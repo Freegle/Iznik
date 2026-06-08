@@ -1079,6 +1079,48 @@ func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
 	assert.Equal(t, int64(1), count(idC), "other app session (series 2) must remain logged in")
 }
 
+// TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable is the regression test
+// for Discourse #9748 *still failing* after the first fix. When the current
+// session's series cannot be resolved to a non-zero value (e.g. a legacy/edge
+// session row stored with series 0, or a stale client token), the previous code
+// fell back to DELETE FROM sessions WHERE userid = ? — logging the user out of
+// EVERY app and device ("logging out of either Freegle or ModTools logs me out
+// of both everywhere"). Logout must instead scope to the current session row and
+// never evict the user's other logins.
+func TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable(t *testing.T) {
+	prefix := uniquePrefix("del_sess_zero")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	mk := func(series uint64) uint64 {
+		db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
+		var id uint64
+		db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&id)
+		return id
+	}
+	// Current login's row has series 0 (series unresolvable); a separate app/device
+	// login has a normal series and must survive this logout.
+	idCurrent := mk(0)
+	idOther := mk(userID*1000 + 7)
+
+	token := GetToken(userID, idCurrent)
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	count := func(id uint64) int64 {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&n)
+		return n
+	}
+	// The current session is logged out (by row id when its series is 0)...
+	assert.Equal(t, int64(0), count(idCurrent), "current session must be deleted")
+	// ...but the user's other login must NOT be cleared. The old delete-all
+	// fallback deleted this too — that was #9748 "logged out everywhere".
+	assert.Equal(t, int64(1), count(idOther), "other login must survive when current series is unresolvable")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Forget
 // ---------------------------------------------------------------------------
