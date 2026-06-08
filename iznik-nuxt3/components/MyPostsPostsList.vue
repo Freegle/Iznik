@@ -206,9 +206,7 @@ watch(activePosts, (newVal) => {
 })
 
 const visiblePosts = computed(() => {
-  // When showing old posts, display ONLY old posts (matching Chats "show hidden"
-  // behaviour which switches between active list and closed list, never mixing them).
-  let visiblePostList = showOldPosts.value ? oldPosts.value : activePosts.value
+  let visiblePostList = showOldPosts.value ? posts.value : activePosts.value
   visiblePostList = visiblePostList || []
 
   const filter = filterText.value.trim().toLowerCase()
