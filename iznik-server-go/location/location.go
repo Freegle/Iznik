@@ -795,14 +795,6 @@ func UpdateLocation(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid geometry")
 		}
 
-		// Simplify the polygon to reduce complexity, matching V1 behaviour.
-		var simplified string
-		db.Raw(fmt.Sprintf("SELECT ST_AsText(ST_Simplify(ST_GeomFromText(?, %d), 0.001)) AS simplified", utils.SRID), *req.Polygon).Scan(&simplified)
-
-		if simplified != "" {
-			req.Polygon = &simplified
-		}
-
 		// Capture old geometry and compute union with new for remap scope (matching V1).
 		// If old and new intersect, remap the union (covers both). If separate, remap both.
 		type OldGeom struct {
