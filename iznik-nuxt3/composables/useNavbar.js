@@ -103,7 +103,7 @@ export function useNavbar() {
   const chatCount = computed(() => {
     const count = Math.min(99, chatStore.unreadCount)
     if (mobileStore.isApp) {
-      mobileStore.setBadgeCount(count + (notificationStore.count || 0))
+      mobileStore.setBadgeCount(Math.min(99, count + (notificationStore.count || 0)))
     }
     return count
   })

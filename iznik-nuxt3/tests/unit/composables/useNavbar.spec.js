@@ -438,4 +438,26 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(0)
   })
+
+  it('clamps combined badge to 99 when chats + notifications exceed 99', async () => {
+    // chatStore.unreadCount = 99, notificationStore.count = 5 → combined = 104.
+    // BUGGY (#674): setBadgeCount(104) — clamp applied to chats alone, not the sum.
+    // FIXED: setBadgeCount(99) — Math.min(99, 99 + 5).
+    mockNotificationCount = 5
+
+    vi.doMock('~/stores/chat', () => ({
+      useChatStore: () => ({
+        unreadCount: 99,
+        byChatId: () => null,
+        fetchChats: vi.fn(),
+        fetchMessages: vi.fn(),
+      }),
+    }))
+
+    const { useNavbar } = await import('~/composables/useNavbar')
+    const { chatCount } = useNavbar()
+    void chatCount.value
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(99)
+  })
 })
