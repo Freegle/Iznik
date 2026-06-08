@@ -204,11 +204,19 @@ describe('ModMessageWorry', () => {
       expect(wrapper.text()).toContain('Phone number')
     })
 
+    it('describes the post content, not a group restriction', () => {
+      const wrapper = mountWithReasons([
+        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+      ])
+      expect(wrapper.text()).not.toContain('This group restricts personal info')
+      expect(wrapper.text()).toContain('This post contains a phone number')
+    })
+
     it('asks mod to request phone number removal', () => {
       const wrapper = mountWithReasons([
         { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
       ])
-      expect(wrapper.text()).toContain('remove their phone number')
+      expect(wrapper.text()).toContain('remove it')
     })
   })
 
@@ -220,11 +228,19 @@ describe('ModMessageWorry', () => {
       expect(wrapper.text()).toContain('Email address')
     })
 
+    it('describes the post content, not a group restriction', () => {
+      const wrapper = mountWithReasons([
+        { check: 'EmailAddress', category: null, detail: 'Post contains an external email address' },
+      ])
+      expect(wrapper.text()).not.toContain('This group restricts personal info')
+      expect(wrapper.text()).toContain('This post contains an email address')
+    })
+
     it('asks mod to request email removal', () => {
       const wrapper = mountWithReasons([
         { check: 'EmailAddress', category: null, detail: 'Post contains an external email address' },
       ])
-      expect(wrapper.text()).toContain('remove their email address')
+      expect(wrapper.text()).toContain('remove it')
     })
   })
 

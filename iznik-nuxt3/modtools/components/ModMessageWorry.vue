@@ -48,12 +48,12 @@
         to describe the item more specifically.
       </span>
       <span v-else-if="reason.check === 'PhoneNumber'">
-        <strong>Phone number:</strong> This group restricts personal info in
-        posts. Please ask the member to remove their phone number.
+        <strong>Phone number:</strong> This post contains a phone number.
+        Please ask the member to remove it.
       </span>
       <span v-else-if="reason.check === 'EmailAddress'">
-        <strong>Email address:</strong> This group restricts personal info in
-        posts. Please ask the member to remove their email address.
+        <strong>Email address:</strong> This post contains an email address.
+        Please ask the member to remove it.
       </span>
       <span v-else-if="reason.check === 'MessagingLink'">
         <strong>Messaging app link:</strong> {{ reason.detail }}. Please ask
