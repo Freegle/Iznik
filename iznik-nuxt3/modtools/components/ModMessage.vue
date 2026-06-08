@@ -49,6 +49,12 @@
               </div>
               <div v-if="editmessage.item && editmessage.location">
                 <b-input-group>
+                  <b-form-input
+                    v-model="editmessage.location.areaname"
+                    size="lg"
+                    class="me-1 areaname-input"
+                    placeholder="Neighbourhood"
+                  />
                   <PostCode
                     :value="editmessage.location.name"
                     :find="false"
@@ -1236,6 +1242,7 @@ async function save() {
         msgtype: editmessage.value.type,
         item: editmessage.value.item.name,
         location: editmessage.value.location.name,
+        areaname: editmessage.value.location.areaname,
         attachments: attids,
         textbody: editmessage.value.textbody,
       })
@@ -1444,6 +1451,10 @@ function spamReport() {
   /* Cap growth on wide desktop so the field doesn't stretch the whole row.
      flex-grow-1 keeps it filling available space up to this cap. */
   max-width: 500px;
+}
+
+.areaname-input {
+  max-width: 160px;
 }
 
 .fullsubject {

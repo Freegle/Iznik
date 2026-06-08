@@ -461,3 +461,56 @@ func TestIsAIAttachment_WhitespaceJSON(t *testing.T) {
 	mods := []byte(`  {  "ai" : true  }  `)
 	assert.True(t, isAIAttachment(mods))
 }
+
+// ── buildLocStrFromInfo ───────────────────────────────────────────────────────
+// Regression tests for the ModTools location-name-overwrite bug (Discourse #9769/1).
+// When a mod edits a message, the area name shown in the subject (e.g. "Stepney")
+// must be preserved — it must not be silently replaced with the postcode-mapping default.
+
+func TestBuildLocStrFromInfo_PostcodeWithDBArea(t *testing.T) {
+	// Standard case: postcode has a mapped area.
+	result := buildLocStrFromInfo("E1 1AA", "Postcode", "Stepney", "")
+	assert.Equal(t, "Stepney E1", result)
+}
+
+func TestBuildLocStrFromInfo_PostcodeCustomAreaOverridesDB(t *testing.T) {
+	// When a mod supplies a custom area name it must override the DB-derived one.
+	result := buildLocStrFromInfo("E1 1AA", "Postcode", "Stepney", "Whitechapel")
+	assert.Equal(t, "Whitechapel E1", result)
+}
+
+func TestBuildLocStrFromInfo_PostcodeNoArea(t *testing.T) {
+	// Postcode with no area: return only the outward code.
+	result := buildLocStrFromInfo("CB22 3AA", "Postcode", "", "")
+	assert.Equal(t, "CB22", result)
+}
+
+func TestBuildLocStrFromInfo_PostcodeCustomAreaNoDBArea(t *testing.T) {
+	// Custom area + postcode with no DB mapping.
+	result := buildLocStrFromInfo("CB22 3AA", "Postcode", "", "Teversham")
+	assert.Equal(t, "Teversham CB22", result)
+}
+
+func TestBuildLocStrFromInfo_NonPostcodeNoCustom(t *testing.T) {
+	// Non-postcode location: return the name as-is.
+	result := buildLocStrFromInfo("Stepney", "Area", "", "")
+	assert.Equal(t, "Stepney", result)
+}
+
+func TestBuildLocStrFromInfo_NonPostcodeCustomArea(t *testing.T) {
+	// Non-postcode location: custom area overrides the name.
+	result := buildLocStrFromInfo("Stepney", "Area", "", "Whitechapel")
+	assert.Equal(t, "Whitechapel", result)
+}
+
+func TestBuildLocStrFromInfo_EmptyCustomAreaFallsBackToDBArea(t *testing.T) {
+	// Empty custom area string must not suppress the DB area name.
+	result := buildLocStrFromInfo("E1 1AA", "Postcode", "Stepney", "")
+	assert.Equal(t, "Stepney E1", result)
+}
+
+func TestBuildLocStrFromInfo_PostcodeNoSpaceInName(t *testing.T) {
+	// Edge case: postcode with no space (malformed) — name used as vaguePC.
+	result := buildLocStrFromInfo("E1", "Postcode", "Stepney", "")
+	assert.Equal(t, "Stepney E1", result)
+}

@@ -1316,4 +1316,47 @@ describe('ModMessage', () => {
       expect(labelSpan.text()).toBe('Back to Pending')
     })
   })
+
+  // Regression tests for Discourse #9769/1 — location (neighbourhood) name
+  // must be shown and preserved when a mod edits a post.
+  describe('location areaname editing (Discourse #9769/1)', () => {
+    it('save sends areaname from message location', async () => {
+      // The mod should not need to change anything for the area name to be preserved.
+      const wrapper = mountComponent(
+        {},
+        {
+          item: { name: 'Kitchen Table' },
+          location: { name: 'E1 1AA', areaname: 'Stepney' },
+        }
+      )
+      wrapper.vm.startEdit()
+      await wrapper.vm.save()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          areaname: 'Stepney',
+        })
+      )
+    })
+
+    it('save preserves a custom area name without overwriting with postcode default', async () => {
+      // If the stored area name differs from the Mapping default (e.g. "Whitechapel"
+      // vs the postcode default "Stepney"), the custom name must survive a no-op save.
+      const wrapper = mountComponent(
+        {},
+        {
+          item: { name: 'Kitchen Table' },
+          location: { name: 'E1 1AA', areaname: 'Whitechapel' },
+        }
+      )
+      wrapper.vm.startEdit()
+      await wrapper.vm.save()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          areaname: 'Whitechapel',
+        })
+      )
+    })
+  })
 })

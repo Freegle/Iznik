@@ -1527,6 +1527,32 @@ func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 	return groupids
 }
 
+// buildLocStrFromInfo is the pure, database-free core of the location string builder.
+// locName is the raw location record name (e.g. "E1 1AA" for a postcode),
+// locType is the location type ("Postcode" or any other value),
+// dbAreaName is the area name looked up from the DB mapping (used when customArea is empty),
+// customArea is an optional mod-supplied override — when non-empty it replaces dbAreaName.
+func buildLocStrFromInfo(locName, locType, dbAreaName, customArea string) string {
+	areaToUse := dbAreaName
+	if customArea != "" {
+		areaToUse = customArea
+	}
+	if locType == "Postcode" {
+		vaguePC := locName
+		if idx := strings.Index(vaguePC, " "); idx > 0 {
+			vaguePC = vaguePC[:idx]
+		}
+		if areaToUse != "" {
+			return areaToUse + " " + vaguePC
+		}
+		return vaguePC
+	}
+	if customArea != "" {
+		return customArea
+	}
+	return locName
+}
+
 // constructLocationString builds a location string for a message's subject,
 // using the area name + vague postcode format.
 // The vague postcode is the outward code only (e.g., "CB22" from "CB22 3AA").
@@ -2496,6 +2522,7 @@ type patchMessageRequest struct {
 	Lng          *float64 `json:"lng"`
 	Location     *string  `json:"location"`
 	Locationid   *uint64  `json:"locationid"`
+	Areaname     *string  `json:"areaname"`
 	Groupid      *uint64  `json:"groupid"`
 	Attachments  []uint64 `json:"attachments"`
 	BadAIImages  []uint64 `json:"badAIImages"`
@@ -2709,9 +2736,8 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
-	// Reconstruct subject from type + item + location when item/type/location changed
-	//.
-	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil {
+	// Reconstruct subject from type + item + location when item/type/location changed.
+	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil || req.Areaname != nil {
 		var msgType string
 		var itemName *string
 		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
@@ -2723,8 +2749,23 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 			db.Raw("SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1", req.ID).Scan(&itemName)
 		}
 
-		// Build the location string using area + vague postcode.
-		locStr := constructLocationString(db, req.ID)
+		// Build the location string, using a mod-supplied area name when provided so
+		// the stored neighbourhood spelling is preserved rather than being silently
+		// overwritten by the postcode-mapping default (Discourse #9769/1).
+		var locStr string
+		if req.Areaname != nil && *req.Areaname != "" {
+			type locInfo struct {
+				Name   string
+				Type   string
+				Areaid uint64
+			}
+			var loc locInfo
+			db.Raw("SELECT l.name, l.type, COALESCE(l.areaid, 0) as areaid FROM locations l "+
+				"INNER JOIN messages m ON m.locationid = l.id WHERE m.id = ?", req.ID).Scan(&loc)
+			locStr = buildLocStrFromInfo(loc.Name, loc.Type, "", *req.Areaname)
+		} else {
+			locStr = constructLocationString(db, req.ID)
+		}
 
 		if itemName != nil && locStr != "" {
 			// Use the group keyword for the type (V1: group settings, defaults to uppercase).
