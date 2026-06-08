@@ -218,6 +218,79 @@ func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
 	}
 }
 
+// A returned/rejected post is aged against the same expiry as any other post
+// (maxagetoshow / EXPIRE_TIME, 90 days for the default group — matching V1's
+// own-posts age cap), but by its ORIGINAL date rather than arrival. A rejected
+// post's arrival can be recent while the post itself is years old, which would
+// otherwise keep a long-dead rejected message in the member's active posts.
+// Reporter: Discourse topic 9481/561.
+func TestOldRejectedMessageClassifiedAsOld(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("oldrej")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	// createRejected inserts a Rejected post (no spatial row, as rejected posts
+	// aren't public) with a given original date and a RECENT arrival.
+	createRejected := func(subject string, dateDaysAgo int) uint64 {
+		db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_SUB(NOW(), INTERVAL ? DAY))",
+			userID, subject, locationID, dateDaysAgo)
+		var id uint64
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+			userID, subject).Scan(&id)
+		require.NotZero(t, id)
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+			"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 1 DAY), 'Rejected', 0)", id, groupID)
+		t.Cleanup(func() {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		})
+		return id
+	}
+
+	oldRejID := createRejected("OFFER: Ancient Rejected Lamp", 400) // years-old → Old
+	// 60 days: past the reporter's "month" suggestion but within the 90-day
+	// expiry — under V1 parity this is still active (not a separate shorter rule).
+	midRejID := createRejected("OFFER: Two-Month Rejected Chair", 60)
+
+	// active=true: old rejected excluded, mid-age (within expiry) still present.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	foundOld, foundMid := false, false
+	for _, m := range msgs {
+		if m.ID == oldRejID {
+			foundOld = true
+		}
+		if m.ID == midRejID {
+			foundMid = true
+		}
+	}
+	assert.False(t, foundOld, "Years-old rejected post should NOT appear in active")
+	assert.True(t, foundMid, "Rejected post within the 90-day expiry should still appear in active (V1 parity)")
+
+	// active=false: old rejected marked hasoutcome=true (Old); mid one not.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=false&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &msgs)
+	for _, m := range msgs {
+		if m.ID == oldRejID {
+			assert.True(t, m.Hasoutcome, "Years-old rejected post should be hasoutcome=true (Old) in non-active query")
+		}
+		if m.ID == midRejID {
+			assert.False(t, m.Hasoutcome, "Rejected post within expiry should not be marked Old")
+		}
+	}
+}
+
 func TestExpiredPromisedMessageExcludedFromActive(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("exprms")
