@@ -795,6 +795,14 @@ func UpdateLocation(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid geometry")
 		}
 
+		// Note: V1 PHP called ST_Simplify(polygon, 0.001) here before saving. That 0.001-degree
+		// (~111 m) Douglas-Peucker pass silently dropped any new vertex placed within ~111 m of the
+		// line between its neighbours — exactly what happens when a user drags a geoman midpoint
+		// marker (the new point starts on the original edge and may be moved only a short distance).
+		// Result: the vertex the user just placed was discarded on every Save (Discourse #9770).
+		// We deliberately skip write-time simplification here to preserve user intent.
+		// The SELECT queries above still use ST_Simplify for display-only rendering, which is fine.
+
 		// Capture old geometry and compute union with new for remap scope (matching V1).
 		// If old and new intersect, remap the union (covers both). If separate, remap both.
 		type OldGeom struct {
