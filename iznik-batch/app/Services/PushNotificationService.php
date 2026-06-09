@@ -383,6 +383,23 @@ class PushNotificationService
      */
     public function getBadgeCount(int $userId): int
     {
+        return $this->getBadgeBreakdown($userId)['total'];
+    }
+
+    /**
+     * Return per-collection badge counts for a ModTools user.
+     *
+     * Returns ['pending' => N, 'spam' => N, 'volunteering' => N, 'total' => N].
+     * Callers that need per-collection data (e.g. to choose notification route/label)
+     * use this directly rather than duplicating the queries in a separate method.
+     *
+     * The queries here are the single authoritative source for badge counts — do not
+     * add a parallel count method; update this breakdown instead.
+     */
+    private function getBadgeBreakdown(int $userId): array
+    {
+        $zero = ['pending' => 0, 'spam' => 0, 'volunteering' => 0, 'total' => 0];
+
         // Get all approved mod/owner memberships with settings to determine active/inactive.
         $memberships = DB::select(
             "SELECT groupid, settings FROM memberships
@@ -391,7 +408,7 @@ class PushNotificationService
         );
 
         if (empty($memberships)) {
-            return 0;
+            return $zero;
         }
 
         // Mirror session.go: only count work from active groups in the badge total.
@@ -404,7 +421,7 @@ class PushNotificationService
         }
 
         if (empty($activeGroupIds)) {
-            return 0;
+            return $zero;
         }
 
         $placeholders = implode(',', array_fill(0, count($activeGroupIds), '?'));
@@ -451,7 +468,16 @@ class PushNotificationService
             $activeGroupIds
         );
 
-        return ($pending->cnt ?? 0) + ($spam->cnt ?? 0) + ($volunteering->cnt ?? 0);
+        $pendingCnt = (int) ($pending->cnt ?? 0);
+        $spamCnt = (int) ($spam->cnt ?? 0);
+        $volunteeringCnt = (int) ($volunteering->cnt ?? 0);
+
+        return [
+            'pending' => $pendingCnt,
+            'spam' => $spamCnt,
+            'volunteering' => $volunteeringCnt,
+            'total' => $pendingCnt + $spamCnt + $volunteeringCnt,
+        ];
     }
 
     /**
@@ -485,12 +511,20 @@ class PushNotificationService
     /**
      * Build the ModTools notification payload.
      *
-     * For ModTools, we send a simple "pending messages" notification.
-     * Matches legacy User::getNotificationPayload(modtools=true).
+     * Uses getBadgeBreakdown() to choose the label and tap-through route based on
+     * which categories have work, so the notification describes what actually needs
+     * attention rather than always saying "messages pending" regardless of work type.
+     *
+     * When pendingCount > 0:  title = "N message(s) pending", route = /modtools/messages/pending
+     * When pendingCount == 0: title = "N item(s) to review",  route = /modtools (dashboard)
+     *
+     * Badge uses the total across all categories in both cases.
      */
     private function buildModToolsPayload(int $userId): ?array
     {
-        $total = $this->getBadgeCount($userId);
+        $breakdown = $this->getBadgeBreakdown($userId);
+        $total = $breakdown['total'];
+        $pendingCount = $breakdown['pending'];
 
         if ($total === 0) {
             // Still send a zero-count to clear badge
@@ -512,8 +546,13 @@ class PushNotificationService
             ];
         }
 
-        $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
-        $message = "Open ModTools to review";
+        if ($pendingCount > 0) {
+            $title = "$pendingCount message" . ($pendingCount > 1 ? 's' : '') . " pending";
+            $route = '/modtools/messages/pending';
+        } else {
+            $title = "$total item" . ($total > 1 ? 's' : '') . " to review";
+            $route = '/modtools';
+        }
 
         return [
             'badge' => (string) $total,
@@ -521,13 +560,13 @@ class PushNotificationService
             'chatcount' => '0',
             'notifcount' => (string) $total,
             'title' => $title,
-            'message' => $message,
+            'message' => 'Open ModTools to review',
             'chatids' => '',
             'content-available' => '1',
             'image' => 'www/images/modtools_logo.png',
             'modtools' => '1',
             'sound' => 'default',
-            'route' => '/modtools/messages/pending',
+            'route' => $route,
             'channel_id' => 'modtools',
             // Fixed notId per user so each new notification replaces the previous one
             // on Android instead of stacking multiple "N pending" badges.

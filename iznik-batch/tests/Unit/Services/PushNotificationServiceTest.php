@@ -481,6 +481,48 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * Volunteering-only badge count must route to /modtools dashboard, not /modtools/messages/pending.
+     *
+     * Regression for Discourse #9692/10: when the badge total is driven by pending volunteering ops
+     * (no pending messages), the notification said "N messages pending" and routed to
+     * /modtools/messages/pending — an empty page. The label and route must reflect the actual
+     * work type.
+     */
+    public function test_buildModToolsPayload_volunteering_only_routes_to_dashboard_not_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Pending volunteering op — no pending messages
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge'], 'Badge must be 1 (the volunteering op)');
+        // Route must NOT send the mod to /messages/pending — there are no pending messages.
+        $this->assertNotSame('/modtools/messages/pending', $payload['route'],
+            'Volunteering-only badge must not route to /messages/pending (Discourse #9692/10)');
+        $this->assertSame('/modtools', $payload['route'],
+            'Volunteering-only badge must route to the /modtools dashboard');
+        // Title must not claim there are "messages pending" when there are none.
+        $this->assertStringNotContainsString('message', $payload['title'],
+            'Title must not say "messages pending" when only volunteering work is queued');
+    }
+
+    /**
      * Visible ModTools push: priority high and notification.tag set so the
      * latest "N pending" entry replaces the previous one in the tray.
      */
