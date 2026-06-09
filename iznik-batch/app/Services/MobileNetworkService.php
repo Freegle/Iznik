@@ -7,23 +7,33 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Seeds UK mobile-carrier IP ranges into spam_whitelist_ips so that CGNAT
- * shared-egress IPs are fully exempt from the IP-abuse check.
+ * Refreshes IP ranges into spam_whitelist_ips so that shared-egress IPs are
+ * fully exempt from the IP-abuse check (Discourse #9768).
  *
- * Mobile carriers route many thousands of unrelated subscribers through a small
- * pool of public egress IPs (carrier-grade NAT). That makes the ">5 distinct
- * accounts from one IP" signal in ContentCheckService::checkIpAbuse() fire on
- * normal, well-behaved members (Discourse #9768). Whitelisting the carriers'
- * announced prefixes exempts those IPs, exactly as Cloudflare ranges are.
+ * Two sources are refreshed:
  *
- * Ranges are pulled from RIPEstat (free, no API key) by ASN, so they stay
- * current as carriers re-allocate space; run on a monthly schedule. We exempt
- * fully (skip the check) rather than raising a threshold: for CGNAT you cannot
- * distinguish abuse from normal sharing, so a count threshold is meaningless.
+ *  1. UK mobile carriers (via RIPEstat by ASN) — carrier-grade NAT pools many
+ *     unrelated subscribers behind a small set of public IPs, making the
+ *     ">5 distinct accounts from one IP" signal fire on well-behaved members.
+ *
+ *  2. Cloudflare CDN egress (via https://www.cloudflare.com/ips-v4) — Cloudflare
+ *     WARP, Cloudflare-proxied sites, and Cloudflare Email Routing all share the
+ *     same egress pool, so members with no connection to each other share an IP.
+ *
+ * Stale entries are PRUNED: rows previously written by this job (identified by
+ * their comment markers) that are no longer in the freshly-fetched set are
+ * deleted, so the table stays accurate as ranges change over time. Manually-
+ * added rows (no recognised marker, or a different comment) are never touched.
+ *
+ * Run on a monthly schedule.
  */
 class MobileNetworkService
 {
     public const RIPESTAT_URL = 'https://stat.ripe.net/data/announced-prefixes/data.json';
+    public const CLOUDFLARE_IPV4_URL = 'https://www.cloudflare.com/ips-v4';
+
+    /** Comment prefix written for every Cloudflare row — used as ownership marker for pruning. */
+    public const CLOUDFLARE_COMMENT = 'Cloudflare CDN egress (auto)';
 
     /**
      * UK mobile network operators by ASN. The MVNOs (giffgaff, Tesco Mobile,
@@ -38,16 +48,26 @@ class MobileNetworkService
     ];
 
     /**
-     * Fetch each carrier's announced IPv4 prefixes and upsert them into
-     * spam_whitelist_ips. Returns the number of CIDR rows written.
-     *
-     * Idempotent: re-running upserts by the unique `ip` column. A failure for
-     * one ASN is logged and skipped so the rest still refresh.
+     * Refresh UK mobile-carrier AND Cloudflare IP ranges in spam_whitelist_ips.
+     * Stale job-owned rows are pruned. Returns total CIDR rows written.
      */
     public function refresh(): int
     {
+        $total = 0;
+        $total += $this->refreshMobileCidrs();
+        $total += $this->refreshCloudflareCidrs();
+        return $total;
+    }
+
+    /**
+     * Fetch each carrier's announced IPv4 prefixes and upsert them.
+     * Prunes stale "UK mobile: …" rows after each ASN is processed.
+     */
+    private function refreshMobileCidrs(): int
+    {
         $now = now();
         $total = 0;
+        $allFetched = [];
 
         foreach (self::UK_MOBILE_ASNS as $asn => $name) {
             try {
@@ -74,6 +94,7 @@ class MobileNetworkService
                     continue;
                 }
 
+                $allFetched[] = $cidr;
                 $rows[] = [
                     'ip' => $cidr,
                     'comment' => "UK mobile: {$name} (AS{$asn}) — CGNAT shared egress, exempt from IP-abuse (Discourse #9768)",
@@ -87,6 +108,64 @@ class MobileNetworkService
             }
         }
 
+        // Prune stale mobile rows (owned by this job) that are no longer in any ASN's current set.
+        if (!empty($allFetched)) {
+            DB::table('spam_whitelist_ips')
+                ->where('comment', 'like', 'UK mobile:%')
+                ->whereNotIn('ip', $allFetched)
+                ->delete();
+        }
+
         return $total;
+    }
+
+    /**
+     * Fetch Cloudflare's published IPv4 egress ranges and upsert them.
+     * Prunes stale Cloudflare rows after fetching the current list.
+     */
+    private function refreshCloudflareCidrs(): int
+    {
+        try {
+            $resp = Http::timeout(30)
+                ->retry(2, 500)
+                ->get(self::CLOUDFLARE_IPV4_URL);
+        } catch (\Throwable $e) {
+            Log::warning('MobileNetworkService: Cloudflare ips-v4 fetch failed: ' . $e->getMessage());
+            return 0;
+        }
+
+        if (!$resp->successful()) {
+            Log::warning('MobileNetworkService: Cloudflare ips-v4 HTTP ' . $resp->status());
+            return 0;
+        }
+
+        $now = now();
+        $rows = [];
+        $fetched = [];
+
+        foreach (explode("\n", trim($resp->body())) as $line) {
+            $cidr = trim($line);
+            if ($cidr === '' || str_contains($cidr, ':')) {
+                continue; // skip blank lines and IPv6
+            }
+            $fetched[] = $cidr;
+            $rows[] = [
+                'ip' => $cidr,
+                'comment' => self::CLOUDFLARE_COMMENT,
+                'date' => $now,
+            ];
+        }
+
+        if (!empty($rows)) {
+            DB::table('spam_whitelist_ips')->upsert($rows, ['ip'], ['comment', 'date']);
+
+            // Prune stale Cloudflare rows no longer in the published list.
+            DB::table('spam_whitelist_ips')
+                ->where('comment', self::CLOUDFLARE_COMMENT)
+                ->whereNotIn('ip', $fetched)
+                ->delete();
+        }
+
+        return count($rows);
     }
 }
