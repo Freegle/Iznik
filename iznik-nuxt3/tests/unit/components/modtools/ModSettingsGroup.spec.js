@@ -773,11 +773,31 @@ describe('ModSettingsGroup', () => {
   })
 
   describe('bug #9767: TN settings link missing on first load', () => {
-    // The batch fetch (getModGroups → fetchGroupsMTBatch) ignores the tnkey
-    // query parameter in the Go batch endpoint, so cached groups have no tnkey.
-    // fetchIfNeedBeMT returns early for cached groups — skipping the tnkey fetch.
-    // Fix: fetchGroup must call fetchGroupMT directly so tnkey is always fetched.
-    it('fetchGroup calls fetchGroupMT directly to ensure tnkey is always fetched fresh', async () => {
+    const tnUrl =
+      'https://trashnothing.com/modtools/group-settings/TestGroup?key=abc'
+
+    it('shows TN settings link when group has tnkey data', async () => {
+      // This is the state after the fix: fetchGroupMT populates tnkey in the store.
+      const wrapper = mountComponent({}, { tnkey: { url: tnUrl } })
+      await flushPromises()
+      expect(wrapper.text()).toContain('TrashNothing settings')
+      const link = wrapper.find(`.external-link[href="${tnUrl}"]`)
+      expect(link.exists()).toBe(true)
+    })
+
+    it('hides TN settings link when group has no tnkey data (bug state before fix)', async () => {
+      // Simulates what batch fetch (getModGroups → fetchGroupsMTBatch) returns:
+      // groups without tnkey, because the batch endpoint never fetches it.
+      // fetchIfNeedBeMT returned early for these cached groups → link was never shown.
+      const wrapper = mountComponent({}, { tnkey: null })
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('TrashNothing settings')
+    })
+
+    it('calls fetchGroupMT on first mount to ensure tnkey is always fetched (regression guard)', async () => {
+      // fetchIfNeedBeMT skips groups already in the store (from batch fetch),
+      // so tnkey was never fetched on first load. The fix uses fetchGroupMT,
+      // which always fetches including tnkey, so the link renders on first load.
       const wrapper = mountComponent({ initialGroup: 123 })
       await flushPromises()
       expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalledWith(123)
