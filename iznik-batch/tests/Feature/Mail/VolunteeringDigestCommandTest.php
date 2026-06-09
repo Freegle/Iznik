@@ -378,6 +378,66 @@ class VolunteeringDigestCommandTest extends TestCase
         );
     }
 
+    /**
+     * Regression test for Discourse topic 9692 post 12.
+     *
+     * The DB stores volunteering titles HTML-encoded (e.g. "Coffee &amp; Cake").
+     * VolunteeringDigestService must call html_entity_decode() before passing the
+     * title to the mailable so Blade's {{ }} produces a single &amp; in the HTML
+     * source (which email clients render as "&"). Without the decode, {{ }} double-
+     * encodes to &amp;amp;, which email clients render as the literal string "&amp;".
+     */
+    public function test_html_encoded_title_in_db_is_decoded_in_rendered_email(): void
+    {
+        $group = $this->createTestGroup();
+
+        // Insert volunteering with HTML-encoded title, exactly as production DB stores it.
+        $volId = DB::table('volunteering')->insertGetId([
+            'title'       => 'Coffee &amp; Cake Stall',
+            'location'    => 'Tea &amp; Coffee Room',
+            'description' => 'Bring friends &amp; family.',
+            'pending'     => 0,
+            'deleted'     => 0,
+            'expired'     => 0,
+            'added'       => now(),
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volId,
+            'groupid'        => $group->id,
+        ]);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'volunteeringallowed' => 1,
+            'emailfrequency'      => 24,
+        ]);
+
+        // Capture the VolunteeringDigestMail before it reaches the spooler.
+        $capturedMail = null;
+        $spooler = \Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$capturedMail) {
+            $capturedMail = $mailable;
+            return 'spooled-id';
+        });
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        $this->assertNotNull($capturedMail, 'A VolunteeringDigestMail should have been created');
+
+        $html = $capturedMail->render();
+
+        // Correct: single &amp; in HTML source → email client displays "&"
+        $this->assertStringContainsString('Coffee &amp; Cake Stall', $html,
+            'Title must appear as single-encoded "&amp;" so email clients render "&"');
+
+        // Wrong: double-encoded &amp;amp; → email client displays the literal "&amp;"
+        $this->assertStringNotContainsString('Coffee &amp;amp; Cake Stall', $html,
+            'Title must not be double-encoded (regression guard for 9692/12)');
+    }
+
     public function test_skips_group_with_volunteering_setting_disabled(): void
     {
         Mail::fake();
