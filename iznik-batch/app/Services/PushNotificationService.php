@@ -383,6 +383,23 @@ class PushNotificationService
      */
     public function getBadgeCount(int $userId): int
     {
+        return $this->getBadgeBreakdown($userId)['total'];
+    }
+
+    /**
+     * Return per-collection badge counts for a ModTools user.
+     *
+     * Returns ['pending' => N, 'spam' => N, 'volunteering' => N, 'total' => N].
+     * Callers that need per-collection data (e.g. to choose notification route/label)
+     * use this directly rather than duplicating the queries in a separate method.
+     *
+     * The queries here are the single authoritative source for badge counts — do not
+     * add a parallel count method; update this breakdown instead.
+     */
+    private function getBadgeBreakdown(int $userId): array
+    {
+        $zero = ['pending' => 0, 'spam' => 0, 'volunteering' => 0, 'total' => 0];
+
         // Get all approved mod/owner memberships with settings to determine active/inactive.
         $memberships = DB::select(
             "SELECT groupid, settings FROM memberships
@@ -391,7 +408,7 @@ class PushNotificationService
         );
 
         if (empty($memberships)) {
-            return 0;
+            return $zero;
         }
 
         // Mirror session.go: only count work from active groups in the badge total.
@@ -404,7 +421,7 @@ class PushNotificationService
         }
 
         if (empty($activeGroupIds)) {
-            return 0;
+            return $zero;
         }
 
         $placeholders = implode(',', array_fill(0, count($activeGroupIds), '?'));
@@ -451,7 +468,16 @@ class PushNotificationService
             $activeGroupIds
         );
 
-        return ($pending->cnt ?? 0) + ($spam->cnt ?? 0) + ($volunteering->cnt ?? 0);
+        $pendingCnt = (int) ($pending->cnt ?? 0);
+        $spamCnt = (int) ($spam->cnt ?? 0);
+        $volunteeringCnt = (int) ($volunteering->cnt ?? 0);
+
+        return [
+            'pending' => $pendingCnt,
+            'spam' => $spamCnt,
+            'volunteering' => $volunteeringCnt,
+            'total' => $pendingCnt + $spamCnt + $volunteeringCnt,
+        ];
     }
 
     /**
@@ -485,12 +511,29 @@ class PushNotificationService
     /**
      * Build the ModTools notification payload.
      *
-     * For ModTools, we send a simple "pending messages" notification.
-     * Matches legacy User::getNotificationPayload(modtools=true).
+     * Mirrors V1 User::getNotificationPayload(TRUE) (iznik-server/include/user/User.php ~4547-4569):
+     * iterate categories in a fixed priority order (volunteering → spam → pending), last-wins,
+     * so pending — being last — always wins when present. This ensures the notification route and
+     * title reflect the highest-priority work type.
+     *
+     * Routes use direct Nuxt paths WITHOUT a /modtools/ prefix. The /modtools/ prefix hits the
+     * catch-all redirect page (iznik-nuxt3/modtools/pages/modtools/[...slug].vue) which delays
+     * navigation by 2 seconds. The correct direct pages are /messages/pending and /volunteering.
+     * (Discourse #9692/10).
+     *
+     * Category mapping (V1 parity):
+     *   volunteering → route /volunteering,        title "N volunteer op(s)"
+     *   spam         → route /messages/pending,    title "N message(s) to review"
+     *   pending      → route /messages/pending,    title "N pending message(s)"
+     *
+     * Title is multi-line ("\n"-joined) listing each non-zero category.
+     * If total == 0: empty title, route "/".
+     * Badge is always total across all categories.
      */
     private function buildModToolsPayload(int $userId): ?array
     {
-        $total = $this->getBadgeCount($userId);
+        $breakdown = $this->getBadgeBreakdown($userId);
+        $total = $breakdown['total'];
 
         if ($total === 0) {
             // Still send a zero-count to clear badge
@@ -506,14 +549,36 @@ class PushNotificationService
                 'image' => 'www/images/modtools_logo.png',
                 'modtools' => '1',
                 'sound' => 'default',
-                'route' => '/modtools',
+                'route' => '/',
                 'channel_id' => 'modtools',
                 'notId' => (string) $userId,
             ];
         }
 
-        $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
-        $message = "Open ModTools to review";
+        // Per-category label lines (for multi-line title) and per-category route.
+        // Last-wins order: volunteering first, pending last — so pending wins if present.
+        $titleLines = [];
+        $route = '/';
+
+        $volunteeringCount = $breakdown['volunteering'];
+        if ($volunteeringCount > 0) {
+            $titleLines[] = $volunteeringCount . ' volunteer op' . ($volunteeringCount > 1 ? 's' : '');
+            $route = '/volunteering';
+        }
+
+        $spamCount = $breakdown['spam'];
+        if ($spamCount > 0) {
+            $titleLines[] = $spamCount . ' message' . ($spamCount > 1 ? 's' : '') . ' to review';
+            $route = '/messages/pending';
+        }
+
+        $pendingCount = $breakdown['pending'];
+        if ($pendingCount > 0) {
+            $titleLines[] = $pendingCount . ' pending message' . ($pendingCount > 1 ? 's' : '');
+            $route = '/messages/pending';
+        }
+
+        $title = implode("\n", $titleLines);
 
         return [
             'badge' => (string) $total,
@@ -521,13 +586,13 @@ class PushNotificationService
             'chatcount' => '0',
             'notifcount' => (string) $total,
             'title' => $title,
-            'message' => $message,
+            'message' => 'Open ModTools to review',
             'chatids' => '',
             'content-available' => '1',
             'image' => 'www/images/modtools_logo.png',
             'modtools' => '1',
             'sound' => 'default',
-            'route' => '/modtools/messages/pending',
+            'route' => $route,
             'channel_id' => 'modtools',
             // Fixed notId per user so each new notification replaces the previous one
             // on Android instead of stacking multiple "N pending" badges.
