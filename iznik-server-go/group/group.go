@@ -329,6 +329,17 @@ func GetGroup(c *fiber.Ctx) error {
 			group.Welcomemail = ""
 		}
 
+		// Default nil JSON fields to empty objects so the frontend never sees null,
+		// which would crash group.settings.X access and trigger an infinite store
+		// re-fetch loop (the store uses !group.settings as "not yet loaded"). Mirrors
+		// the same nil-guard in user/user.go.
+		if group.Settings == nil {
+			group.Settings = json.RawMessage("{}")
+		}
+		if group.Microvolunteeringoptions == nil {
+			group.Microvolunteeringoptions = json.RawMessage("{}")
+		}
+
 		return c.JSON(group)
 	} else {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
@@ -413,6 +424,15 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 
 			if !modtools {
 				g.Welcomemail = ""
+			}
+
+			// Default nil JSON fields to empty objects (same nil-guard as single
+			// GetGroup path and user/user.go) so the frontend never receives null.
+			if g.Settings == nil {
+				g.Settings = json.RawMessage("{}")
+			}
+			if g.Microvolunteeringoptions == nil {
+				g.Microvolunteeringoptions = json.RawMessage("{}")
 			}
 
 			mu.Lock()

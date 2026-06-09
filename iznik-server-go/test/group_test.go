@@ -1162,3 +1162,70 @@ func TestPatchGroupProfileImage(t *testing.T) {
 	profileStr, _ := getBody["profile"].(string)
 	assert.Contains(t, profileStr, fmt.Sprintf("gimg_%d", imageID), "GET must return profile URL for the specific image ID stored in groups.profile")
 }
+
+// TestGetGroup_NullSettingsDefaultsToEmptyObject verifies that a group with a NULL
+// settings column in the DB is returned with settings == {} (not null) from the API.
+//
+// Root cause: GORM leaves json.RawMessage as nil when the DB column is NULL. The
+// frontend group store checks !group.settings as "not yet loaded" → a null settings
+// field triggers an infinite re-fetch loop and crashes any group.settings.X access.
+// Applies to both single-group (GET /group/:id) and batch (GET /group/:id1,:id2) paths.
+// Mirrors the same nil-guard already present in user/user.go.
+func TestGetGroup_NullSettingsDefaultsToEmptyObject(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("grpnullsettings")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Force settings and microvolunteeringoptions to NULL, simulating a group
+	// row that was created before those columns existed or that was never updated.
+	db.Exec("UPDATE `groups` SET settings = NULL, microvolunteeringoptions = NULL WHERE id = ?", groupID)
+
+	// --- Single group path (GET /group/:id) ---
+	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/group/%d", groupID), nil))
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	require.NoError(t, json2.Unmarshal(rsp(resp), &raw))
+
+	// settings must be an object ({}), not null.
+	settings, settingsPresent := raw["settings"]
+	assert.True(t, settingsPresent, "settings field must be present in response")
+	assert.NotNil(t, settings, "settings must not be null — null crashes frontend group.settings.X access and triggers infinite store re-fetch")
+	_, isObject := settings.(map[string]interface{})
+	assert.True(t, isObject, "settings must be a JSON object ({}), not null or a primitive")
+
+	// microvolunteeringoptions must also be an object, not null.
+	mvo, mvoPresent := raw["microvolunteeringoptions"]
+	assert.True(t, mvoPresent, "microvolunteeringoptions field must be present in response")
+	assert.NotNil(t, mvo, "microvolunteeringoptions must not be null")
+	_, mvoIsObject := mvo.(map[string]interface{})
+	assert.True(t, mvoIsObject, "microvolunteeringoptions must be a JSON object ({}), not null")
+
+	// --- Batch path (GET /group/:id1,:id2) ---
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	db.Exec("UPDATE `groups` SET settings = NULL, microvolunteeringoptions = NULL WHERE id = ?", group2ID)
+
+	batchURL := fmt.Sprintf("/api/group/%d,%d", groupID, group2ID)
+	batchResp, err := getApp().Test(httptest.NewRequest("GET", batchURL, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 200, batchResp.StatusCode)
+
+	var batchGroups []map[string]interface{}
+	require.NoError(t, json2.Unmarshal(rsp(batchResp), &batchGroups))
+	assert.Equal(t, 2, len(batchGroups))
+
+	for _, g := range batchGroups {
+		batchSettings, ok := g["settings"]
+		assert.True(t, ok, "batch: settings field must be present")
+		assert.NotNil(t, batchSettings, "batch: settings must not be null")
+		_, batchIsObject := batchSettings.(map[string]interface{})
+		assert.True(t, batchIsObject, "batch: settings must be a JSON object ({})")
+
+		batchMvo, mvoOk := g["microvolunteeringoptions"]
+		assert.True(t, mvoOk, "batch: microvolunteeringoptions must be present")
+		assert.NotNil(t, batchMvo, "batch: microvolunteeringoptions must not be null")
+		_, batchMvoIsObject := batchMvo.(map[string]interface{})
+		assert.True(t, batchMvoIsObject, "batch: microvolunteeringoptions must be a JSON object")
+	}
+}
