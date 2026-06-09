@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/router"
@@ -29,8 +30,17 @@ func (a *TestApp) Test(req *http.Request, msTimeout ...int) (*http.Response, err
 var app *TestApp
 
 func init() {
+	// Match production timezone (main.go sets time.Local = UTC). The DB DSN uses loc=Local,
+	// so without this, GORM parses MySQL UTC timestamps as local time, causing 1h skew in BST.
+	loc, _ := time.LoadLocation("UTC")
+	time.Local = loc
+
 	// Set environment variables needed for tests
 	os.Setenv("LOVEJUNK_PARTNER_KEY", "testkey123")
+	// USER_SITE must be set so isValidRedirectURL allows www.ilovefreegle.org (used by email tracking tests).
+	if os.Getenv("USER_SITE") == "" {
+		os.Setenv("USER_SITE", "www.ilovefreegle.org")
+	}
 
 	app = &TestApp{fiber.New()}
 	app.Use(user.NewAuthMiddleware(user.Config{}))

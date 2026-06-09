@@ -8377,9 +8377,10 @@ func TestMessagePartnerKeyBypassesBodyMasking(t *testing.T) {
 
 // --- Content check pipeline tests ---
 
-// TestJoinAndPostUnmoderatedUserStartsPending verifies that even a user with
-// an explicit non-moderated posting status starts in Pending (awaiting contentcheck).
-func TestJoinAndPostUnmoderatedUserStartsPending(t *testing.T) {
+// TestJoinAndPostUnmoderatedUserGoesApproved verifies that a user with
+// ourPostingStatus='DEFAULT' (non-moderated) goes straight to Approved on JoinAndPost,
+// matching V1 postToCollection parity. Moderated (NULL/MODERATED) users still go to Pending.
+func TestJoinAndPostUnmoderatedUserGoesApproved(t *testing.T) {
 	prefix := uniquePrefix("msgcc_jap_unmod")
 	db := database.DBConn
 
@@ -8387,7 +8388,7 @@ func TestJoinAndPostUnmoderatedUserStartsPending(t *testing.T) {
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 
-	// Explicitly non-moderated posting status — previously this caused Approved.
+	// DEFAULT posting status = non-moderated member (V1 postToCollection → Approved).
 	CreateTestMembership(t, userID, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
 
@@ -8405,16 +8406,10 @@ func TestJoinAndPostUnmoderatedUserStartsPending(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 200, resp.StatusCode)
 
-	// Must start Pending — contentcheck batch job promotes to Approved after checking.
+	// Non-moderated member goes to Approved (V1 parity, Discourse #9481/562).
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
-	assert.Equal(t, "Pending", collection, "all submissions must start Pending for content check processing")
-
-	// No push_notify_group_mods task should be queued at submit time.
-	var taskCount int64
-	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'push_notify_group_mods' AND processed_at IS NULL AND data LIKE ?",
-		fmt.Sprintf(`%%"group_id":%d%%`, groupID)).Scan(&taskCount)
-	assert.Equal(t, int64(0), taskCount, "push notification must not be queued at submit time — contentcheck batch job does that")
+	assert.Equal(t, "Approved", collection, "DEFAULT-status member goes to Approved, matching V1 postToCollection")
 }
 
 // TestContentcheckUnprocessedHiddenFromPendingQueue verifies that a message with
@@ -8766,4 +8761,120 @@ func TestListMessagesMT_SpamInPendingList(t *testing.T) {
 	// Cleanup.
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+}
+
+// TestRepostDefaultUserGoesApproved verifies that a non-moderated member (ourPostingStatus=DEFAULT)
+// who manually reposts via RejectToDraft → JoinAndPost gets collection=Approved immediately,
+// matching V1 repost() behaviour and auto-repost behaviour. Discourse #9481 post 562.
+//
+// AssertFlip: FAILS on buggy code (collection=Pending), PASSES after fix (collection=Approved).
+func TestRepostDefaultUserGoesApproved(t *testing.T) {
+	prefix := uniquePrefix("repost_default_approved")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	// Set to DEFAULT posting status — this is a regular, non-moderated member.
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+	_, token := CreateTestSession(t, userID)
+
+	// Start with an Approved message (the normal state before reposting).
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" repostable item", 52.5, -1.8)
+
+	// Step 1: RejectToDraft — converts message to a draft.
+	body1, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "RejectToDraft",
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body1))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Step 2: JoinAndPost — resubmits the draft.
+	body2, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "JoinAndPost",
+	})
+	req = httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body2))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Non-moderated member's repost must land in Approved, not Pending.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "DEFAULT-status member's manual repost should go to Approved")
+
+	// The message must also be in the spatial index (since collection=Approved).
+	var spatialCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	assert.Equal(t, int64(1), spatialCount, "Approved repost must appear in messages_spatial")
+}
+
+// TestManualRepostPendingVisibleInHistory verifies that a message in Pending collection
+// appears in the user's posting history (GetUserMessageHistory).
+// Bug: history was filtered to collection='Approved' only, so a manually reposted message
+// was invisible until the content-check batch approved it. Discourse #9481 post 562.
+//
+// AssertFlip: FAILS on buggy code (Approved-only filter), PASSES after fix (Pending included).
+func TestManualRepostPendingVisibleInHistory(t *testing.T) {
+	prefix := uniquePrefix("repost_pending_history")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Simulate a moderated member's repost: message is in Pending (content-check not yet run).
+	pendingSubject := prefix + " OFFER pending repost"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', NOW())",
+		posterID, pendingSubject)
+	var pendingMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, pendingSubject).Scan(&pendingMsgID)
+	require.NotZero(t, pendingMsgID)
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) VALUES (?, ?, NOW(), 'Pending')",
+		pendingMsgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", pendingMsgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", pendingMsgID)
+	})
+
+	// Fetch the poster via the modtools API (which returns messagehistory).
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&raw)
+	require.NoError(t, err)
+
+	history, ok := raw["messagehistory"].([]interface{})
+	require.True(t, ok, "messagehistory must be present for modtools fetch")
+
+	pendingFound := false
+	for _, h := range history {
+		entry, ok := h.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if id, ok := entry["id"].(float64); ok && uint64(id) == pendingMsgID {
+			pendingFound = true
+			coll, _ := entry["collection"].(string)
+			assert.Equal(t, "Pending", coll, "history entry should carry the Pending collection")
+		}
+	}
+	assert.True(t, pendingFound, "Pending message must appear in the poster's message history")
 }

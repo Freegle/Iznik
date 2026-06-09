@@ -100,11 +100,12 @@ func TestJobsDedupeByTitleAndBody(t *testing.T) {
 	// High expectation (cpc * clickability) so these rank within JOBS_LIMIT.
 	insertJob := func(title, location, body, canonicalTitle string) {
 		wkt := fmt.Sprintf("POINT(%.7f %.7f)", lng, lat)
-		ref := fmt.Sprintf("test-job-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
+		// job_reference is varchar(32) — keep under that limit.
+		ref := fmt.Sprintf("tj%d%04d", time.Now().UnixNano()%10000000000, rand.Intn(10000))
 		result := db.Exec(
 			fmt.Sprintf(
 				"INSERT INTO jobs (title, location, url, body, job_reference, category, geometry, cpc, clickability, visible, canonical_title) "+
-					"VALUES (?, ?, 'http://example.com/job', ?, ?, 'General', ST_GeomFromText(?, %d), 99.0, 1, 1, ?)",
+					"VALUES (?, ?, 'http://example.com/job', ?, ?, 'General', ST_GeomFromText(?, %d), 0.99, 1, 1, ?)",
 				utils.SRID),
 			title, location, body, ref, wkt, canonicalTitle)
 

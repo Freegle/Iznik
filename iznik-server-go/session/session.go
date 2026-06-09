@@ -589,7 +589,8 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// GDPR erasure: partner-deleted accounts have no recovery affordance (the partner
 		// owns the contract), so unlike the self-service flow we blank message content
 		// immediately rather than deferring to the 14-day grace cleanup.
-		db.Exec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", targetID)
+		// message is NOT NULL in the schema — blank it rather than null it; all other content columns are nullable.
+		db.Exec("UPDATE messages SET fromip = NULL, message = '', envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", targetID)
 		db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID)
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
