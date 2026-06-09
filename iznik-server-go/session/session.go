@@ -924,6 +924,11 @@ func GetSession(c *fiber.Ctx) error {
 		var wg2 sync.WaitGroup
 
 		// --- Pending messages: active groups split by held, inactive all → pendingother ---
+		// Only count messages where contentcheck_checked_at IS NOT NULL: the content
+		// check has run and left the message pending (moderated user/group or flagged
+		// content). Messages that have not yet been content-checked may still be
+		// auto-approved and must not trigger a phantom notification or inflate the
+		// badge count. Discourse #9481 post 563.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
@@ -933,7 +938,8 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NULL "+
+					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&pending)
 				// Held pending in active groups → pendingother (blue).
 				var heldActive int64
@@ -941,7 +947,8 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NOT NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NOT NULL "+
+					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&heldActive)
 				pendingother += heldActive
 			}
@@ -952,7 +959,8 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL "+
+					"AND mg.contentcheck_checked_at IS NOT NULL",
 					inactiveGroupIDs, utils.COLLECTION_PENDING).Scan(&inact)
 				pendingother += inact
 			}
