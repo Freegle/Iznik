@@ -1023,6 +1023,47 @@ func TestPatchGroupSupportCanPatchWithoutMembership(t *testing.T) {
 	assert.Equal(t, "Support set this", tagline)
 }
 
+func TestPatchGroupMicrovolunteeringoptions(t *testing.T) {
+	prefix := uniquePrefix("grpmv_opts")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, userID)
+	CreateTestMembership(t, userID, groupID, "Moderator")
+
+	opts := map[string]interface{}{
+		"approvedmessages": true,
+		"wordmatch":        true,
+		"photorotate":      false,
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":                     groupID,
+		"microvolunteeringoptions": opts,
+	})
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/group?jwt=%s", token), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify microvolunteeringoptions was saved to the DB
+	var stored string
+	db.Raw("SELECT COALESCE(microvolunteeringoptions, '') FROM `groups` WHERE id = ?", groupID).Scan(&stored)
+	assert.NotEmpty(t, stored, "microvolunteeringoptions should be stored after PATCH")
+	assert.Contains(t, stored, "approvedmessages", "stored value should contain approvedmessages key")
+	assert.Contains(t, stored, "wordmatch", "stored value should contain wordmatch key")
+
+	// Verify it is returned correctly in GET response
+	getResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/"+fmt.Sprint(groupID), nil))
+	assert.Equal(t, 200, getResp.StatusCode)
+	var raw map[string]interface{}
+	json2.Unmarshal(rsp(getResp), &raw)
+	mvOpts, ok := raw["microvolunteeringoptions"].(map[string]interface{})
+	assert.True(t, ok, "microvolunteeringoptions should be a JSON object in GET response")
+	assert.Equal(t, true, mvOpts["approvedmessages"])
+	assert.Equal(t, true, mvOpts["wordmatch"])
+}
+
 func TestTnKeyInfoJSONShape(t *testing.T) {
 	// Verify that TnKeyInfo serializes as a nested object with "url" and "expires" fields,
 	// matching the TN API response shape that the frontend expects (group.tnkey.url).
