@@ -1873,8 +1873,8 @@ func TestWorkCountPendingMessages(t *testing.T) {
 		"VALUES (?, 'OFFER: Pending item', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupID)
 	defer func() {
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -1882,7 +1882,7 @@ func TestWorkCountPendingMessages(t *testing.T) {
 
 	work := getSessionWork(t, token)
 	pending := work["pending"].(float64)
-	assert.GreaterOrEqual(t, pending, float64(1), "Should count pending message")
+	assert.GreaterOrEqual(t, pending, float64(1), "Should count content-checked pending message")
 }
 
 // ---------------------------------------------------------------------------
@@ -2042,7 +2042,8 @@ func TestWorkCountPendingExcludesDeletedUsers(t *testing.T) {
 
 	// Create a pending message from this member.
 	msgID := CreateTestMessage(t, memberID, groupID, "OFFER: Limbo pending", 55.9533, -3.1883)
-	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)
+	// Set collection = 'Pending' and contentcheck_checked_at so the fix counts it.
+	db.Exec("UPDATE messages_groups SET collection = 'Pending', contentcheck_checked_at = NOW() WHERE msgid = ?", msgID)
 
 	// Baseline: message should be counted.
 	workBefore := getSessionWork(t, token)
@@ -2057,6 +2058,65 @@ func TestWorkCountPendingExcludesDeletedUsers(t *testing.T) {
 	pendingAfter := workAfter["pending"].(float64) + workAfter["pendingother"].(float64)
 
 	assert.Less(t, pendingAfter, pendingBefore, "Pending count must exclude messages from deleted users")
+}
+
+// ---------------------------------------------------------------------------
+// Work Counts: Unchecked pending messages excluded (phantom-notification fix)
+// Discourse #9481 post 563: a pending message with contentcheck_checked_at IS
+// NULL has not yet been processed by the content check and may still be
+// auto-approved. Counting it fires a phantom beep that vanishes when the mod
+// opens Pending. Only messages that content check has processed and left
+// pending (contentcheck_checked_at IS NOT NULL) should be counted.
+// ---------------------------------------------------------------------------
+
+func TestWorkCountPendingExcludesUnchecked(t *testing.T) {
+	prefix := uniquePrefix("wc_unchk")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	workBefore := getSessionWork(t, token)
+	pendingBefore := workBefore["pending"].(float64)
+	pendingotherBefore := workBefore["pendingother"].(float64)
+
+	// Simulate a just-arrived post: contentcheck_checked_at IS NULL (not yet processed).
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Auto-approvable item', 'Test body', 'Test body', 'Offer', ?, NOW())",
+		memberID, locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	workUnchecked := getSessionWork(t, token)
+	pendingUnchecked := workUnchecked["pending"].(float64)
+	pendingotherUnchecked := workUnchecked["pendingother"].(float64)
+
+	// Unchecked message must NOT inflate the count — phantom notification bug.
+	assert.Equal(t, pendingBefore, pendingUnchecked,
+		"Unchecked pending message must not appear in pending count before content check runs")
+	assert.Equal(t, pendingotherBefore, pendingotherUnchecked,
+		"Unchecked pending message must not appear in pendingother before content check runs")
+
+	// Once content check marks the message (contentcheck_checked_at IS NOT NULL),
+	// it must appear in the count — real pending items need mod attention.
+	db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NOW() WHERE msgid = ? AND groupid = ?",
+		msgID, groupID)
+	workChecked := getSessionWork(t, token)
+	pendingChecked := workChecked["pending"].(float64)
+	assert.Greater(t, pendingChecked, pendingBefore,
+		"Content-checked pending message must appear in count once content check has run")
 }
 
 // ---------------------------------------------------------------------------
@@ -2347,8 +2407,8 @@ func TestWorkCountInactiveModPendingGoesToOther(t *testing.T) {
 		"VALUES (?, 'OFFER: Inactive pending', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupID)
 	defer func() {
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -2380,8 +2440,8 @@ func TestWorkCountActiveModPendingGoesToPrimary(t *testing.T) {
 		"VALUES (?, 'OFFER: Active pending', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupID)
 	defer func() {
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
