@@ -798,6 +798,20 @@ func TestTidyName_TNSuffixMultiple(t *testing.T) {
 	assert.Equal(t, "Name", TidyName("Name-g123-g456"))
 }
 
+func TestTidyName_DoubleTNOnlyBecomesFreegler(t *testing.T) {
+	// A name that is only double TN suffixes (no real prefix): first tnRegexp strips
+	// the outer suffix leaving "-g123"; second tnRegexp strips that leaving ""; the
+	// final len==0 fallback kicks in. Covers the last-resort "A freegler" branch.
+	assert.Equal(t, "A freegler", TidyName("-g123-g456"))
+}
+
+func TestTidyName_TripleTNOnlyBecomesFreegler(t *testing.T) {
+	// A name that is only triple TN suffixes: first tnRegexp strips the outermost
+	// suffix leaving "-g123-g456"; second tnRegexp strips that leaving "-g123";
+	// tnOnlyRegexp matches "-g123" directly. Covers the tnOnlyRegexp "A freegler" branch.
+	assert.Equal(t, "A freegler", TidyName("-g123-g456-g789"))
+}
+
 func TestTidyName_ComplexChain(t *testing.T) {
 	// Email with TN suffix and long name.
 	// Strip email suffix → "verylongnamethatexceedsthirtytwocharacters-g123" (47 chars)
