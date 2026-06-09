@@ -2372,14 +2372,25 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 			flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupid, myid, myid)
 	}
 
-	// All messages start Pending — the content check batch job runs content checks
-	// and promotes clean messages from non-moderated users to Approved.
-	collection := utils.COLLECTION_PENDING
+	// Determine collection using V1 postToCollection logic (User::postToCollection line 819):
+	//   NULL / empty / MODERATED / PROHIBITED → Pending
+	//   anything else (e.g. DEFAULT, UNMODERATED) → Approved
+	// This matches the initial-post path and V1 repost() behaviour: a non-moderated
+	// member's manual repost goes straight to Approved, not through the content-check
+	// pipeline. New members (NULL ourPostingStatus) still start in Pending.
 	var ourPostingStatus *string
 	db.Raw("SELECT ourPostingStatus FROM memberships WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&ourPostingStatus)
 
 	if ourPostingStatus != nil && strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) {
 		return fiber.NewError(fiber.StatusForbidden, "You are not allowed to post on this group")
+	}
+
+	collection := utils.COLLECTION_PENDING
+	if ourPostingStatus != nil &&
+		!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_MODERATED) &&
+		!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) &&
+		*ourPostingStatus != "" {
+		collection = utils.COLLECTION_APPROVED
 	}
 
 	// Reconstruct subject with location and group keyword before submitting
@@ -2417,6 +2428,12 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
 		req.ID, groupid, collection)
 
+	// Non-moderated users skip the content-check pipeline (collection=Approved above),
+	// so we must populate the spatial index here rather than waiting for the batch job.
+	if collection == utils.COLLECTION_APPROVED {
+		addApprovedMessageToSpatialIndex(db, req.ID)
+	}
+
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
 	db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID)
 	db.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
@@ -2447,13 +2464,11 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// and text=messageid (RFC822 Message-Id header).
 	logMessageReceived(db, groupid, myid, req.ID)
 
-	// Do NOT add to messages_spatial here. Every post starts Pending (see above),
-	// and messages_spatial backs the public browse/map — which is shown to all users,
-	// including logged-out ones (see message.Bounds / message.Groups). So it must only
-	// ever contain Approved messages. The message is added to the spatial index when it
-	// becomes Approved: either the content-check batch job (messages:contentcheck)
-	// auto-promotes it, or a moderator approves it (handleApprove). The poster still
-	// sees their own pending post immediately via the fromuser branch of the browse query.
+	// messages_spatial is only for Approved messages (backs the public browse/map).
+	// Non-moderated users already have collection=Approved and were added to the spatial
+	// index above. For Pending posts the batch job (messages:contentcheck) or a moderator
+	// (handleApprove) will add the row. The poster still sees their own pending post
+	// immediately via the fromuser branch of the browse query.
 
 	// Check if user has a password (to determine if they're a new user).
 	var hasPassword int64

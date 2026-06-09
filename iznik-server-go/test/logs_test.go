@@ -392,7 +392,7 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	db := database.DBConn
 
 	// Create message with original subject "Wanted: Escooter"
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Wanted', 'Wanted: Escooter', 'body', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Wanted', 'Wanted: Escooter', 'body', 'body', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 
