@@ -39,11 +39,17 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 	persistent := c.Get("Authorization2")
 
 	if id == 0 && len(persistent) > 0 {
-		// parse persistent token
-		var persistentToken PersistentToken
-		_ = json2.Unmarshal([]byte(persistent), &persistentToken)
+		// Use a minimal struct so that old-format tokens whose Series field was
+		// serialised as a JSON string ("12345") don't cause json.Unmarshal to
+		// return a type-error that zeroes out the parsed ID.  id+token is a
+		// sufficient authenticator without Series.
+		var minPT struct {
+			ID    uint64 `json:"id"`
+			Token string `json:"token"`
+		}
+		_ = json2.Unmarshal([]byte(persistent), &minPT)
 
-		if (persistentToken.ID > 0) && (persistentToken.Series > 0) && (persistentToken.Token != "") {
+		if minPT.ID > 0 && minPT.Token != "" {
 			// Verify token against sessions table
 			db := database.DBConn
 
@@ -52,7 +58,7 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 			}
 
 			var userids []Userid
-			db.Raw("SELECT userid FROM sessions WHERE id = ? AND series = ? AND token = ? LIMIT 1;", persistentToken.ID, persistentToken.Series, persistentToken.Token).Scan(&userids)
+			db.Raw("SELECT userid FROM sessions WHERE id = ? AND token = ? LIMIT 1;", minPT.ID, minPT.Token).Scan(&userids)
 
 			if len(userids) > 0 {
 				id = userids[0].Userid

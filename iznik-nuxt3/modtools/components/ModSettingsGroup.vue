@@ -4,7 +4,7 @@
       <ModGroupSelect v-model="groupid" modonly />
     </div>
     <div v-if="group && group.mysettings" class="mt-2 scrollinplace">
-      <NoticeMessage v-if="group.settings.closed" variant="danger" class="mb-1">
+      <NoticeMessage v-if="group.settings?.closed" variant="danger" class="mb-1">
         Your community is currently closed. You can change this in
         <em>Features for Members</em>.
       </NoticeMessage>
