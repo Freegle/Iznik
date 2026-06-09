@@ -565,6 +565,39 @@ describe('ModMessage', () => {
         textbody: 'This is the message body',
       })
     })
+
+    // Regression tests for Discourse #9769/1 — neighbourhood name must be sent on save.
+    it('includes areaname in patch when location has areaname (Discourse #9769/1)', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          item: { name: 'Kitchen Table' },
+          location: { name: 'E1 1AA', areaname: 'Stepney' },
+        }
+      )
+      wrapper.vm.startEdit()
+      await wrapper.vm.save()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith(
+        expect.objectContaining({ areaname: 'Stepney' })
+      )
+    })
+
+    it('preserves custom areaname spelling over mapping default (Discourse #9769/1)', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          item: { name: 'Kitchen Table' },
+          location: { name: 'E1 1AA', areaname: 'Whitechapel' },
+        }
+      )
+      wrapper.vm.startEdit()
+      await wrapper.vm.save()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith(
+        expect.objectContaining({ areaname: 'Whitechapel' })
+      )
+    })
   })
 
   describe('backToPending', () => {
