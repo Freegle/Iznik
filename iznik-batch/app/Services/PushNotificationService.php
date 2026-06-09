@@ -511,20 +511,29 @@ class PushNotificationService
     /**
      * Build the ModTools notification payload.
      *
-     * Uses getBadgeBreakdown() to choose the label and tap-through route based on
-     * which categories have work, so the notification describes what actually needs
-     * attention rather than always saying "messages pending" regardless of work type.
+     * Mirrors V1 User::getNotificationPayload(TRUE) (iznik-server/include/user/User.php ~4547-4569):
+     * iterate categories in a fixed priority order (volunteering → spam → pending), last-wins,
+     * so pending — being last — always wins when present. This ensures the notification route and
+     * title reflect the highest-priority work type.
      *
-     * When pendingCount > 0:  title = "N message(s) pending", route = /modtools/messages/pending
-     * When pendingCount == 0: title = "N item(s) to review",  route = /modtools (dashboard)
+     * Routes use direct Nuxt paths WITHOUT a /modtools/ prefix. The /modtools/ prefix hits the
+     * catch-all redirect page (iznik-nuxt3/modtools/pages/modtools/[...slug].vue) which delays
+     * navigation by 2 seconds. The correct direct pages are /messages/pending and /volunteering.
+     * (Discourse #9692/10).
      *
-     * Badge uses the total across all categories in both cases.
+     * Category mapping (V1 parity):
+     *   volunteering → route /volunteering,        title "N volunteer op(s)"
+     *   spam         → route /messages/pending,    title "N message(s) to review"
+     *   pending      → route /messages/pending,    title "N pending message(s)"
+     *
+     * Title is multi-line ("\n"-joined) listing each non-zero category.
+     * If total == 0: empty title, route "/".
+     * Badge is always total across all categories.
      */
     private function buildModToolsPayload(int $userId): ?array
     {
         $breakdown = $this->getBadgeBreakdown($userId);
         $total = $breakdown['total'];
-        $pendingCount = $breakdown['pending'];
 
         if ($total === 0) {
             // Still send a zero-count to clear badge
@@ -540,19 +549,36 @@ class PushNotificationService
                 'image' => 'www/images/modtools_logo.png',
                 'modtools' => '1',
                 'sound' => 'default',
-                'route' => '/modtools',
+                'route' => '/',
                 'channel_id' => 'modtools',
                 'notId' => (string) $userId,
             ];
         }
 
-        if ($pendingCount > 0) {
-            $title = "$pendingCount message" . ($pendingCount > 1 ? 's' : '') . " pending";
-            $route = '/modtools/messages/pending';
-        } else {
-            $title = "$total item" . ($total > 1 ? 's' : '') . " to review";
-            $route = '/modtools';
+        // Per-category label lines (for multi-line title) and per-category route.
+        // Last-wins order: volunteering first, pending last — so pending wins if present.
+        $titleLines = [];
+        $route = '/';
+
+        $volunteeringCount = $breakdown['volunteering'];
+        if ($volunteeringCount > 0) {
+            $titleLines[] = $volunteeringCount . ' volunteer op' . ($volunteeringCount > 1 ? 's' : '');
+            $route = '/volunteering';
         }
+
+        $spamCount = $breakdown['spam'];
+        if ($spamCount > 0) {
+            $titleLines[] = $spamCount . ' message' . ($spamCount > 1 ? 's' : '') . ' to review';
+            $route = '/messages/pending';
+        }
+
+        $pendingCount = $breakdown['pending'];
+        if ($pendingCount > 0) {
+            $titleLines[] = $pendingCount . ' pending message' . ($pendingCount > 1 ? 's' : '');
+            $route = '/messages/pending';
+        }
+
+        $title = implode("\n", $titleLines);
 
         return [
             'badge' => (string) $total,
