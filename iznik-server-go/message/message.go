@@ -1530,7 +1530,14 @@ func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 // constructLocationString builds a location string for a message's subject,
 // using the area name + vague postcode format.
 // The vague postcode is the outward code only (e.g., "CB22" from "CB22 3AA").
-func constructLocationString(db *gorm.DB, msgid uint64) string {
+// Pass an optional overrideAreaName to use a mod-supplied area name instead of
+// the DB-derived mapping default (Discourse #9769/1 — area name not preserved on save).
+func constructLocationString(db *gorm.DB, msgid uint64, overrideAreaName ...string) string {
+	customArea := ""
+	if len(overrideAreaName) > 0 {
+		customArea = overrideAreaName[0]
+	}
+
 	type locInfo struct {
 		Name   string
 		Type   string
@@ -1544,26 +1551,27 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 		return ""
 	}
 
-	if loc.Type == "Postcode" && loc.Areaid > 0 {
-		// Get the area name.
-		var areaName string
-		db.Raw("SELECT name FROM locations WHERE id = ?", loc.Areaid).Scan(&areaName)
-
+	if loc.Type == "Postcode" {
 		// Vague postcode: take only the outward code (before the space).
 		vaguePC := loc.Name
 		if idx := strings.Index(vaguePC, " "); idx > 0 {
 			vaguePC = vaguePC[:idx]
 		}
 
-		return areaName + " " + vaguePC
+		// Prefer the mod-supplied name; fall back to the DB mapping area name.
+		areaName := customArea
+		if areaName == "" && loc.Areaid > 0 {
+			db.Raw("SELECT name FROM locations WHERE id = ?", loc.Areaid).Scan(&areaName)
+		}
+
+		if areaName != "" {
+			return areaName + " " + vaguePC
+		}
+		return vaguePC
 	}
 
-	// Not a postcode with area — use the location name as-is,
-	// but ensure vague (strip inward code if it looks like a postcode).
-	if loc.Type == "Postcode" {
-		if idx := strings.Index(loc.Name, " "); idx > 0 {
-			return loc.Name[:idx]
-		}
+	if customArea != "" {
+		return customArea
 	}
 	return loc.Name
 }
@@ -2496,6 +2504,7 @@ type patchMessageRequest struct {
 	Lng          *float64 `json:"lng"`
 	Location     *string  `json:"location"`
 	Locationid   *uint64  `json:"locationid"`
+	Areaname     *string  `json:"areaname"`
 	Groupid      *uint64  `json:"groupid"`
 	Attachments  []uint64 `json:"attachments"`
 	BadAIImages  []uint64 `json:"badAIImages"`
@@ -2709,9 +2718,8 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
-	// Reconstruct subject from type + item + location when item/type/location changed
-	//.
-	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil {
+	// Reconstruct subject from type + item + location when item/type/location/areaname changed.
+	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil || req.Areaname != nil {
 		var msgType string
 		var itemName *string
 		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
@@ -2723,8 +2731,15 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 			db.Raw("SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1", req.ID).Scan(&itemName)
 		}
 
-		// Build the location string using area + vague postcode.
-		locStr := constructLocationString(db, req.ID)
+		// Build the location string. When the mod supplied an areaname, pass it as
+		// an override so the spelling they chose is used rather than the mapping default
+		// (Discourse #9769/1 — area name reset to mapping default on save).
+		var locStr string
+		if req.Areaname != nil && *req.Areaname != "" {
+			locStr = constructLocationString(db, req.ID, *req.Areaname)
+		} else {
+			locStr = constructLocationString(db, req.ID)
+		}
 
 		if itemName != nil && locStr != "" {
 			// Use the group keyword for the type (V1: group settings, defaults to uppercase).

@@ -5215,6 +5215,113 @@ func TestPatchMessageReconstructsSubjectFromItemLocation(t *testing.T) {
 	assert.NotContains(t, subject, "3AA")
 }
 
+// TestPatchMessageAreanameOverride — Discourse #9769/1
+// When a mod PATCHes a message and supplies an areaname, the subject must use
+// that spelling instead of the DB-derived mapping default.
+func TestPatchMessageAreanameOverride(t *testing.T) {
+	prefix := uniquePrefix("msgpatch_area")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create area location ("Mapping default") and a postcode linked to it.
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 52.5, -1.8)", prefix+"_MappingDefault")
+	var areaID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_MappingDefault").Scan(&areaID)
+	require.NotZero(t, areaID)
+
+	db.Exec("INSERT INTO locations (name, type, lat, lng, areaid) VALUES (?, 'Postcode', 52.5, -1.8, ?)", prefix+"_E1 1AA", areaID)
+	var pcID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_E1 1AA").Scan(&pcID)
+	require.NotZero(t, pcID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" Test Item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET locationid = ? WHERE id = ?", pcID, msgID)
+
+	db.Exec("INSERT INTO items (name) VALUES (?)", prefix+"_Chair")
+	var itemID uint64
+	db.Raw("SELECT id FROM items WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_Chair").Scan(&itemID)
+	require.NotZero(t, itemID)
+	db.Exec("DELETE FROM messages_items WHERE msgid = ?", msgID)
+	db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
+
+	// PATCH with a custom area name that differs from the DB mapping default.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":       msgID,
+		"areaname": prefix + "_CustomSpelling",
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var subject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+
+	// Subject must use the mod-supplied spelling, not the DB mapping default.
+	assert.Contains(t, subject, prefix+"_CustomSpelling", "subject should contain mod-supplied area name")
+	assert.NotContains(t, subject, prefix+"_MappingDefault", "subject must NOT use DB mapping default when areaname override is supplied")
+	// Vague postcode (outward code only) should still be present.
+	assert.Contains(t, subject, prefix+"_E1", "subject should contain vague postcode outward code")
+}
+
+// TestPatchMessageAreanameOmittedKeepsDBDefault — Discourse #9769/1 (non-regression)
+// When areaname is not sent, the existing behaviour (DB-derived area name) must be unchanged.
+func TestPatchMessageAreanameOmittedKeepsDBDefault(t *testing.T) {
+	prefix := uniquePrefix("msgpatch_areakp")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 52.5, -1.8)", prefix+"_DBArea")
+	var areaID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_DBArea").Scan(&areaID)
+	require.NotZero(t, areaID)
+
+	db.Exec("INSERT INTO locations (name, type, lat, lng, areaid) VALUES (?, 'Postcode', 52.5, -1.8, ?)", prefix+"_SW1 1AA", areaID)
+	var pcID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_SW1 1AA").Scan(&pcID)
+	require.NotZero(t, pcID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET locationid = ? WHERE id = ?", pcID, msgID)
+
+	db.Exec("INSERT INTO items (name) VALUES (?)", prefix+"_Table")
+	var itemID uint64
+	db.Raw("SELECT id FROM items WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_Table").Scan(&itemID)
+	require.NotZero(t, itemID)
+	db.Exec("DELETE FROM messages_items WHERE msgid = ?", msgID)
+	db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
+
+	// PATCH with item only — no areaname field.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":   msgID,
+		"item": prefix + "_Table",
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var subject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+
+	// Without an areaname override, subject must still use the DB-derived area name.
+	assert.Contains(t, subject, prefix+"_DBArea", "subject should contain DB-derived area name when no override is supplied")
+}
+
 func TestPatchMessageItemCaseCorrection(t *testing.T) {
 	// Bug: Discourse #9518 post #18 — "Correct Case" standard message lowercases the
 	// subject visually but the Go API finds the existing item via case-insensitive MySQL
