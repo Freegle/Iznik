@@ -2011,6 +2011,143 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // checkIpAbuse — spam_whitelist_ips exemption (V1 parity: Spam.php lines 105-114)
+    // -------------------------------------------------------------------------
+
+    public function test_ip_abuse_whitelisted_exact_ip_not_flagged(): void
+    {
+        $ip = '162.158.255.1'; // Representative Cloudflare IP in 162.158.0.0/15 range
+
+        DB::table('spam_whitelist_ips')->insertOrIgnore([
+            'ip'      => $ip,
+            'comment' => 'Cloudflare egress (test)',
+            'date'    => now(),
+        ]);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Six more users with the same whitelisted IP
+        for ($i = 0; $i < 6; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP in spam_whitelist_ips should not trigger IP abuse warning (V1 parity)');
+
+        DB::table('spam_whitelist_ips')->where('ip', $ip)->delete();
+    }
+
+    public function test_ip_abuse_whitelisted_cidr_not_flagged(): void
+    {
+        // 162.158.0.0/15 covers 162.158.0.1 through 162.159.255.254 (Cloudflare CDN range)
+        $cidr = '162.158.0.0/15';
+        $ipInRange = '162.158.100.50';
+
+        DB::table('spam_whitelist_ips')->insertOrIgnore([
+            'ip'      => $cidr,
+            'comment' => 'Cloudflare CDN 162.158.0.0/15',
+            'date'    => now(),
+        ]);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ipInRange,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        for ($i = 0; $i < 6; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ipInRange,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP within a whitelisted CIDR range should not trigger IP abuse warning');
+
+        DB::table('spam_whitelist_ips')->where('ip', $cidr)->delete();
+    }
+
+    public function test_ip_abuse_non_whitelisted_ip_still_flagged(): void
+    {
+        // Ensure 192.0.2.x is NOT in the whitelist (RFC 5737 documentation range, never allocated)
+        $ip = '192.0.2.1';
+        DB::table('spam_whitelist_ips')->where('ip', $ip)->delete();
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        for ($i = 0; $i < 6; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, 'Non-whitelisted IP used by many users should still be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
+    }
+
+    // -------------------------------------------------------------------------
     // checkBulkVolunteerMail — detect bulk mailing to volunteer addresses (V1 Spam.php parity)
     // -------------------------------------------------------------------------
 
