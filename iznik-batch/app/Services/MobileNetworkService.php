@@ -36,6 +36,12 @@ class MobileNetworkService
     public const CLOUDFLARE_COMMENT = 'Cloudflare CDN egress (auto)';
 
     /**
+     * RFC 6598 CGNAT range — always included alongside Cloudflare ranges so it
+     * shares the same ownership marker and survives pruning on every run.
+     */
+    public const CGNAT_CIDR = '100.64.0.0/10';
+
+    /**
      * UK mobile network operators by ASN. The MVNOs (giffgaff, Tesco Mobile,
      * Sky Mobile, Lebara, Voxi, etc.) ride these operators' ranges, so covering
      * the four MNOs covers their egress too.
@@ -121,7 +127,9 @@ class MobileNetworkService
 
     /**
      * Fetch Cloudflare's published IPv4 egress ranges and upsert them.
-     * Prunes stale Cloudflare rows after fetching the current list.
+     * Also always writes the RFC 6598 CGNAT constant (100.64.0.0/10) under the
+     * same ownership marker so it survives pruning on every run.
+     * Prunes stale Cloudflare/CGNAT rows after fetching the current list.
      */
     private function refreshCloudflareCidrs(): int
     {
@@ -143,6 +151,15 @@ class MobileNetworkService
         $rows = [];
         $fetched = [];
 
+        // Always include the RFC 6598 CGNAT range under the Cloudflare marker so
+        // it is protected by the same pruning logic and never accidentally deleted.
+        $fetched[] = self::CGNAT_CIDR;
+        $rows[] = [
+            'ip'      => self::CGNAT_CIDR,
+            'comment' => self::CLOUDFLARE_COMMENT,
+            'date'    => $now,
+        ];
+
         foreach (explode("\n", trim($resp->body())) as $line) {
             $cidr = trim($line);
             if ($cidr === '' || str_contains($cidr, ':')) {
@@ -150,21 +167,19 @@ class MobileNetworkService
             }
             $fetched[] = $cidr;
             $rows[] = [
-                'ip' => $cidr,
+                'ip'      => $cidr,
                 'comment' => self::CLOUDFLARE_COMMENT,
-                'date' => $now,
+                'date'    => $now,
             ];
         }
 
-        if (!empty($rows)) {
-            DB::table('spam_whitelist_ips')->upsert($rows, ['ip'], ['comment', 'date']);
+        DB::table('spam_whitelist_ips')->upsert($rows, ['ip'], ['comment', 'date']);
 
-            // Prune stale Cloudflare rows no longer in the published list.
-            DB::table('spam_whitelist_ips')
-                ->where('comment', self::CLOUDFLARE_COMMENT)
-                ->whereNotIn('ip', $fetched)
-                ->delete();
-        }
+        // Prune stale Cloudflare/CGNAT rows no longer in the published list.
+        DB::table('spam_whitelist_ips')
+            ->where('comment', self::CLOUDFLARE_COMMENT)
+            ->whereNotIn('ip', $fetched)
+            ->delete();
 
         return count($rows);
     }

@@ -171,6 +171,38 @@ class RefreshMobileCidrsCommandTest extends TestCase
         );
     }
 
+    // ── RFC 6598 CGNAT constant ───────────────────────────────────────────────
+
+    public function test_cgnat_range_is_always_written_alongside_cloudflare(): void
+    {
+        // 100.64.0.0/10 is a static constant; it is included on every successful
+        // Cloudflare fetch so it survives the pruning cycle under the same marker.
+        DB::table('spam_whitelist_ips')->where('comment', MobileNetworkService::CLOUDFLARE_COMMENT)->delete();
+        $this->fakeBoth([], ['104.16.0.0/13']);
+
+        $this->artisan('spam:refresh-mobile-cidrs')->assertExitCode(0);
+
+        $this->assertDatabaseHas('spam_whitelist_ips', [
+            'ip'      => MobileNetworkService::CGNAT_CIDR,
+            'comment' => MobileNetworkService::CLOUDFLARE_COMMENT,
+        ]);
+    }
+
+    public function test_cgnat_range_is_idempotent_on_rerun(): void
+    {
+        DB::table('spam_whitelist_ips')->where('comment', MobileNetworkService::CLOUDFLARE_COMMENT)->delete();
+        $this->fakeBoth([], []);
+
+        $this->artisan('spam:refresh-mobile-cidrs')->assertExitCode(0);
+        $this->artisan('spam:refresh-mobile-cidrs')->assertExitCode(0);
+
+        $this->assertSame(
+            1,
+            DB::table('spam_whitelist_ips')->where('ip', MobileNetworkService::CGNAT_CIDR)->count(),
+            '100.64.0.0/10 must appear exactly once even after two runs'
+        );
+    }
+
     // ── Pruning ───────────────────────────────────────────────────────────────
 
     public function test_prunes_stale_mobile_rows_no_longer_in_upstream(): void
