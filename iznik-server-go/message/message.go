@@ -2458,11 +2458,15 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// and text=messageid (RFC822 Message-Id header).
 	logMessageReceived(db, groupid, myid, req.ID)
 
-	// Do NOT add to messages_spatial here. messages_spatial backs the public browse/map
-	// and must only contain Approved messages. The message is added to the spatial index
-	// when it becomes Approved: either the content-check batch job (messages:contentcheck)
-	// auto-promotes it, or a moderator approves it (handleApprove). The poster still
-	// sees their own pending post immediately via the fromuser branch of the browse query.
+	// For Approved messages, populate messages_spatial immediately so the message
+	// appears in the /myposts active view (GetMessagesForUser HAVING requires
+	// spatialid IS NOT NULL for Approved messages). Pending messages are handled
+	// by the content-check batch job or handleApprove when they become Approved.
+	// addApprovedMessageToSpatialIndex re-checks collection=Approved internally,
+	// so it is a safe no-op for Pending messages or messages without coordinates.
+	if collection == utils.COLLECTION_APPROVED {
+		addApprovedMessageToSpatialIndex(db, req.ID)
+	}
 
 	// Check if user has a password (to determine if they're a new user).
 	var hasPassword int64

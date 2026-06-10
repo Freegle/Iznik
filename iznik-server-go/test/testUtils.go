@@ -503,14 +503,13 @@ func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint6
 func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject string, lat float64, lng float64) uint64 {
 	db := database.DBConn
 
-
 	// Get a location ID
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
-		userID, subject, locationID)
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, lat, lng, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, ?, ?, NOW())",
+		userID, subject, locationID, lat, lng)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create message: %v", result.Error)

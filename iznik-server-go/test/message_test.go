@@ -8808,6 +8808,12 @@ func TestRepostDefaultUserGoesApproved(t *testing.T) {
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
 	assert.Equal(t, "Approved", collection, "DEFAULT-status member's manual repost should go to Approved")
+
+	// Approved repost must have a messages_spatial entry so the poster sees it in
+	// their /myposts active view (GetMessagesForUser HAVING requires spatialid IS NOT NULL).
+	var spatialCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	assert.Equal(t, int64(1), spatialCount, "Approved repost must be in messages_spatial for /myposts visibility")
 }
 
 // TestManualRepostPendingVisibleInHistory verifies that a message in Pending collection
