@@ -33,6 +33,28 @@ function makeMessage(reasons = [], worry = []) {
   }
 }
 
+function makePendingMessage({ reasons = [], worry = [], checkedAt = null, collection = 'Pending' } = {}) {
+  return {
+    id: 456,
+    worry,
+    groups: [{
+      collection,
+      contentcheck_checked_at: checkedAt,
+      contentcheck_reasons: reasons,
+    }],
+  }
+}
+
+function mountMessage(message) {
+  mockMessageStore.byId.mockImplementation((id) =>
+    id === message.id ? message : null
+  )
+  return mount(ModMessageWorry, {
+    props: { messageid: message.id },
+    global: { stubs: STUBS },
+  })
+}
+
 function mountWithReasons(reasons) {
   const message = makeMessage(reasons)
   mockMessageStore.byId.mockImplementation((id) =>
@@ -395,6 +417,51 @@ describe('ModMessageWorry', () => {
     it('messageid prop is required and used', () => {
       const wrapper = mountWithReasons([])
       expect(wrapper.props('messageid')).toBe(123)
+    })
+  })
+
+  describe('pendingNoIssues — info notice for Pending posts with no flags', () => {
+    it('shows info notice for Pending + checked + no worry + no reasons', () => {
+      const message = makePendingMessage({ checkedAt: '2026-06-10T12:00:00Z' })
+      const wrapper = mountMessage(message)
+      expect(wrapper.find('.notice-message.info').exists()).toBe(true)
+      expect(wrapper.text()).toContain('no content issues')
+    })
+
+    it('info notice text mentions pending queue', () => {
+      const message = makePendingMessage({ checkedAt: '2026-06-10T12:00:00Z' })
+      const wrapper = mountMessage(message)
+      expect(wrapper.text()).toContain('pending queue')
+    })
+
+    it('does not show info notice when worry matches are present', () => {
+      const message = makePendingMessage({
+        checkedAt: '2026-06-10T12:00:00Z',
+        worry: [{ word: 'gun', worryword: { keyword: 'gun', type: 'Review' } }],
+      })
+      const wrapper = mountMessage(message)
+      expect(wrapper.find('.notice-message.info').exists()).toBe(false)
+    })
+
+    it('does not show info notice when contentcheck_reasons are present', () => {
+      const message = makePendingMessage({
+        checkedAt: '2026-06-10T12:00:00Z',
+        reasons: [{ check: 'Vague', category: null, detail: 'too generic' }],
+      })
+      const wrapper = mountMessage(message)
+      expect(wrapper.find('.notice-message.info').exists()).toBe(false)
+    })
+
+    it('does not show info notice when contentcheck_checked_at is null (not yet processed)', () => {
+      const message = makePendingMessage({ checkedAt: null })
+      const wrapper = mountMessage(message)
+      expect(wrapper.find('.notice-message.info').exists()).toBe(false)
+    })
+
+    it('does not show info notice for Approved collection', () => {
+      const message = makePendingMessage({ checkedAt: '2026-06-10T12:00:00Z', collection: 'Approved' })
+      const wrapper = mountMessage(message)
+      expect(wrapper.find('.notice-message.info').exists()).toBe(false)
     })
   })
 })

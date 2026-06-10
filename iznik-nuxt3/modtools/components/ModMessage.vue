@@ -356,6 +356,9 @@
                   (g) =>
                     g.contentcheck_reasons &&
                     g.contentcheck_reasons.length
+                ) ||
+                message.groups?.some(
+                  (g) => g.collection === 'Pending' && g.contentcheck_checked_at
                 )
               "
               :messageid="message.id"

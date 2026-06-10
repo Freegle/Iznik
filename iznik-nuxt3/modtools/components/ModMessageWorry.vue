@@ -36,6 +36,16 @@
       </p>
     </NoticeMessage>
 
+    <!-- Pending post with no content flags: explain it's held by manual-review group setting -->
+    <NoticeMessage
+      v-if="pendingNoIssues"
+      variant="info"
+      class="mb-1"
+    >
+      This post has no content issues. It is in the pending queue because this
+      community requires all posts to be approved manually.
+    </NoticeMessage>
+
     <!-- Content check failure reasons (stored, from batch processing) -->
     <NoticeMessage
       v-for="(reason, i) in contentcheckReasons"
@@ -155,5 +165,18 @@ const contentcheckReasons = computed(() => {
     }
   }
   return []
+})
+
+/* True when the batch content-check has run (contentcheck_checked_at set), the post
+   is still Pending, and neither real-time worry words nor batch reasons flagged it.
+   In this case the post is pending only because the group requires manual approval —
+   show an informational notice so mods know it is safe to approve. */
+const pendingNoIssues = computed(() => {
+  if (!message.value?.groups) return false
+  if (worryMatches.value.length > 0) return false
+  if (contentcheckReasons.value.length > 0) return false
+  return message.value.groups.some(
+    (mg) => mg.collection === 'Pending' && mg.contentcheck_checked_at
+  )
 })
 </script>

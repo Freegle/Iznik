@@ -840,6 +840,36 @@ describe('ModMessage', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.mod-message-worry').exists()).toBe(true)
     })
+
+    it('shows worry component for Pending post with contentcheck_checked_at set (no worry, no reasons)', async () => {
+      const wrapper = mountComponent({ summary: false }, {
+        worry: null,
+        groups: [{
+          groupid: 789,
+          namedisplay: 'Test Group',
+          collection: 'Pending',
+          contentcheck_checked_at: '2026-06-10T12:00:00Z',
+          contentcheck_reasons: null,
+        }],
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.mod-message-worry').exists()).toBe(true)
+    })
+
+    it('does not show worry component for Pending post when contentcheck_checked_at is null', async () => {
+      const wrapper = mountComponent({ summary: false }, {
+        worry: null,
+        groups: [{
+          groupid: 789,
+          namedisplay: 'Test Group',
+          collection: 'Pending',
+          contentcheck_checked_at: null,
+          contentcheck_reasons: null,
+        }],
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.mod-message-worry').exists()).toBe(false)
+    })
   })
 
   describe('Availability badges', () => {
