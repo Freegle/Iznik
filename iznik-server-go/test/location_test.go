@@ -221,6 +221,48 @@ func TestUpdateLocationPreservesNearbyVertex(t *testing.T) {
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
+// TestUpdateLocationPreservesAdjacentVertexOnMidpointDrag tests Discourse #9770 post 2:
+// when a new midpoint vertex M is far enough from the original edge to survive
+// ST_Simplify(0.001), the ORIGINAL adjacent vertex B must also survive.
+// After inserting M between A and B, B is only 0.00098° from line M→C — inside the old
+// 0.001° tolerance — so ST_Simplify would silently drop B (the "adjacent marker deleted"
+// report).  The fix removes write-time ST_Simplify entirely, so B is preserved.
+func TestUpdateLocationPreservesAdjacentVertexOnMidpointDrag(t *testing.T) {
+	prefix := uniquePrefix("locwr_adjvert")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+
+	db.Exec("INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Polygon', ?, 0)",
+		"AdjVertTest "+prefix, "adjverttest "+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "AdjVertTest "+prefix).Scan(&locID)
+	assert.Greater(t, locID, uint64(0))
+
+	// 6 distinct vertices + closing = 7 points.
+	// M=(-3.1975, 55.9415) is 0.0015° north of the original A-B edge, so M survives
+	// ST_Simplify(0.001). But B=(-3.195, 55.940) is only 0.00098° from line M→C —
+	// inside the old tolerance — so ST_Simplify(0.001) would drop B.
+	withMidpointFar := "POLYGON((-3.200 55.940, -3.1975 55.9415, -3.195 55.940, -3.190 55.940, -3.190 55.950, -3.200 55.950, -3.200 55.940))"
+	body := fmt.Sprintf(`{"id":%d,"polygon":"%s"}`, locID, withMidpointFar)
+	req := httptest.NewRequest("PATCH", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// All 6 distinct vertices must survive — 7 points (6 distinct + closing).
+	// On the buggy code ST_Simplify dropped B, returning 6.
+	var numPoints int
+	db.Raw("SELECT ST_NumPoints(ST_ExteriorRing(ourgeometry)) FROM locations WHERE id = ?", locID).Scan(&numPoints)
+	assert.Equal(t, 7, numPoints, "original vertex B adjacent to midpoint M must not be dropped (#9770 post 2)")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
 func TestUpdateLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_upd")
 	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
