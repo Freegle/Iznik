@@ -374,9 +374,7 @@ const inMTapp = ref(false)
 
 const discourseCount = computed(() => {
   const discourse = authStore.discourse
-  return discourse
-    ? discourse.notifications + discourse.newtopics + discourse.unreadtopics
-    : 0
+  return discourse ? discourse.notifications : 0
 })
 
 const menuCount = computed(() => {
