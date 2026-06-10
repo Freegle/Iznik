@@ -2428,12 +2428,6 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
 		req.ID, groupid, collection)
 
-	// Non-moderated users skip the content-check pipeline (collection=Approved above),
-	// so we must populate the spatial index here rather than waiting for the batch job.
-	if collection == utils.COLLECTION_APPROVED {
-		addApprovedMessageToSpatialIndex(db, req.ID)
-	}
-
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
 	db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID)
 	db.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
@@ -2464,11 +2458,11 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// and text=messageid (RFC822 Message-Id header).
 	logMessageReceived(db, groupid, myid, req.ID)
 
-	// messages_spatial is only for Approved messages (backs the public browse/map).
-	// Non-moderated users already have collection=Approved and were added to the spatial
-	// index above. For Pending posts the batch job (messages:contentcheck) or a moderator
-	// (handleApprove) will add the row. The poster still sees their own pending post
-	// immediately via the fromuser branch of the browse query.
+	// Do NOT add to messages_spatial here. messages_spatial backs the public browse/map
+	// and must only contain Approved messages. The message is added to the spatial index
+	// when it becomes Approved: either the content-check batch job (messages:contentcheck)
+	// auto-promotes it, or a moderator approves it (handleApprove). The poster still
+	// sees their own pending post immediately via the fromuser branch of the browse query.
 
 	// Check if user has a password (to determine if they're a new user).
 	var hasPassword int64

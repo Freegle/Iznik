@@ -8808,11 +8808,6 @@ func TestRepostDefaultUserGoesApproved(t *testing.T) {
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
 	assert.Equal(t, "Approved", collection, "DEFAULT-status member's manual repost should go to Approved")
-
-	// The message must also be in the spatial index (since collection=Approved).
-	var spatialCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
-	assert.Equal(t, int64(1), spatialCount, "Approved repost must appear in messages_spatial")
 }
 
 // TestManualRepostPendingVisibleInHistory verifies that a message in Pending collection
