@@ -390,4 +390,34 @@ class ChaseupModsCommandTest extends TestCase
 
         Mail::assertNothingSent();
     }
+
+    public function test_chat_url_links_directly_to_chats_not_via_modtools_prefix(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($mod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'collection' => Membership::COLLECTION_APPROVED,
+        ]);
+
+        $room = $this->createTestChatRoom($member, $mod, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'groupid' => $group->id,
+        ]);
+
+        $this->createTestChatMessage($room, $member, ['date' => now()->subSeconds(600000)]);
+        $this->createTestChatMessage($room, $member, ['date' => now()->subHours(1)]);
+
+        $this->artisan('chats:chaseup-mods')->assertExitCode(0);
+
+        Mail::assertSent(\App\Mail\Chat\ChaseupModsMail::class, function ($mail) use ($room) {
+            return !str_contains($mail->chatUrl, '/modtools/')
+                && str_contains($mail->chatUrl, '/chats/' . $room->id);
+        });
+    }
 }
