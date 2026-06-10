@@ -232,6 +232,53 @@ describe('modtools default layout — leftmenu CLS prevention', () => {
   })
 })
 
+describe('modtools default layout — pending badge includes spam', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCheckWork.mockReset()
+    mockResetCheckWork.mockReset()
+    mockAuthStore.user = { id: 1, displayname: 'Test Mod' }
+    mockAuthStore.loginStateKnown = true
+    mockAuthStore.work = { pending: 0, spam: 1, total: 1 }
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+    mockAuthStore.work = null
+  })
+
+  it('Pending menu badge includes spam so work.total matches visible badge sum (Discourse #9654)', async () => {
+    // spam messages appear in the Pending review list (PR #638),
+    // so the Pending nav badge must count ['pending', 'spam'] — not just ['pending'].
+    // Otherwise a mod with 1 spam message sees total=1 in the hamburger but 0 in the
+    // Pending item, giving a spurious "+1 persisting all day" (Discourse #9654).
+    const capturedItems = []
+    const CapturingModMenuItemLeft = {
+      template: '<div />',
+      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant', 'directcount'],
+      setup(props) {
+        capturedItems.push({
+          link: props.link,
+          name: props.name,
+          count: props.count ? [...props.count] : null,
+        })
+      },
+    }
+
+    const wrapper = mountLayout({ ModMenuItemLeft: CapturingModMenuItemLeft })
+    await flushPromises()
+    await nextTick()
+
+    const pendingItem = capturedItems.find((item) => item.link === '/messages/pending')
+    expect(pendingItem, 'Pending menu item must be rendered').toBeDefined()
+
+    // Fails on buggy code (count=['pending'], spam not present).
+    // Passes after fix (count=['pending','spam']).
+    expect(pendingItem.count).toContain('spam')
+  })
+})
+
 describe('modtools default layout — re-login group refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks()
