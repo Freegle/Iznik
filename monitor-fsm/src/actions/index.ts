@@ -705,7 +705,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'sync_pr_states',
-    description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table, moves fix-queued bugs to fixed on merge, and reopens bugs whose PRs were closed (rejected) by the reviewer — tracking rejection count so escalation logic can fire. Returns {synced, updated, reopened: [{topic, post, prNumber, rejections}]}.',
+    description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table (sets deploy_state=pending_deploy on MERGE), and reopens bugs whose PRs were closed (rejected) by the reviewer — tracking rejection count so escalation logic can fire. Bug → fixed promotion happens in reconcileBugStates (discourse-status.ts) only once deploy_state=deployed is confirmed. Returns {synced, updated, reopened: [{topic, post, prNumber, rejections}]}.',
     handler: async () => {
       const db = getDb()
       const bugPRs = db.prepare(
@@ -2370,9 +2370,9 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const fixed = bugsFixed.filter(b => b.outcome === 'fixed')
       const deferred = bugsFixed.filter(b => b.outcome === 'deferred')
       if (fixed.length > 0) {
-        lines.push('## Discourse bugs fixed', '')
+        lines.push('## Discourse bugs: fix PRs opened', '')
         for (const b of fixed) {
-          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber}` : ''}`)
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber} (awaiting merge + deploy)` : ''}`)
         }
         lines.push('')
       }

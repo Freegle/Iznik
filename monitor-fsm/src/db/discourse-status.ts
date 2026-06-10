@@ -26,21 +26,21 @@ export interface StatusRenderResult {
 }
 
 // Reconcile bug state against PR state before rendering. A bug sits in
-// 'fix-queued' from the moment a draft reply is queued (PR opened). It should
-// only move to 'fixed' once the PR is MERGED and live. Nothing in the rest of
-// the pipeline was calling markDiscourseBugFixed, so bugs accumulated forever
-// in "working on" with the misleading label "fixed". Do the transition here,
-// on every render, based on the pr table.
+// 'fix-queued' from the moment a draft reply is queued (PR opened). It moves
+// to 'fixed' only once the PR is both MERGED and confirmed deployed — so that
+// the "Fixed in the last 7 days" section only lists fixes that are actually
+// live, not fixes that are merely merged but still pending deployment.
+// queue_deployed_reply_drafts (called on every LOAD_STATE) sets deploy_state
+// to 'deployed' once the build commit is confirmed live.
 function reconcileBugStates(db: DB): void {
   const rows = db.prepare(`
-    SELECT b.topic, b.post, b.pr_number, p.state AS pr_state, p.deploy_state
+    SELECT b.topic, b.post, b.pr_number
     FROM discourse_bug b
     JOIN pr p ON p.number = b.pr_number
     WHERE b.state = 'fix-queued'
       AND b.pr_number IS NOT NULL
       AND p.state = 'MERGED'
-      -- deploy_state is rarely populated; Freegle auto-deploys on merge to
-      -- production, so MERGED is sufficient to consider a fix live.
+      AND p.deploy_state IN ('deployed', 'live')
   `).all() as Array<{ topic: number; post: number; pr_number: number }>
   for (const r of rows) {
     markDiscourseBugFixed(db, r.topic, r.post, r.pr_number)
