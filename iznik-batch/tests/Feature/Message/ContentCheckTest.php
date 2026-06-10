@@ -422,29 +422,40 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // checkPhoneNumbers — universal UK phone number detection
+    // checkPhoneNumbers — gated by group restrictpersonalinfo rule
     // -------------------------------------------------------------------------
 
-    public function test_phone_number_in_body_returns_reason(): void
+    public function test_phone_number_flagged_when_group_restricts_personalinfo(): void
     {
-        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123');
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
-        $this->assertNotNull($result);
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
+
+        $this->assertNotNull($result, 'Phone number should be flagged when restrictpersonalinfo is set');
         $this->assertEquals('PhoneNumber', $result['check']);
     }
 
-    public function test_phone_number_universal_check_always_flags(): void
+    public function test_phone_number_not_flagged_when_group_has_no_personalinfo_restriction(): void
     {
+        // Discourse #9766: groups without restrictpersonalinfo must not have posts held for phone numbers
         $group = $this->createTestGroup();
 
-        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123');
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
 
-        $this->assertNotNull($result, 'Phone numbers should be flagged universally regardless of group rules');
-        $this->assertEquals('PhoneNumber', $result['check']);
+        $this->assertNull($result, 'Phone number must not be flagged when group has no restrictpersonalinfo rule');
+    }
+
+    public function test_phone_number_not_flagged_when_restrict_rule_is_false(): void
+    {
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => false]]);
+
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
+
+        $this->assertNull($result, 'Phone number must not be flagged when restrictpersonalinfo is false');
     }
 
     // -------------------------------------------------------------------------
-    // checkPII — email addresses (phone numbers now checked universally)
+    // checkPII — email addresses, gated by the same restrictpersonalinfo rule
     // -------------------------------------------------------------------------
 
     public function test_no_personal_info_in_body_returns_null(): void
