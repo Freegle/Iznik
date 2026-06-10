@@ -1881,12 +1881,30 @@ class IncomingMailService
             $body = $prependSubject . "\r\n\r\n" . $body;
         }
 
+        // Detect digest-reply patterns before stripping so we can append the label after.
+        // V1 parity: MailRouter.php detected "On ... -auto@GROUP_DOMAIN> wrote:" and
+        // "-----Original Message-----" to identify replies that include the full digest,
+        // then stripped the quoted content and appended the label text.
+        $isDigestReply = false;
+        if (! $skipStripQuoted) {
+            $groupDomain = preg_quote(config('freegle.mail.group_domain', 'groups.ilovefreegle.org'), '/');
+            if (preg_match('/^\s*On.*?-auto@' . $groupDomain . '>\s*wrote\s*:/ms', $body) ||
+                preg_match('/-----Original Message-----/', $body)) {
+                $isDigestReply = true;
+            }
+        }
+
         // Strip quoted reply text and signatures before storing.
         // For volunteer messages, the quoted text (conversation transcript, reported post)
         // is the useful content - don't strip it. Matches legacy iznik-server behavior:
         // "Don't strip quoted as it might be useful."
         if (! $skipStripQuoted) {
             $body = $this->stripQuoted->strip($body);
+        }
+
+        // Append digest-reply label so moderators know to check the original email.
+        if ($isDigestReply) {
+            $body = rtrim($body) . "\r\n\r\n(Probably replied to digest - check View original email)";
         }
 
         // Determine if this chat message needs review.

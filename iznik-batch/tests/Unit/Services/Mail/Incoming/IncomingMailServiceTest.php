@@ -5079,4 +5079,95 @@ class IncomingMailServiceTest extends TestCase
             return $mail->hasTo($senderEmail);
         });
     }
+
+    // ========================================
+    // Digest Reply Label Tests (Issue #9775)
+    // ========================================
+
+    public function test_digest_reply_via_original_message_separator_appends_label(): void
+    {
+        // Regression test for #9775: a user replying to a digest email via a mail
+        // client that quotes it with "-----Original Message-----" should get the
+        // "(Probably replied to digest - check View original email)" label appended
+        // to the chat message body so moderators know to check the original email.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('digestreplier')]);
+        $this->createMembership($user, $group);
+        $memberEmail = $user->emails->first()->email;
+
+        $body = "Hi, I wanted to reply to one of the posts in the digest.\r\n\r\n"
+            . "-----Original Message-----\r\n"
+            . "From: ".$group->nameshort."-auto@groups.ilovefreegle.org\r\n"
+            . "Subject: [".$group->nameshort."] What's New\r\n"
+            . "\r\nHere is all the digest content...";
+
+        $email = $this->createMinimalEmail([
+            'From' => $memberEmail,
+            'To' => $group->nameshort.'-auto@groups.ilovefreegle.org',
+            'Subject' => "Re: [".$group->nameshort."] What's New",
+        ], $body);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $memberEmail,
+            $group->nameshort.'-auto@groups.ilovefreegle.org'
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should have been created');
+        $this->assertStringContainsString(
+            '(Probably replied to digest - check View original email)',
+            $chatMsg->message,
+            'Digest reply label should be appended to the chat message body'
+        );
+    }
+
+    public function test_digest_reply_via_auto_address_header_appends_label(): void
+    {
+        // Regression test for #9775: a user replying to a digest email via a mail
+        // client that quotes it with "On ... -auto@groups.ilovefreegle.org> wrote:"
+        // should get the digest label appended to the chat message body.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('digestreplier2')]);
+        $this->createMembership($user, $group);
+        $memberEmail = $user->emails->first()->email;
+
+        $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $body = "Yes, I am interested in that item!\r\n\r\n"
+            . "On 10 Jun 2026, at 08:00, ".$group->nameshort."-auto@".$groupDomain."> wrote:\r\n"
+            . "\r\n> OFFER: Old sofa (Somewhere)\r\n"
+            . "> Posted by Someone";
+
+        $email = $this->createMinimalEmail([
+            'From' => $memberEmail,
+            'To' => $group->nameshort.'-auto@'.$groupDomain,
+            'Subject' => "Re: [".$group->nameshort."] What's New",
+        ], $body);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $memberEmail,
+            $group->nameshort.'-auto@'.$groupDomain
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should have been created');
+        $this->assertStringContainsString(
+            '(Probably replied to digest - check View original email)',
+            $chatMsg->message,
+            'Digest reply label should be appended to the chat message body'
+        );
+    }
 }
