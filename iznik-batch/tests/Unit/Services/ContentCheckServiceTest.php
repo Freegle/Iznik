@@ -221,13 +221,15 @@ class ContentCheckServiceTest extends TestCase
     }
 
     // =========================================================================
-    // checkPhoneNumbers — public, pure regex
+    // checkPhoneNumbers — gated by group restrictpersonalinfo rule
     // =========================================================================
 
     #[DataProvider('phoneNumberProvider')]
     public function test_check_phone_numbers(string $subject, string $body, bool $expectFlag): void
     {
-        $result = $this->service->checkPhoneNumbers($subject, $body);
+        // Phone number check is gated by restrictpersonalinfo; use a group that has it set.
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
+        $result = $this->service->checkPhoneNumbers($subject, $body, $group->id);
 
         if ($expectFlag) {
             $this->assertNotNull($result);
@@ -236,6 +238,15 @@ class ContentCheckServiceTest extends TestCase
         } else {
             $this->assertNull($result);
         }
+    }
+
+    public function test_check_phone_numbers_not_flagged_without_group_rule(): void
+    {
+        // Groups without restrictpersonalinfo must not have posts flagged for phone numbers.
+        $group = $this->createTestGroup();
+        $result = $this->service->checkPhoneNumbers('', 'Call 07911 123456 for details', $group->id);
+
+        $this->assertNull($result, 'Phone number must not flag when group has no restrictpersonalinfo rule');
     }
 
     public static function phoneNumberProvider(): array

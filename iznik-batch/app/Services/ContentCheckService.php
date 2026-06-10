@@ -130,7 +130,7 @@ class ContentCheckService
         if ($r = $this->checkNotAnItem($subject, $textbody, $itemName)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkPhoneNumbers($subject, $textbody)) {
+        if ($r = $this->checkPhoneNumbers($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkPII($subject, $textbody, $groupid)) {
@@ -178,8 +178,9 @@ class ContentCheckService
      * Phone numbers are deliberately NOT checked in chat: sharing a phone
      * number is normal and expected when arranging a handover, so flagging it
      * produced too many false positives. (V1's Spam::checkReview() never
-     * checked phone numbers either.) The checkPhoneNumbers() check still runs
-     * for posts via checkMessage().
+     * checked phone numbers either.) The checkPhoneNumbers() check runs for
+     * posts via checkMessage(), but only when the group's restrictpersonalinfo
+     * rule is set.
      *
      * @return array|null Reason ['check','category','action','detail'] or null.
      */
@@ -826,10 +827,26 @@ class ContentCheckService
     // (0, +44, or 0044) followed by 9–10 digits (with optional spaces/hyphens).
     // This specificity avoids false positives from short numeric strings like
     // flat numbers or times.
+    //
+    // Only flagged when the group's restrictpersonalinfo rule is set — phone
+    // numbers are explicitly called out in that setting's description ("eg
+    // telephone numbers, addresses"). Groups without the rule never see this
+    // flag. (V1 had no universal phone-number check; the setting description
+    // makes the intent clear.)
     // -------------------------------------------------------------------------
 
-    public function checkPhoneNumbers(string $subject, string $textbody): ?array
+    public function checkPhoneNumbers(string $subject, string $textbody, int $groupid): ?array
     {
+        $rulesJson = DB::table('groups')->where('id', $groupid)->value('rules');
+        if ($rulesJson) {
+            $rules = is_string($rulesJson) ? json_decode($rulesJson, true) : $rulesJson;
+            if (empty($rules['restrictpersonalinfo'])) {
+                return null;
+            }
+        } else {
+            return null;
+        }
+
         $haystack = $subject . ' ' . $textbody;
 
         // (?<!\d) / (?!\d) instead of \b — \b doesn't fire before a literal "+"
@@ -847,8 +864,10 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // PII — external email addresses, only when group rule restrictpersonalinfo
-    // is set. Phone numbers in posts are checked via checkPhoneNumbers().
+    // PII — external email addresses, gated by the group rule restrictpersonalinfo.
+    // Phone numbers are also gated by the same rule via checkPhoneNumbers().
+    // Both checks are described by the setting: "Do you restrict personal info
+    // in posts eg telephone numbers, addresses?"
     // -------------------------------------------------------------------------
 
     public function checkPII(string $subject, string $textbody, int $groupid): ?array
