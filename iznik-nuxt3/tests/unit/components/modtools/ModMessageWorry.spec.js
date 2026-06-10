@@ -397,4 +397,90 @@ describe('ModMessageWorry', () => {
       expect(wrapper.props('messageid')).toBe(123)
     })
   })
+
+  describe('group moderation notice', () => {
+    it('shows a notice when post is Pending, content-check ran, and no issues found', () => {
+      const message = {
+        id: 123,
+        worry: [],
+        groups: [
+          {
+            collection: 'Pending',
+            contentcheck_checked_at: '2026-01-01T12:00:00Z',
+            contentcheck_reasons: null,
+          },
+        ],
+      }
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
+      expect(wrapper.text()).toContain('group')
+    })
+
+    it('does NOT show the notice when contentcheck has not run yet', () => {
+      const message = {
+        id: 123,
+        worry: [],
+        groups: [
+          {
+            collection: 'Pending',
+            contentcheck_checked_at: null,
+            contentcheck_reasons: null,
+          },
+        ],
+      }
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
+    })
+
+    it('does NOT show the notice when contentcheck found issues', () => {
+      const message = {
+        id: 123,
+        worry: [],
+        groups: [
+          {
+            collection: 'Pending',
+            contentcheck_checked_at: '2026-01-01T12:00:00Z',
+            contentcheck_reasons: [
+              { check: 'Vague', category: null, detail: 'too generic' },
+            ],
+          },
+        ],
+      }
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.text()).toContain('Vague post')
+      expect(wrapper.text()).not.toContain('group')
+    })
+
+    it('does NOT show the notice when collection is not Pending', () => {
+      const message = {
+        id: 123,
+        worry: [],
+        groups: [
+          {
+            collection: 'Approved',
+            contentcheck_checked_at: '2026-01-01T12:00:00Z',
+            contentcheck_reasons: null,
+          },
+        ],
+      }
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
+    })
+  })
 })

@@ -1,5 +1,15 @@
 <template>
   <div v-if="message">
+    <!-- Group moderation: post is checked and clean but held by group settings -->
+    <NoticeMessage
+      v-if="pendingNoIssues"
+      variant="info"
+      class="mb-1"
+    >
+      This post has no content issues. It is in the pending queue because this
+      group's settings require all posts to be reviewed manually.
+    </NoticeMessage>
+
     <!-- Worry words flagged by the Go API (real-time, per-request check) -->
     <NoticeMessage
       v-for="(match, i) in worryMatches"
@@ -155,5 +165,19 @@ const contentcheckReasons = computed(() => {
     }
   }
   return []
+})
+
+/* True when the post is Pending, the content-check batch job has run, and no
+   issues were found — meaning it is held only by the group's moderation settings. */
+const pendingNoIssues = computed(() => {
+  if (!message.value?.groups) return false
+  return message.value.groups.some(
+    (mg) =>
+      mg.collection === 'Pending' &&
+      mg.contentcheck_checked_at &&
+      (!mg.contentcheck_reasons ||
+        !Array.isArray(mg.contentcheck_reasons) ||
+        mg.contentcheck_reasons.length === 0)
+  )
 })
 </script>
