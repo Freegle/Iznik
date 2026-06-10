@@ -4,7 +4,8 @@
       !chatmessage?.sameasnext ||
       last ||
       chatmessage?.bymailid ||
-      chatmessage?.gap
+      chatmessage?.gap ||
+      chatmessage?.platform === 0
     "
     class="text-muted fontsize mb-1"
   >
@@ -15,6 +16,13 @@
       >
         {{ timeadaptChat(chatmessage?.date) }}
       </span>
+      <b-badge
+        v-if="chatmessage?.platform === 0"
+        variant="info"
+        class="ms-1"
+      >
+        Replied via email
+      </b-badge>
       <b-badge
         v-if="chatmessage?.replyexpected && !chatmessage?.replyreceived"
         variant="danger"

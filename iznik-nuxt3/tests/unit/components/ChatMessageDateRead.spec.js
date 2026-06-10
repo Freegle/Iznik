@@ -195,6 +195,25 @@ describe('ChatMessageDateRead', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.b-badge').exists()).toBe(false)
     })
+
+    it('shows replied via email label for email message (platform 0)', () => {
+      mockChatmessage.value.platform = 0
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('Replied via email')
+    })
+
+    it('does not show replied via email label for regular message (platform 1)', () => {
+      mockChatmessage.value.platform = 1
+      const wrapper = createWrapper()
+      expect(wrapper.text()).not.toContain('Replied via email')
+    })
+
+    it('shows date section when platform is 0 even if sameasnext is true', () => {
+      mockChatmessage.value.sameasnext = true
+      mockChatmessage.value.platform = 0
+      const wrapper = createWrapper()
+      expect(wrapper.find('.text-muted').exists()).toBe(true)
+    })
   })
 
   describe('my messages (from current user)', () => {

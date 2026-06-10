@@ -24,29 +24,30 @@ import (
 // =============================================================================
 
 type ChatMessage struct {
-	ID                 uint64          `json:"id" gorm:"primary_key"`
-	Chatid             uint64          `json:"chatid"`
-	Userid             uint64          `json:"userid"`
-	Type               string          `json:"type"`
-	Refmsgid           *uint64         `json:"refmsgid"`
-	Refchatid          *uint64         `json:"refchatid"`
-	Imageid            *uint64         `json:"imageid"`
-	Image              *ChatAttachment `json:"image" gorm:"-"`
-	Date               time.Time       `json:"date"`
-	Message            string          `json:"message"`
-	Seenbyall          bool            `json:"seenbyall"`
-	Mailedtoall        bool            `json:"mailedtoall"`
-	Replyexpected      bool            `json:"replyexpected"`
-	Replyreceived      bool            `json:"replyreceived"`
+	ID                   uint64          `json:"id" gorm:"primary_key"`
+	Chatid               uint64          `json:"chatid"`
+	Userid               uint64          `json:"userid"`
+	Type                 string          `json:"type"`
+	Refmsgid             *uint64         `json:"refmsgid"`
+	Refchatid            *uint64         `json:"refchatid"`
+	Imageid              *uint64         `json:"imageid"`
+	Image                *ChatAttachment `json:"image" gorm:"-"`
+	Date                 time.Time       `json:"date"`
+	Message              string          `json:"message"`
+	Seenbyall            bool            `json:"seenbyall"`
+	Mailedtoall          bool            `json:"mailedtoall"`
+	Replyexpected        bool            `json:"replyexpected"`
+	Replyreceived        bool            `json:"replyreceived"`
 	Reportreason         *string         `json:"reportreason"`
 	Reviewrequired       bool            `json:"reviewrequired"`
 	Reviewrejected       bool            `json:"reviewrejected"`
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
-	Addressid          *uint64         `json:"addressid" gorm:"-"`
-	Modnote            bool            `json:"modnote" gorm:"-"`
-	Archived           int             `json:"-" gorm:"-"`
-	Deleted            bool            `json:"-"`
+	Platform             int             `json:"platform"`
+	Addressid            *uint64         `json:"addressid" gorm:"-"`
+	Modnote              bool            `json:"modnote" gorm:"-"`
+	Archived             int             `json:"-" gorm:"-"`
+	Deleted              bool            `json:"-"`
 }
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the
@@ -373,6 +374,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
+	payload.Platform = 1
 	db.Create(&payload)
 	newid := payload.ID
 
@@ -525,6 +527,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	cm.Date = time.Now()
 	cm.Message = payload.Message
 	cm.Refmsgid = payload.Refmsgid
+	cm.Platform = 1
 	db.Create(&cm)
 	newid := cm.ID
 

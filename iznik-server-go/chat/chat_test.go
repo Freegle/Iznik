@@ -277,3 +277,23 @@ func TestChatMessageImageID(t *testing.T) {
 	assert.NotNil(t, msgWithImage.Imageid)
 	assert.Equal(t, uint64(42), *msgWithImage.Imageid)
 }
+
+func TestChatMessagePlatformField(t *testing.T) {
+	// Platform=1 (website) is serialized and deserialized correctly
+	msgWebsite := ChatMessage{Platform: 1}
+	data, err := json.Marshal(msgWebsite)
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	assert.Equal(t, float64(1), parsed["platform"], "platform should be 1 for website messages")
+
+	// Platform=0 (email reply) is serialized and deserialized correctly
+	msgEmail := ChatMessage{Platform: 0}
+	data2, err := json.Marshal(msgEmail)
+	require.NoError(t, err)
+
+	var parsed2 map[string]interface{}
+	require.NoError(t, json.Unmarshal(data2, &parsed2))
+	assert.Equal(t, float64(0), parsed2["platform"], "platform should be 0 for email reply messages")
+}
