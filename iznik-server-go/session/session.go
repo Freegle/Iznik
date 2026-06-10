@@ -64,6 +64,50 @@ func FetchEmailHealth(db *gorm.DB, hour int) (emailin, emailout int64) {
 	return emailin, emailout
 }
 
+// discourseTopicWindowDays is the look-back window applied when counting new/unread
+// Discourse topics for the modtools badge. Without this filter a newly-promoted
+// moderator sees every historical topic they have never read as "new", producing
+// badge values in the hundreds (e.g. 466+793 as reported in Discourse topic 9654
+// post 10). Thirty days is long enough to catch genuinely active threads while
+// suppressing the one-time flood for new mods.
+const discourseTopicWindowDays = 30
+
+// TopicActiveWithin reports whether a Discourse topic has had activity within the
+// given window. Exported so it can be unit-tested without an HTTP server.
+//
+// The three string parameters map to Discourse's topic_list JSON fields:
+//   - createdAt  → created_at
+//   - bumpedAt   → bumped_at   (updated on every reply — preferred signal)
+//   - lastPosted → last_posted_at
+//
+// The most-recent-activity timestamp (bumpedAt → lastPosted → createdAt) is
+// tried in order; the topic counts if that timestamp parses and falls after
+// `since`. A missing or malformed timestamp is treated as inactive (false).
+func TopicActiveWithin(createdAt, bumpedAt, lastPosted string, since time.Time) bool {
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05Z",
+	}
+	parse := func(s string) (time.Time, bool) {
+		if s == "" {
+			return time.Time{}, false
+		}
+		for _, f := range formats {
+			if t, err := time.Parse(f, s); err == nil {
+				return t, true
+			}
+		}
+		return time.Time{}, false
+	}
+	for _, candidate := range []string{bumpedAt, lastPosted, createdAt} {
+		if t, ok := parse(candidate); ok {
+			return t.After(since)
+		}
+	}
+	return false
+}
+
 // fetchDiscourseStats fetches notification and topic counts from the Discourse API.
 // Returns nil if Discourse is not configured or the API call fails.
 func fetchDiscourseStats(myid uint64) fiber.Map {
@@ -136,6 +180,19 @@ func fetchDiscourseStats(myid uint64) fiber.Map {
 		notifications = sr.CurrentUser.UnreadNotifications
 	}()
 
+	since := time.Now().AddDate(0, 0, -discourseTopicWindowDays)
+
+	type topicEntry struct {
+		CreatedAt  string `json:"created_at"`
+		BumpedAt   string `json:"bumped_at"`
+		LastPosted string `json:"last_posted_at"`
+	}
+	type topicListResp struct {
+		TopicList struct {
+			Topics []topicEntry `json:"topics"`
+		} `json:"topic_list"`
+	}
+
 	go func() {
 		defer wg.Done()
 		req, err := http.NewRequest("GET", discourseAPI+"/new.json", nil)
@@ -153,13 +210,13 @@ func fetchDiscourseStats(myid uint64) fiber.Map {
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		var tr struct {
-			TopicList struct {
-				Topics []interface{} `json:"topics"`
-			} `json:"topic_list"`
-		}
+		var tr topicListResp
 		_ = json.Unmarshal(body, &tr)
-		newtopics = int64(len(tr.TopicList.Topics))
+		for _, t := range tr.TopicList.Topics {
+			if TopicActiveWithin(t.CreatedAt, t.BumpedAt, t.LastPosted, since) {
+				newtopics++
+			}
+		}
 	}()
 
 	go func() {
@@ -179,13 +236,13 @@ func fetchDiscourseStats(myid uint64) fiber.Map {
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		var tr struct {
-			TopicList struct {
-				Topics []interface{} `json:"topics"`
-			} `json:"topic_list"`
-		}
+		var tr topicListResp
 		_ = json.Unmarshal(body, &tr)
-		unreadtopics = int64(len(tr.TopicList.Topics))
+		for _, t := range tr.TopicList.Topics {
+			if TopicActiveWithin(t.CreatedAt, t.BumpedAt, t.LastPosted, since) {
+				unreadtopics++
+			}
+		}
 	}()
 
 	wg.Wait()

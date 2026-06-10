@@ -3404,3 +3404,53 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
 	})
 }
+
+// TestTopicActiveWithin exercises the pure predicate used to filter Discourse
+// new/unread topics to the last 30 days.  No HTTP server or database required.
+// This covers the fix for Discourse topic 9654 post 10 (newly-promoted mod flood).
+func TestTopicActiveWithin(t *testing.T) {
+	now := time.Now().UTC()
+	recent := now.AddDate(0, 0, -5).Format(time.RFC3339)   // 5 days ago — within window
+	old := now.AddDate(0, 0, -60).Format(time.RFC3339)     // 60 days ago — outside window
+	boundary := now.AddDate(0, 0, -30).Add(-time.Second).Format(time.RFC3339) // just outside
+
+	t.Run("recent bumped_at → active", func(t *testing.T) {
+		assert.True(t, session.TopicActiveWithin(old, recent, old, now.AddDate(0, 0, -30)),
+			"recent bumpedAt must be active")
+	})
+
+	t.Run("old everything → inactive", func(t *testing.T) {
+		assert.False(t, session.TopicActiveWithin(old, old, old, now.AddDate(0, 0, -30)),
+			"all old timestamps must be inactive")
+	})
+
+	t.Run("bad/missing timestamps → inactive", func(t *testing.T) {
+		assert.False(t, session.TopicActiveWithin("", "", "", now.AddDate(0, 0, -30)),
+			"empty timestamps must return false")
+		assert.False(t, session.TopicActiveWithin("not-a-date", "also-bad", "nope", now.AddDate(0, 0, -30)),
+			"malformed timestamps must return false")
+	})
+
+	t.Run("recent created_at only (bumpedAt and lastPosted empty) → active", func(t *testing.T) {
+		assert.True(t, session.TopicActiveWithin(recent, "", "", now.AddDate(0, 0, -30)),
+			"recent createdAt with empty others must be active")
+	})
+
+	t.Run("bumped_at preferred over last_posted_at", func(t *testing.T) {
+		// bumpedAt is old but lastPosted is recent — bumpedAt takes precedence,
+		// so the topic is treated as inactive (old bumped_at wins).
+		assert.False(t, session.TopicActiveWithin(old, old, recent, now.AddDate(0, 0, -30)),
+			"bumpedAt=old wins over lastPosted=recent — inactive")
+	})
+
+	t.Run("bumpedAt empty, last_posted_at recent → active", func(t *testing.T) {
+		assert.True(t, session.TopicActiveWithin(old, "", recent, now.AddDate(0, 0, -30)),
+			"empty bumpedAt falls through to recent lastPosted — active")
+	})
+
+	t.Run("exactly at boundary → inactive (After is strictly greater)", func(t *testing.T) {
+		// boundary is just outside the 30-day window
+		assert.False(t, session.TopicActiveWithin(boundary, boundary, boundary, now.AddDate(0, 0, -30)),
+			"timestamp exactly at/before since must be inactive")
+	})
+}

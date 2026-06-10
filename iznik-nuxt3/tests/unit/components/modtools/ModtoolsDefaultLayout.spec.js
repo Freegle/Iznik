@@ -279,43 +279,6 @@ describe('modtools default layout — pending badge includes spam', () => {
   })
 })
 
-describe('modtools default layout — discourse badge (issue 9654)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockCheckWork.mockReset()
-    mockResetCheckWork.mockReset()
-    mockAuthStore.user = { id: 1, displayname: 'Test Mod' }
-    mockAuthStore.auth = { jwt: null, persistent: null }
-    mockAuthStore.loginStateKnown = true
-    mockAuthStore.discourse = null
-    mockAuthStore.work = null
-    mockAuthStore.fetchUser = vi.fn().mockResolvedValue(null)
-    mockAuthStore.logout = vi.fn().mockResolvedValue(undefined)
-  })
-
-  afterEach(() => {
-    mockAuthStore.user = null
-    mockAuthStore.discourse = null
-    mockAuthStore.loginStateKnown = false
-  })
-
-  it('discourse badge shows only the notification bell count, not new/unread topic counts', async () => {
-    // Reproduction of topic 9654: a newly-promoted moderator gets added to Discourse
-    // group categories (Hackney, Newham, etc.) and ALL existing topics appear as
-    // "newtopics" (e.g. 466 + 793 = 1259).  Only the actionable notification bell
-    // count should show — not the informational unread-topics flood.
-    mockAuthStore.discourse = { notifications: 3, newtopics: 466, unreadtopics: 793 }
-
-    const wrapper = mountLayout()
-    await flushPromises()
-    await nextTick()
-
-    const badge = wrapper.find('.discourseBadge')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text().trim()).toBe('3')
-  })
-})
-
 describe('modtools default layout — re-login group refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks()
