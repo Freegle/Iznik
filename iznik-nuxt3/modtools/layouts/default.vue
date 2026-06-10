@@ -87,7 +87,7 @@
         <ModMenuItemLeft
           link="/messages/pending"
           name="Pending"
-          :count="['pending']"
+          :count="['pending', 'spam']"
           :othercount="['pendingother']"
           indent
           @mobilehidemenu="mobilehidemenu"

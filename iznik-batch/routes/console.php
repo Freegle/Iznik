@@ -85,6 +85,14 @@ Schedule::command('data:update-cpi')
     ->sendOutputTo(cronLog('data:update-cpi'))
     ->runInBackground();
 
+// Refresh UK mobile-carrier IP ranges (from RIPEstat) into spam_whitelist_ips so
+// CGNAT shared-egress IPs stay exempt from the IP-abuse check (Discourse #9768).
+Schedule::command('spam:refresh-mobile-cidrs')
+    ->monthly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('spam:refresh-mobile-cidrs'))
+    ->runInBackground();
+
 // Content check — run all content checks on unprocessed pending messages.
 // Promotes clean messages from non-moderated users to Approved; keeps others
 // in Pending with failure reasons stored, then notifies group mods.
