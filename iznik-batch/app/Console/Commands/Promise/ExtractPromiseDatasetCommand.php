@@ -42,11 +42,14 @@ class ExtractPromiseDatasetCommand extends Command
             mkdir($outDir, 0755, true);
         }
 
-        // Query User2User chat rooms
+        // Query User2User chat rooms.
+        // NB: do NOT use ORDER BY RAND() — it filesorts the entire filtered set and
+        // times out the live-DB tunnel on large windows. Use a cheap PK-ordered scan
+        // (most-recent first) and bound the sample with --since / --max-rooms.
         $query = DB::table('chat_rooms')
             ->where('chattype', 'User2User')
             ->where('created', '>=', $since)
-            ->orderByRaw('RAND()');
+            ->orderBy('id', 'desc');
 
         if ($maxRooms) {
             $query->limit($maxRooms);
