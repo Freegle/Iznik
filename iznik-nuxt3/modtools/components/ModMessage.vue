@@ -202,7 +202,7 @@
                   >
                 </b-button>
                 <SpinButton
-                  v-if="contextGroup?.collection === 'Approved'"
+                  v-if="hasCollection('Approved')"
                   class="mt-2"
                   variant="white"
                   icon-name="reply"

@@ -908,6 +908,22 @@ describe('ModMessage', () => {
       )
       expect(backToPendingButton.length).toBe(0)
     })
+
+    it('shows for multi-group messages when any group is Approved (All Groups view)', async () => {
+      // Regression: contextGroup fell back to groups[0] (Pending) when contextGroupid=null,
+      // hiding the button even though groups[1] was Approved.
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: null },
+        {
+          groups: [
+            { groupid: 100, collection: 'Pending' },
+            { groupid: 789, collection: 'Approved' },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Back to Pending')
+    })
   })
 
   describe('ModMessageButtons', () => {
