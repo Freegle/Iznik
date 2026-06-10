@@ -1147,11 +1147,58 @@ class ContentCheckService
      */
     private const IP_ABUSE_ID_CAP = 50;
 
+    /**
+     * Return true if $ip is in spam_whitelist_ips (exact match or IPv4 CIDR).
+     * V1 parity: Spam.php lines 105-114 nullified the IP before correlation
+     * queries when it matched spam_whitelist_ips. This method extends V1's
+     * exact-match with CIDR support so CDN ranges (e.g. 162.158.0.0/15) can
+     * be whitelisted without enumerating every individual address.
+     */
+    private function isIpWhitelisted(string $ip): bool
+    {
+        if (DB::table('spam_whitelist_ips')->where('ip', $ip)->exists()) {
+            return true;
+        }
+
+        // Check CIDR entries (rows whose ip value contains a '/')
+        $cidrs = DB::table('spam_whitelist_ips')
+            ->where('ip', 'like', '%/%')
+            ->pluck('ip');
+
+        $ipLong = ip2long($ip);
+        if ($ipLong === false) {
+            return false; // IPv6 — no CIDR support yet
+        }
+
+        foreach ($cidrs as $cidr) {
+            [$net, $prefix] = explode('/', $cidr, 2);
+            $netLong = ip2long($net);
+            if ($netLong === false) {
+                continue;
+            }
+            $prefixInt = (int)$prefix;
+            $mask = $prefixInt >= 32 ? -1 : ~((1 << (32 - $prefixInt)) - 1);
+            if (($ipLong & $mask) === ($netLong & $mask)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function checkIpAbuse(int $msgid): ?array
     {
         $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
 
         if (!$fromip) {
+            return null;
+        }
+
+        // V1 parity (Spam.php lines 105-114): skip whitelisted IPs.
+        // Shared CDN/proxy egress IPs (e.g. Cloudflare) are added to
+        // spam_whitelist_ips; flagging them produces false positives because
+        // many distinct, well-behaved users share the same egress IP.
+        if ($this->isIpWhitelisted($fromip)) {
             return null;
         }
 
