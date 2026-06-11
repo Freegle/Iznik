@@ -2709,9 +2709,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
-	// Reconstruct subject from type + item + location when item/type/location changed
-	//.
-	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil {
+	// Reconstruct subject from type + item + location when item/type/location changed,
+	// but ONLY when the caller did not supply an explicit subject.  An explicit subject
+	// always wins — passing msgtype alongside a new subject must not silently clobber it.
+	if req.Subject == nil && (req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil) {
 		var msgType string
 		var itemName *string
 		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
@@ -3042,16 +3043,19 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			return err
 		}
 
-		// Remove any AI attachment whenever textbody is updated (both cases).
+		// TN's textbody is the authoritative photo set for its posts.  Whenever TN
+		// sends a textbody (even an empty one) we delete ALL existing attachments and
+		// then let the scraper add the new set (if pic links were present).
+		//
+		// This fixes two bugs:
+		//   #2 — textbody with no pic links: old non-AI photos were left behind.
+		//   #3 — textbody with new pic links: old non-AI photos coexisted with the new ones.
+		//
+		// recordAIDeletions is called with an empty keep-list so any AI attachment is
+		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
-			var aiCount int64
-			db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-				msgID, `%"ai":true%`).Scan(&aiCount)
-			if aiCount > 0 {
-				recordAIDeletions(db, myid, msgID, []uint64{}, nil)
-				db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-					msgID, `%"ai":true%`)
-			}
+			recordAIDeletions(db, myid, msgID, []uint64{}, nil)
+			db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 		}
 
 		// If TN photos were present, scrape them and store as attachments.
