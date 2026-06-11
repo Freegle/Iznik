@@ -37,6 +37,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
     protected Collection $preparedPosts;
 
+    /** @var Collection lightweight "came and went" (Taken/Received) entries for the greyed daily section */
+    protected Collection $preparedCompletedPosts;
+
     /** @var array<int,object> primary group rows (id => {nameshort, namefull}) for post bylines + header list */
     protected array $groupLookup = [];
 
@@ -46,7 +49,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         public User $user,
         protected Collection $posts,
         public string $mode,
-        protected Collection $sponsors = new Collection()
+        protected Collection $sponsors = new Collection(),
+        protected Collection $completedPosts = new Collection()
     ) {
         parent::__construct();
 
@@ -91,6 +95,39 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
         // Prepare posts with tracking URLs and decoded text.
         $this->preparedPosts = $this->preparePosts();
+
+        // "Came and went" list (daily only) — lightweight, no reply CTA.
+        $this->preparedCompletedPosts = $this->prepareCompletedPosts();
+    }
+
+    /**
+     * Lightweight prep for the "came and went" (Taken/Received) section: just
+     * what the greyed list shows — title, location, thumbnail, date and a link
+     * to the (now-closed) post. No reply button or per-post reply tracking,
+     * since the item is gone.
+     */
+    protected function prepareCompletedPosts(): Collection
+    {
+        return $this->completedPosts->map(function ($message) {
+            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $arrival = $message->arrival instanceof Carbon
+                ? $message->arrival
+                : Carbon::parse($message->arrival ?? $message->date);
+
+            return [
+                'id' => $message->id,
+                'type' => $message->type,
+                'itemName' => $this->extractItemName($subject),
+                'locationName' => $this->extractLocationName($subject),
+                'imageUrl' => $this->getMessageImageUrl($message, 240, 240),
+                'messageUrl' => $this->trackedUrl(
+                    $this->userSite . '/message/' . $message->id,
+                    'completed_' . $message->id,
+                    'view_completed'
+                ),
+                'date' => $arrival->setTimezone('Europe/London')->format('D j M, g:ia'),
+            ];
+        })->values();
     }
 
     /**
@@ -254,6 +291,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
+            'completedPosts' => $this->preparedCompletedPosts,
             'post' => $immediatePost,
             'isOffer' => $immediateIsOffer,
             'accentColor' => $immediateAccentColor,
@@ -340,6 +378,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $this->renderAmpTemplate('emails.amp.digest.unified', [
                 'user' => $this->user,
                 'posts' => $ampPosts,
+                'completedPosts' => $this->preparedCompletedPosts,
                 'postCount' => $this->posts->count(),
                 'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'amp_settings', 'settings'),
                 'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),

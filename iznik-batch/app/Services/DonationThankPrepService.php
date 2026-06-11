@@ -185,7 +185,20 @@ class DonationThankPrepService
                 : null;
         }
 
-        $amount    = (float) $donation->GrossAmount;
+        $amount = (float) $donation->GrossAmount;
+
+        // Bank-transfer / manually-recorded external donations are deliberate
+        // gifts (someone keyed them in), so they always warrant a thank-you
+        // regardless of amount. This replaces the per-donation "please thank
+        // them" email the Go AddDonation handler used to send.
+        if ($this->isExternalDonation($donation)) {
+            return [
+                'key'  => 'external',
+                'text' => 'External donation of £' . number_format($amount, 2)
+                          . ' (bank transfer / manually recorded)',
+            ];
+        }
+
         $threshold = (float) config('freegle.donations.manual_thanks', 20);
         if ($amount >= $threshold) {
             return [
@@ -196,6 +209,16 @@ class DonationThankPrepService
         }
 
         return null;
+    }
+
+    /**
+     * A deliberately-recorded external donation (bank transfer keyed in via the
+     * AddDonation API), as opposed to an automatic PayPal/Stripe one-off.
+     */
+    private function isExternalDonation(object $donation): bool
+    {
+        return (string) ($donation->source ?? '') === 'BankTransfer'
+            || (string) ($donation->type ?? '') === 'External';
     }
 
     /**

@@ -590,4 +590,30 @@ class DonationThankPrepCommandTest extends TestCase
             return false;
         });
     }
+
+    public function test_external_bank_donation_is_thanked_regardless_of_amount(): void
+    {
+        Mail::fake();
+
+        // A small manually-recorded bank transfer — below the £20 one-off
+        // threshold, but deliberately recorded, so it must still be thanked.
+        // This replaces the per-donation email the Go AddDonation handler used
+        // to send.
+        $this->insertDonation([
+            'GrossAmount'     => 5.00,
+            'Payer'           => 'banktransfer@example.com',
+            'TransactionType' => 'Completed',
+            'type'            => 'External',
+            'source'          => 'BankTransfer',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return count($mail->cards) === 1
+                && $mail->cards[0]['donation']['payer'] === 'banktransfer@example.com'
+                && $mail->cards[0]['thankReasonKey'] === 'external';
+        });
+    }
 }

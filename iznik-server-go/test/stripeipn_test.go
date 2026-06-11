@@ -210,21 +210,14 @@ func TestStripeIPN_RecurringFirstDonation(t *testing.T) {
 	db.Raw("SELECT TransactionType FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&txType)
 	assert.Equal(t, "subscr_payment", txType)
 
-	// Verify thank-you task was queued.
+	// No per-donation thank-you email is queued any more: the daily
+	// mail:donations:thank-prep digest coordinates all thanking.
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
 		userID).Scan(&taskCount)
-	assert.Equal(t, int64(1), taskCount, "Thank-you email should be queued for first recurring donation")
-
-	// Source field must be 'stripe' so the email is worded correctly.
-	var source string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
-		userID).Scan(&source)
-	assert.Equal(t, "stripe", source, "Stripe IPN must tag thank-you task with source=stripe")
+	assert.Equal(t, int64(0), taskCount, "first recurring donation must not queue a per-donation thank-you email")
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
-	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
-		fmt.Sprintf("%%\"user_id\":%d%%", userID))
 }
 
 func TestStripeIPN_GiftAidNotification(t *testing.T) {
