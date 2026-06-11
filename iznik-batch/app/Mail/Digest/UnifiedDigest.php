@@ -582,11 +582,17 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 : config('freegle.images.wanted_placeholder');
 
             // Create tracked image URL with scroll depth.
+            // BUT: don't proxy the placeholder. The tracking proxy returns a
+            // 302 to the underlying URL, and Gmail's own image proxy doesn't
+            // always follow that redirect (Edward 2026-06-11 report — cards
+            // for no-photo posts rendered as broken). Open/click tracking on
+            // a placeholder is meaningless anyway (every no-photo card maps
+            // to the same URL), so serve the raw URL directly for those.
             $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
             $displayImageUrl = $imageUrl ?? $placeholderUrl;
-            $trackedImage = $displayImageUrl !== null
+            $trackedImage = $imageUrl !== null
                 ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
-                : null;
+                : $displayImageUrl;
 
             // Hero image for immediate (single-post) mode: a larger, height-
             // capped crop (600x400) so the photo is the hero — V1's immediate

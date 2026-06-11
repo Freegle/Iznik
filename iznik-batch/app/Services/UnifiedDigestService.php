@@ -41,10 +41,10 @@ class UnifiedDigestService
      * @param int|null $userId Specific user ID to process (for testing)
      * @return array Statistics about the operation
      */
-    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1): array
+    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
         if ($mode === self::MODE_IMMEDIATE) {
-            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards);
+            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards, $shouldStop);
         }
 
         $stats = [
@@ -68,6 +68,19 @@ class UnifiedDigestService
         }
 
         foreach ($users as $user) {
+            // Graceful interrupt: SIGTERM/SIGINT (or an abort-file touch) flips
+            // the caller's shouldStop flag. Check between users so a kill
+            // drains the current per-user spool write before exiting — at
+            // worst one duplicate next run, never a torn write.
+            if ($shouldStop !== null && $shouldStop()) {
+                $stats['stopped'] = TRUE;
+                Log::info('UnifiedDigestService: Daily digest stopping on shutdown signal', [
+                    'users_processed' => $stats['users_processed'],
+                    'emails_sent'     => $stats['emails_sent'],
+                ]);
+                break;
+            }
+
             try {
                 $result = $this->sendDigestToUser($user, $mode, $dryRun);
 
@@ -115,7 +128,7 @@ class UnifiedDigestService
      * @param int $shards Total shard count; groups partitioned by MOD(groupid, shards)
      * @return array Statistics about the operation
      */
-    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1): array
+    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
         $stats = [
             'groups_processed' => 0,
@@ -158,6 +171,17 @@ class UnifiedDigestService
         $touchedUsers = [];
 
         foreach ($query->cursor() as $row) {
+            // Graceful interrupt — check between groups so the in-flight
+            // group's cursor advance completes before exit.
+            if ($shouldStop !== null && $shouldStop()) {
+                $stats['stopped'] = TRUE;
+                Log::info('UnifiedDigestService: Immediate digest stopping on shutdown signal', [
+                    'groups_processed' => $stats['groups_processed'],
+                    'emails_sent'      => $stats['emails_sent'],
+                ]);
+                break;
+            }
+
             try {
                 $result = $this->processGroupImmediate($row, $dryRun, $userId);
                 $stats['emails_sent'] += $result['emails'];
@@ -265,9 +289,6 @@ class UnifiedDigestService
 
             $sponsorsCache = null;
             foreach ($users as $uid => $user) {
-                if ((int) $message->fromuser === (int) $uid) {
-                    continue;
-                }
                 if (!$user->email_preferred) {
                     continue;
                 }
@@ -531,10 +552,21 @@ class UnifiedDigestService
      */
     protected function getUsersForDigest(string $mode, ?int $userId = null, int $shard = 0, int $shards = 1): \Illuminate\Support\LazyCollection
     {
+        // V1 parity (User::sendOurMails, iznik-server/include/user/User.php:4117
+        // and Engage::USER_INACTIVE = 365*12*3600 = 182.5 days): the canonical
+        // "is this user reachable" gate excludes anyone inactive for half a
+        // year, all Trash Nothing-imported users (handled separately by TN),
+        // and any address known to be bouncing. V2 previously used 90 days
+        // and didn't check tnuserid / bouncing, which (a) silently dropped
+        // ~30k users V1 still emails and (b) silently emailed TN users and
+        // bouncing addresses V1 explicitly skips — measured 2026-06-11
+        // before this patch.
         $query = User::query()
             ->whereNull('deleted')
             ->whereNotNull('lastaccess')
-            ->where('lastaccess', '>', now()->subDays(90)); // Active in last 90 days.
+            ->where('lastaccess', '>', now()->subSeconds(365 * 12 * 3600))
+            ->whereNull('tnuserid')
+            ->where('bouncing', 0);
 
         if ($userId) {
             $query->where('id', $userId);
@@ -668,9 +700,6 @@ class UnifiedDigestService
 
         // Deduplicate cross-posted items.
         $deduplicatedPosts = $this->deduplicatePosts($posts);
-
-        // Filter out user's own posts.
-        $deduplicatedPosts = $deduplicatedPosts->filter(fn($post) => $post['message']->fromuser !== $user->id)->values();
 
         if ($deduplicatedPosts->isEmpty()) {
             // Nothing to send, but still advance the tracker past these posts

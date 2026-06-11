@@ -1950,6 +1950,64 @@ func TestWorkCountSpamMessagesAgedOutNotCounted(t *testing.T) {
 	assert.Equal(t, float64(0), spam, "Spam older than 30 days must not be counted in the badge (it is aged out of the Pending list)")
 }
 
+// Housekeeping is an Admin-only function. A Support user must not get it in the
+// work badge (the SysAdmin housekeeping list isn't shown to Support), or the
+// badge inflates with no visible home.
+func TestWorkCountHousekeepingAdminOnly(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("wc_hk")
+	taskKey := prefix + "_overdue"
+	// An overdue (failed) housekeeper task so the count is non-zero for Admin.
+	db.Exec("INSERT INTO housekeeper_tasks (task_key, name, interval_hours, enabled, placeholder, last_status) VALUES (?, ?, 1, 1, 0, 'failure')", taskKey, "WC test overdue")
+	defer db.Exec("DELETE FROM housekeeper_tasks WHERE task_key = ?", taskKey)
+
+	groupID := CreateTestGroup(t, prefix)
+
+	supportID := CreateTestUser(t, prefix+"_sup", "User")
+	CreateTestMembership(t, supportID, groupID, "Moderator")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supTok := CreateTestSession(t, supportID)
+	assert.Equal(t, float64(0), getSessionWork(t, supTok)["housekeeping"].(float64),
+		"Support must not get the housekeeping count (Admin-only)")
+
+	adminID := CreateTestUser(t, prefix+"_adm", "User")
+	CreateTestMembership(t, adminID, groupID, "Moderator")
+	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", adminID)
+	_, admTok := CreateTestSession(t, adminID)
+	assert.GreaterOrEqual(t, getSessionWork(t, admTok)["housekeeping"].(float64), float64(1),
+		"Admin must get the housekeeping count")
+}
+
+// Spammer pending-add review is gated by the SpamAdmin permission (granted via
+// the teams table), not systemrole. A Support user without that permission must
+// not get the count, matching the Spammers menu visibility (hasPermissionSpamAdmin).
+func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("wc_spa")
+	groupID := CreateTestGroup(t, prefix)
+
+	// A pending-add spam_users row to count (the count is system-wide).
+	flaggedID := CreateTestUser(t, prefix+"_flagged", "User")
+	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'PendingAdd', 'WC test', ?)", flaggedID, flaggedID)
+	defer db.Exec("DELETE FROM spam_users WHERE userid = ?", flaggedID)
+
+	// Support user WITHOUT SpamAdmin permission → 0.
+	supportID := CreateTestUser(t, prefix+"_sup", "User")
+	CreateTestMembership(t, supportID, groupID, "Moderator")
+	db.Exec("UPDATE users SET systemrole = 'Support', permissions = NULL WHERE id = ?", supportID)
+	_, supTok := CreateTestSession(t, supportID)
+	assert.Equal(t, float64(0), getSessionWork(t, supTok)["spammerpendingadd"].(float64),
+		"Support without SpamAdmin permission must not get spammerpendingadd")
+
+	// User WITH SpamAdmin permission → counts.
+	spamAdminID := CreateTestUser(t, prefix+"_spa", "User")
+	CreateTestMembership(t, spamAdminID, groupID, "Moderator")
+	db.Exec("UPDATE users SET permissions = 'SpamAdmin' WHERE id = ?", spamAdminID)
+	_, spaTok := CreateTestSession(t, spamAdminID)
+	assert.GreaterOrEqual(t, getSessionWork(t, spaTok)["spammerpendingadd"].(float64), float64(1),
+		"User with SpamAdmin permission must get spammerpendingadd")
+}
+
 func TestWorkCountSpamMembersReFlaggedAfterRecentReview(t *testing.T) {
 	// Regression: commit 4749246f6 changed the member list query to use
 	// reviewrequestedat > reviewedat, but session.go badge counts still used the

@@ -1,13 +1,49 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you'])
+    @php
+        $mediaStyles = '
+@media only screen and (max-width: 480px) {
+  /* Mobile only: clamp the body-text snippet to two lines so a long
+     post does not push the Reply button or meta row out of view. */
+  .fd-desc {
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+  /* Mobile: hide header thumbs beyond the 5th so the visible thumbs stay
+     large enough to read. Inline width from mj-group is overridden so the
+     visible cells (logo + 5 thumbs = 6) split the row evenly. */
+  .fd-header-thumb-5, .fd-header-thumb-6, .fd-header-thumb-7, .fd-header-thumb-8, .fd-header-thumb-9 {
+    display: none !important;
+  }
+  .fd-header-col { width: 16.66% !important; }
+}
+/* MOBILE-FIRST default. Most recipients are on mobile, and Gmail mobile web
+   strips embedded style blocks, so the DEFAULT (driven by inline styles) is
+   the mobile layout: the full-width .fd-narrow-only meta/byline/Reply row
+   shows, and the in-column .fd-wide-only copy is inline display:none. Only
+   clients that keep embedded styles and are on a wide screen swap to the
+   2-column desktop layout. */
+@media only screen and (min-width: 481px) {
+  .fd-wide-only { display: block !important; }
+  .fd-narrow-only { display: none !important; }
+}
+        ';
+    @endphp
+    @include('emails.mjml.partials.head', [
+        'preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you',
+        'mediaStyles' => $mediaStyles ?? '',
+    ])
 
     <mj-body background-color="#f4f4f4">
         @php
             $offers = collect($posts)->where('type', 'Offer');
             $wanteds = collect($posts)->where('type', 'Wanted');
-            $maxHeaderItems = 3;
-            $offerColor = '#3c763d';
-            $wantedColor = '#4895DD';
+            $maxHeaderItems = 6;
+            // Shared tokens — keep in lockstep with the AMP variant via
+            // DigestStyle; never inline accent colours in either template.
+            $offerColor = \App\Mail\Digest\DigestStyle::OFFER_GREEN;
+            $wantedColor = \App\Mail\Digest\DigestStyle::WANTED_BLUE;
         @endphp
 
         @if($mode === 'immediate')
@@ -210,33 +246,61 @@
         {{-- DAILY MODE: multi-post digest with thumbnail nav               --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
-        {{-- Header - Freegle brand green with logo + compact summary --}}
-        <mj-section mj-class="bg-success" padding="16px 20px">
-            <mj-column width="20%" vertical-align="middle">
-                <mj-image
-                    width="50px"
-                    src="{{ config('freegle.branding.logo_url') }}"
-                    alt="Freegle"
-                    align="left"
-                    padding="0"
-                />
-            </mj-column>
-            <mj-column width="80%" vertical-align="middle">
-                <mj-text font-size="13px" color="#ffffff" padding="0" line-height="1.6">
-                    @if($offers->isNotEmpty())
-                    <span style="display: inline-block; background-color: {{ $offerColor }}; border: 1px solid rgba(255,255,255,0.4); font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; vertical-align: middle; margin-right: 3px;">OFFER</span>
-                    @foreach($offers->take($maxHeaderItems) as $post)<a href="#msg-{{ $post['message']->id }}" style="color: #ffffff; text-decoration: underline;">{{ $post['itemName'] }}</a>@if(!$loop->last), @endif @endforeach @if($offers->count() > $maxHeaderItems) <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: underline;">+{{ $offers->count() - $maxHeaderItems }} more</a> @endif
-                    @endif
-                    @if($offers->isNotEmpty() && $wanteds->isNotEmpty())
-                    <br/>
-                    @endif
-                    @if($wanteds->isNotEmpty())
-                    <span style="display: inline-block; background-color: {{ $wantedColor }}; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; vertical-align: middle; margin-right: 3px;">WANTED</span>
-                    @foreach($wanteds->take($maxHeaderItems) as $post)<a href="#msg-{{ $post['message']->id }}" style="color: #ffffff; text-decoration: underline;">{{ $post['itemName'] }}</a>@if(!$loop->last), @endif @endforeach @if($wanteds->count() > $maxHeaderItems) <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: underline;">+{{ $wanteds->count() - $maxHeaderItems }} more</a> @endif
-                    @endif
-                </mj-text>
-            </mj-column>
+        {{-- Header - Freegle brand green with logo + thumbnail nav --}}
+        {{-- Thumbnails use trackedImageUrl (proxy) when available, falling back
+             to displayImageUrl. Each thumbnail links to its card anchor. --}}
+        {{-- Skip posts with placeholder images — only show real photos in the
+             header strip so the thumbnail nav is a faithful preview of what
+             follows, not a wall of default Offer/Wanted icons. Cards still
+             show the placeholder for no-photo posts further down. --}}
+        {{-- Render up to 10 thumbs; @media in the head hides 5-9 on mobile so
+             the visible thumbs stay large enough to read on a 360px viewport.
+             Other clients (eM Client, Apple Mail, Gmail desktop via AMP) keep
+             the full row. --}}
+        @php
+            $headerThumbs = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->take(10)->values();
+        @endphp
+        @if($headerThumbs->isNotEmpty())
+        <mj-section mj-class="bg-success" padding="12px 16px">
+            {{-- One mj-column per item (logo + each thumb) inside an mj-group
+                 so they don't stack on mobile. Each column gets an equal share
+                 of the row, and each mj-image is width="100%" so it fills its
+                 column — the strip auto-sizes to whatever space is available,
+                 fewer thumbs = larger images, more thumbs = smaller. Sources
+                 are pre-cropped square (240×240) by the delivery proxy so the
+                 natural aspect ratio is 1:1; mj-image preserves it. --}}
+            <mj-group>
+                {{-- Every column gets the SAME left/right padding so each
+                     takes exactly the same share of the row (an unbalanced
+                     padding on the last column made it visibly wider in
+                     K-9 Mail). 4px each side = 8px between adjacent thumbs.
+                     css-class tags individual columns so @media can hide
+                     header-thumb-5..9 on mobile. --}}
+                <mj-column vertical-align="middle" padding-left="4px" padding-right="4px" padding-top="0" padding-bottom="0" css-class="fd-header-col">
+                    <mj-image
+                        src="{{ config('freegle.branding.logo_url') }}"
+                        alt="Freegle"
+                        width="100%"
+                        padding="0"
+                        align="center"
+                    />
+                </mj-column>
+                @foreach($headerThumbs as $post)
+                <mj-column vertical-align="middle" padding-left="4px" padding-right="4px" padding-top="0" padding-bottom="0" css-class="fd-header-col fd-header-thumb-{{ $loop->index }}">
+                    <mj-image
+                        src="{{ $post['thumbImageUrl'] }}"
+                        href="#msg-{{ $post['message']->id }}"
+                        alt="{{ $post['itemName'] }}"
+                        width="100%"
+                        padding="0"
+                        border="2px solid rgba(255,255,255,0.6)"
+                        border-radius="4px"
+                    />
+                </mj-column>
+                @endforeach
+            </mj-group>
         </mj-section>
+        @endif
 
         {{-- Post cards --}}
         @foreach($posts as $index => $post)
@@ -251,62 +315,146 @@
         </mj-section>
         @endif
 
+        {{-- Daily card structure:
+             - Top: a 2-column block (photo + content) wrapped in mj-group
+               so it STAYS 2-column on mobile (mj-group blocks MJML's
+               default <480px stack).
+             - Content column on desktop carries pill + title + location +
+               description AND meta + byline + first-posted + Reply.
+             - On mobile, the meta/byline/first-posted/Reply elements are
+               hidden inside col 2 (.fd-hide-mobile) and a duplicate
+               full-width section appears below the card (.fd-hide-desktop).
+             - Clients without @media support (Outlook desktop) see the
+               default state: full-width section hidden, in-column copy
+               shown — i.e. the desktop layout. --}}
         <mj-section background-color="#ffffff" padding="12px 20px">
+            <mj-group>
+                <mj-column width="30%" vertical-align="top" padding="0 12px 0 0">
+                    {{-- thumbImageUrl is the square (fit=cover) 240x240 crop, so
+                         mj-image renders square at the rendered size. width="100%"
+                         makes the image fill the column — it scales naturally as
+                         the column shrinks on mobile, no fluid-on-mobile blow-up. --}}
+                    <mj-image
+                        src="{{ $post['thumbImageUrl'] }}"
+                        href="{{ $post['messageUrl'] }}"
+                        alt="{{ $post['itemName'] }}"
+                        width="100%"
+                        border-radius="4px"
+                        padding="0"
+                    />
+                </mj-column>
+                <mj-column width="70%" vertical-align="top">
+                    <mj-text padding="0" font-size="14px" color="#212529">
+                        <a id="msg-{{ $post['message']->id }}"></a>
+                        {{-- Pill on its own row, title + location below — same
+                             stacking order as the AMP variant's .post-type-row /
+                             .post-title block. --}}
+                        <div style="margin-bottom: 6px;">
+                            <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 3px; line-height: 1; letter-spacing: 0.3px; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
+                        </div>
+                        <div style="padding-bottom: 4px;">
+                            <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 1.4;">{{ $post['itemName'] }}</a>
+                            @if($post['locationName'])
+                            <br/><span style="color: #212529; font-size: 12px; font-weight: 500;">{{ $post['locationName'] }}</span>
+                            @endif
+                        </div>
+                        {{-- Desktop (in-column) copy of desc + meta + byline + Reply.
+                             INLINE display:none = hidden by default, so mobile and
+                             <style>-stripping clients (Gmail mobile web) fall back to
+                             the full-width .fd-narrow-only copy below. The min-width
+                             @media reveals this on wide screens that keep <style>. --}}
+                        <div class="fd-wide-only" style="display: none;">
+                            @if($post['messageText'] || $post['postedToText'])
+                            <div style="padding-top: 2px;">
+                                @if($post['messageText'])
+                                <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                                @endif
+                                @if($post['postedToText'])
+                                <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
+                                @endif
+                            </div>
+                            @endif
+                            <div style="margin-top: 6px; color: #888888; font-size: 12px;">
+                                @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
+                            </div>
+                            @if(!empty($post['posterName']) || !empty($post['groupName']))
+                            <div style="margin-top: 8px; color: #888888; font-size: 12px; line-height: 22px;">
+                                @if(!empty($post['posterAvatarUrl']))
+                                <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 8px;" />
+                                @endif
+                                @if(!empty($post['posterName']))
+                                Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+                                @endif
+                                @if(!empty($post['groupName']))
+                                on @if(!empty($post['groupUrl']))<a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline; font-weight: bold;">{{ $post['groupName'] }}</a>@else<strong style="color: #555555;">{{ $post['groupName'] }}</strong>@endif
+                                @endif
+                            </div>
+                            @endif
+                            @if(!empty($post['firstPostedFormatted']))
+                            <div style="margin-top: 4px; font-size: 11px; color: #999999;">
+                                First posted&nbsp;{{ $post['firstPostedFormatted'] }}
+                            </div>
+                            @endif
+                            <div style="margin-top: 10px;">
+                                <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
+                            </div>
+                        </div>
+                    </mj-text>
+                </mj-column>
+            </mj-group>
+        </mj-section>
+
+        {{-- Mobile-only: full-width row below the 2-column block carrying
+             meta + byline + first-posted + Reply. Hidden by default; the
+             @media (max-width: 480px) block reveals it. Outlook desktop
+             (no @media) keeps it hidden — the in-column copy above stays
+             visible there. --}}
+        {{-- The whole reflow copy carries INLINE display:none so clients that
+             strip <style> (Gmail mobile web) keep it hidden — no duplicate of
+             the in-column copy. The @media block (kept only by clients that
+             preserve <style>) flips it to block !important and hides the
+             in-column copy instead, giving the full-width mobile reflow there.
+             mj-section padding=0 + the padding on the inner div means the
+             collapsed (display:none) state leaves no gap on Gmail. --}}
+        <mj-section background-color="#ffffff" padding="0">
             <mj-column>
                 <mj-text padding="0" font-size="14px" color="#212529">
-                    <a id="msg-{{ $post['message']->id }}"></a>
-                    <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; width: 100%;">
-                        {{-- Top row: image (rowspan) + title/description --}}
-                        <tr>
-                            <td rowspan="2" style="vertical-align: top; width: 120px; height: 120px; padding-right: 16px;">
-                                <a href="{{ $post['messageUrl'] }}">
-                                    <img src="{{ $post['trackedImageUrl'] }}" alt="{{ $post['itemName'] }}" width="120" height="120" style="display: block; width: 120px; height: 120px; object-fit: cover;" />
-                                </a>
-                            </td>
-                            <td style="vertical-align: top;">
-                                <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; width: 100%;">
-                                    <tr>
-                                        <td style="vertical-align: top; width: 85px; padding-right: 8px;">
-                                            <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: bold; padding: 6px 11px; border-radius: 4px; line-height: 1;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
-                                        </td>
-                                        <td style="vertical-align: top;">
-                                            <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none; font-weight: 600; font-size: 15px; line-height: 1.4;">{{ $post['itemName'] }}</a>
-                                            @if($post['locationName'])
-                                            <br/><span style="color: #212529; font-size: 12px; font-weight: 500;">{{ $post['locationName'] }}</span>
-                                            @endif
-                                        </td>
-                                    </tr>
-                                    @if($post['messageText'] || $post['postedToText'])
-                                    <tr>
-                                        <td colspan="2" style="padding-top: 4px;">
-                                            @if($post['messageText'])
-                                            <span style="color: #808080; font-size: 13px; font-weight: 500; line-height: 1.4;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
-                                            @endif
-                                            @if($post['postedToText'])
-                                            <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
-                                            @endif
-                                        </td>
-                                    </tr>
-                                    @endif
-                                </table>
-                            </td>
-                        </tr>
-                        {{-- Bottom row: reply button + time, aligned to bottom of image --}}
-                        <tr>
-                            <td style="vertical-align: bottom; padding-top: 6px;">
-                                <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; width: 100%;">
-                                    <tr>
-                                        <td style="vertical-align: middle;">
-                                            <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 4px; text-decoration: none;">Reply</a>
-                                        </td>
-                                        <td style="vertical-align: middle; text-align: right; color: #999999; font-size: 12px; white-space: nowrap;">
-                                            @if($post['distanceText'])<span style="margin-right: 8px;">{{ $post['distanceText'] }}</span>@endif{{ $post['arrivalFormatted'] }}
-                                        </td>
-                                    </tr>
-                                </table>
-                            </td>
-                        </tr>
-                    </table>
+                    <div class="fd-narrow-only" style="padding: 0 20px 8px;">
+                        @if($post['messageText'] || $post['postedToText'])
+                        <div style="padding-bottom: 6px;">
+                            @if($post['messageText'])
+                            <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                            @endif
+                            @if($post['postedToText'])
+                            <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
+                            @endif
+                        </div>
+                        @endif
+                        <div style="color: #888888; font-size: 12px;">
+                            @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
+                        </div>
+                        @if(!empty($post['posterName']) || !empty($post['groupName']))
+                        <div style="margin-top: 8px; color: #888888; font-size: 12px; line-height: 22px;">
+                            @if(!empty($post['posterAvatarUrl']))
+                            <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 8px;" />
+                            @endif
+                            @if(!empty($post['posterName']))
+                            Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+                            @endif
+                            @if(!empty($post['groupName']))
+                            on @if(!empty($post['groupUrl']))<a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline; font-weight: bold;">{{ $post['groupName'] }}</a>@else<strong style="color: #555555;">{{ $post['groupName'] }}</strong>@endif
+                            @endif
+                        </div>
+                        @endif
+                        @if(!empty($post['firstPostedFormatted']))
+                        <div style="margin-top: 4px; font-size: 11px; color: #999999;">
+                            First posted&nbsp;{{ $post['firstPostedFormatted'] }}
+                        </div>
+                        @endif
+                        <div style="margin-top: 10px;">
+                            <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
+                        </div>
+                    </div>
                 </mj-text>
             </mj-column>
         </mj-section>
