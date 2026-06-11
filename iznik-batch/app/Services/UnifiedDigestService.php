@@ -531,10 +531,21 @@ class UnifiedDigestService
      */
     protected function getUsersForDigest(string $mode, ?int $userId = null, int $shard = 0, int $shards = 1): \Illuminate\Support\LazyCollection
     {
+        // V1 parity (User::sendOurMails, iznik-server/include/user/User.php:4117
+        // and Engage::USER_INACTIVE = 365*12*3600 = 182.5 days): the canonical
+        // "is this user reachable" gate excludes anyone inactive for half a
+        // year, all Trash Nothing-imported users (handled separately by TN),
+        // and any address known to be bouncing. V2 previously used 90 days
+        // and didn't check tnuserid / bouncing, which (a) silently dropped
+        // ~30k users V1 still emails and (b) silently emailed TN users and
+        // bouncing addresses V1 explicitly skips — measured 2026-06-11
+        // before this patch.
         $query = User::query()
             ->whereNull('deleted')
             ->whereNotNull('lastaccess')
-            ->where('lastaccess', '>', now()->subDays(90)); // Active in last 90 days.
+            ->where('lastaccess', '>', now()->subSeconds(365 * 12 * 3600))
+            ->whereNull('tnuserid')
+            ->where('bouncing', 0);
 
         if ($userId) {
             $query->where('id', $userId);
