@@ -23,10 +23,16 @@ use Illuminate\Support\Facades\DB;
  * "Donations today" email; the split keeps each concern legible.
  *
  * Dedup is by a config-table high-water-mark (CONFIG_KEY_LAST_ID): each run
- * shows only donations with id > the stored mark, then advances the mark to
- * the max id mailed. First run initialises the mark to MAX(id) so the
- * historical backlog is not dumped. (The per-row users_donations.thanked
- * column is display-only here and is not used for filtering.)
+ * examines only donations with id > the stored mark, then advances the mark
+ * to the max id *examined* (thanked or skipped) so a continuation or
+ * sub-threshold gift is never reconsidered. First run initialises the mark
+ * to MAX(id) so the historical backlog is not dumped. (The per-row
+ * users_donations.thanked column is display-only here and is not used for
+ * filtering.)
+ *
+ * `--today` resend mode bypasses the mark entirely: it selects today's
+ * donations and does not read or advance the mark, so a normal cron run is
+ * unaffected. `--recipient=` routes that resend to an ad-hoc address.
  */
 class DonationThankPrepService
 {
@@ -51,34 +57,45 @@ class DonationThankPrepService
     ];
 
     /**
-     * @return array{donations: int, total: float, sent: bool, last_id: int}
+     * @param  bool         $dryRun            Build the digest but don't send or advance the mark.
+     * @param  string|null  $recipientOverride Send to this address instead of thanks_addr (for ad-hoc resends).
+     * @param  bool         $todayOnly         Select today's donations and ignore/preserve the high-water mark
+     *                                         (for resends — does not advance the mark).
+     * @return array{donations: int, examined: int, total: float, sent: bool, last_id: int}
      */
-    public function sendDailyThankPrep(bool $dryRun = false): array
+    public function sendDailyThankPrep(bool $dryRun = false, ?string $recipientOverride = null, bool $todayOnly = false): array
     {
         // thanks_addr always resolves: its env default falls back to the
         // fundraising address (see config/freegle.php), so no runtime ??
         // fallback is needed.
-        $recipient = config('freegle.mail.thanks_addr');
+        $recipient = $recipientOverride ?: config('freegle.mail.thanks_addr');
 
-        // High-water mark: the largest donation id we've already shown.
-        // On first run the row doesn't exist — initialise to MAX(id) so the
-        // historical backlog (~137k rows in prod as of deploy) isn't dumped
-        // into Jacky's inbox. In a dry run we compute that mark but must NOT
-        // persist it (a dry run has no side effects).
-        $lastId = $this->getLastSentId($dryRun);
-
-        $donations = DB::table('users_donations')
-            ->where('id', '>', $lastId)
-            ->orderBy('id')
-            ->get();
-
-        if ($donations->isEmpty()) {
-            return ['donations' => 0, 'total' => 0.0, 'sent' => false, 'last_id' => $lastId];
+        if ($todayOnly) {
+            // Resend / ad-hoc mode: select today's donations and neither read
+            // nor advance the high-water mark, so a normal cron run is
+            // unaffected. Server time is UTC; donation timestamps are UTC.
+            $lastId    = null;
+            $donations = DB::table('users_donations')
+                ->whereRaw('timestamp >= CURDATE()')
+                ->orderBy('id')
+                ->get();
+        } else {
+            // High-water mark: the largest donation id we've already examined.
+            // On first run the row doesn't exist — initialise to MAX(id) so the
+            // historical backlog (~137k rows in prod as of deploy) isn't dumped
+            // into the thanker's inbox. In a dry run we compute that mark but
+            // must NOT persist it (a dry run has no side effects).
+            $lastId    = $this->getLastSentId($dryRun);
+            $donations = DB::table('users_donations')
+                ->where('id', '>', $lastId)
+                ->orderBy('id')
+                ->get();
         }
 
-        $total  = 0.0;
-        $cards  = [];
-        $maxId  = $lastId;
+        $examined = $donations->count();
+        $total    = 0.0;
+        $cards    = [];
+        $maxId    = (int) ($lastId ?? 0);
         foreach ($donations as $donation) {
             // Always advance the high-water mark, even for donations we skip,
             // so a continuation or sub-threshold gift isn't re-examined every
@@ -87,22 +104,24 @@ class DonationThankPrepService
                 $maxId = (int) $donation->id;
             }
 
-            if (!$this->shouldThank($donation)) {
+            $reason = $this->thankReason($donation);
+            if ($reason === null) {
                 continue;
             }
 
             $total  += (float) $donation->GrossAmount;
-            $cards[] = $this->buildDonationCard($donation);
+            $cards[] = $this->buildDonationCard($donation, $reason);
         }
 
         // Nothing in this batch warranted a thank-you (all continuations,
         // sub-threshold one-offs, or excluded payers). Advance the mark so the
-        // skipped rows don't return, but send no email.
+        // skipped rows don't return, but send no email. In --today mode we
+        // never touch the mark.
         if (empty($cards)) {
-            if (!$dryRun) {
+            if (!$todayOnly && !$dryRun && $maxId > (int) ($lastId ?? 0)) {
                 $this->setLastSentId($maxId);
             }
-            return ['donations' => 0, 'total' => 0.0, 'sent' => false, 'last_id' => $maxId];
+            return ['donations' => 0, 'examined' => $examined, 'total' => 0.0, 'sent' => false, 'last_id' => $maxId];
         }
 
         if (!$dryRun) {
@@ -118,15 +137,19 @@ class DonationThankPrepService
                 (string) $recipient,
             );
 
-            // Advance the mark only after spool returns. If spool throws we
-            // leave the mark in place and the next cron tick retries the
-            // same range — at-least-once delivery, the same trade-off the
-            // EmailSpoolerService callers already accept.
-            $this->setLastSentId($maxId);
+            // Advance the mark only after spool returns, and only in normal
+            // (high-water) mode. If spool throws we leave the mark in place
+            // and the next cron tick retries the same range — at-least-once
+            // delivery, the same trade-off the EmailSpoolerService callers
+            // already accept. --today mode never touches the mark.
+            if (!$todayOnly) {
+                $this->setLastSentId($maxId);
+            }
         }
 
         return [
             'donations' => count($cards),
+            'examined'  => $examined,
             'total'     => $total,
             'sent'      => !$dryRun,
             'last_id'   => $maxId,
@@ -134,28 +157,45 @@ class DonationThankPrepService
     }
 
     /**
-     * Should this donation produce a thank-you card? Mirrors V1
+     * Why this donation warrants a thank-you, or null to skip. Mirrors V1
      * donateipn.php's trigger so we don't re-thank established donors:
      *
      *   - never for an excluded payer (PayPal Giving Fund / Tipalti);
      *   - for recurring donations, only the donor's first-ever payment (a new
      *     sign-up), never the monthly continuations;
      *   - for one-off donations, only at or above the manual-thanks threshold.
+     *
+     * The reason is surfaced on the card so the thanker can see at a glance
+     * which kind of thank-you is due.
+     *
+     * @return array{key: string, text: string}|null
      */
-    private function shouldThank(object $donation): bool
+    private function thankReason(object $donation): ?array
     {
         if ($this->isExcludedPayer((string) ($donation->Payer ?? ''))
             || (string) $donation->source === 'PayPalGivingFund') {
-            return false;
+            return null;
         }
 
         $recurring = in_array((string) $donation->TransactionType, self::RECURRING_TYPES, true);
 
         if ($recurring) {
-            return $this->isFirstDonation($donation);
+            return $this->isFirstDonation($donation)
+                ? ['key' => 'new-recurring', 'text' => 'New recurring donation just set up']
+                : null;
         }
 
-        return (float) $donation->GrossAmount >= (float) config('freegle.donations.manual_thanks', 20);
+        $amount    = (float) $donation->GrossAmount;
+        $threshold = (float) config('freegle.donations.manual_thanks', 20);
+        if ($amount >= $threshold) {
+            return [
+                'key'  => 'large-oneoff',
+                'text' => 'One-off donation of £' . number_format($amount, 2)
+                          . ' (£' . number_format($threshold, 0) . ' or more)',
+            ];
+        }
+
+        return null;
     }
 
     /**
@@ -232,7 +272,7 @@ class DonationThankPrepService
      * else they've given, where they sit in the Gift Aid register, what
      * mods have noted, the most recent member↔mod chat.
      */
-    private function buildDonationCard(object $donation): array
+    private function buildDonationCard(object $donation, array $reason): array
     {
         $recurring = in_array((string) $donation->TransactionType, self::RECURRING_TYPES, true);
 
@@ -240,6 +280,10 @@ class DonationThankPrepService
             ->setTimezone('Europe/London');
 
         $card = [
+            // Why this donation is in the digest — shown on the card so the
+            // thanker can see at a glance what kind of thank-you is due.
+            'thankReason'    => (string) $reason['text'],
+            'thankReasonKey' => (string) $reason['key'],
             'donation' => [
                 'id'             => (int) $donation->id,
                 'amount'         => (float) $donation->GrossAmount,

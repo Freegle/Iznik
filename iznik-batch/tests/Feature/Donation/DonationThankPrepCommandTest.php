@@ -94,13 +94,107 @@ class DonationThankPrepCommandTest extends TestCase
         $this->insertDonation(['GrossAmount' => 25.50, 'Payer' => 'bob@example.com']);
 
         $this->artisan('mail:donations:thank-prep')
-            ->expectsOutputToContain('Sent thank-prep digest for 2 donor(s) needing thanks, totalling £50.50')
+            ->expectsOutputToContain('Sent thank-prep digest for 2 donor(s) needing thanks (of 2 new donation(s) examined), totalling £50.50')
             ->assertExitCode(0);
 
         Mail::assertSentCount(1);
         Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
             return $mail->envelope()->subject === 'Donations needing thanks: 2 donors, £50.50'
                 && count($mail->cards) === 2;
+        });
+    }
+
+    public function test_card_carries_thank_reason_for_each_eligibility_path(): void
+    {
+        Mail::fake();
+
+        // One-off >= threshold → "large-oneoff" reason with the amount.
+        $this->insertDonation([
+            'GrossAmount'     => 30.00,
+            'Payer'           => 'big-oneoff@example.com',
+            'TransactionType' => 'Completed',
+        ]);
+        // First-ever recurring sign-up → "new-recurring" reason.
+        $this->insertDonation([
+            'GrossAmount'     => 5.00,
+            'Payer'           => 'first-monthly@example.com',
+            'TransactionType' => 'subscr_payment',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            $byPayer = [];
+            foreach ($mail->cards as $card) {
+                $byPayer[$card['donation']['payer']] = $card;
+            }
+            $oneoff = $byPayer['big-oneoff@example.com']     ?? null;
+            $newrec = $byPayer['first-monthly@example.com']  ?? null;
+
+            return $oneoff !== null
+                && $oneoff['thankReasonKey'] === 'large-oneoff'
+                && str_contains($oneoff['thankReason'], '£30.00')
+                && $newrec !== null
+                && $newrec['thankReasonKey'] === 'new-recurring'
+                && $newrec['thankReason'] === 'New recurring donation just set up';
+        });
+    }
+
+    public function test_today_mode_selects_todays_donations_and_leaves_mark_untouched(): void
+    {
+        Mail::fake();
+
+        // Seed an existing high-water mark — --today must NOT touch it, and
+        // must NOT exclude rows by id; today's donations are sent regardless.
+        $todayId = $this->insertDonation([
+            'GrossAmount' => 25.00,
+            'Payer'       => 'today@example.com',
+            'timestamp'   => now(),
+        ]);
+        $this->setLastSentId($todayId + 999);
+        $markBefore = (string) ($todayId + 999);
+
+        $this->artisan('mail:donations:thank-prep', ['--today' => true])
+            ->expectsOutputToContain('TODAY mode')
+            ->expectsOutputToContain('Sent thank-prep digest for 1 donor(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+
+        $row = DB::table('config')->where('key', 'donation_thank_prep_last_id')->first();
+        $this->assertSame($markBefore, $row->value, '--today must not advance the mark');
+    }
+
+    public function test_today_mode_excludes_yesterdays_donations(): void
+    {
+        Mail::fake();
+
+        DB::table('config')->where('key', 'donation_thank_prep_last_id')->delete();
+        $this->insertDonation([
+            'GrossAmount' => 25.00,
+            'Payer'       => 'yesterday@example.com',
+            'timestamp'   => now()->subDay(),
+        ]);
+
+        $this->artisan('mail:donations:thank-prep', ['--today' => true])
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_recipient_override_routes_digest_to_given_address(): void
+    {
+        Mail::fake();
+
+        $this->insertDonation(['GrossAmount' => 25.00, 'Payer' => 'override@example.com']);
+
+        $this->artisan('mail:donations:thank-prep', ['--recipient' => 'ad-hoc@example.org'])
+            ->expectsOutputToContain('Recipient override: ad-hoc@example.org')
+            ->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return $mail->recipientEmail === 'ad-hoc@example.org';
         });
     }
 

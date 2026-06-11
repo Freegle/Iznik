@@ -33,11 +33,13 @@
           Donations needing thanks: {{ count($cards) }} — total £{{ number_format($total, 2) }}
         </mj-text>
         <mj-text padding="0 10px 6px" font-size="13px" color="#666">
-          Each card has the data you'd otherwise pull together by hand: donor identity,
-          donation history, Gift Aid status, group memberships, recent mod notes, member↔mod
-          chat snippets, and links into the relevant Modtools pages. Each donation appears
-          in exactly one digest — it won't be repeated tomorrow, so please action every card
-          before this email scrolls away.
+          Only donations that warrant a personal thank-you appear here: one-off gifts at or
+          above the manual-thanks threshold, and newly set-up recurring donations. Each card
+          states why a thank-you is due, plus the data you'd otherwise pull together by
+          hand: donor identity, donation history, Gift Aid status, group memberships, recent
+          mod notes, member↔mod chat snippets, and links into the relevant Modtools pages.
+          Each donation appears in exactly one digest — it won't be repeated tomorrow, so
+          please action every card before this email scrolls away.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -88,6 +90,11 @@
                   <div style="font-size:13px;color:#555;margin-top:2px;">
                     at {{ $d['time'] }} &nbsp;via&nbsp; {{ $d['source'] }}@if ($d['transaction']) &nbsp;&middot;&nbsp; ref <span style="font-family:monospace;font-size:12px;">{{ $d['transaction'] }}</span>@endif
                   </div>
+                  @if (!empty($card['thankReason']))
+                    <div style="font-size:13px;color:#155724;font-weight:bold;margin-top:4px;">
+                      Why thank: {{ $card['thankReason'] }}
+                    </div>
+                  @endif
                 </td>
                 <td style="text-align:right;font-size:12px;">
                   @foreach ($flags as $f)
