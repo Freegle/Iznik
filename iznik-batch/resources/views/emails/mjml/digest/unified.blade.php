@@ -357,6 +357,12 @@
                                     @endif
                                 </div>
                                 @endif
+                                {{-- 📍 distance · 🕒 time. Sits between the description and
+                                     the byline, matching the AMP variant's .post-meta order
+                                     (meta then byline then Reply). --}}
+                                <div style="margin-top: 6px; color: #888888; font-size: 12px;">
+                                    @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
+                                </div>
                                 {{-- "Posted by <name> on <group>" byline. Avatar + styling
                                      match the AMP variant's .post-byline so HTML and AMP
                                      readers see the same attribution row. 22px line-height
@@ -365,7 +371,7 @@
                                      green) so it reads as "the community where this was
                                      posted" rather than a CTA. --}}
                                 @if(!empty($post['posterName']) || !empty($post['groupName']))
-                                <div style="margin-top: 10px; color: #888888; font-size: 12px; line-height: 22px;">
+                                <div style="margin-top: 8px; color: #888888; font-size: 12px; line-height: 22px;">
                                     @if(!empty($post['posterAvatarUrl']))
                                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 8px;" />
                                     @endif
@@ -395,17 +401,11 @@
                              clients that support @media. --}}
                         <tr>
                             <td style="vertical-align: bottom; padding-top: 8px; padding-bottom: 8px;">
-                                <!--[if mso]><table cellpadding="0" cellspacing="0"><tr><td style="vertical-align:middle;padding-right:8px;"><![endif]-->
-                                {{-- padding-bottom on the wrap leaves breathing room below
-                                     the Reply button before the next card divider. --}}
-                                <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; padding-right: 8px; padding-bottom: 4px;">
-                                    <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none; white-space: nowrap;">Reply</a>
-                                </div><!--[if mso]></td><td style="vertical-align:middle;"><![endif]-->
-                                {{-- 📍 distance · 🕒 time — same icons and middle-dot
-                                     separator as the AMP .post-meta strip; same #888 colour. --}}
-                                <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; color: #888888; font-size: 12px; white-space: nowrap; padding-bottom: 4px;">
-                                    @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
-                                </div><!--[if mso]></td></tr></table><![endif]-->
+                                {{-- Reply on its own row. The 📍/🕒 meta strip lives above
+                                     the byline now (AMP-parity order), so this row only
+                                     carries the primary CTA — no longer fighting the meta
+                                     text for horizontal space on narrow viewports. --}}
+                                <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none; white-space: nowrap;">Reply</a>
                             </td>
                         </tr>
                     </table>
