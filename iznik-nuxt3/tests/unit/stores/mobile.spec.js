@@ -657,6 +657,131 @@ describe('mobile store', () => {
     })
   })
 
+  describe('reRegisterPush', () => {
+    function makePushPlugin(receive = 'granted') {
+      return {
+        checkPermissions: vi.fn().mockResolvedValue({ receive }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+    }
+
+    it('calls register() on a native app with a stored plugin and granted permission', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = makePushPlugin('granted')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.checkPermissions).toHaveBeenCalled()
+      expect(plugin.register).toHaveBeenCalled()
+    })
+
+    it('does NOT call register() when not on the app', async () => {
+      const store = useMobileStore()
+      store.isApp = false
+      const plugin = makePushPlugin('granted')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call register() when no plugin reference is stored', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      store.pushPlugin = null
+
+      // Should simply no-op without throwing.
+      await expect(store.reRegisterPush()).resolves.toBeUndefined()
+    })
+
+    it('does NOT call register() when permission is not granted', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = makePushPlugin('denied')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.checkPermissions).toHaveBeenCalled()
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('swallows errors thrown during re-registration', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockRejectedValue(new Error('boom')),
+      }
+      store.pushPlugin = plugin
+
+      await expect(store.reRegisterPush()).resolves.toBeUndefined()
+    })
+  })
+
+  describe('initWakeUpActions resume handler', () => {
+    let store
+    let capturedListener
+    let mockApp
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'resume') capturedListener = fn
+        }),
+      }
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    it('re-registers push on resume when on a native app', async () => {
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+
+      store.initWakeUpActions(mockApp)
+      expect(capturedListener).not.toBeNull()
+
+      await capturedListener({})
+      // Allow the async reRegisterPush() to settle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      expect(plugin.register).toHaveBeenCalled()
+    })
+
+    it('does not re-register push on resume when not on the app', async () => {
+      store.isApp = false
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+
+      store.initWakeUpActions(mockApp)
+      await capturedListener({})
+      await Promise.resolve()
+      await Promise.resolve()
+
+      // Existing resume behaviour still runs.
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      // But registration is not re-triggered off-app.
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+  })
+
   describe('handleNotification duplicate-navigation guard', () => {
     it('skips router.push when already on the target chat route', async () => {
       // AssertFlip: before the fix, router.currentRoute.path is accessed directly

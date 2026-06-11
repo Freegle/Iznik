@@ -45,6 +45,7 @@ export const useMobileStore = defineStore({
     inlineReply: false,
     chatid: false,
     pushed: false,
+    pushPlugin: null,
     route: false,
     apprequiredversion: false,
     appupdaterequired: false,
@@ -200,8 +201,38 @@ export const useMobileStore = defineStore({
 
             const chatStore = useChatStore()
             chatStore.fetchChats(null, false)
+
+            // Re-trigger push registration on resume so that a missed/failed
+            // initial registration or a rotated FCM/APNs token recovers. The
+            // existing 'registration' listener re-fires with the current token
+            // and savePushId() is a no-op unless something actually changed.
+            this.reRegisterPush()
           } catch (e) {}
         })
+      }
+    },
+
+    // Re-register for push on the native app. Safe to call repeatedly: it only
+    // calls register() (which re-fires the existing 'registration' listener);
+    // it does NOT re-add listeners, re-create channels or re-request
+    // permissions. No-op on web or before push has been initialised.
+    async reRegisterPush() {
+      if (!process.client || !this.isApp || !this.pushPlugin) {
+        return
+      }
+
+      try {
+        const permStatus = await this.pushPlugin.checkPermissions()
+        if (permStatus?.receive === 'granted') {
+          dbg()?.info('Re-registering push on resume')
+          await this.pushPlugin.register()
+        } else {
+          dbg()?.info('Skipping push re-register; permission not granted', {
+            receive: permStatus?.receive,
+          })
+        }
+      } catch (e) {
+        dbg()?.warn('Push re-register on resume failed', e?.message)
       }
     },
 
@@ -259,6 +290,11 @@ export const useMobileStore = defineStore({
 
     async initPushNotifications(PushNotifications, Badge) {
       dbg()?.info('initPushNotifications started', { isiOS: this.isiOS })
+
+      // Keep a reference to the plugin so we can re-register on app resume
+      // (see reRegisterPush()) without re-adding listeners or re-requesting
+      // permissions.
+      this.pushPlugin = PushNotifications
 
       if (!this.isiOS) {
         // Delete old channels
