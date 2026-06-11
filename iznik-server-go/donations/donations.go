@@ -68,6 +68,47 @@ func getExcludedPayers() []string {
 	return result
 }
 
+// MatchUserByEmailOrPriorDonation finds a still-valid Freegle user for a payer
+// email, mirroring V1 donateipn.php / User::findByEmail. It tries, in order:
+//
+//  1. an exact or canonical match against a registered address — V1 matched
+//     `email = ? OR canon = ?`, but the Go IPN handlers had dropped the canon
+//     leg, so variant addresses (gmail dots/+tags, googlemail, TN variants)
+//     stopped matching; and
+//  2. a prior donation from the same Payer that is already linked to a
+//     non-deleted user. This catches recurring donors whose Freegle email later
+//     changed or was removed while PayPal keeps billing the original address.
+//     The `users.deleted IS NULL` guard makes it merge-safe: a merged-away
+//     account is marked deleted (and its donations reassigned to the survivor),
+//     so we never re-link to a dead account — we just fall through to unmatched.
+//
+// Returns 0 when there is no confident match.
+func MatchUserByEmailOrPriorDonation(email string) uint64 {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return 0
+	}
+
+	gdb := database.DBConn
+	var userID uint64
+
+	// 1. Registered address, exact or canonical (reuses the shared util so the
+	//    canon form matches how addresses are stored).
+	canon := user.CanonicalizeEmail(email)
+	gdb.Raw("SELECT userid FROM users_emails WHERE (email = ? OR canon = ?) AND userid IS NOT NULL LIMIT 1",
+		email, canon).Scan(&userID)
+	if userID > 0 {
+		return userID
+	}
+
+	// 2. Prior donation from the same Payer, linked to a still-valid user.
+	gdb.Raw("SELECT ud.userid FROM users_donations ud "+
+		"JOIN users u ON u.id = ud.userid "+
+		"WHERE ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL "+
+		"ORDER BY ud.timestamp DESC LIMIT 1", email).Scan(&userID)
+	return userID
+}
+
 // GetDonations returns donation target and amount raised for the current month
 // @Summary Get donations summary
 // @Description Returns the donation target and amount raised for the current month, optionally filtered by group

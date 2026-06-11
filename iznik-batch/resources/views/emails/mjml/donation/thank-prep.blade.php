@@ -83,7 +83,7 @@
               <tr>
                 <td style="text-align:left;">
                   <div style="font-size:18px;font-weight:bold;color:#222;">
-                    {{ $amountFmt }} &nbsp;to&nbsp; {{ $name }}
+                    {{ $amountFmt }} &nbsp;from&nbsp; {{ $name }}
                   </div>
                   <div style="font-size:13px;color:#555;margin-top:2px;">
                     at {{ $d['time'] }} &nbsp;via&nbsp; {{ $d['source'] }}@if ($d['transaction']) &nbsp;&middot;&nbsp; ref <span style="font-family:monospace;font-size:12px;">{{ $d['transaction'] }}</span>@endif
@@ -136,6 +136,20 @@
                   <td class="card-label">Member</td>
                   <td><span class="flag-pill flag-pill-warn">Unmatched</span> — sleuthing required (PayPal/Stripe email may differ from Freegle email)</td>
                 </tr>
+                @if (!empty($card['candidates']))
+                  <tr>
+                    <td class="card-label">Possible matches</td>
+                    <td>
+                      @foreach ($card['candidates'] as $cand)
+                        <div style="margin-bottom:3px;">
+                          <a href="{{ $cand['link'] }}">{{ $cand['name'] !== 'Unknown' ? $cand['name'] : ('#' . $cand['userid']) }}</a>
+                          @if ($cand['email'])&nbsp;<span style="color:#555;word-break:break-all;">&lt;{{ $cand['email'] }}&gt;</span>@endif
+                          <span style="color:#888;font-size:12px;">— {{ $cand['reason'] }}</span>
+                        </div>
+                      @endforeach
+                    </td>
+                  </tr>
+                @endif
               @endif
             </table>
           </mj-raw>
