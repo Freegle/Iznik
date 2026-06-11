@@ -152,32 +152,28 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEmpty($result);
     }
 
-    public function test_digest_excludes_users_own_posts(): void
+    public function test_digest_includes_users_own_posts(): void
     {
-        $poster = $this->createTestUser();
+        // V1 parity: the per-group digest selection in iznik-server
+        // include/mail/Digest.php has no fromuser != ? filter, so a user's
+        // own posts appear in their own digest. Mirror that here.
         $recipient = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        // Recipient wants daily digests — per-group emailfrequency=24 is the
-        // V1-parity selector.
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($poster, $group);
         $this->createMembership($recipient, $group, [
             'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
         ]);
 
-        // Create a message from the recipient (should be filtered out).
         $this->createTestMessage($recipient, $group);
 
-        // Run digest for recipient.
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
-        // No emails should be sent because the only message is from the recipient.
-        $this->assertEquals(0, $stats['emails_sent']);
+        $this->assertEquals(1, $stats['emails_sent']);
     }
 
     public function test_deduplication_same_subject_different_body_not_deduped(): void

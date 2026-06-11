@@ -265,9 +265,6 @@ class UnifiedDigestService
 
             $sponsorsCache = null;
             foreach ($users as $uid => $user) {
-                if ((int) $message->fromuser === (int) $uid) {
-                    continue;
-                }
                 if (!$user->email_preferred) {
                     continue;
                 }
@@ -679,9 +676,6 @@ class UnifiedDigestService
 
         // Deduplicate cross-posted items.
         $deduplicatedPosts = $this->deduplicatePosts($posts);
-
-        // Filter out user's own posts.
-        $deduplicatedPosts = $deduplicatedPosts->filter(fn($post) => $post['message']->fromuser !== $user->id)->values();
 
         if ($deduplicatedPosts->isEmpty()) {
             // Nothing to send, but still advance the tracker past these posts
