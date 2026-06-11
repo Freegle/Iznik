@@ -47,20 +47,15 @@
                 <mj-text padding="0 0 4px 0" font-size="18px" font-weight="700" color="#212529" line-height="1.25">
                     <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
-                {{-- Location --}}
-                @if($post['locationName'])
-                <mj-text padding="0 0 8px 0" font-size="13px" color="#666666">
-                    {{ $post['locationName'] }}
-                </mj-text>
-                @endif
                 {{-- The full description is rendered in its own section
                      below; no snippet here, since the immediate digest is
                      one post and a 120-char preview duplicates the body. --}}
-                {{-- Distance + time row --}}
+                {{-- Metadata row: location · distance · absolute time, all on
+                     one line like the web card (location was on its own line,
+                     which looked messy). Time is always absolute, not relative. --}}
                 <mj-text padding="0" font-size="12px" color="#888888">
-                    @if($post['distanceText'])
-                    <span style="margin-right: 12px;">&#x1F4CD; {{ $post['distanceText'] }}</span>
-                    @endif
+                    @if($post['locationName'])<span style="margin-right: 12px;">&#x1F4CD; {{ $post['locationName'] }}</span>@endif
+                    @if($post['distanceText'])<span style="margin-right: 12px;">{{ $post['distanceText'] }}</span>@endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
             </mj-column>

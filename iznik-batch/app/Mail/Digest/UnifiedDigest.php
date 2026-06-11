@@ -225,7 +225,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $firstPost = $this->posts->first();
             $groupId = $firstPost['postedToGroups'][0] ?? null;
             if ($groupId) {
-                $row = DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
+                $row = $this->groupRow($groupId);
                 $primaryGroupName = $row ? ($row->namefull ?: $row->nameshort) : null;
             }
         }
@@ -417,14 +417,30 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         );
     }
 
+    /**
+     * Resolve a group's {nameshort, namefull} row, reusing the batch groupLookup
+     * loaded by preparePosts() so we don't issue a redundant single-row SELECT
+     * per immediate-digest email. Falls back to a query only if the id wasn't
+     * among the digest's post groups.
+     */
+    protected function groupRow(?int $groupId): ?object
+    {
+        if (!$groupId) {
+            return null;
+        }
+        if (isset($this->groupLookup[$groupId])) {
+            return $this->groupLookup[$groupId];
+        }
+
+        return DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
+    }
+
     protected function getSubject(): string
     {
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
             $firstPost = $this->posts->first();
             $groupId = $firstPost['postedToGroups'][0] ?? null;
-            $groupRow = $groupId
-                ? DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull'])
-                : null;
+            $groupRow = $this->groupRow($groupId);
             $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
             // Decode HTML entities: the DB stores subjects HTML-encoded (e.g.
             // "Coffee &amp; Cake"); the email subject line is plain text and
