@@ -87,17 +87,49 @@
       grid-template-columns: 200px 1fr;
       gap: 14px;
     }
+    /* Multi-post card is a 2x2 grid: image in col 1, head (pill/title/
+       location) col 2 row 1, rest (desc/meta/byline/Reply) col 2 row 2.
+       On desktop the image spans both rows so its bottom edge lines up
+       with the bottom of the Reply accordion. On mobile the image shrinks
+       to a 110px column beside the head, and .post-rest breaks out to
+       span the full card width — mirroring the HTML variant's layout. */
     .post-img-wrap {
+      grid-column: 1;
+      grid-row: 1 / span 2;
       position: relative; /* required so amp-img layout="fill" fills it */
       min-height: 200px;
       border-radius: 4px;
       overflow: hidden;
     }
+    .post-head {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0; /* allow content to shrink */
+    }
+    .post-rest {
+      grid-column: 2;
+      grid-row: 2;
+      min-width: 0;
+    }
+    @media (max-width: 480px) {
+      .post-card {
+        grid-template-columns: 110px 1fr;
+        gap: 10px;
+      }
+      .post-img-wrap {
+        grid-row: 1;
+        min-height: 110px;
+      }
+      .post-rest {
+        grid-column: 1 / -1;
+      }
+    }
     /* AMP4Email disallows the object-fit attribute on <amp-img>; do it
        via CSS on the inner <img> the amp-img runtime renders. */
     .post-img-wrap amp-img img { object-fit: cover; }
+    /* Single-post (immediate) card keeps the flat .post-content wrapper. */
     .post-content {
-      min-width: 0; /* allow content to shrink */
+      min-width: 0;
     }
     /* OFFER / WANTED pill — matches the MJML chip shape (white text on
        a green or blue background pill) instead of plain coloured text,
@@ -112,8 +144,8 @@
       margin: 0 0 6px 0;
       letter-spacing: 0.3px;
     }
-    .post-type-offer { background-color: #338808; }
-    .post-type-wanted { background-color: #00A1CB; }
+    .post-type-offer { background-color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; }
+    .post-type-wanted { background-color: {{ \App\Mail\Digest\DigestStyle::WANTED_BLUE }}; }
     .post-type-row { margin: 0 0 6px 0; }
     .post-title {
       font-size: 16px;
@@ -247,7 +279,7 @@
     }
     .reply-chip {
       display: inline-block;
-      background-color: #338808;
+      background-color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};
       color: #ffffff;
       padding: 9px 26px;
       border-radius: 4px;
@@ -255,7 +287,7 @@
       font-weight: 700;
       text-align: center;
     }
-    .reply-chip.wanted { background-color: #00A1CB; }
+    .reply-chip.wanted { background-color: {{ \App\Mail\Digest\DigestStyle::WANTED_BLUE }}; }
     /* Hide the Reply chip once the user opens the accordion. We can hide
        the span (display: none works on grandchildren), and collapse the
        h4 to zero height so the form below sits where the chip was. The
@@ -565,7 +597,7 @@
       <div class="post-img-wrap">
         <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
       </div>
-      <div class="post-content">
+      <div class="post-head">
     @endif
         {{-- OFFER / WANTED pill. Wrapped in a <p> so it gets its own
              line + bottom margin, but the visible chip is a <span> —
@@ -583,6 +615,15 @@
           <br><span class="post-location">{{ $post['locationName'] }}</span>
           @endif
         </p>
+        @if(!$isSingle)
+        {{-- Multi-post: close the head cell (pill/title/location) and open
+             the rest cell (desc/meta/byline/Reply). On mobile the rest cell
+             spans the full card width; on desktop it stays in column 2.
+             The single-post branch keeps one flat .post-content wrapper, so
+             the two shared closers at the bottom of the card match both. --}}
+      </div>
+      <div class="post-rest">
+        @endif
         @if($post['messageText'])
         {{-- User-supplied description. Immediate renders the full body
              (it's the only post); multi-post truncates for AMP size. --}}
