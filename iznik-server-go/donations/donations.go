@@ -10,7 +10,6 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -311,9 +310,9 @@ func AddDonation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Add failed")
 	}
 
-	// For non-zero amounts: create Gift Aid notification and queue email.
+	// For non-zero amounts: create a Gift Aid prompt. Thanking is handled by
+	// the daily mail:donations:thank-prep digest, not a per-donation email.
 	if req.Amount > 0 {
-		// Check if user needs a Gift Aid prompt.
 		var giftAidPeriod *string
 		db.Raw("SELECT period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1", req.UserID).Scan(&giftAidPeriod)
 
@@ -321,17 +320,6 @@ func AddDonation(c *fiber.Ctx) error {
 			// Create a GiftAid notification for the user.
 			db.Exec("INSERT INTO users_notifications (touser, type, timestamp, seen) VALUES (?, 'GiftAid', NOW(), 0)",
 				req.UserID)
-		}
-
-		// Queue email to info@ilovefreegle.org.
-		if err := queue.QueueTask(queue.TaskEmailDonateExternal, map[string]interface{}{
-			"user_id":    req.UserID,
-			"user_name":  name,
-			"user_email": preferredEmail,
-			"amount":     req.Amount,
-			"source":     "external",
-		}); err != nil {
-			log.Printf("Failed to queue donate-external email for user %d: %v", req.UserID, err)
 		}
 	}
 
