@@ -737,10 +737,29 @@ class UnifiedDigestService
         // Get or create digest tracking record.
         $digestTracker = $this->getOrCreateDigestTracker($user, $mode);
 
-        // Get all posts from user's groups since last digest.
-        $posts = $this->getPostsForUser($user, $digestTracker, $mode);
+        // One query for the whole window, carrying has_outcome / has_success
+        // flags; partition here rather than re-querying.
+        $allPosts = $this->getPostsForUser($user, $digestTracker, $mode);
+
+        if ($allPosts->isEmpty()) {
+            return ['status' => 'no_posts', 'count' => 0];
+        }
+
+        // available  = no outcome at all (the live posts)
+        // completed  = a Taken/Received outcome (the "came and went" list, daily only)
+        // withdrawn/expired (has_outcome && !has_success) appear in neither.
+        $posts = $allPosts->filter(fn ($p) => !$p->has_outcome)->values();
+        $completedPosts = $mode === self::MODE_DAILY
+            ? $allPosts->filter(fn ($p) => $p->has_success)->unique('id')->values()
+            : collect();
 
         if ($posts->isEmpty()) {
+            // No live posts to send. Still advance the cursor past everything
+            // examined (incl. completed/withdrawn) so they don't re-surface,
+            // and don't send a completed-only digest.
+            if (!$dryRun) {
+                $this->updateDigestTracker($digestTracker, $allPosts);
+            }
             return ['status' => 'no_posts', 'count' => 0];
         }
 
@@ -751,7 +770,7 @@ class UnifiedDigestService
             // Nothing to send, but still advance the tracker past these posts
             // so the next tick doesn't re-fetch and re-filter the same set.
             if (!$dryRun) {
-                $this->updateDigestTracker($digestTracker, $posts);
+                $this->updateDigestTracker($digestTracker, $allPosts);
             }
             return ['status' => 'no_posts', 'count' => 0];
         }
@@ -796,25 +815,16 @@ class UnifiedDigestService
             return ['status' => 'sent', 'count' => $sent];
         }
 
-        // Daily mode: one rolled-up digest covers everything. Alongside the
-        // available posts, fetch the "came and went" set (Taken/Received in
-        // the same window) for the greyed secondary section + frequency nudge.
-        $completedPosts = $this->getCompletedPostsForUser($user, $digestTracker);
-
+        // Daily mode: one rolled-up digest. $completedPosts (the "came and
+        // went" Taken/Received set) was partitioned from the same query above.
         if (!$dryRun) {
             app(\App\Services\EmailSpoolerService::class)->spool(
                 new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts),
                 emailType: 'digest_daily',
             );
-            // Advance the cursor past BOTH lists' arrivals so a completed post
-            // with a later arrival than every available post doesn't re-surface
-            // in tomorrow's "came and went" section. The combined collection is
-            // re-sorted by arrival so ->last() in updateDigestTracker is the
-            // true high-water mark.
-            $trackerPosts = $posts->concat($completedPosts)
-                ->sortBy(fn ($p) => [(string) $p->arrival, (int) $p->id])
-                ->values();
-            $this->updateDigestTracker($digestTracker, $trackerPosts);
+            // Advance the cursor past everything examined this window (live,
+            // completed and withdrawn) so nothing re-surfaces tomorrow.
+            $this->updateDigestTracker($digestTracker, $allPosts);
         }
 
         return ['status' => 'sent', 'count' => 1];
@@ -900,23 +910,23 @@ class UnifiedDigestService
             return collect();
         }
 
+        // Single query for the whole window, with two outcome flags so the
+        // caller can partition in PHP (no second round-trip):
+        //   has_outcome   — any outcome row exists (Taken/Received/Withdrawn/…)
+        //   has_success   — a Taken/Received outcome exists
+        // From these: available = !has_outcome; "came and went" = has_success;
+        // withdrawn/expired (has_outcome && !has_success) are dropped by the
+        // caller. V1 parity (Digest.php:218 only lists count(outcomes)==0 as
+        // available); matches the platform browse/map dropping any outcome.
+        $successList = "'" . Message::OUTCOME_TAKEN . "','" . Message::OUTCOME_RECEIVED . "'";
         $query = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+            ->selectRaw('EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id) AS has_outcome')
+            ->selectRaw("EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id AND mo.outcome IN ($successList)) AS has_success")
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->whereIn('messages_groups.groupid', $groupIds)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
-            // V1 parity (iznik-server/include/mail/Digest.php:218 — only posts
-            // with count(outcomes)==0 reach the available list): exclude any
-            // post that already has an outcome (Taken/Received/Withdrawn/
-            // Expired/Partial). Without this the digest advertised
-            // withdrawn/taken items as still available — matches the platform
-            // browse/map, which also drops any post with an outcome.
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
-                    ->whereColumn('messages_outcomes.msgid', 'messages.id');
-            })
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->orderBy('messages_groups.arrival', 'asc');
 
@@ -925,55 +935,6 @@ class UnifiedDigestService
             $query->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
         } else {
             // First digest - only get messages from the last 24 hours.
-            $query->where('messages_groups.arrival', '>=', now()->subDay());
-        }
-
-        return $query->with(['attachments', 'fromUser', 'groups'])->get();
-    }
-
-    /**
-     * Fetch posts in the same window/groups as getPostsForUser that have
-     * SUCCESSFULLY completed (Taken/Received) since the last digest — the
-     * "came and went" list. V1 (Digest.php) showed these in a separate
-     * greyed section under the available posts with a nudge to increase
-     * digest frequency ("if you missed something..."). Only successful
-     * outcomes qualify: a Withdrawn/Expired post wasn't "missed", so it is
-     * excluded entirely (by the whereNotExists on the available query) and
-     * does not appear here either. Daily mode only — the immediate digest is
-     * a single live post.
-     */
-    protected function getCompletedPostsForUser(User $user, UserDigest $tracker): Collection
-    {
-        $membershipQuery = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED);
-        $this->applyDigestFrequency($membershipQuery, self::MODE_DAILY);
-        $groupIds = $membershipQuery->pluck('groupid');
-
-        if ($groupIds->isEmpty()) {
-            return collect();
-        }
-
-        $query = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->whereIn('messages_groups.groupid', $groupIds)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
-            ->whereNull('messages.deleted')
-            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
-            // Successful outcome only (Taken/Received) — the Go API's own
-            // "successful" definition (message.go) — so this is the "it went
-            // quickly, you missed it" set, not poster-withdrawn/expired ones.
-            ->whereExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
-                    ->whereColumn('messages_outcomes.msgid', 'messages.id')
-                    ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]);
-            })
-            ->orderBy('messages_groups.arrival', 'asc');
-
-        if ($tracker->lastmsgdate) {
-            $query->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
-        } else {
             $query->where('messages_groups.arrival', '>=', now()->subDay());
         }
 

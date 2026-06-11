@@ -30,7 +30,7 @@ Reply: {{ $post['messageUrl'] }}
 
 @endforeach
 ------------------------------------
-@if(!empty($completedPosts) && count($completedPosts) > 0)
+@if(count($completedPosts ?? []) > 0)
 
 CAME AND WENT
 These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in Settings: {{ $settingsUrl }}

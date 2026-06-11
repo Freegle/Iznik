@@ -463,7 +463,7 @@
         {{-- "Came and went" — Taken/Received posts since the last digest, shown
              greyed out with a nudge to increase digest frequency (V1 parity,
              Digest.php $unavailable). Daily only; suppressed when empty. --}}
-        @if(!empty($completedPosts) && count($completedPosts) > 0)
+        @if(count($completedPosts ?? []) > 0)
         <mj-section background-color="#e9e9e9" padding="16px 20px 8px">
             <mj-column>
                 <mj-text font-size="14px" font-weight="700" color="#444444" padding="0 0 4px 0">

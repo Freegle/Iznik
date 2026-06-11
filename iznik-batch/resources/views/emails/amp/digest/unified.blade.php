@@ -685,7 +685,7 @@
 
     {{-- "Came and went": Taken/Received posts since the last digest, greyed
          with a nudge to increase digest frequency. Daily only; empty = hidden. --}}
-    @if(!empty($completedPosts) && count($completedPosts) > 0)
+    @if(count($completedPosts ?? []) > 0)
     <div class="cag-section">
       <p class="cag-head">Came and went</p>
       <p class="cag-nudge">These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in <a href="{{ $settingsUrl }}">Settings</a>.</p>
