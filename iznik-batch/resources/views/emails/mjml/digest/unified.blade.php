@@ -224,8 +224,71 @@
         {{-- Header - Freegle brand green with logo + thumbnail nav --}}
         {{-- Thumbnails use trackedImageUrl (proxy) when available, falling back
              to displayImageUrl. Each thumbnail links to its card anchor. --}}
+        {{-- Skip posts with placeholder images — only show real photos in the
+             header strip so the thumbnail nav is a faithful preview of what
+             follows, not a wall of default Offer/Wanted icons. Cards still
+             show the placeholder for no-photo posts further down. --}}
+        @php
+            $headerPosts = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->values();
+            $headerThumbs = $headerPosts->take($maxHeaderItems);
+            $headerOverflow = max(0, $headerPosts->count() - $maxHeaderItems);
+        @endphp
+        @if($headerThumbs->isNotEmpty())
         <mj-section mj-class="bg-success" padding="12px 16px">
-            <mj-column width="20%" vertical-align="middle">
+            {{-- mj-group keeps logo + thumb row side-by-side on mobile (without
+                 it MJML's <480px breakpoint stacks them). --}}
+            <mj-group>
+                <mj-column width="20%" vertical-align="middle">
+                    <mj-image
+                        width="50px"
+                        src="{{ config('freegle.branding.logo_url') }}"
+                        alt="Freegle"
+                        align="left"
+                        padding="0"
+                    />
+                </mj-column>
+                <mj-column width="80%" vertical-align="middle">
+                    {{-- mj-table is MJML's table primitive — compiles to a real
+                         <table>/<tr>/<td> structure that renders consistently
+                         across Gmail desktop, Outlook and mobile. Replaces the
+                         earlier inline-block <a> chain inside <mj-text font-size:0>
+                         which Gmail desktop wasn't rendering (Edward 2026-06-11). --}}
+                    <mj-table padding="0" cellpadding="0" cellspacing="0">
+                        <tr>
+                            @foreach($headerThumbs as $post)
+                            @php
+                                $thumbSrc = $post['trackedImageUrl'] ?? $post['displayImageUrl'] ?? '';
+                                $isOfferThumb = $post['type'] === 'Offer';
+                                $pillBg = $isOfferThumb ? $offerColor : $wantedColor;
+                            @endphp
+                            <td style="width: 48px; padding: 0 4px 0 0; vertical-align: top;">
+                                <a href="#msg-{{ $post['message']->id }}" style="text-decoration: none; display: block;">
+                                    <img src="{{ $thumbSrc }}"
+                                         alt="{{ $post['itemName'] }}"
+                                         width="44"
+                                         height="44"
+                                         style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid rgba(255,255,255,0.5);"
+                                    />
+                                    {{-- 7px keeps "WANTED" within 44px thumbnail width. --}}
+                                    <span style="display: block; background-color: {{ $pillBg }}; color: #ffffff; font-size: 7px; font-weight: bold; text-align: center; padding: 1px 0; border-radius: 0 0 3px 3px; line-height: 1.3;">{{ $isOfferThumb ? 'OFFER' : 'WANTED' }}</span>
+                                </a>
+                            </td>
+                            @endforeach
+                            @if($headerOverflow > 0)
+                            <td style="width: 48px; padding: 0; vertical-align: top;">
+                                <a href="{{ $browseUrl }}" style="display: block; width: 44px; height: 52px; background-color: rgba(255,255,255,0.2); border-radius: 4px; text-align: center; line-height: 52px; color: #ffffff; font-size: 11px; font-weight: bold; text-decoration: none;">+{{ $headerOverflow }}</a>
+                            </td>
+                            @endif
+                        </tr>
+                    </mj-table>
+                </mj-column>
+            </mj-group>
+        </mj-section>
+        @else
+        {{-- All posts in this digest are placeholder-only; show just the logo
+             so the brand-green strip still anchors the email visually. --}}
+        <mj-section mj-class="bg-success" padding="12px 16px">
+            <mj-column vertical-align="middle">
                 <mj-image
                     width="50px"
                     src="{{ config('freegle.branding.logo_url') }}"
@@ -234,33 +297,8 @@
                     padding="0"
                 />
             </mj-column>
-            <mj-column width="80%" vertical-align="middle">
-                <mj-text font-size="0" padding="0" line-height="1">
-                    {{-- Thumbnail row: small clickable images linking to each post's card anchor.
-                         font-size:0 on the container collapses whitespace gaps between inline-block items.
-                         Each thumb is 44x44 with object-fit:cover so varying aspect ratios look uniform. --}}
-                    @foreach($posts->take($maxHeaderItems) as $post)
-                    @php
-                        $thumbSrc = $post['trackedImageUrl'] ?? $post['displayImageUrl'] ?? '';
-                        $isOfferThumb = $post['type'] === 'Offer';
-                        $pillBg = $isOfferThumb ? $offerColor : $wantedColor;
-                    @endphp
-                    <a href="#msg-{{ $post['message']->id }}" style="display: inline-block; margin: 0 4px 4px 0; vertical-align: top; position: relative; text-decoration: none;">
-                        <img src="{{ $thumbSrc }}"
-                             alt="{{ $post['itemName'] }}"
-                             width="44"
-                             height="44"
-                             style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid rgba(255,255,255,0.5);"
-                        />
-                        <span style="display: block; background-color: {{ $pillBg }}; color: #ffffff; font-size: 8px; font-weight: bold; text-align: center; padding: 1px 0; border-radius: 0 0 3px 3px; letter-spacing: 0.3px; line-height: 1.3;">{{ $isOfferThumb ? 'OFFER' : 'WNTD' }}</span>
-                    </a>
-                    @endforeach
-                    @if($posts->count() > $maxHeaderItems)
-                    <a href="{{ $browseUrl }}" style="display: inline-block; vertical-align: top; margin: 0 0 4px 0; width: 44px; height: 52px; background-color: rgba(255,255,255,0.2); border-radius: 4px; text-align: center; line-height: 52px; color: #ffffff; font-size: 11px; font-weight: bold; text-decoration: none;">+{{ $posts->count() - $maxHeaderItems }}</a>
-                    @endif
-                </mj-text>
-            </mj-column>
         </mj-section>
+        @endif
 
         {{-- Post cards --}}
         @foreach($posts as $index => $post)
