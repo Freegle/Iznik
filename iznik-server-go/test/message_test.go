@@ -8947,3 +8947,52 @@ func TestListMessagesMT_SpamInPendingList(t *testing.T) {
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 }
+
+// TestListMessagesMT_OldSpamExcludedFromPendingList verifies that Spam-collection
+// messages older than 30 days are NOT returned by the Pending review endpoint.
+// Spam shown in the Pending queue should age out rather than accumulate forever;
+// Pending-collection messages are never aged out this way.
+func TestListMessagesMT_OldSpamExcludedFromPendingList(t *testing.T) {
+	prefix := uniquePrefix("lstmt_oldspam")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Recent spam (within 30 days) — should appear in the queue.
+	recentID := CreateTestMessage(t, posterID, groupID, prefix+" recent spam", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam', arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ? AND groupid = ?", recentID, groupID)
+
+	// Old spam (older than 30 days) — should be excluded.
+	oldID := CreateTestMessage(t, posterID, groupID, prefix+" old spam", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam', arrival = NOW() - INTERVAL 40 DAY WHERE msgid = ? AND groupid = ?", oldID, groupID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+
+	foundRecent, foundOld := false, false
+	for _, id := range msgs {
+		if id == float64(recentID) {
+			foundRecent = true
+		}
+		if id == float64(oldID) {
+			foundOld = true
+		}
+	}
+	assert.True(t, foundRecent, "Recent (<30d) Spam-collection message should appear in the Pending review list")
+	assert.False(t, foundOld, "Old (>30d) Spam-collection message should be excluded from the Pending review list")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", recentID, oldID)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", recentID, oldID)
+}

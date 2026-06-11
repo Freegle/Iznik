@@ -261,6 +261,51 @@ describe('ModMessageButtons', () => {
     })
   })
 
+  describe('spam collection messages (shown in pending queue)', () => {
+    // Discourse #9654: Spam-collection messages are surfaced in the Pending
+    // review queue and must offer the same moderation actions as Pending —
+    // otherwise they render with no action buttons (only the autosend toggle).
+    const spamGroups = { groups: [{ groupid: 456, collection: 'Spam' }] }
+
+    it('shows approve button for spam-collection messages', () => {
+      const wrapper = mountComponent({}, spamGroups)
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(true)
+    })
+
+    it('shows reject button for spam-collection messages', () => {
+      const wrapper = mountComponent({}, spamGroups)
+      expect(wrapper.find('.mod-message-button.reject').exists()).toBe(true)
+    })
+
+    it('shows delete button for spam-collection messages', () => {
+      const wrapper = mountComponent({}, spamGroups)
+      expect(wrapper.find('.mod-message-button.delete').exists()).toBe(true)
+    })
+
+    it('shows spam button for spam-collection messages', () => {
+      const wrapper = mountComponent({}, spamGroups)
+      expect(wrapper.find('.mod-message-button.spam').exists()).toBe(true)
+    })
+
+    it('hides approve button for spam-collection messages when cantpost is true', () => {
+      const wrapper = mountComponent({ cantpost: true }, spamGroups)
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(false)
+    })
+
+    it('spam computed is true for a Spam-collection message', () => {
+      const wrapper = mountComponent({}, spamGroups)
+      expect(wrapper.vm.spam).toBe(true)
+    })
+
+    it('spam computed is false for a Pending-collection message', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      expect(wrapper.vm.spam).toBe(false)
+    })
+  })
+
   describe('approved message buttons', () => {
     it('shows leave (blank reply) button for approved messages', () => {
       const wrapper = mountComponent(

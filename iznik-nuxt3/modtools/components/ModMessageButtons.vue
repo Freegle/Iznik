@@ -26,7 +26,7 @@
         label="Blank Reply"
       />
     </div>
-    <div v-else-if="pending" class="d-inline">
+    <div v-else-if="pending || spam" class="d-inline">
       <ModMessageButton
         v-if="!cantpost"
         :messageid="message.id"
@@ -252,9 +252,17 @@ const approved = computed(() => {
   return hasCollection('Approved')
 })
 
+// Spam-collection messages are surfaced in the Pending review queue (Go API,
+// Discourse #9654). They need the same moderation actions as Pending — without
+// this they'd render with no action buttons at all (only the autosend toggle),
+// leaving mods unable to approve/reject/delete them.
+const spam = computed(() => {
+  return hasCollection('Spam')
+})
+
 const validActions = computed(() => {
   // The standard messages we show depend on the valid ones for this type of message.
-  if (pending.value) {
+  if (pending.value || spam.value) {
     const ret = ['Reject', 'Leave', 'Delete', 'Edit', 'Hold Message']
     if (!props.cantpost) {
       ret.push('Approve')

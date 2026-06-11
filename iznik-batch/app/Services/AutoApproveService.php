@@ -70,6 +70,17 @@ class AutoApproveService
             ->whereNull('messages_groups.heldby')
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
+            // Never auto-approve a message that is in the Spam collection on ANY
+            // group. Spam-collection messages now surface in the Pending review
+            // queue (Discourse #9654) but must be actioned by a human, never
+            // auto-sent after the 48h fallback.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_groups as spam_mg')
+                    ->whereColumn('spam_mg.msgid', 'messages_groups.msgid')
+                    ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
+                    ->where('spam_mg.deleted', 0);
+            })
             ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS])
             ->get()
             ->groupBy('msgid');
