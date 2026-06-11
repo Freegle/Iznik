@@ -363,10 +363,10 @@
                             <td style="vertical-align: bottom; padding-top: 4px;">
                                 <!--[if mso]><table cellpadding="0" cellspacing="0"><tr><td style="vertical-align:middle;padding-right:8px;"><![endif]-->
                                 <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; padding-right: 8px; padding-bottom: 2px;">
-                                    <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 4px; text-decoration: none; white-space: nowrap;">Reply</a>
+                                    <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none; white-space: nowrap;">Reply</a>
                                 </div><!--[if mso]></td><td style="vertical-align:middle;"><![endif]-->
                                 <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; color: #999999; font-size: 12px; white-space: nowrap; padding-bottom: 2px;">
-                                    @if($post['distanceText'])<span style="margin-right: 8px;">{{ $post['distanceText'] }}</span>@endif{{ $post['arrivalFormatted'] }}
+                                    @if($post['distanceText']){{ $post['distanceText'] }} &bull; @endif{{ $post['arrivalFormatted'] }}
                                 </div><!--[if mso]></td></tr></table><![endif]-->
                             </td>
                         </tr>
