@@ -546,15 +546,6 @@
       </div>
     </div>
 
-    @if($postCount !== 1)
-    {{-- Greeting only on the multi-post (daily) digest. Immediate is
-         always exactly one post so the "Here is 1 new post" preamble is
-         silly — drop straight to the post. --}}
-    <div class="greeting">
-      <h2>Hi {{ $user->displayname ?? 'there' }},</h2>
-      <p>Here are <strong>{{ $postCount }}</strong> new posts from your Freegle communities.</p>
-    </div>
-    @endif
 
     {{-- Shared amp-mustache templates referenced by id from every post's
          amp-form. AMP4Email disallows the shared-form / amp-bind approach

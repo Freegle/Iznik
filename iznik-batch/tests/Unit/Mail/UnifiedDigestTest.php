@@ -667,13 +667,12 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('New paragraph after blank', $html);
     }
 
-    public function test_daily_no_photo_post_omits_placeholder_image(): void
+    public function test_daily_no_photo_post_shows_type_specific_placeholder(): void
     {
-        // A daily-digest post with no photo must NOT fall back to the blank
-        // grey placeholder tile — neither as the card image nor in the top
-        // thumbnail nav strip. Both read as a broken/unloaded image,
-        // especially on mobile where the stacked card image spans the full
-        // width of the screen.
+        // A daily-digest post with no photo renders a TYPE-SPECIFIC placeholder
+        // (green OFFER / blue WANTED, matching the in-app MessagePhotoPlaceholder)
+        // rather than a real photo. An OFFER post must use the OFFER placeholder
+        // and a WANTED post the WANTED placeholder — never each other's.
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
@@ -681,13 +680,19 @@ class UnifiedDigestTest extends TestCase
         $poster = $this->createTestUser();
         $this->createMembership($poster, $group);
 
-        // No attachment → no photo → isPlaceholder.
-        $message = $this->createTestMessage($poster, $group, [
+        // No attachment → no photo → isPlaceholder → type placeholder.
+        $offerMsg = $this->createTestMessage($poster, $group, [
             'subject' => 'OFFER: Coloplast supplies (Craigmount EH12)',
+            'type' => 'Offer',
+        ]);
+        $wantedMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'WANTED: Child\'s bike (Craigmount EH12)',
+            'type' => 'Wanted',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $offerMsg, 'postedToGroups' => [$group->id]],
+            ['message' => $wantedMsg, 'postedToGroups' => [$group->id]],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -696,12 +701,20 @@ class UnifiedDigestTest extends TestCase
 
         $this->assertNotEmpty($html, 'Spooled HTML body should not be empty');
 
-        $placeholder = config('freegle.images.offer_placeholder');
-        $this->assertNotEmpty($placeholder, 'offer_placeholder config should be set');
-        $this->assertStringNotContainsString(
-            $placeholder,
+        $offerPlaceholder = config('freegle.images.offer_placeholder');
+        $wantedPlaceholder = config('freegle.images.wanted_placeholder');
+        $this->assertNotEmpty($offerPlaceholder, 'offer_placeholder config should be set');
+        $this->assertNotEmpty($wantedPlaceholder, 'wanted_placeholder config should be set');
+
+        $this->assertStringContainsString(
+            $offerPlaceholder,
             $html,
-            'A photo-less daily digest must not render the blank placeholder image'
+            'A photo-less OFFER post should render the OFFER placeholder image'
+        );
+        $this->assertStringContainsString(
+            $wantedPlaceholder,
+            $html,
+            'A photo-less WANTED post should render the WANTED placeholder image'
         );
     }
 

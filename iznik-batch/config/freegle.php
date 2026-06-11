@@ -153,10 +153,12 @@ return [
         'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
         'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
 
-        // Placeholder images for posts without photos (digest emails)
-        // These default to the generic placeholder until type-specific SVGs are deployed.
-        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
-        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
+        // Placeholder images for posts without photos (digest emails).
+        // Type-specific: green OFFER / blue WANTED, matching the in-app
+        // MessagePhotoPlaceholder gradients. Served from the user site
+        // (iznik-nuxt3/public/placeholder-offer.png / placeholder-wanted.png).
+        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-offer.png'),
+        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
     // GeoIP database for IP country lookups
