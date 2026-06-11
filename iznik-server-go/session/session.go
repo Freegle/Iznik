@@ -1173,11 +1173,16 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Spammer pending counts (system-wide, Admin/Support only) ---
+		// --- Spammer pending counts (SpamAdmin permission only) ---
+		// Gated by the SpamAdmin permission (granted via the teams table), to
+		// match the Spammers page (spammers.go) and the frontend's
+		// hasPermissionSpamAdmin. Systemrole=Support is too broad: a Support
+		// user not on the spam team can't see the Spammers menu, so counting
+		// these would inflate the badge with no visible, clickable home.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if userRow.Systemrole == utils.SYSTEMROLE_ADMIN || userRow.Systemrole == utils.SYSTEMROLE_SUPPORT {
+			if auth.HasPermission(myid, auth.PERM_SPAM_ADMIN) {
 				db.Raw("SELECT COUNT(*) FROM spam_users WHERE collection = ?", utils.SPAM_COLLECTION_PENDING_ADD).Scan(&spammerpendingadd)
 				db.Raw("SELECT COUNT(*) FROM spam_users WHERE collection = ?", utils.SPAM_COLLECTION_PENDING_REMOVE).Scan(&spammerpendingremove)
 			}
@@ -1350,8 +1355,11 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Housekeeping tasks: overdue or failed (admin/support) ---
-		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN || userRow.Systemrole == utils.SYSTEMROLE_SUPPORT {
+		// --- Housekeeping tasks: overdue or failed (Admin only) ---
+		// Housekeeping is a SysAdmin function — Admin systemrole only. Support
+		// users don't see the SysAdmin housekeeping list, so counting it for
+		// them inflates the badge with no visible, clickable home.
+		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
