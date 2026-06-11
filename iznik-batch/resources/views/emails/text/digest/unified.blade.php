@@ -30,6 +30,15 @@ Reply: {{ $post['messageUrl'] }}
 
 @endforeach
 ------------------------------------
+@if(!empty($completedPosts) && count($completedPosts) > 0)
+
+CAME AND WENT
+These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in Settings: {{ $settingsUrl }}
+@foreach($completedPosts as $cp)
+- {{ $cp['itemName'] }}@if($cp['locationName']) ({{ $cp['locationName'] }})@endif — {{ $cp['type'] === 'Offer' ? 'Taken' : 'Received' }} {{ $cp['date'] }}: {{ $cp['messageUrl'] }}
+@endforeach
+------------------------------------
+@endif
 
 Browse all posts: {{ $browseUrl }}
 @if(isset($jobAds) && $jobAds->isNotEmpty())

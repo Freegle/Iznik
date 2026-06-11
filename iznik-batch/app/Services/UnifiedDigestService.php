@@ -796,13 +796,25 @@ class UnifiedDigestService
             return ['status' => 'sent', 'count' => $sent];
         }
 
-        // Daily mode: one rolled-up digest covers everything.
+        // Daily mode: one rolled-up digest covers everything. Alongside the
+        // available posts, fetch the "came and went" set (Taken/Received in
+        // the same window) for the greyed secondary section + frequency nudge.
+        $completedPosts = $this->getCompletedPostsForUser($user, $digestTracker);
+
         if (!$dryRun) {
             app(\App\Services\EmailSpoolerService::class)->spool(
-                new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors),
+                new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts),
                 emailType: 'digest_daily',
             );
-            $this->updateDigestTracker($digestTracker, $posts);
+            // Advance the cursor past BOTH lists' arrivals so a completed post
+            // with a later arrival than every available post doesn't re-surface
+            // in tomorrow's "came and went" section. The combined collection is
+            // re-sorted by arrival so ->last() in updateDigestTracker is the
+            // true high-water mark.
+            $trackerPosts = $posts->concat($completedPosts)
+                ->sortBy(fn ($p) => [(string) $p->arrival, (int) $p->id])
+                ->values();
+            $this->updateDigestTracker($digestTracker, $trackerPosts);
         }
 
         return ['status' => 'sent', 'count' => 1];
@@ -913,6 +925,55 @@ class UnifiedDigestService
             $query->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
         } else {
             // First digest - only get messages from the last 24 hours.
+            $query->where('messages_groups.arrival', '>=', now()->subDay());
+        }
+
+        return $query->with(['attachments', 'fromUser', 'groups'])->get();
+    }
+
+    /**
+     * Fetch posts in the same window/groups as getPostsForUser that have
+     * SUCCESSFULLY completed (Taken/Received) since the last digest — the
+     * "came and went" list. V1 (Digest.php) showed these in a separate
+     * greyed section under the available posts with a nudge to increase
+     * digest frequency ("if you missed something..."). Only successful
+     * outcomes qualify: a Withdrawn/Expired post wasn't "missed", so it is
+     * excluded entirely (by the whereNotExists on the available query) and
+     * does not appear here either. Daily mode only — the immediate digest is
+     * a single live post.
+     */
+    protected function getCompletedPostsForUser(User $user, UserDigest $tracker): Collection
+    {
+        $membershipQuery = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED);
+        $this->applyDigestFrequency($membershipQuery, self::MODE_DAILY);
+        $groupIds = $membershipQuery->pluck('groupid');
+
+        if ($groupIds->isEmpty()) {
+            return collect();
+        }
+
+        $query = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->whereIn('messages_groups.groupid', $groupIds)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            // Successful outcome only (Taken/Received) — the Go API's own
+            // "successful" definition (message.go) — so this is the "it went
+            // quickly, you missed it" set, not poster-withdrawn/expired ones.
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_outcomes')
+                    ->whereColumn('messages_outcomes.msgid', 'messages.id')
+                    ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]);
+            })
+            ->orderBy('messages_groups.arrival', 'asc');
+
+        if ($tracker->lastmsgdate) {
+            $query->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
+        } else {
             $query->where('messages_groups.arrival', '>=', now()->subDay());
         }
 

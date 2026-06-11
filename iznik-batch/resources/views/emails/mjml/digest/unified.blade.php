@@ -460,6 +460,38 @@
         </mj-section>
         @endforeach
 
+        {{-- "Came and went" — Taken/Received posts since the last digest, shown
+             greyed out with a nudge to increase digest frequency (V1 parity,
+             Digest.php $unavailable). Daily only; suppressed when empty. --}}
+        @if(!empty($completedPosts) && count($completedPosts) > 0)
+        <mj-section background-color="#e9e9e9" padding="16px 20px 8px">
+            <mj-column>
+                <mj-text font-size="14px" font-weight="700" color="#444444" padding="0 0 4px 0">
+                    Came and went
+                </mj-text>
+                <mj-text font-size="12px" color="#666666" padding="0 0 12px 0" line-height="1.5">
+                    These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in <a href="{{ $settingsUrl }}" style="color: #3c763d; text-decoration: none; font-weight: bold;">Settings</a>.
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @foreach($completedPosts as $cp)
+        <mj-section background-color="#e9e9e9" padding="0 20px 8px">
+            <mj-column width="18%" vertical-align="top" padding="0 10px 0 0">
+                @if(!empty($cp['imageUrl']))
+                <mj-image src="{{ $cp['imageUrl'] }}" href="{{ $cp['messageUrl'] }}" alt="{{ $cp['itemName'] }}" width="100%" border-radius="4px" padding="0" css-class="fd-dim" />
+                @endif
+            </mj-column>
+            <mj-column width="82%" vertical-align="top">
+                <mj-text padding="0" font-size="14px" color="#777777">
+                    <span style="text-decoration: line-through; color: #777777; font-weight: 600;">{{ $cp['itemName'] }}</span>
+                    @if($cp['locationName'])<span style="color: #999999;"> · {{ $cp['locationName'] }}</span>@endif
+                    <br/><span style="color: #999999; font-size: 12px;">{{ $cp['type'] === 'Offer' ? 'Taken' : 'Received' }} · {{ $cp['date'] }}</span>
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @endforeach
+        @endif
+
         {{-- Browse all CTA --}}
         <mj-section background-color="#ffffff" padding="16px 20px 20px 20px">
             <mj-column>

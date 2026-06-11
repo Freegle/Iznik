@@ -411,6 +411,20 @@
       margin: 0;
     }
 
+    /* "Came and went" — Taken/Received posts shown greyed under the digest
+       (V1 parity, Digest.php $unavailable). AMP4Email disallows inline styles,
+       so this is class-based. */
+    .cag-section { background-color: #e9e9e9; padding: 14px 20px 8px; }
+    .cag-head { font-size: 14px; font-weight: 700; color: #444444; margin: 0 0 4px 0; }
+    .cag-nudge { font-size: 12px; color: #666666; line-height: 1.5; margin: 0 0 10px 0; }
+    .cag-nudge a { color: #338808; text-decoration: none; font-weight: bold; }
+    .cag-row { display: flex; align-items: center; padding: 6px 20px; background-color: #e9e9e9; }
+    .cag-row .cag-img { flex: 0 0 auto; margin-right: 10px; }
+    .cag-img amp-img img { object-fit: cover; border-radius: 4px; }
+    .cag-text { min-width: 0; }
+    .cag-title { font-size: 14px; font-weight: 600; color: #777777; text-decoration: line-through; margin: 0; }
+    .cag-meta { font-size: 12px; color: #999999; margin: 2px 0 0 0; }
+
     /* Job listings block (V1 single.html parity — mirrors the MJML jobs block) */
     .jobs-section {
       background-color: #F7F6EC;
@@ -668,6 +682,26 @@
       </div>
     </div>
     @endforeach
+
+    {{-- "Came and went": Taken/Received posts since the last digest, greyed
+         with a nudge to increase digest frequency. Daily only; empty = hidden. --}}
+    @if(!empty($completedPosts) && count($completedPosts) > 0)
+    <div class="cag-section">
+      <p class="cag-head">Came and went</p>
+      <p class="cag-nudge">These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in <a href="{{ $settingsUrl }}">Settings</a>.</p>
+    </div>
+    @foreach($completedPosts as $cp)
+    <div class="cag-row">
+      @if(!empty($cp['imageUrl']))
+      <a href="{{ $cp['messageUrl'] }}" class="cag-img"><amp-img src="{{ $cp['imageUrl'] }}" width="44" height="44" layout="fixed" alt="{{ $cp['itemName'] }}"></amp-img></a>
+      @endif
+      <div class="cag-text">
+        <p class="cag-title">{{ $cp['itemName'] }}@if($cp['locationName']) · {{ $cp['locationName'] }}@endif</p>
+        <p class="cag-meta">{{ $cp['type'] === 'Offer' ? 'Taken' : 'Received' }} · {{ $cp['date'] }}</p>
+      </div>
+    </div>
+    @endforeach
+    @endif
 
     {{-- Jobs near you (V1 single.html parity — mirrors the MJML jobs block).
          AMP4Email needs concrete amp-img dimensions, so the thumb is a fixed
