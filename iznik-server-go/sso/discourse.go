@@ -99,20 +99,29 @@ func DiscourseSSO(c *fiber.Ctx) error {
 
 // validateDiscourseSession validates the cookie against the sessions table.
 // The user must be a Freegle moderator.
+//
+// Authentication uses id+token only. The series field is intentionally ignored:
+// PR #679 (2026-06-09) changed the session emitter to output series as a JSON
+// number (uint64) rather than a string, which caused json.Unmarshal to error
+// when trying to decode a number into a string field — producing an infinite
+// ModTools ⇄ Discourse redirect loop for all moderators. Authenticating by
+// id+token alone (matching the approach in auth/auth.go WhoAmI) fixes the loop
+// and is sufficient because token is a cryptographically random secret.
 func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	db := database.DBConn
 
+	// Series is deliberately absent from this struct: the field changed from a
+	// JSON string to a JSON number in PR #679. Parsing id+token is sufficient.
 	var cookie struct {
-		ID     uint64 `json:"id"`
-		Series string `json:"series"`
-		Token  string `json:"token"`
+		ID    uint64 `json:"id"`
+		Token string `json:"token"`
 	}
 
 	if err := json.Unmarshal([]byte(cookieValue), &cookie); err != nil {
 		return nil, fmt.Errorf("invalid cookie JSON: %w", err)
 	}
 
-	if cookie.ID == 0 || cookie.Series == "" || cookie.Token == "" {
+	if cookie.ID == 0 || cookie.Token == "" {
 		return nil, fmt.Errorf("incomplete cookie data")
 	}
 
@@ -125,8 +134,8 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	db.Raw(`SELECT sessions.userid FROM sessions
 		INNER JOIN users ON sessions.userid = users.id
 		WHERE users.systemrole IN ('Admin', 'Support', 'Moderator')
-		AND sessions.id = ? AND sessions.series = ? AND sessions.token = ?`,
-		cookie.ID, cookie.Series, cookie.Token).Scan(&sessions)
+		AND sessions.id = ? AND sessions.token = ?`,
+		cookie.ID, cookie.Token).Scan(&sessions)
 
 	if len(sessions) == 0 {
 		return nil, fmt.Errorf("no valid moderator session found")

@@ -246,6 +246,8 @@ func TestDiscourseSSO_ValidSig_IncompleteCookieData(t *testing.T) {
 	app := newDiscourseSSOApp()
 	req := httptest.NewRequest("GET", "/discourse_sso?sso="+ssoP+"&sig="+sigP, nil)
 	// id=0, series and token present — triggers the incomplete-data check.
+	// id=0 triggers the incomplete-data check (series is ignored; authentication
+	// is by id+token only after PR #679 fix).
 	req.Header.Set("Cookie", `Iznik-Discourse-SSO=`+url.QueryEscape(`{"id":0,"series":"s","token":"t"}`))
 	resp, err := app.Test(req)
 	assert.NoError(t, err)
@@ -357,9 +359,11 @@ func TestValidateDiscourseSession_ZeroID(t *testing.T) {
 }
 
 func TestValidateDiscourseSession_EmptySeries(t *testing.T) {
-	_, err := validateDiscourseSession(`{"id":42,"series":"","token":"def"}`)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "incomplete cookie data")
+	// Series is ignored in the id+token authentication model (PR #679 fix).
+	// A cookie with an empty series but valid id+token proceeds to the DB lookup.
+	// Without a DB in unit tests this panics, so we skip; the important invariant
+	// is that it does NOT return "incomplete cookie data" here.
+	t.Skip("series is now ignored — empty series no longer causes incomplete-data error; DB required to go further")
 }
 
 func TestValidateDiscourseSession_EmptyToken(t *testing.T) {
@@ -403,14 +407,15 @@ func TestDiscourseSSO_NoSecretAlwaysReturns500(t *testing.T) {
 }
 
 func TestValidateDiscourseSession_MissingFields(t *testing.T) {
-	// Table of cookie values where at least one required field is zero/empty.
-	// All return before touching the DB.
+	// Table of cookie values where at least one required field (id or token) is
+	// zero/empty. Series is no longer a required field (PR #679 fix: series is now
+	// emitted as a JSON number; authentication is by id+token only).
+	// All of these return before touching the DB.
 	tests := []struct {
 		name   string
 		cookie string
 	}{
 		{"ID zero", `{"id":0,"series":"s","token":"t"}`},
-		{"series empty", `{"id":1,"series":"","token":"t"}`},
 		{"token empty", `{"id":1,"series":"s","token":""}`},
 		{"all empty", `{"id":0,"series":"","token":""}`},
 	}

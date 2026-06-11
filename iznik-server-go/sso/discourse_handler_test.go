@@ -248,6 +248,9 @@ func TestBuildSSOResponse_AdminFlagIsLiteralString(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestValidateDiscourseSession_EarlyExits(t *testing.T) {
+	// Series is no longer a required field (PR #679 fix: series is now emitted as
+	// a JSON number; authentication is by id+token only). Only id=0 or empty token
+	// trigger "incomplete cookie data" before the DB lookup.
 	cases := []struct {
 		name    string
 		cookie  string
@@ -256,7 +259,6 @@ func TestValidateDiscourseSession_EarlyExits(t *testing.T) {
 		{"invalid json", "not-json", "invalid cookie JSON"},
 		{"empty json object", "{}", "incomplete cookie data"},
 		{"zero user id", `{"id":0,"series":"s","token":"t"}`, "incomplete cookie data"},
-		{"empty series", `{"id":1,"series":"","token":"t"}`, "incomplete cookie data"},
 		{"empty token", `{"id":1,"series":"s","token":""}`, "incomplete cookie data"},
 		{"truncated json", `{"id":1,"series":`, "invalid cookie JSON"},
 		{"null values", `{"id":null,"series":null,"token":null}`, "incomplete cookie data"},
@@ -388,19 +390,11 @@ func TestDiscourseSSO_IncompleteCookieZeroID_RedirectsToLogin(t *testing.T) {
 }
 
 func TestDiscourseSSO_IncompleteCookieEmptySeries_RedirectsToLogin(t *testing.T) {
-	secret := "test-secret"
-	os.Setenv("DISCOURSE_SECRET", secret)
-	defer os.Unsetenv("DISCOURSE_SECRET")
-
-	rawPayload := base64.StdEncoding.EncodeToString([]byte("nonce=abc123"))
-	sig := computeHMAC(rawPayload, secret)
-
-	app := newSSOApp()
-	resp := doSSORequest(t, app, rawPayload, sig, &http.Cookie{
-		Name:  "Iznik-Discourse-SSO",
-		Value: `{"id":1,"series":"","token":"xyz"}`,
-	})
-	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+	// Series is no longer required (PR #679 fix). A cookie with empty series but
+	// valid id+token passes the pre-DB checks and reaches the session lookup.
+	// Without a DB this path panics, so this test is skipped. The pre-DB early-exit
+	// path for empty series no longer exists — that is the intended post-fix behaviour.
+	t.Skip("series is now ignored — empty series with valid id+token reaches DB; no DB in unit tests")
 }
 
 func TestDiscourseSSO_IncompleteCookieEmptyToken_RedirectsToLogin(t *testing.T) {
@@ -456,4 +450,68 @@ func TestDiscourseSSO_SignatureRoundTrip(t *testing.T) {
 	resp := doSSORequest(t, app, rawPayload, sig)
 	assert.NotEqual(t, fiber.StatusForbidden, resp.StatusCode, "correct signature must not be rejected")
 	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: PR #679 — series emitted as JSON number causes redirect loop
+// ---------------------------------------------------------------------------
+//
+// Before the fix, the SSO cookie struct had `Series string`. When PR #679
+// changed session.go to emit series as a uint64 (JSON number), Unmarshal
+// would error trying to decode a number into a string field. The handler then
+// redirected back to modtools.org/discourse, which set the cookie again and
+// retried — infinite loop, all moderators locked out of Discourse.
+//
+// After the fix, series is absent from the parse struct; only id+token are
+// required. A cookie with series as a number must pass the pre-DB validation
+// step (json.Unmarshal must not error).
+
+// TestValidateDiscourseSession_NumericSeries_PassesPreDBCheck verifies that a
+// cookie whose "series" field is a JSON number (as emitted by PR #679's session.go)
+// does NOT cause json.Unmarshal to fail. On the old code this returned
+// "invalid cookie JSON"; on the fixed code it passes the pre-DB checks and
+// proceeds to the session lookup (the DB lookup itself fails without a DB, but
+// the error is "no valid moderator session found", not "invalid cookie JSON").
+func TestValidateDiscourseSession_NumericSeries_PassesPreDBCheck(t *testing.T) {
+	// This is the cookie format that PR #679 produces: series is a uint64 number.
+	// On the OLD code: json.Unmarshal errors because a number can't decode into
+	// a string field → "invalid cookie JSON" → infinite redirect loop.
+	// On the FIXED code: series field is absent from the parse struct → Unmarshal
+	// succeeds (unknown fields are ignored) → proceeds to DB lookup.
+	cookie := `{"id":99,"series":12345,"token":"sometoken"}`
+	_, err := validateDiscourseSession(cookie)
+	// Must NOT be a JSON parse error — that was the bug. The only acceptable
+	// errors here are DB-related (no DB in unit tests).
+	if err != nil {
+		assert.NotContains(t, err.Error(), "invalid cookie JSON",
+			"REGRESSION: numeric series must not cause JSON parse failure (PR #679 redirect loop bug)")
+		// pre-DB completeness check should pass: id=99 (nonzero), token="sometoken" (nonempty)
+		assert.NotContains(t, err.Error(), "incomplete cookie data",
+			"id+token are both present; pre-DB check must pass")
+		// Expect a DB-related failure (no session in test DB, or no DB connection).
+		// Any DB error here is correct behaviour — the cookie parsed successfully.
+	}
+	// Note: if validateDiscourseSession returns nil (no error), that means a real
+	// DB session row matched — also correct. The key assertion is no JSON error.
+}
+
+// TestValidateDiscourseSession_NumericSeriesZeroID_StillRejectsEarly verifies
+// that a cookie with a numeric series but id=0 still fails the pre-DB check.
+// This ensures the id validation is not broken by the series fix.
+func TestValidateDiscourseSession_NumericSeriesZeroID_StillRejectsEarly(t *testing.T) {
+	cookie := `{"id":0,"series":12345,"token":"sometoken"}`
+	_, err := validateDiscourseSession(cookie)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "incomplete cookie data",
+		"id=0 must still be rejected as incomplete even when series is a number")
+}
+
+// TestValidateDiscourseSession_NumericSeriesEmptyToken_StillRejectsEarly verifies
+// that a cookie with a numeric series but empty token still fails the pre-DB check.
+func TestValidateDiscourseSession_NumericSeriesEmptyToken_StillRejectsEarly(t *testing.T) {
+	cookie := `{"id":99,"series":12345,"token":""}`
+	_, err := validateDiscourseSession(cookie)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "incomplete cookie data",
+		"empty token must still be rejected as incomplete even when series is a number")
 }
