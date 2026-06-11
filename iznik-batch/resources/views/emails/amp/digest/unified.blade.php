@@ -124,6 +124,13 @@
       color: #212529;
       text-decoration: none;
     }
+    /* Location sits on its own line directly under the title — matches
+       the HTML variant's pill+title block. */
+    .post-location {
+      color: #212529;
+      font-size: 12px;
+      font-weight: 500;
+    }
     /* User-supplied description: 14px / #333 / regular so it reads as
        content but stays secondary to the title. Clamped to two lines
        via max-height + overflow hidden — AMP4Email's CSS-strict mode
@@ -133,7 +140,7 @@
        string so a runaway description can't blow past the clamp. */
     .post-preview {
       font-size: 14px;
-      color: #333333;
+      color: #555555;
       margin: 0 0 6px 0;
       line-height: 1.5;
       max-height: 42px;
@@ -567,21 +574,25 @@
              cascade pinned p to block), span with display: inline-block
              reliably hugs its text. --}}
         <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span></p>
-        <p class="post-title"><a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a></p>
+        <p class="post-title">
+          <a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a>
+          @if($post['locationName'] ?? null)
+          {{-- Location sits directly under the title to match the HTML
+               variant's pill+title block — no pin emoji here either; the
+               pin lives next to the distance in the meta row below. --}}
+          <br><span class="post-location">{{ $post['locationName'] }}</span>
+          @endif
+        </p>
         @if($post['messageText'])
         {{-- User-supplied description. Immediate renders the full body
              (it's the only post); multi-post truncates for AMP size. --}}
         <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
         @endif
-        {{-- Location · distance · time as one clean strip — the previous
-             three stacked lines (post-loc, post-time, post-byline) read
-             as a messy column of dimming text and the location-pin emoji
-             sat directly above the avatar. One line with middle-dot
-             separators reads as a single coherent metadata footer. --}}
+        {{-- Meta row: 📍 distance · 🕒 time. Location moved up into the
+             title block so this row is just the bits that vary per
+             recipient (distance) or per post (time). --}}
         <p class="post-meta">
-          @if($post['locationName'] ?? null)<span>{{ $post['locationName'] }}</span>@endif
-          @if($post['distanceText'])@if($post['locationName'] ?? null)<span class="sep">·</span>@endif<span>&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-          <span class="sep">·</span><span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
+          @if($post['distanceText'])<span>&#x1F4CD; {{ $post['distanceText'] }}</span><span class="sep">·</span>@endif<span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
         </p>
         {{-- Avatar byline (V1 MultipleDigest parity). Sits on its own
              row below the metadata strip so the avatar pairs cleanly

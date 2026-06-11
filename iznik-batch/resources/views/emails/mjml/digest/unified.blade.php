@@ -330,11 +330,15 @@
                                      honour @media (Apple Mail, Gmail mobile app account types
                                      that preserve <style> tags). --}}
                                 <!--[if mso]><table cellpadding="0" cellspacing="0"><tr><td style="vertical-align:top;width:85px;padding-right:8px;"><![endif]-->
-                                <div class="fd-pill-title-wrap" style="display: inline-block; vertical-align: top; width: 85px; max-width: 85px; padding-right: 8px; padding-bottom: 4px;">
-                                    <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: bold; padding: 6px 11px; border-radius: 4px; line-height: 1; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
+                                {{-- Pill + title share a row. Pill size matches the AMP variant's
+                                     .post-type-offer (12px font, 4px 10px padding, 3px radius,
+                                     letter-spacing for readability). Title is 16px / weight 600
+                                     / colour #212529, also matching AMP. --}}
+                                <div class="fd-pill-title-wrap" style="display: inline-block; vertical-align: top; width: 78px; max-width: 78px; padding-right: 8px; padding-bottom: 4px;">
+                                    <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 3px; line-height: 1; letter-spacing: 0.3px; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                                 </div><!--[if mso]></td><td style="vertical-align:top;"><![endif]-->
-                                <div class="fd-pill-title-wrap" style="display: inline-block; vertical-align: top; width: calc(100% - 97px); max-width: calc(100% - 97px); padding-bottom: 4px;">
-                                    <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none; font-weight: 600; font-size: 15px; line-height: 1.4;">{{ $post['itemName'] }}</a>
+                                <div class="fd-pill-title-wrap" style="display: inline-block; vertical-align: top; width: calc(100% - 90px); max-width: calc(100% - 90px); padding-bottom: 4px;">
+                                    <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 1.4;">{{ $post['itemName'] }}</a>
                                     @if($post['locationName'])
                                     <br/><span style="color: #212529; font-size: 12px; font-weight: 500;">{{ $post['locationName'] }}</span>
                                     @endif
@@ -342,13 +346,43 @@
                                 @if($post['messageText'] || $post['postedToText'])
                                 <div style="padding-top: 2px;">
                                     @if($post['messageText'])
-                                    {{-- fd-desc clamps to 2 lines on mobile via the @media block above;
-                                         desktop keeps the natural multi-line flow. --}}
-                                    <span class="fd-desc" style="color: #808080; font-size: 13px; font-weight: 500; line-height: 1.4;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                                    {{-- Body snippet matches AMP's .post-preview: 14px / #555
+                                         / 1.5 line-height. fd-desc adds a 2-line webkit-line-clamp
+                                         on mobile via the @media block above so a long body
+                                         can't push the Reply button or meta row off-screen. --}}
+                                    <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
                                     @endif
                                     @if($post['postedToText'])
                                     <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
                                     @endif
+                                </div>
+                                @endif
+                                {{-- "Posted by <name> on <group>" byline. Avatar + styling
+                                     match the AMP variant's .post-byline so HTML and AMP
+                                     readers see the same attribution row. 22px line-height
+                                     keeps the avatar (22x22 circle) on the text baseline.
+                                     The group link is bold-underline #555 (not the brand
+                                     green) so it reads as "the community where this was
+                                     posted" rather than a CTA. --}}
+                                @if(!empty($post['posterName']) || !empty($post['groupName']))
+                                <div style="margin-top: 10px; color: #888888; font-size: 12px; line-height: 22px;">
+                                    @if(!empty($post['posterAvatarUrl']))
+                                    <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 8px;" />
+                                    @endif
+                                    @if(!empty($post['posterName']))
+                                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+                                    @endif
+                                    @if(!empty($post['groupName']))
+                                    on @if(!empty($post['groupUrl']))<a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline; font-weight: bold;">{{ $post['groupName'] }}</a>@else<strong style="color: #555555;">{{ $post['groupName'] }}</strong>@endif
+                                    @endif
+                                </div>
+                                @endif
+                                {{-- V1 single.html parity (immediate already shows this
+                                     separately): "First posted …" appears only when the
+                                     message has actually been reposted to this group. --}}
+                                @if(!empty($post['firstPostedFormatted']))
+                                <div style="margin-top: 4px; font-size: 11px; color: #999999;">
+                                    First posted&nbsp;{{ $post['firstPostedFormatted'] }}
                                 </div>
                                 @endif
                             </td>
@@ -360,13 +394,17 @@
                              The media-query block forces the meta cell to a new line on ≤ 480px
                              clients that support @media. --}}
                         <tr>
-                            <td style="vertical-align: bottom; padding-top: 4px;">
+                            <td style="vertical-align: bottom; padding-top: 8px; padding-bottom: 8px;">
                                 <!--[if mso]><table cellpadding="0" cellspacing="0"><tr><td style="vertical-align:middle;padding-right:8px;"><![endif]-->
-                                <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; padding-right: 8px; padding-bottom: 2px;">
+                                {{-- padding-bottom on the wrap leaves breathing room below
+                                     the Reply button before the next card divider. --}}
+                                <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; padding-right: 8px; padding-bottom: 4px;">
                                     <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none; white-space: nowrap;">Reply</a>
                                 </div><!--[if mso]></td><td style="vertical-align:middle;"><![endif]-->
-                                <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; color: #999999; font-size: 12px; white-space: nowrap; padding-bottom: 2px;">
-                                    @if($post['distanceText']){{ $post['distanceText'] }} &bull; @endif{{ $post['arrivalFormatted'] }}
+                                {{-- 📍 distance · 🕒 time — same icons and middle-dot
+                                     separator as the AMP .post-meta strip; same #888 colour. --}}
+                                <div class="fd-reply-time-wrap" style="display: inline-block; vertical-align: middle; color: #888888; font-size: 12px; white-space: nowrap; padding-bottom: 4px;">
+                                    @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
                                 </div><!--[if mso]></td></tr></table><![endif]-->
                             </td>
                         </tr>
