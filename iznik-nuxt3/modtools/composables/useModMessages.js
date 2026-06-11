@@ -82,7 +82,7 @@ const messages = computed(() => {
   if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
     const allowed =
       collection.value === 'Pending'
-        ? ['Pending', 'PendingOther']
+        ? ['Pending', 'PendingOther', 'Spam']
         : [collection.value]
     const contextGid = groupid.value ? parseInt(groupid.value) : null
     messages = messages.filter((m) => {
