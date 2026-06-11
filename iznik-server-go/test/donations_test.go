@@ -108,15 +108,11 @@ func TestAddDonationExternal(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", targetUserID).Scan(&notifCount)
 	assert.Greater(t, notifCount, int64(0))
 
-	// Verify email task was queued.
+	// No per-donation thank-you email is queued any more: the daily
+	// mail:donations:thank-prep digest coordinates all thanking.
 	var taskCount int64
-	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND processed_at IS NULL").Scan(&taskCount)
-	assert.Greater(t, taskCount, int64(0))
-
-	// Source field must be 'external' so the email is worded correctly.
-	var source string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL ORDER BY id DESC LIMIT 1", targetUserID).Scan(&source)
-	assert.Equal(t, "external", source, "Manually-added donation must tag thank-you task with source=external")
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL", targetUserID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "external donation must not queue a per-donation thank-you email")
 }
 
 func TestAddDonationZeroAmount(t *testing.T) {
