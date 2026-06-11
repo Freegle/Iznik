@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---------------------------------------------------------------------------
 # mrml MJML compiler — in-process PHP extension (Rust).
 # Replaces the per-compile HTTP round-trip to the Node mjml sidecar with a
@@ -13,7 +11,9 @@
 #
 # Built here (per-branch) rather than in Dockerfile.base because the base
 # image only rebuilds on push to master, so a base-only change would not be
-# exercised by a PR's CI. Cargo layers are Docker-cached between builds.
+# exercised by a PR's CI. No BuildKit-only features (the orb builds the batch
+# image with the legacy builder on WSL) — the cargo build RUN layer is cached
+# by Docker layer/registry caching between runs instead.
 # ---------------------------------------------------------------------------
 FROM php:8.4-cli AS mjml-ext-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,9 +33,7 @@ RUN git clone --depth 1 --branch v1.2.1 https://github.com/alekitto/mjml-php.git
 # PhpException::default (already used elsewhere in the same file).
 RUN perl -0777 -pi -e 's/PhpException::new\(e\.to_string\(\), 0, unsafe \{\s*RENDER_EXCEPTION\.expect\("did not set exception ce"\)\s*\}\)/PhpException::default(e.to_string())/g' src/mjml.rs \
     && ! grep -q 'RENDER_EXCEPTION.expect' src/mjml.rs
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/build/target \
-    cargo build --release && cp target/release/libmjml.so /mjml.so
+RUN cargo build --release && cp target/release/libmjml.so /mjml.so
 
 # ---------------------------------------------------------------------------
 # Application image.
