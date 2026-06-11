@@ -92,7 +92,7 @@ class StoriesNewsletterMail extends MjmlMailable implements BulkRenderable
     public function bulkData(): array
     {
         return [
-            'name'           => $this->recipientName,
+            'name'           => $this->ph('recipientName'),
             'email'          => $this->ph('recipientEmail'),
             'stories'        => $this->stories,
             'headerImageUrl' => $this->headerImageUrl,
@@ -108,6 +108,7 @@ class StoriesNewsletterMail extends MjmlMailable implements BulkRenderable
     public function mergeVars(): array
     {
         return [
+            'recipientName'  => $this->recipientName,
             'recipientEmail' => $this->recipientEmail,
         ];
     }
