@@ -634,6 +634,26 @@ class UnifiedDigestService
                 ]);
             }
         } elseif ($mode === self::MODE_DAILY && !$userId) {
+            // Once-per-24h guard. The daily digest sends incrementally off the
+            // per-user users_digests cursor (everything since lastmsgid), so if
+            // the command is invoked more than once in a day — a manual resume,
+            // a staged rollout, an extra cron tick — each run sends a fresh
+            // increment and the user gets several digests in one day (observed
+            // 2026-06-11: ~11.7k users got 2-5 digests after repeated manual
+            // runs). V1 relied purely on being cron'd once daily; make the
+            // behaviour robust instead by skipping any user whose last daily
+            // digest went out within the last 23 hours. 23h (not 24h) leaves
+            // slack so the fixed 08:00 cron reliably re-includes everyone the
+            // next morning even if a tick fires a few seconds early. An
+            // explicit --user (manual sampling/resend) bypasses this.
+            $query->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users_digests')
+                    ->whereColumn('users_digests.userid', 'users.id')
+                    ->where('users_digests.mode', self::MODE_DAILY)
+                    ->where('users_digests.lastsent', '>', now()->subHours(23));
+            });
+
             // Safety gate — FREEGLE_DIGEST_DAILY_ALLOWLIST. Daily unified
             // digests are OFF by default (empty list): V1's bulk3
             // digest.php cron still owns daily, so an unconfigured deploy

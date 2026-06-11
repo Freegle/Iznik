@@ -131,6 +131,50 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    public function test_daily_digest_skips_user_sent_within_23_hours(): void
+    {
+        // Bulk daily run (no --user) must not re-send to a user whose last
+        // daily digest went out less than 23h ago, even though new posts
+        // exist — guards against the multi-send seen on 2026-06-11 when the
+        // command was run several times in one day.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createTestMessage($poster, $group);
+
+        // Recipient received a daily digest 1 hour ago, cursor at 0 so there
+        // ARE newer posts to send — only the 23h guard should hold it back.
+        UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+            'lastsent' => now()->subHour(),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+        $this->assertEquals(0, $stats['emails_sent'], 'must skip a user digested <23h ago');
+
+        // Move the last-sent mark beyond the 23h window; now eligible again.
+        UserDigest::where('userid', $recipient->id)
+            ->where('mode', UnifiedDigestService::MODE_DAILY)
+            ->update(['lastsent' => now()->subHours(25)]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+        $this->assertEquals(1, $stats['emails_sent'], 'must send once the last digest is >23h old');
+    }
+
     public function test_format_posted_to_multiple_groups(): void
     {
         $group1 = $this->createTestGroup();
