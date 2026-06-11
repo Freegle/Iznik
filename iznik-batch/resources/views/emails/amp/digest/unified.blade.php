@@ -23,8 +23,40 @@
     /* Header */
     .header {
       background-color: #338808;
-      padding: 16px 20px;
-      text-align: center;
+      padding: 12px 16px;
+    }
+    /* Logo + thumbnail nav share one flex row. AMP4Email supports
+       flexbox; avoid `gap` (not on the amp-custom allowlist) and use
+       per-item margin-right instead. 1 logo + 5 thumbs at 44px fits a
+       320px iPhone viewport. */
+    .header-row {
+      display: flex;
+      align-items: center;
+    }
+    .header-row .logo {
+      margin-right: 8px;
+    }
+    .header-thumb {
+      display: block;
+      line-height: 0;
+      border: 2px solid rgba(255, 255, 255, 0.6);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-right: 4px;
+    }
+    /* AMP4Email disallows the object-fit attribute on <amp-img>; do it via
+       CSS on the inner <img> the amp-img runtime renders so non-square
+       source photos crop to fit the 44×44 box instead of stretching. */
+    .header-thumb amp-img img { object-fit: cover; }
+
+    /* Mobile: hide header thumbs beyond the 5th so the visible ones stay
+       large enough to read. AMP4Email keeps the <style amp-custom> intact,
+       so the @media query reliably applies in Gmail mobile (unlike the
+       HTML variant where Gmail desktop strips <style>). */
+    @media (max-width: 480px) {
+      .header-thumb-5, .header-thumb-6, .header-thumb-7, .header-thumb-8, .header-thumb-9 {
+        display: none;
+      }
     }
 
     /* Greeting */
@@ -55,17 +87,49 @@
       grid-template-columns: 200px 1fr;
       gap: 14px;
     }
+    /* Multi-post card is a 2x2 grid: image in col 1, head (pill/title/
+       location) col 2 row 1, rest (desc/meta/byline/Reply) col 2 row 2.
+       On desktop the image spans both rows so its bottom edge lines up
+       with the bottom of the Reply accordion. On mobile the image shrinks
+       to a 110px column beside the head, and .post-rest breaks out to
+       span the full card width — mirroring the HTML variant's layout. */
     .post-img-wrap {
+      grid-column: 1;
+      grid-row: 1 / span 2;
       position: relative; /* required so amp-img layout="fill" fills it */
       min-height: 200px;
       border-radius: 4px;
       overflow: hidden;
     }
+    .post-head {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0; /* allow content to shrink */
+    }
+    .post-rest {
+      grid-column: 2;
+      grid-row: 2;
+      min-width: 0;
+    }
+    @media (max-width: 480px) {
+      .post-card {
+        grid-template-columns: 110px 1fr;
+        gap: 10px;
+      }
+      .post-img-wrap {
+        grid-row: 1;
+        min-height: 110px;
+      }
+      .post-rest {
+        grid-column: 1 / -1;
+      }
+    }
     /* AMP4Email disallows the object-fit attribute on <amp-img>; do it
        via CSS on the inner <img> the amp-img runtime renders. */
     .post-img-wrap amp-img img { object-fit: cover; }
+    /* Single-post (immediate) card keeps the flat .post-content wrapper. */
     .post-content {
-      min-width: 0; /* allow content to shrink */
+      min-width: 0;
     }
     /* OFFER / WANTED pill — matches the MJML chip shape (white text on
        a green or blue background pill) instead of plain coloured text,
@@ -80,8 +144,8 @@
       margin: 0 0 6px 0;
       letter-spacing: 0.3px;
     }
-    .post-type-offer { background-color: #338808; }
-    .post-type-wanted { background-color: #00A1CB; }
+    .post-type-offer { background-color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; }
+    .post-type-wanted { background-color: {{ \App\Mail\Digest\DigestStyle::WANTED_BLUE }}; }
     .post-type-row { margin: 0 0 6px 0; }
     .post-title {
       font-size: 16px;
@@ -92,6 +156,13 @@
       color: #212529;
       text-decoration: none;
     }
+    /* Location sits on its own line directly under the title — matches
+       the HTML variant's pill+title block. */
+    .post-location {
+      color: #212529;
+      font-size: 12px;
+      font-weight: 500;
+    }
     /* User-supplied description: 14px / #333 / regular so it reads as
        content but stays secondary to the title. Clamped to two lines
        via max-height + overflow hidden — AMP4Email's CSS-strict mode
@@ -101,7 +172,7 @@
        string so a runaway description can't blow past the clamp. */
     .post-preview {
       font-size: 14px;
-      color: #333333;
+      color: #555555;
       margin: 0 0 6px 0;
       line-height: 1.5;
       max-height: 42px;
@@ -208,7 +279,7 @@
     }
     .reply-chip {
       display: inline-block;
-      background-color: #338808;
+      background-color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};
       color: #ffffff;
       padding: 9px 26px;
       border-radius: 4px;
@@ -216,7 +287,7 @@
       font-weight: 700;
       text-align: center;
     }
-    .reply-chip.wanted { background-color: #00A1CB; }
+    .reply-chip.wanted { background-color: {{ \App\Mail\Digest\DigestStyle::WANTED_BLUE }}; }
     /* Hide the Reply chip once the user opens the accordion. We can hide
        the span (display: none works on grandchildren), and collapse the
        h4 to zero height so the form below sits where the chip was. The
@@ -435,28 +506,46 @@
 </head>
 <body>
   <div class="container">
-    {{-- Header --}}
+    {{-- Header: logo + thumbnail nav. Mirrors the MJML version. AMP4Email
+         disallows fragment-only hrefs (and tightens CSS to a small
+         allowlist) so each thumb links to its post's web URL rather than
+         scrolling within the email — best AMP can do. Placeholder-only
+         posts are skipped so the strip is a faithful preview of the real
+         photos in the cards. --}}
+    {{-- Render up to 10 thumbs; @media (max-width: 480px) hides 5-9 on
+         mobile so the visible thumbs stay large enough to read. --}}
+    @php
+        $headerThumbs = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->take(10)->values();
+    @endphp
     <div class="header">
-      {{-- logo_url is the square Freegle icon (icon.png). The old 120x40 box
-           forced a 3:1 ratio and squashed it flat — render it square. --}}
-      <amp-img
-        src="{{ config('freegle.branding.logo_url') }}"
-        width="48"
-        height="48"
-        alt="{{ config('freegle.branding.name', 'Freegle') }}"
-        layout="fixed"
-      ></amp-img>
+      <div class="header-row">
+        {{-- logo_url is the square Freegle icon (icon.png). Sized to match
+             the thumbs so logo + strip align on top and bottom edges. --}}
+        <amp-img
+          class="logo"
+          src="{{ config('freegle.branding.logo_url') }}"
+          width="44"
+          height="44"
+          alt="{{ config('freegle.branding.name', 'Freegle') }}"
+          layout="fixed"
+        ></amp-img>
+        @foreach($headerThumbs as $post)
+        <a class="header-thumb header-thumb-{{ $loop->index }}" href="{{ $post['fallbackReplyUrl'] }}">
+          {{-- thumbImageUrl is the 240×240 square crop from the delivery
+               proxy; combined with object-fit:cover (above) the rendered
+               44×44 box always shows a square photo regardless of source. --}}
+          <amp-img
+            src="{{ $post['thumbImageUrl'] }}"
+            width="44"
+            height="44"
+            alt="{{ $post['itemName'] }}"
+            layout="fixed"
+          ></amp-img>
+        </a>
+        @endforeach
+      </div>
     </div>
 
-    @if($postCount !== 1)
-    {{-- Greeting only on the multi-post (daily) digest. Immediate is
-         always exactly one post so the "Here is 1 new post" preamble is
-         silly — drop straight to the post. --}}
-    <div class="greeting">
-      <h2>Hi {{ $user->displayname ?? 'there' }},</h2>
-      <p>Here are <strong>{{ $postCount }}</strong> new posts from your Freegle communities.</p>
-    </div>
-    @endif
 
     {{-- Shared amp-mustache templates referenced by id from every post's
          amp-form. AMP4Email disallows the shared-form / amp-bind approach
@@ -487,10 +576,10 @@
         <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
       </a>
     </div>
-    <div class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
+    <div id="msg-{{ $post['message']->id }}" class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
       <div class="post-content" style="padding-left: 0;">
     @else
-    <div class="post-card">
+    <div id="msg-{{ $post['message']->id }}" class="post-card">
       {{-- Multi-post thumbnail. The grid above gives the image cell a
            non-relative computed height (matches the content cell), and
            amp-img layout="fill" + object-fit:cover stretches the photo
@@ -499,7 +588,7 @@
       <div class="post-img-wrap">
         <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
       </div>
-      <div class="post-content">
+      <div class="post-head">
     @endif
         {{-- OFFER / WANTED pill. Wrapped in a <p> so it gets its own
              line + bottom margin, but the visible chip is a <span> —
@@ -508,21 +597,34 @@
              cascade pinned p to block), span with display: inline-block
              reliably hugs its text. --}}
         <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span></p>
-        <p class="post-title"><a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a></p>
+        <p class="post-title">
+          <a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a>
+          @if($post['locationName'] ?? null)
+          {{-- Location sits directly under the title to match the HTML
+               variant's pill+title block — no pin emoji here either; the
+               pin lives next to the distance in the meta row below. --}}
+          <br><span class="post-location">{{ $post['locationName'] }}</span>
+          @endif
+        </p>
+        @if(!$isSingle)
+        {{-- Multi-post: close the head cell (pill/title/location) and open
+             the rest cell (desc/meta/byline/Reply). On mobile the rest cell
+             spans the full card width; on desktop it stays in column 2.
+             The single-post branch keeps one flat .post-content wrapper, so
+             the two shared closers at the bottom of the card match both. --}}
+      </div>
+      <div class="post-rest">
+        @endif
         @if($post['messageText'])
         {{-- User-supplied description. Immediate renders the full body
              (it's the only post); multi-post truncates for AMP size. --}}
         <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
         @endif
-        {{-- Location · distance · time as one clean strip — the previous
-             three stacked lines (post-loc, post-time, post-byline) read
-             as a messy column of dimming text and the location-pin emoji
-             sat directly above the avatar. One line with middle-dot
-             separators reads as a single coherent metadata footer. --}}
+        {{-- Meta row: 📍 distance · 🕒 time. Location moved up into the
+             title block so this row is just the bits that vary per
+             recipient (distance) or per post (time). --}}
         <p class="post-meta">
-          @if($post['locationName'] ?? null)<span>{{ $post['locationName'] }}</span>@endif
-          @if($post['distanceText'])@if($post['locationName'] ?? null)<span class="sep">·</span>@endif<span>&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-          <span class="sep">·</span><span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
+          @if($post['distanceText'])<span>&#x1F4CD; {{ $post['distanceText'] }}</span><span class="sep">·</span>@endif<span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
         </p>
         {{-- Avatar byline (V1 MultipleDigest parity). Sits on its own
              row below the metadata strip so the avatar pairs cleanly

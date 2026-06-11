@@ -191,6 +191,18 @@ Schedule::command('mail:mod-notifs')
     ->sendOutputTo(cronLog('mail:mod-notifs'))
     ->runInBackground();
 
+// Site-wide / per-group alerts to mods — processes incomplete rows in the
+// `alerts` table (broadcasts from the central team, with read receipts and
+// escalation). Batches 50 groups per pass via groupprogress, so the 10-min
+// cadence lets a Freegle-wide alert work through every group over a few ticks.
+// V1: cron/alerts.php (every 10 minutes). Cut over 2026-06-11; V1 disabled
+// in the bulk3-internal crontab at the same time to avoid double-sending.
+Schedule::command('mail:alerts:send')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:alerts:send'))
+    ->runInBackground();
+
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
 Schedule::command('monitor:email-health')
