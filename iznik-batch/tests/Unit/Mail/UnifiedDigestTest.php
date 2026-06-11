@@ -3,7 +3,9 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
+use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Illuminate\Mail\Mailable;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
@@ -24,16 +26,19 @@ class UnifiedDigestTest extends TestCase
     }
 
     /**
-     * Spool the mailable and return the decoded spool-file array. This is
-     * how the real mail path captures everything (subject, body, all custom
-     * headers, reply-to) — so assertions here exercise the actual
-     * production capture pipeline rather than poking at Symfony internals.
+     * Spool the mailable and return the decoded spool file data.
+     *
+     * @return array{from: array, reply_to: array, headers: array, html: string, ...}
      */
-    private function spoolAndLoad(UnifiedDigest $mail, string $recipient): array
+    private function spoolAndLoad(Mailable $mailable, string $recipient): array
     {
-        $id = $this->spooler->spool($mail, $recipient);
-        return json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $id = $this->spooler->spool($mailable, $recipient);
+        $path = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $data = json_decode(file_get_contents($path), true);
+
+        return $data ?? [];
     }
+
 
     public function test_can_be_constructed(): void
     {

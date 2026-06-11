@@ -1054,10 +1054,16 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
+				// Match the Pending review list (message_list.go): Spam-collection
+				// messages older than 30 days are aged out of the queue, so they
+				// must not be counted in the badge either — otherwise the badge
+				// shows a total with no visible, clickable home (an inflated
+				// hamburger count and no red left-menu count).
 				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
-					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL",
+					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
+					"AND mg.arrival >= (NOW() - INTERVAL 30 DAY)",
 					activeGroupIDs, utils.COLLECTION_SPAM).Scan(&spam)
 			}
 		}()

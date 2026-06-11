@@ -165,6 +165,7 @@ class AmpersandEncodingTest extends TestCase
                     'isPlaceholder'      => true,
                     'groupName'          => null,
                     'groupUrl'           => null,
+                    'postedToText'       => null,                              // single-group post (preparePosts contract)
                     'type'               => 'Offer',
                     'subject'            => 'OFFER: Bread & Butter (London)',  // decoded
                     'itemName'           => 'Bread & Butter',                 // decoded by preparePosts()
@@ -316,6 +317,7 @@ class AmpersandEncodingTest extends TestCase
                 'isPlaceholder'      => true,
                 'groupName'          => null,
                 'groupUrl'           => null,
+                'postedToText'       => null,                              // single-group post (preparePosts contract)
                 'type'               => 'Offer',
                 'subject'            => 'OFFER: Coffee & Cake (London)',      // decoded
                 'itemName'           => 'Coffee & Cake',                      // decoded
