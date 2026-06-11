@@ -131,6 +131,37 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    public function test_daily_digest_excludes_posts_with_an_outcome(): void
+    {
+        // V1 parity (Digest.php:218): a post that already has an outcome
+        // (Withdrawn/Taken/Received/...) is no longer available and must not
+        // appear in the digest — it was advertising withdrawn items as live.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // The only post in range has been withdrawn.
+        $message = $this->createTestMessage($poster, $group);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id,
+            'outcome' => 'Withdrawn',
+            'timestamp' => now(),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'a withdrawn/taken post must not be digested');
+    }
+
     public function test_daily_digest_skips_user_already_sent_today(): void
     {
         // Bulk daily run (no --user) must not re-send to a user who already

@@ -428,6 +428,14 @@ class UnifiedDigestService
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
+            // V1 parity (Digest.php:218): a post with any outcome
+            // (Taken/Received/Withdrawn/...) is no longer available, so it
+            // must not appear in the immediate digest either.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_outcomes')
+                    ->whereColumn('messages_outcomes.msgid', 'messages.id');
+            })
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
 
         if ($cursorMsgdate) {
@@ -886,6 +894,17 @@ class UnifiedDigestService
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
+            // V1 parity (iznik-server/include/mail/Digest.php:218 — only posts
+            // with count(outcomes)==0 reach the available list): exclude any
+            // post that already has an outcome (Taken/Received/Withdrawn/
+            // Expired/Partial). Without this the digest advertised
+            // withdrawn/taken items as still available — matches the platform
+            // browse/map, which also drops any post with an outcome.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_outcomes')
+                    ->whereColumn('messages_outcomes.msgid', 'messages.id');
+            })
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->orderBy('messages_groups.arrival', 'asc');
 
