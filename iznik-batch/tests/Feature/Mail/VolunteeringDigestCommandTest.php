@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\Group;
-use App\Models\Membership;
 use App\Services\EmailSpoolerService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -15,18 +15,19 @@ class VolunteeringDigestCommandTest extends TestCase
     {
         parent::setUp();
 
-        // VolunteeringDigestService queries volunteerings globally (no WHERE groupid in SQL).
-        // Rows from parallel test classes can slip through DatabaseTransactions isolation.
-        // Delete inside the current transaction so leaked rows are hidden without affecting
-        // other test classes (the DELETE is rolled back with this test's transaction).
+        // VolunteeringDigestService queries volunteering / groups / users globally.
+        // Rows from parallel test classes can slip through DatabaseTransactions
+        // isolation. Delete inside the current transaction so leaked rows are
+        // hidden without affecting other test classes (the DELETE rolls back with
+        // this test's transaction).
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['volunteering_dates', 'volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+        foreach (['volunteering_dates', 'volunteering_images', 'volunteering_groups', 'volunteering', 'users_digests', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
-    private function createVolunteering(int $groupId = null, string $title = 'Test Volunteering'): int
+    private function createVolunteering(?int $groupId = null, string $title = 'Test Volunteering'): int
     {
         $volId = DB::table('volunteering')->insertGetId([
             'title' => $title,
@@ -48,6 +49,23 @@ class VolunteeringDigestCommandTest extends TestCase
         return $volId;
     }
 
+    private function linkVolunteeringToGroup(int $volId, int $groupId): void
+    {
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volId,
+            'groupid' => $groupId,
+        ]);
+    }
+
+    private function setLastSent(int $userId, \DateTimeInterface|string $when): void
+    {
+        DB::table('users_digests')->insert([
+            'userid'   => $userId,
+            'mode'     => 'volunteering',
+            'lastsent' => $when,
+        ]);
+    }
+
     public function test_smoke_no_groups(): void
     {
         Mail::fake();
@@ -65,20 +83,14 @@ class VolunteeringDigestCommandTest extends TestCase
 
         $group = $this->createTestGroup();
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
-        // No volunteering created for the group
-
-        $this->artisan('mail:volunteering-digest')
-            ->assertExitCode(0);
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
 
         Mail::assertNothingSent();
     }
 
-    public function test_sends_to_members_with_volunteering_enabled(): void
+    public function test_sends_one_email_per_user_with_volunteering_enabled(): void
     {
         Mail::fake();
 
@@ -86,16 +98,10 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $member1 = $this->createTestUser();
-        $this->createMembership($member1, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member1, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $member2 = $this->createTestUser();
-        $this->createMembership($member2, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member2, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 2 email(s)')
@@ -104,26 +110,74 @@ class VolunteeringDigestCommandTest extends TestCase
         Mail::assertSentCount(2);
     }
 
-    public function test_spool_failure_for_one_member_does_not_abort_digest(): void
+    public function test_one_combined_email_covers_all_a_users_groups(): void
     {
-        // The spooler throws on the first recipient (e.g. a transient MJML
-        // render error, which spool() re-throws because it isn't a permanent
-        // address failure). The per-member loop must skip that recipient and
-        // keep going — not let the exception escape and abort the whole run.
+        // A user in two volunteering-enabled groups, each with its own
+        // opportunity, gets ONE email containing BOTH — not one email per group.
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $this->createVolunteering($group1->id, 'Group One Opp');
+        $this->createVolunteering($group2->id, 'Group Two Opp');
+
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group1, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+        $this->createMembership($user, $group2, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            return count($mail->volunteerings) === 2;
+        });
+    }
+
+    public function test_opportunity_cross_posted_to_several_of_users_groups_appears_once(): void
+    {
+        // The same opportunity shared with two of the user's groups must appear
+        // ONCE (deduplicated by id), annotated with both group names.
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group1, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+        $this->createMembership($user, $group2, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+
+        $volId = $this->createVolunteering($group1->id, 'Cross-posted Opp');
+        $this->linkVolunteeringToGroup($volId, $group2->id);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) use ($group1, $group2) {
+            if (count($mail->volunteerings) !== 1) {
+                return false;
+            }
+            $groups = $mail->volunteerings[0]['groups'] ?? [];
+            sort($groups);
+            $expected = [$group1->nameshort, $group2->nameshort];
+            sort($expected);
+            return $groups === $expected;
+        });
+    }
+
+    public function test_spool_failure_for_one_user_does_not_abort_digest(): void
+    {
         $group = $this->createTestGroup();
         $this->createVolunteering($group->id);
 
         $member1 = $this->createTestUser();
-        $this->createMembership($member1, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member1, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $member2 = $this->createTestUser();
-        $this->createMembership($member2, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member2, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $calls = 0;
         $spooler = \Mockery::mock(EmailSpoolerService::class);
@@ -140,7 +194,7 @@ class VolunteeringDigestCommandTest extends TestCase
             ->expectsOutputToContain('Sent 1 email(s)')
             ->assertExitCode(0);
 
-        $this->assertSame(2, $calls, 'Both members should have been attempted');
+        $this->assertSame(2, $calls, 'Both users should have been attempted');
     }
 
     public function test_skips_members_with_volunteering_disabled(): void
@@ -151,16 +205,10 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $memberOptedIn = $this->createTestUser();
-        $this->createMembership($memberOptedIn, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($memberOptedIn, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $memberOptedOut = $this->createTestUser();
-        $this->createMembership($memberOptedOut, $group, [
-            'volunteeringallowed' => 0,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($memberOptedOut, $group, ['volunteeringallowed' => 0, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
@@ -177,16 +225,10 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $memberActive = $this->createTestUser();
-        $this->createMembership($memberActive, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($memberActive, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $memberNoEmail = $this->createTestUser();
-        $this->createMembership($memberNoEmail, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 0,
-        ]);
+        $this->createMembership($memberNoEmail, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 0]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
@@ -203,10 +245,7 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $deletedUser = $this->createTestUser(['deleted' => now()]);
-        $this->createMembership($deletedUser, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($deletedUser, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 0 email(s)')
@@ -215,43 +254,36 @@ class VolunteeringDigestCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_skips_group_recently_sent(): void
+    public function test_skips_user_recently_sent(): void
     {
         Mail::fake();
 
         $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)
-            ->update(['lastvolunteeringroundup' => now()->subDays(1)]);
-
         $this->createVolunteering($group->id);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
-        $this->artisan('mail:volunteering-digest')
-            ->assertExitCode(0);
+        // Sent only 1 day ago (< 3-day threshold) — must be skipped.
+        $this->setLastSent($member->id, now()->subDays(1));
+
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
 
         Mail::assertNothingSent();
     }
 
-    public function test_processes_group_not_sent_in_3_days(): void
+    public function test_processes_user_not_sent_in_3_days(): void
     {
         Mail::fake();
 
         $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)
-            ->update(['lastvolunteeringroundup' => now()->subDays(4)]);
-
         $this->createVolunteering($group->id);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+
+        // Last sent 4 days ago (>= 3-day threshold) — must be processed.
+        $this->setLastSent($member->id, now()->subDays(4));
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
@@ -260,7 +292,7 @@ class VolunteeringDigestCommandTest extends TestCase
         Mail::assertSentCount(1);
     }
 
-    public function test_updates_lastvolunteeringroundup_after_sending(): void
+    public function test_records_lastsent_per_user_after_sending(): void
     {
         Mail::fake();
 
@@ -268,16 +300,15 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
-        $this->artisan('mail:volunteering-digest')
-            ->assertExitCode(0);
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
 
         $this->assertNotNull(
-            DB::table('groups')->where('id', $group->id)->value('lastvolunteeringroundup')
+            DB::table('users_digests')
+                ->where('userid', $member->id)
+                ->where('mode', 'volunteering')
+                ->value('lastsent')
         );
     }
 
@@ -286,14 +317,11 @@ class VolunteeringDigestCommandTest extends TestCase
         Mail::fake();
 
         $group = $this->createTestGroup();
-        // Global volunteering — no group assigned
+        // Global opportunity — no group assigned, shown to all eligible users.
         $this->createVolunteering(null, 'Global Opportunity');
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
@@ -308,7 +336,6 @@ class VolunteeringDigestCommandTest extends TestCase
 
         $group = $this->createTestGroup();
 
-        // Expired volunteering — should not be included
         $expiredId = DB::table('volunteering')->insertGetId([
             'title' => 'Expired Opportunity',
             'location' => 'Somewhere',
@@ -323,13 +350,9 @@ class VolunteeringDigestCommandTest extends TestCase
         ]);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
-        $this->artisan('mail:volunteering-digest')
-            ->assertExitCode(0);
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
 
         Mail::assertNothingSent();
     }
@@ -342,18 +365,14 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
-        $this->artisan('mail:volunteering-digest')
-            ->assertExitCode(0);
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
 
         Mail::assertNothingSent();
     }
 
-    public function test_dry_run_does_not_send_emails(): void
+    public function test_dry_run_does_not_send_or_record(): void
     {
         Mail::fake();
 
@@ -361,10 +380,7 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest', ['--dry-run' => true])
             ->expectsOutputToContain('DRY RUN')
@@ -374,7 +390,7 @@ class VolunteeringDigestCommandTest extends TestCase
         Mail::assertNothingSent();
 
         $this->assertNull(
-            DB::table('groups')->where('id', $group->id)->value('lastvolunteeringroundup')
+            DB::table('users_digests')->where('userid', $member->id)->where('mode', 'volunteering')->value('lastsent')
         );
     }
 
@@ -389,13 +405,9 @@ class VolunteeringDigestCommandTest extends TestCase
         $this->createVolunteering($group->id);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
-        $this->artisan('mail:volunteering-digest')
-            ->assertExitCode(0);
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
 
         Mail::assertNothingSent();
     }
@@ -422,16 +434,15 @@ class VolunteeringDigestCommandTest extends TestCase
         ]);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            return $mail->volunteerings[0]['online'] === true;
+        });
     }
 
     public function test_applyby_deadline_is_formatted(): void
@@ -447,16 +458,15 @@ class VolunteeringDigestCommandTest extends TestCase
         ]);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            return !empty($mail->volunteerings[0]['applyby']);
+        });
     }
 
     public function test_contact_fields_are_passed_through(): void
@@ -478,19 +488,20 @@ class VolunteeringDigestCommandTest extends TestCase
             'expired' => 0,
             'added' => now(),
         ]);
-        // No volunteering_groups row → global opportunity, shown for all groups
+        // No volunteering_groups row → global opportunity, shown for all users
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            $v = $mail->volunteerings[0];
+            return $v['contactname'] === 'Jane Smith'
+                && $v['contactemail'] === 'jane@example.org';
+        });
     }
 
     public function test_photo_thumb_from_externalmods_url(): void
@@ -508,15 +519,14 @@ class VolunteeringDigestCommandTest extends TestCase
         ]);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
+        $this->createMembership($member, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
 
         $this->artisan('mail:volunteering-digest')
             ->expectsOutputToContain('Sent 1 email(s)')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            return $mail->volunteerings[0]['photo_thumb'] === 'https://cdn.example.com/image.jpg';
+        });
     }
 }

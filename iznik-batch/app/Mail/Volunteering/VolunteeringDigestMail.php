@@ -11,9 +11,16 @@ use Illuminate\Support\Collection;
 class VolunteeringDigestMail extends MjmlMailable
 {
     use TrackableEmail;
+
+    /**
+     * @param array $volunteerings Deduplicated opportunities across all the
+     *                             recipient's volunteering-enabled groups (plus
+     *                             global opportunities). Each carries a 'groups'
+     *                             array of the recipient's group names it is
+     *                             shared with (empty for global opportunities).
+     */
     public function __construct(
         public readonly string $recipientEmail,
-        public readonly string $groupName,
         public readonly array $volunteerings,
         public readonly string $unsubscribeUrl,
         public readonly Collection $jobAds = new Collection(),
@@ -27,13 +34,13 @@ class VolunteeringDigestMail extends MjmlMailable
             $this->userId,
             null,
             $this->getSubject(),
-            ['group' => $this->groupName, 'vol_count' => count($this->volunteerings)]
+            ['vol_count' => count($this->volunteerings)]
         );
     }
 
     protected function getSubject(): string
     {
-        return "[{$this->groupName}] Volunteer Opportunity Roundup";
+        return 'Volunteer opportunities near you';
     }
 
     public function envelope(): Envelope
@@ -41,7 +48,7 @@ class VolunteeringDigestMail extends MjmlMailable
         return new Envelope(
             from: new Address(
                 config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
-                $this->groupName
+                config('freegle.site_name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail)],
             subject: $this->getSubject(),
@@ -62,7 +69,6 @@ class VolunteeringDigestMail extends MjmlMailable
         });
 
         return $this->mjmlView('emails.mjml.volunteering.digest', [
-            'groupName'      => $this->groupName,
             'volunteerings'  => $this->volunteerings,
             'userSite'       => $userSite,
             'unsubscribeUrl' => $this->unsubscribeUrl,
