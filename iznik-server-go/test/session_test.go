@@ -1917,6 +1917,39 @@ func TestWorkCountSpamMessages(t *testing.T) {
 	assert.GreaterOrEqual(t, spam, float64(1), "Should count spam message")
 }
 
+// Spam-collection messages older than 30 days are aged out of the Pending
+// review list (message_list.go); the badge work-count must apply the same age
+// filter, or the hamburger total shows a count with no visible, clickable home
+// (an inflated total and no matching red left-menu count).
+func TestWorkCountSpamMessagesAgedOutNotCounted(t *testing.T) {
+	prefix := uniquePrefix("wc_spam_old")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Old spam item', 'Test body', 'Test body', 'Offer', ?, NOW() - INTERVAL 40 DAY)", memberID, locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
+	// Spam row arrived 40 days ago — older than the 30-day window.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW() - INTERVAL 40 DAY, 'Spam', 0)", msgID, groupID)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	work := getSessionWork(t, token)
+	spam := work["spam"].(float64)
+	assert.Equal(t, float64(0), spam, "Spam older than 30 days must not be counted in the badge (it is aged out of the Pending list)")
+}
+
 func TestWorkCountSpamMembersReFlaggedAfterRecentReview(t *testing.T) {
 	// Regression: commit 4749246f6 changed the member list query to use
 	// reviewrequestedat > reviewedat, but session.go badge counts still used the
