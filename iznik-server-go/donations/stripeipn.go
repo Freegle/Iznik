@@ -215,6 +215,21 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 		}
 	}
 
+	// 4. Canonical-email and prior-donation fallbacks (V1 parity), using the
+	//    best available payer email.
+	if userID == 0 {
+		payerEmail := ""
+		if charge.BillingDetails != nil {
+			payerEmail = charge.BillingDetails.Email
+		}
+		if payerEmail != "" {
+			userID = MatchUserByEmailOrPriorDonation(payerEmail)
+			if userID > 0 {
+				log.Printf("[StripeIPN] Matched user %d via email/canon/prior donation for %s", userID, payerEmail)
+			}
+		}
+	}
+
 	// Get user name and email for the matched user.
 	if userID > 0 {
 		gdb.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&userEmail)

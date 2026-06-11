@@ -23,6 +23,18 @@ return [
 
     'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
 
+    'donations' => [
+        // One-off donations below this amount (£) don't warrant a manual
+        // thank-you (V1 Donations::MANUAL_THANKS). Recurring donations are
+        // thanked once, on the first payment, regardless of amount.
+        'manual_thanks' => (float) env('FREEGLE_MANUAL_THANKS', 20),
+
+        // Payer emails that must never trigger a thank-you (PayPal Giving Fund,
+        // Tipalti). Comma-separated; mirrors the Go DONATIONS_EXCLUDE so both
+        // sides share one source of truth.
+        'excluded_payers' => env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),

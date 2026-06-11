@@ -78,11 +78,14 @@ func PayPalIPN(c *fiber.Ctx) error {
 		}
 	}
 
-	// Fallback to email lookup.
+	// Fallback: registered address (exact or canonical) or a prior donation from
+	// the same Payer that's linked to a still-valid user. Mirrors V1 findByEmail
+	// and recovers recurring donors whose Freegle email later changed while
+	// PayPal keeps billing the original address.
 	if userID == 0 && payerEmail != "" {
-		gdb.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", payerEmail).Scan(&userID)
+		userID = MatchUserByEmailOrPriorDonation(payerEmail)
 		if userID > 0 {
-			log.Printf("[PayPalIPN] Matched user %d from payer email %s", userID, payerEmail)
+			log.Printf("[PayPalIPN] Matched user %d for payer email %s (email/canon/prior donation)", userID, payerEmail)
 		}
 	}
 

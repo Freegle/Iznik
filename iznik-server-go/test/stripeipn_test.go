@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -249,4 +250,67 @@ func TestStripeIPN_GiftAidNotification(t *testing.T) {
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
 	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
+}
+
+// TestStripeIPN_MatchByPriorDonation: a billing email not registered on any
+// account, but a prior donation from the same Payer is linked to a valid user.
+func TestStripeIPN_MatchByPriorDonation(t *testing.T) {
+	prefix := uniquePrefix("stripeprior")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	billingEmail := prefix + "_card@external.com" // not in users_emails
+	priorTxn := "ch_prior_" + prefix
+	chargeID := "ch_test_" + prefix
+
+	db.Exec("INSERT INTO users_donations (userid, Payer, GrossAmount, TransactionID, TransactionType, source, type, timestamp) "+
+		"VALUES (?, ?, 10.00, ?, 'subscr_payment', 'Stripe', 'Stripe', NOW() - INTERVAL 1 MONTH)",
+		userID, billingEmail, priorTxn)
+
+	body := makeChargeEvent(chargeID, 1000, map[string]string{}, billingEmail, "One-time donation")
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donorID)
+	assert.NotNil(t, donorID, "should match via prior donation from same Payer")
+	if donorID != nil {
+		assert.Equal(t, userID, *donorID)
+	}
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", priorTxn, chargeID)
+}
+
+// TestStripeIPN_MatchByCanon: billing email differs from the registered address
+// only by canonicalisation; must still match (V1 parity).
+func TestStripeIPN_MatchByCanon(t *testing.T) {
+	prefix := uniquePrefix("stripecanon")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	billingEmail := prefix + ".donor@test.com"
+	canon := user.CanonicalizeEmail(billingEmail)
+	storedEmail := canon
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)", userID, storedEmail, canon)
+
+	chargeID := "ch_test_" + prefix
+	body := makeChargeEvent(chargeID, 1000, map[string]string{}, billingEmail, "One-time donation")
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donorID)
+	assert.NotNil(t, donorID, "billing email should match registered account via canon")
+	if donorID != nil {
+		assert.Equal(t, userID, *donorID)
+	}
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ? AND email = ?", userID, storedEmail)
 }

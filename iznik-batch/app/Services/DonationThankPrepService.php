@@ -80,11 +80,29 @@ class DonationThankPrepService
         $cards  = [];
         $maxId  = $lastId;
         foreach ($donations as $donation) {
-            $total += (float) $donation->GrossAmount;
-            $cards[] = $this->buildDonationCard($donation);
+            // Always advance the high-water mark, even for donations we skip,
+            // so a continuation or sub-threshold gift isn't re-examined every
+            // run and never re-surfaces tomorrow.
             if ((int) $donation->id > $maxId) {
                 $maxId = (int) $donation->id;
             }
+
+            if (!$this->shouldThank($donation)) {
+                continue;
+            }
+
+            $total  += (float) $donation->GrossAmount;
+            $cards[] = $this->buildDonationCard($donation);
+        }
+
+        // Nothing in this batch warranted a thank-you (all continuations,
+        // sub-threshold one-offs, or excluded payers). Advance the mark so the
+        // skipped rows don't return, but send no email.
+        if (empty($cards)) {
+            if (!$dryRun) {
+                $this->setLastSentId($maxId);
+            }
+            return ['donations' => 0, 'total' => 0.0, 'sent' => false, 'last_id' => $maxId];
         }
 
         if (!$dryRun) {
@@ -108,11 +126,74 @@ class DonationThankPrepService
         }
 
         return [
-            'donations' => $donations->count(),
+            'donations' => count($cards),
             'total'     => $total,
             'sent'      => !$dryRun,
             'last_id'   => $maxId,
         ];
+    }
+
+    /**
+     * Should this donation produce a thank-you card? Mirrors V1
+     * donateipn.php's trigger so we don't re-thank established donors:
+     *
+     *   - never for an excluded payer (PayPal Giving Fund / Tipalti);
+     *   - for recurring donations, only the donor's first-ever payment (a new
+     *     sign-up), never the monthly continuations;
+     *   - for one-off donations, only at or above the manual-thanks threshold.
+     */
+    private function shouldThank(object $donation): bool
+    {
+        if ($this->isExcludedPayer((string) ($donation->Payer ?? ''))
+            || (string) $donation->source === 'PayPalGivingFund') {
+            return false;
+        }
+
+        $recurring = in_array((string) $donation->TransactionType, self::RECURRING_TYPES, true);
+
+        if ($recurring) {
+            return $this->isFirstDonation($donation);
+        }
+
+        return (float) $donation->GrossAmount >= (float) config('freegle.donations.manual_thanks', 20);
+    }
+
+    /**
+     * True when there is no earlier donation from the same donor — matched by
+     * userid where known, otherwise by Payer email so a continuation from an
+     * as-yet-unmatched recurring donor is still recognised as not-first.
+     */
+    private function isFirstDonation(object $donation): bool
+    {
+        $query = DB::table('users_donations')->where('id', '<', (int) $donation->id);
+
+        if ($donation->userid) {
+            $query->where('userid', (int) $donation->userid);
+        } else {
+            $query->where('Payer', (string) ($donation->Payer ?? ''));
+        }
+
+        return !$query->exists();
+    }
+
+    private function isExcludedPayer(string $payer): bool
+    {
+        if ($payer === '') {
+            return false;
+        }
+
+        $list = array_filter(array_map(
+            'trim',
+            explode(',', (string) config('freegle.donations.excluded_payers', ''))
+        ));
+
+        foreach ($list as $excluded) {
+            if (strcasecmp($payer, $excluded) === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -183,6 +264,7 @@ class DonationThankPrepService
             'modChats'        => [],
             'birthdayHint'    => false,
             'flags'           => [],
+            'candidates'      => [],
             'links'           => $this->buildLinks($donation),
         ];
 
@@ -190,6 +272,7 @@ class DonationThankPrepService
             $card = $this->enrichMatchedDonor((int) $donation->userid, $donation, $card, $recurring);
         } else {
             $card['flags'][] = 'Unmatched donor — needs sleuthing';
+            $card['candidates'] = $this->gatherCandidates($donation);
         }
 
         if ($recurring) {
@@ -410,5 +493,91 @@ class DonationThankPrepService
         }
 
         return $links;
+    }
+
+    /**
+     * For an unmatched donation, surface a few plausible Freegle accounts the
+     * thanker can check — mirroring the manual sleuthing (same email prefix on
+     * a different provider; same display name). These are read-only suggestions
+     * shown on the card; nothing is auto-linked. Capped so the card stays
+     * scannable.
+     *
+     * @return array<int, array{userid:int, name:string, email:?string, reason:string, link:string}>
+     */
+    private function gatherCandidates(object $donation): array
+    {
+        $payer      = (string) ($donation->Payer ?? '');
+        $candidates = [];
+        $seen       = [];
+
+        // 1. Same email local-part on any provider — people reuse the prefix
+        //    across gmail/btinternet/etc. The leading-anchored LIKE uses the
+        //    email index, so this stays cheap.
+        $at = strpos($payer, '@');
+        if ($at > 2) {
+            $local      = substr($payer, 0, $at);
+            $likePrefix = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $local) . '@%';
+
+            $rows = DB::table('users_emails')
+                ->join('users', 'users.id', '=', 'users_emails.userid')
+                ->whereNull('users.deleted')
+                ->whereNotNull('users_emails.userid')
+                ->where('users_emails.email', 'like', $likePrefix)
+                ->where('users_emails.email', '<>', $payer)
+                ->where('users_emails.email', 'not like', '%@users.ilovefreegle.org')
+                ->where('users_emails.email', 'not like', '%@users.trash-nothing.com')
+                ->orderBy('users_emails.userid')
+                ->limit(5)
+                ->get(['users.id as userid', 'users.firstname', 'users.lastname', 'users.fullname', 'users_emails.email']);
+
+            foreach ($rows as $r) {
+                $key = (int) $r->userid;
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $candidates[] = $this->candidateRow($r, "same email prefix ({$local}@…)");
+            }
+        }
+
+        // 2. Exact display-name match (PayPal/Stripe give us the payer's name).
+        $name = trim((string) ($donation->PayerDisplayName ?? ''));
+        if ($name !== '' && strpos($name, '@') === false && count($candidates) < 5) {
+            $rows = DB::table('users')
+                ->whereNull('deleted')
+                ->where('fullname', $name)
+                ->orderBy('id')
+                ->limit(5)
+                ->get(['id as userid', 'firstname', 'lastname', 'fullname']);
+
+            foreach ($rows as $r) {
+                $key = (int) $r->userid;
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $r->email = null;
+                $candidates[] = $this->candidateRow($r, 'name match');
+            }
+        }
+
+        return array_slice($candidates, 0, 5);
+    }
+
+    private function candidateRow(object $r, string $reason): array
+    {
+        $display = trim(((string) ($r->firstname ?? '')) . ' ' . ((string) ($r->lastname ?? '')));
+        if ($display === '') {
+            $display = (string) ($r->fullname ?? '');
+        }
+        $modBase = rtrim((string) config('freegle.sites.mod', 'https://modtools.org'), '/');
+
+        return [
+            'userid' => (int) $r->userid,
+            'name'   => $display !== '' ? $display : 'Unknown',
+            'email'  => isset($r->email) ? $r->email : null,
+            'reason' => $reason,
+            'link'   => "{$modBase}/support/" . (int) $r->userid,
+        ];
     }
 }
