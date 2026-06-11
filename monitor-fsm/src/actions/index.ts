@@ -2370,9 +2370,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const fixed = bugsFixed.filter(b => b.outcome === 'fixed')
       const deferred = bugsFixed.filter(b => b.outcome === 'deferred')
       if (fixed.length > 0) {
-        lines.push('## Discourse bugs fixed', '')
+        lines.push('## Discourse bugs: fix PRs opened', '')
+        lines.push('_These PRs have passed automated review but are not yet merged or deployed (awaiting merge + deploy)._', '')
         for (const b of fixed) {
-          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber}` : ''}`)
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber} (awaiting merge + deploy)` : ''}`)
         }
         lines.push('')
       }
