@@ -665,6 +665,17 @@ describe('mobile store', () => {
       }
     }
 
+    beforeEach(() => {
+      // reRegisterPush guards with `if (!process.client ...)`; enable the
+      // client environment so the checkPermissions/register path runs (same
+      // pattern as the initDeepLinks and other native-guarded blocks above).
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
     it('calls register() on a native app with a stored plugin and granted permission', async () => {
       const store = useMobileStore()
       store.isApp = true
