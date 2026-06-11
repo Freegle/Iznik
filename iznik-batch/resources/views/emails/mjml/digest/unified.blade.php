@@ -17,16 +17,17 @@
     display: none !important;
   }
   .fd-header-col { width: 16.66% !important; }
-  /* On mobile, the meta/byline/Reply block moves out of the 2-column
-     card into a full-width row below. Hide the in-column copy and reveal
-     the below-card copy. */
-  .fd-hide-mobile { display: none !important; }
-  .fd-hide-desktop, .fd-hide-desktop > div { display: block !important; }
 }
-/* Default: desktop. Mobile-only section is hidden, in-column copy is
-   shown. Clients without @media support (Outlook desktop) see this
-   default — i.e. the desktop layout. */
-.fd-hide-desktop { display: none; }
+/* MOBILE-FIRST default. Most recipients are on mobile, and Gmail mobile web
+   strips embedded style blocks, so the DEFAULT (driven by inline styles) is
+   the mobile layout: the full-width .fd-narrow-only meta/byline/Reply row
+   shows, and the in-column .fd-wide-only copy is inline display:none. Only
+   clients that keep embedded styles and are on a wide screen swap to the
+   2-column desktop layout. */
+@media only screen and (min-width: 481px) {
+  .fd-wide-only { display: block !important; }
+  .fd-narrow-only { display: none !important; }
+}
         ';
     @endphp
     @include('emails.mjml.partials.head', [
@@ -357,22 +358,22 @@
                             <br/><span style="color: #212529; font-size: 12px; font-weight: 500;">{{ $post['locationName'] }}</span>
                             @endif
                         </div>
-                        {{-- Description is desktop-only inside col 2; on mobile it
-                             moves to the full-width row below (.fd-hide-desktop). --}}
-                        @if($post['messageText'] || $post['postedToText'])
-                        <div class="fd-hide-mobile" style="padding-top: 2px;">
-                            @if($post['messageText'])
-                            <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                        {{-- Desktop (in-column) copy of desc + meta + byline + Reply.
+                             INLINE display:none = hidden by default, so mobile and
+                             <style>-stripping clients (Gmail mobile web) fall back to
+                             the full-width .fd-narrow-only copy below. The min-width
+                             @media reveals this on wide screens that keep <style>. --}}
+                        <div class="fd-wide-only" style="display: none;">
+                            @if($post['messageText'] || $post['postedToText'])
+                            <div style="padding-top: 2px;">
+                                @if($post['messageText'])
+                                <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                                @endif
+                                @if($post['postedToText'])
+                                <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
+                                @endif
+                            </div>
                             @endif
-                            @if($post['postedToText'])
-                            <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
-                            @endif
-                        </div>
-                        @endif
-                        {{-- Desktop-only: meta + byline + first-posted live INSIDE col 2.
-                             Mobile clients hide this via .fd-hide-mobile and show the
-                             full-width copy from the section below. --}}
-                        <div class="fd-hide-mobile">
                             <div style="margin-top: 6px; color: #888888; font-size: 12px;">
                                 @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
                             </div>
@@ -394,20 +395,11 @@
                                 First posted&nbsp;{{ $post['firstPostedFormatted'] }}
                             </div>
                             @endif
+                            <div style="margin-top: 10px;">
+                                <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
+                            </div>
                         </div>
                     </mj-text>
-                    <mj-button
-                        href="{{ $post['messageUrl'] }}"
-                        background-color="{{ $isOffer ? $offerColor : $wantedColor }}"
-                        color="#ffffff"
-                        font-size="13px"
-                        font-weight="700"
-                        border-radius="4px"
-                        inner-padding="9px 26px"
-                        padding="10px 0 0 0"
-                        align="left"
-                        css-class="fd-hide-mobile"
-                    >Reply</mj-button>
                 </mj-column>
             </mj-group>
         </mj-section>
@@ -417,55 +409,53 @@
              @media (max-width: 480px) block reveals it. Outlook desktop
              (no @media) keeps it hidden — the in-column copy above stays
              visible there. --}}
-        <mj-section css-class="fd-hide-desktop" background-color="#ffffff" padding="0 20px 8px">
+        {{-- The whole reflow copy carries INLINE display:none so clients that
+             strip <style> (Gmail mobile web) keep it hidden — no duplicate of
+             the in-column copy. The @media block (kept only by clients that
+             preserve <style>) flips it to block !important and hides the
+             in-column copy instead, giving the full-width mobile reflow there.
+             mj-section padding=0 + the padding on the inner div means the
+             collapsed (display:none) state leaves no gap on Gmail. --}}
+        <mj-section background-color="#ffffff" padding="0">
             <mj-column>
                 <mj-text padding="0" font-size="14px" color="#212529">
-                    {{-- Description leads the mobile row (it left col 2 to get
-                         the full card width); fd-desc still clamps it to two
-                         lines via the mobile @media block. --}}
-                    @if($post['messageText'] || $post['postedToText'])
-                    <div style="padding-bottom: 6px;">
-                        @if($post['messageText'])
-                        <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                    <div class="fd-narrow-only" style="padding: 0 20px 8px;">
+                        @if($post['messageText'] || $post['postedToText'])
+                        <div style="padding-bottom: 6px;">
+                            @if($post['messageText'])
+                            <span class="fd-desc" style="color: #555555; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                            @endif
+                            @if($post['postedToText'])
+                            <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
+                            @endif
+                        </div>
                         @endif
-                        @if($post['postedToText'])
-                        <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
+                        <div style="color: #888888; font-size: 12px;">
+                            @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
+                        </div>
+                        @if(!empty($post['posterName']) || !empty($post['groupName']))
+                        <div style="margin-top: 8px; color: #888888; font-size: 12px; line-height: 22px;">
+                            @if(!empty($post['posterAvatarUrl']))
+                            <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 8px;" />
+                            @endif
+                            @if(!empty($post['posterName']))
+                            Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+                            @endif
+                            @if(!empty($post['groupName']))
+                            on @if(!empty($post['groupUrl']))<a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline; font-weight: bold;">{{ $post['groupName'] }}</a>@else<strong style="color: #555555;">{{ $post['groupName'] }}</strong>@endif
+                            @endif
+                        </div>
                         @endif
+                        @if(!empty($post['firstPostedFormatted']))
+                        <div style="margin-top: 4px; font-size: 11px; color: #999999;">
+                            First posted&nbsp;{{ $post['firstPostedFormatted'] }}
+                        </div>
+                        @endif
+                        <div style="margin-top: 10px;">
+                            <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
+                        </div>
                     </div>
-                    @endif
-                    <div style="margin-top: 0; color: #888888; font-size: 12px;">
-                        @if($post['distanceText'])&#x1F4CD; {{ $post['distanceText'] }} &middot; @endif&#x1F552; {{ $post['arrivalFormatted'] }}
-                    </div>
-                    @if(!empty($post['posterName']) || !empty($post['groupName']))
-                    <div style="margin-top: 8px; color: #888888; font-size: 12px; line-height: 22px;">
-                        @if(!empty($post['posterAvatarUrl']))
-                        <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 8px;" />
-                        @endif
-                        @if(!empty($post['posterName']))
-                        Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
-                        @endif
-                        @if(!empty($post['groupName']))
-                        on @if(!empty($post['groupUrl']))<a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline; font-weight: bold;">{{ $post['groupName'] }}</a>@else<strong style="color: #555555;">{{ $post['groupName'] }}</strong>@endif
-                        @endif
-                    </div>
-                    @endif
-                    @if(!empty($post['firstPostedFormatted']))
-                    <div style="margin-top: 4px; font-size: 11px; color: #999999;">
-                        First posted&nbsp;{{ $post['firstPostedFormatted'] }}
-                    </div>
-                    @endif
                 </mj-text>
-                <mj-button
-                    href="{{ $post['messageUrl'] }}"
-                    background-color="{{ $isOffer ? $offerColor : $wantedColor }}"
-                    color="#ffffff"
-                    font-size="13px"
-                    font-weight="700"
-                    border-radius="4px"
-                    inner-padding="9px 26px"
-                    padding="10px 0 0 0"
-                    align="left"
-                >Reply</mj-button>
             </mj-column>
         </mj-section>
         @endforeach
