@@ -248,6 +248,9 @@ func TestBuildSSOResponse_AdminFlagIsLiteralString(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestValidateDiscourseSession_EarlyExits(t *testing.T) {
+	// Series is no longer a required field (PR #679 fix: series is now emitted as
+	// a JSON number; authentication is by id+token only). Only id=0 or empty token
+	// trigger "incomplete cookie data" before the DB lookup.
 	cases := []struct {
 		name    string
 		cookie  string
@@ -256,7 +259,6 @@ func TestValidateDiscourseSession_EarlyExits(t *testing.T) {
 		{"invalid json", "not-json", "invalid cookie JSON"},
 		{"empty json object", "{}", "incomplete cookie data"},
 		{"zero user id", `{"id":0,"series":"s","token":"t"}`, "incomplete cookie data"},
-		{"empty series", `{"id":1,"series":"","token":"t"}`, "incomplete cookie data"},
 		{"empty token", `{"id":1,"series":"s","token":""}`, "incomplete cookie data"},
 		{"truncated json", `{"id":1,"series":`, "invalid cookie JSON"},
 		{"null values", `{"id":null,"series":null,"token":null}`, "incomplete cookie data"},
@@ -387,22 +389,6 @@ func TestDiscourseSSO_IncompleteCookieZeroID_RedirectsToLogin(t *testing.T) {
 	assert.Contains(t, resp.Header.Get("Location"), "modtools.org/discourse")
 }
 
-func TestDiscourseSSO_IncompleteCookieEmptySeries_RedirectsToLogin(t *testing.T) {
-	secret := "test-secret"
-	os.Setenv("DISCOURSE_SECRET", secret)
-	defer os.Unsetenv("DISCOURSE_SECRET")
-
-	rawPayload := base64.StdEncoding.EncodeToString([]byte("nonce=abc123"))
-	sig := computeHMAC(rawPayload, secret)
-
-	app := newSSOApp()
-	resp := doSSORequest(t, app, rawPayload, sig, &http.Cookie{
-		Name:  "Iznik-Discourse-SSO",
-		Value: `{"id":1,"series":"","token":"xyz"}`,
-	})
-	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
-}
-
 func TestDiscourseSSO_IncompleteCookieEmptyToken_RedirectsToLogin(t *testing.T) {
 	secret := "test-secret"
 	os.Setenv("DISCOURSE_SECRET", secret)
@@ -456,4 +442,61 @@ func TestDiscourseSSO_SignatureRoundTrip(t *testing.T) {
 	resp := doSSORequest(t, app, rawPayload, sig)
 	assert.NotEqual(t, fiber.StatusForbidden, resp.StatusCode, "correct signature must not be rejected")
 	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: PR #679 — series emitted as JSON number causes redirect loop
+// ---------------------------------------------------------------------------
+//
+// Before the fix, the SSO cookie struct had `Series string`. When PR #679
+// changed session.go to emit series as a uint64 (JSON number), Unmarshal
+// would error trying to decode a number into a string field. The handler then
+// redirected back to modtools.org/discourse, which set the cookie again and
+// retried — infinite loop, all moderators locked out of Discourse.
+//
+// After the fix, series is absent from the parse struct; only id+token are
+// required. A cookie with series as a number must pass the pre-DB validation
+// step (json.Unmarshal must not error).
+
+// TestParseSSOCookie_NumericSeries is the regression test for the PR #679
+// ModTools⇄Discourse redirect loop. PR #679 changed the persistent token's
+// "series" to a JSON number; the old SSO cookie struct declared Series as a
+// string, so json.Unmarshal errored ("invalid cookie JSON") on every real
+// cookie → the handler bounced back to /discourse forever. parseSSOCookie
+// ignores series, so a numeric series parses cleanly. Pure function → no DB,
+// so this exercises the exact fix without the unit-package nil-DB panic.
+func TestParseSSOCookie_NumericSeries(t *testing.T) {
+	id, token, err := parseSSOCookie(`{"id":99,"series":12345,"token":"sometoken"}`)
+	assert.NoError(t, err, "REGRESSION: numeric series must not fail cookie parse (PR #679 redirect loop)")
+	assert.Equal(t, uint64(99), id)
+	assert.Equal(t, "sometoken", token)
+}
+
+// A string series (older wire format) must still parse — series is simply ignored.
+func TestParseSSOCookie_StringSeries(t *testing.T) {
+	id, token, err := parseSSOCookie(`{"id":7,"series":"12345","token":"tok"}`)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(7), id)
+	assert.Equal(t, "tok", token)
+}
+
+// id=0 is still rejected as incomplete, regardless of series type.
+func TestParseSSOCookie_ZeroID_Rejected(t *testing.T) {
+	_, _, err := parseSSOCookie(`{"id":0,"series":12345,"token":"sometoken"}`)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "incomplete cookie data")
+}
+
+// Empty token is still rejected as incomplete, regardless of series type.
+func TestParseSSOCookie_EmptyToken_Rejected(t *testing.T) {
+	_, _, err := parseSSOCookie(`{"id":99,"series":12345,"token":""}`)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "incomplete cookie data")
+}
+
+// Malformed JSON is still a parse error.
+func TestParseSSOCookie_MalformedJSON(t *testing.T) {
+	_, _, err := parseSSOCookie(`{not json}`)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid cookie JSON")
 }
