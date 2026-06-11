@@ -173,7 +173,26 @@ class EmailSpoolerService
         // path is either absent or a complete file — never partial.
         $path = $this->pendingDir . '/' . $filename;
         $tmp  = $path . '.tmp';
-        file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT));
+        // JSON_INVALID_UTF8_SUBSTITUTE: without it, a single malformed byte
+        // anywhere in $data (a post subject/body with bad UTF-8) makes
+        // json_encode() return FALSE; file_put_contents($tmp, false) then
+        // writes a 0-byte file, which renames into pending/, fails to decode
+        // ("Invalid spool file","bytes":0) and is dropped to failed/ with no
+        // retry — a silent ~0.05% digest loss seen on the 2026-06-11 bulk run.
+        // Substituting bad bytes with U+FFFD keeps the email deliverable.
+        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($json === false) {
+            // Should be unreachable now (SUBSTITUTE handles bad UTF-8), but if
+            // encoding still fails for another reason, fail loudly instead of
+            // writing a poison 0-byte spool file that dies undecodable.
+            Log::error('EmailSpoolerService: json_encode failed, email not spooled', [
+                'id' => $id,
+                'to' => array_column($data['to'] ?? [], 'address'),
+                'json_error' => json_last_error_msg(),
+            ]);
+            throw new \RuntimeException('Failed to encode spool payload: ' . json_last_error_msg());
+        }
+        file_put_contents($tmp, $json);
         rename($tmp, $path);
 
         Log::info('Email spooled', [
@@ -553,7 +572,7 @@ class EmailSpoolerService
                     $this->recordSmtpBounce($data, $e->getMessage());
 
                     // Move to failed - no point retrying.
-                    file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT));
+                    file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
                     rename($sendingPath, $this->failedDir . '/' . $filename);
                     $stats['bounced'] = ($stats['bounced'] ?? 0) + 1;
 
@@ -594,7 +613,7 @@ class EmailSpoolerService
                 }
 
                 // Move back to pending for retry.
-                file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT));
+                file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
                 rename($sendingPath, $pendingPath);
                 $stats['retried']++;
             }
@@ -695,7 +714,7 @@ class EmailSpoolerService
         if ($data) {
             $data['attempts'] = 0;
             $data['last_error'] = null;
-            file_put_contents($failedPath, json_encode($data, JSON_PRETTY_PRINT));
+            file_put_contents($failedPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
         }
 
         return rename($failedPath, $this->pendingDir . '/' . $filename);
@@ -712,7 +731,7 @@ class EmailSpoolerService
             if ($data) {
                 $data['attempts'] = 0;
                 $data['last_error'] = null;
-                file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
+                file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
                 rename($file, $this->pendingDir . '/' . basename($file));
                 $count++;
             }

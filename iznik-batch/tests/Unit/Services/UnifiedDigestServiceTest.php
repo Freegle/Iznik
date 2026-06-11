@@ -131,6 +131,51 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    public function test_daily_digest_skips_user_already_sent_today(): void
+    {
+        // Bulk daily run (no --user) must not re-send to a user who already
+        // got a daily digest earlier the same London day, even though new
+        // posts exist — guards against the multi-send seen on 2026-06-11 when
+        // the command was run several times in one day. A new London day (the
+        // next 08:00 cron) re-includes them.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createTestMessage($poster, $group);
+
+        // Already digested at the start of today's London day, cursor at 0 so
+        // there ARE newer posts — only the once-today guard should hold it back.
+        UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+            'lastsent' => \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC'),
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+        $this->assertEquals(0, $stats['emails_sent'], 'must skip a user already digested today');
+
+        // Move the last-sent mark into yesterday (London); now eligible again.
+        UserDigest::where('userid', $recipient->id)
+            ->where('mode', UnifiedDigestService::MODE_DAILY)
+            ->update(['lastsent' => \Carbon\Carbon::now('Europe/London')->startOfDay()->subHours(2)->setTimezone('UTC')]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+        $this->assertEquals(1, $stats['emails_sent'], 'must send once the last digest was a prior day');
+    }
+
     public function test_format_posted_to_multiple_groups(): void
     {
         $group1 = $this->createTestGroup();

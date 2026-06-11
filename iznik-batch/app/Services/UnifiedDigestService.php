@@ -634,6 +634,44 @@ class UnifiedDigestService
                 ]);
             }
         } elseif ($mode === self::MODE_DAILY && !$userId) {
+            // Once-per-day guard. The daily digest sends incrementally off the
+            // per-user users_digests cursor (everything since lastmsgid), so if
+            // the command is invoked more than once in a day — a manual resume,
+            // a staged rollout, an extra cron tick — each run sends a fresh
+            // increment and the user gets several digests in one day (observed
+            // 2026-06-11: ~11.7k users got 2-5 digests after repeated manual
+            // runs). V1 relied purely on being cron'd once daily.
+            //
+            // Skip any user whose last daily digest already went out on the
+            // current London day. A rolling 24h window was rejected: seeded by
+            // off-schedule sends it makes the digest time drift permanently off
+            // the 08:00 cron slot (a user sent at 16:00 today wouldn't clear a
+            // 24h window by 08:00 tomorrow, so the 08:00 cron would skip them
+            // and they'd creep later each day). Anchoring to the London
+            // calendar day means tomorrow's 08:00 cron is a fresh day and
+            // re-includes everyone, while a second run the same day is skipped
+            // — once daily, at the scheduled time. Digests effectively never
+            // send in the 00:00-08:00 window so the midnight boundary is moot.
+            // An explicit --user (manual sampling/resend) bypasses this.
+            //
+            // The "already today" boundary is the UTC instant of London
+            // midnight, computed in PHP (Carbon, DST-correct) rather than via
+            // SQL CONVERT_TZ — the latter needs MySQL's named-timezone tables
+            // loaded, which would silently fail open (return NULL) where they
+            // aren't (e.g. the test DB). lastsent is stored UTC, so a plain
+            // ">=" against this UTC bound is an index-friendly range scan.
+            $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')
+                ->startOfDay()
+                ->setTimezone('UTC')
+                ->toDateTimeString();
+            $query->whereNotExists(function ($q) use ($londonDayStartUtc) {
+                $q->select(DB::raw(1))
+                    ->from('users_digests')
+                    ->whereColumn('users_digests.userid', 'users.id')
+                    ->where('users_digests.mode', self::MODE_DAILY)
+                    ->where('users_digests.lastsent', '>=', $londonDayStartUtc);
+            });
+
             // Safety gate — FREEGLE_DIGEST_DAILY_ALLOWLIST. Daily unified
             // digests are OFF by default (empty list): V1's bulk3
             // digest.php cron still owns daily, so an unconfigured deploy
