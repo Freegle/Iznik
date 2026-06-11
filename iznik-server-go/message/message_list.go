@@ -528,7 +528,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		collectionFilter := "mg.collection = ?"
 		branchArgs := []interface{}{collection}
 		if collection == utils.COLLECTION_PENDING {
-			collectionFilter = "mg.collection IN (?, ?)"
+			// Include Spam-collection messages in the Pending review queue, but
+			// only recent ones. Spam older than 30 days is stale — it should age
+			// out of the queue rather than accumulate indefinitely. Pending rows
+			// are never aged out here.
+			collectionFilter = "(mg.collection = ? OR (mg.collection = ? AND mg.arrival >= (NOW() - INTERVAL 30 DAY)))"
 			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 		}
 
