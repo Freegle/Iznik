@@ -1436,7 +1436,13 @@ services:
       - ./.git:/var/www/.git:ro
       - ./iznik-server:/var/www/iznik:ro
       - /var/log/freegle:/var/log/freegle
-      - ${FIREBASE_CREDENTIALS_PATH:-/dev/null}:/etc/firebase.json:ro
+      # Bind source uses FIREBASE_HOST_PATH (HOST path). Distinct from
+      # FIREBASE_CREDENTIALS_PATH (CONTAINER path read by Laravel — always
+      # /etc/firebase.json, so we DON'T set it; sharing one var leaked the
+      # host path into the container's env via env_file and Laravel then
+      # tried to open it inside the container — memory
+      # project_push_dropped_devnull_firebase.
+      - ${FIREBASE_HOST_PATH:-/dev/null}:/etc/firebase.json:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       - "mail-host:${MAIL_HOST_IP:-127.0.0.1}"
