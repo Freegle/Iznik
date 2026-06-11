@@ -41,10 +41,10 @@ class UnifiedDigestService
      * @param int|null $userId Specific user ID to process (for testing)
      * @return array Statistics about the operation
      */
-    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1): array
+    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
         if ($mode === self::MODE_IMMEDIATE) {
-            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards);
+            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards, $shouldStop);
         }
 
         $stats = [
@@ -68,6 +68,19 @@ class UnifiedDigestService
         }
 
         foreach ($users as $user) {
+            // Graceful interrupt: SIGTERM/SIGINT (or an abort-file touch) flips
+            // the caller's shouldStop flag. Check between users so a kill
+            // drains the current per-user spool write before exiting — at
+            // worst one duplicate next run, never a torn write.
+            if ($shouldStop !== null && $shouldStop()) {
+                $stats['stopped'] = TRUE;
+                Log::info('UnifiedDigestService: Daily digest stopping on shutdown signal', [
+                    'users_processed' => $stats['users_processed'],
+                    'emails_sent'     => $stats['emails_sent'],
+                ]);
+                break;
+            }
+
             try {
                 $result = $this->sendDigestToUser($user, $mode, $dryRun);
 
@@ -115,7 +128,7 @@ class UnifiedDigestService
      * @param int $shards Total shard count; groups partitioned by MOD(groupid, shards)
      * @return array Statistics about the operation
      */
-    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1): array
+    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
         $stats = [
             'groups_processed' => 0,
@@ -158,6 +171,17 @@ class UnifiedDigestService
         $touchedUsers = [];
 
         foreach ($query->cursor() as $row) {
+            // Graceful interrupt — check between groups so the in-flight
+            // group's cursor advance completes before exit.
+            if ($shouldStop !== null && $shouldStop()) {
+                $stats['stopped'] = TRUE;
+                Log::info('UnifiedDigestService: Immediate digest stopping on shutdown signal', [
+                    'groups_processed' => $stats['groups_processed'],
+                    'emails_sent'      => $stats['emails_sent'],
+                ]);
+                break;
+            }
+
             try {
                 $result = $this->processGroupImmediate($row, $dryRun, $userId);
                 $stats['emails_sent'] += $result['emails'];
