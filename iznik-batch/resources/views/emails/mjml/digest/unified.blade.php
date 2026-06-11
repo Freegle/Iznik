@@ -4,6 +4,21 @@
 @media only screen and (max-width: 480px) {
   .fd-pill-title-wrap { display: block !important; width: 100% !important; }
   .fd-reply-time-wrap { display: block !important; width: 100% !important; }
+  /* Mobile only: clamp the body-text snippet to two lines so a long
+     post does not push the Reply button or meta row out of view. */
+  .fd-desc {
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+  /* Mobile: hide header thumbs beyond the 5th so the visible thumbs stay
+     large enough to read. Inline width from mj-group is overridden so the
+     visible cells (logo + 5 thumbs = 6) split the row evenly. */
+  .fd-header-thumb-5, .fd-header-thumb-6, .fd-header-thumb-7, .fd-header-thumb-8, .fd-header-thumb-9 {
+    display: none !important;
+  }
+  .fd-header-col { width: 16.66% !important; }
 }
         ';
     @endphp
@@ -228,75 +243,52 @@
              header strip so the thumbnail nav is a faithful preview of what
              follows, not a wall of default Offer/Wanted icons. Cards still
              show the placeholder for no-photo posts further down. --}}
+        {{-- Render up to 10 thumbs; @media in the head hides 5-9 on mobile so
+             the visible thumbs stay large enough to read on a 360px viewport.
+             Other clients (eM Client, Apple Mail, Gmail desktop via AMP) keep
+             the full row. --}}
         @php
-            $headerPosts = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->values();
-            $headerThumbs = $headerPosts->take($maxHeaderItems);
-            $headerOverflow = max(0, $headerPosts->count() - $maxHeaderItems);
+            $headerThumbs = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->take(10)->values();
         @endphp
         @if($headerThumbs->isNotEmpty())
         <mj-section mj-class="bg-success" padding="12px 16px">
-            {{-- mj-group keeps logo + thumb row side-by-side on mobile (without
-                 it MJML's <480px breakpoint stacks them). --}}
+            {{-- One mj-column per item (logo + each thumb) inside an mj-group
+                 so they don't stack on mobile. Each column gets an equal share
+                 of the row, and each mj-image is width="100%" so it fills its
+                 column — the strip auto-sizes to whatever space is available,
+                 fewer thumbs = larger images, more thumbs = smaller. Sources
+                 are pre-cropped square (240×240) by the delivery proxy so the
+                 natural aspect ratio is 1:1; mj-image preserves it. --}}
             <mj-group>
-                <mj-column width="20%" vertical-align="middle">
+                {{-- Every column gets the SAME left/right padding so each
+                     takes exactly the same share of the row (an unbalanced
+                     padding on the last column made it visibly wider in
+                     K-9 Mail). 4px each side = 8px between adjacent thumbs.
+                     css-class tags individual columns so @media can hide
+                     header-thumb-5..9 on mobile. --}}
+                <mj-column vertical-align="middle" padding-left="4px" padding-right="4px" padding-top="0" padding-bottom="0" css-class="fd-header-col">
                     <mj-image
-                        width="50px"
                         src="{{ config('freegle.branding.logo_url') }}"
                         alt="Freegle"
-                        align="left"
+                        width="100%"
                         padding="0"
+                        align="center"
                     />
                 </mj-column>
-                <mj-column width="80%" vertical-align="middle">
-                    {{-- mj-table is MJML's table primitive — compiles to a real
-                         <table>/<tr>/<td> structure that renders consistently
-                         across Gmail desktop, Outlook and mobile. Replaces the
-                         earlier inline-block <a> chain inside <mj-text font-size:0>
-                         which Gmail desktop wasn't rendering (Edward 2026-06-11). --}}
-                    <mj-table padding="0" cellpadding="0" cellspacing="0">
-                        <tr>
-                            @foreach($headerThumbs as $post)
-                            @php
-                                $thumbSrc = $post['trackedImageUrl'] ?? $post['displayImageUrl'] ?? '';
-                                $isOfferThumb = $post['type'] === 'Offer';
-                                $pillBg = $isOfferThumb ? $offerColor : $wantedColor;
-                            @endphp
-                            <td style="width: 48px; padding: 0 4px 0 0; vertical-align: top;">
-                                <a href="#msg-{{ $post['message']->id }}" style="text-decoration: none; display: block;">
-                                    <img src="{{ $thumbSrc }}"
-                                         alt="{{ $post['itemName'] }}"
-                                         width="44"
-                                         height="44"
-                                         style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid rgba(255,255,255,0.5);"
-                                    />
-                                    {{-- 7px keeps "WANTED" within 44px thumbnail width. --}}
-                                    <span style="display: block; background-color: {{ $pillBg }}; color: #ffffff; font-size: 7px; font-weight: bold; text-align: center; padding: 1px 0; border-radius: 0 0 3px 3px; line-height: 1.3;">{{ $isOfferThumb ? 'OFFER' : 'WANTED' }}</span>
-                                </a>
-                            </td>
-                            @endforeach
-                            @if($headerOverflow > 0)
-                            <td style="width: 48px; padding: 0; vertical-align: top;">
-                                <a href="{{ $browseUrl }}" style="display: block; width: 44px; height: 52px; background-color: rgba(255,255,255,0.2); border-radius: 4px; text-align: center; line-height: 52px; color: #ffffff; font-size: 11px; font-weight: bold; text-decoration: none;">+{{ $headerOverflow }}</a>
-                            </td>
-                            @endif
-                        </tr>
-                    </mj-table>
+                @foreach($headerThumbs as $post)
+                <mj-column vertical-align="middle" padding-left="4px" padding-right="4px" padding-top="0" padding-bottom="0" css-class="fd-header-col fd-header-thumb-{{ $loop->index }}">
+                    <mj-image
+                        src="{{ $post['thumbImageUrl'] }}"
+                        href="#msg-{{ $post['message']->id }}"
+                        alt="{{ $post['itemName'] }}"
+                        width="100%"
+                        padding="0"
+                        border="2px solid rgba(255,255,255,0.6)"
+                        border-radius="4px"
+                    />
                 </mj-column>
+                @endforeach
             </mj-group>
-        </mj-section>
-        @else
-        {{-- All posts in this digest are placeholder-only; show just the logo
-             so the brand-green strip still anchors the email visually. --}}
-        <mj-section mj-class="bg-success" padding="12px 16px">
-            <mj-column vertical-align="middle">
-                <mj-image
-                    width="50px"
-                    src="{{ config('freegle.branding.logo_url') }}"
-                    alt="Freegle"
-                    align="left"
-                    padding="0"
-                />
-            </mj-column>
         </mj-section>
         @endif
 
@@ -350,7 +342,9 @@
                                 @if($post['messageText'] || $post['postedToText'])
                                 <div style="padding-top: 2px;">
                                     @if($post['messageText'])
-                                    <span style="color: #808080; font-size: 13px; font-weight: 500; line-height: 1.4;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                                    {{-- fd-desc clamps to 2 lines on mobile via the @media block above;
+                                         desktop keeps the natural multi-line flow. --}}
+                                    <span class="fd-desc" style="color: #808080; font-size: 13px; font-weight: 500; line-height: 1.4;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
                                     @endif
                                     @if($post['postedToText'])
                                     <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>

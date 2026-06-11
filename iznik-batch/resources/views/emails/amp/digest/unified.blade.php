@@ -23,8 +23,40 @@
     /* Header */
     .header {
       background-color: #338808;
-      padding: 16px 20px;
-      text-align: center;
+      padding: 12px 16px;
+    }
+    /* Logo + thumbnail nav share one flex row. AMP4Email supports
+       flexbox; avoid `gap` (not on the amp-custom allowlist) and use
+       per-item margin-right instead. 1 logo + 5 thumbs at 44px fits a
+       320px iPhone viewport. */
+    .header-row {
+      display: flex;
+      align-items: center;
+    }
+    .header-row .logo {
+      margin-right: 8px;
+    }
+    .header-thumb {
+      display: block;
+      line-height: 0;
+      border: 2px solid rgba(255, 255, 255, 0.6);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-right: 4px;
+    }
+    /* AMP4Email disallows the object-fit attribute on <amp-img>; do it via
+       CSS on the inner <img> the amp-img runtime renders so non-square
+       source photos crop to fit the 44×44 box instead of stretching. */
+    .header-thumb amp-img img { object-fit: cover; }
+
+    /* Mobile: hide header thumbs beyond the 5th so the visible ones stay
+       large enough to read. AMP4Email keeps the <style amp-custom> intact,
+       so the @media query reliably applies in Gmail mobile (unlike the
+       HTML variant where Gmail desktop strips <style>). */
+    @media (max-width: 480px) {
+      .header-thumb-5, .header-thumb-6, .header-thumb-7, .header-thumb-8, .header-thumb-9 {
+        display: none;
+      }
     }
 
     /* Greeting */
@@ -435,17 +467,44 @@
 </head>
 <body>
   <div class="container">
-    {{-- Header --}}
+    {{-- Header: logo + thumbnail nav. Mirrors the MJML version. AMP4Email
+         disallows fragment-only hrefs (and tightens CSS to a small
+         allowlist) so each thumb links to its post's web URL rather than
+         scrolling within the email — best AMP can do. Placeholder-only
+         posts are skipped so the strip is a faithful preview of the real
+         photos in the cards. --}}
+    {{-- Render up to 10 thumbs; @media (max-width: 480px) hides 5-9 on
+         mobile so the visible thumbs stay large enough to read. --}}
+    @php
+        $headerThumbs = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->take(10)->values();
+    @endphp
     <div class="header">
-      {{-- logo_url is the square Freegle icon (icon.png). The old 120x40 box
-           forced a 3:1 ratio and squashed it flat — render it square. --}}
-      <amp-img
-        src="{{ config('freegle.branding.logo_url') }}"
-        width="48"
-        height="48"
-        alt="{{ config('freegle.branding.name', 'Freegle') }}"
-        layout="fixed"
-      ></amp-img>
+      <div class="header-row">
+        {{-- logo_url is the square Freegle icon (icon.png). Sized to match
+             the thumbs so logo + strip align on top and bottom edges. --}}
+        <amp-img
+          class="logo"
+          src="{{ config('freegle.branding.logo_url') }}"
+          width="44"
+          height="44"
+          alt="{{ config('freegle.branding.name', 'Freegle') }}"
+          layout="fixed"
+        ></amp-img>
+        @foreach($headerThumbs as $post)
+        <a class="header-thumb header-thumb-{{ $loop->index }}" href="{{ $post['fallbackReplyUrl'] }}">
+          {{-- thumbImageUrl is the 240×240 square crop from the delivery
+               proxy; combined with object-fit:cover (above) the rendered
+               44×44 box always shows a square photo regardless of source. --}}
+          <amp-img
+            src="{{ $post['thumbImageUrl'] }}"
+            width="44"
+            height="44"
+            alt="{{ $post['itemName'] }}"
+            layout="fixed"
+          ></amp-img>
+        </a>
+        @endforeach
+      </div>
     </div>
 
     @if($postCount !== 1)
@@ -487,10 +546,10 @@
         <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
       </a>
     </div>
-    <div class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
+    <div id="msg-{{ $post['message']->id }}" class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
       <div class="post-content" style="padding-left: 0;">
     @else
-    <div class="post-card">
+    <div id="msg-{{ $post['message']->id }}" class="post-card">
       {{-- Multi-post thumbnail. The grid above gives the image cell a
            non-relative computed height (matches the content cell), and
            amp-img layout="fill" + object-fit:cover stretches the photo
