@@ -135,6 +135,33 @@
         @handle="outcome($event, 'Withdrawn')"
       />
     </div>
+    <div v-else-if="spam" class="d-inline">
+      <ModMessageButton
+        v-if="!cantpost"
+        :messageid="message.id"
+        :groupid="groupid"
+        variant="primary"
+        icon="check"
+        approve
+        label="Approve"
+      />
+      <ModMessageButton
+        :messageid="message.id"
+        :groupid="groupid"
+        variant="warning"
+        icon="times"
+        reject
+        label="Reject"
+      />
+      <ModMessageButton
+        :messageid="message.id"
+        :groupid="groupid"
+        variant="danger"
+        icon="ban"
+        spam
+        label="Delete as Spam"
+      />
+    </div>
     <div v-if="!editreview" class="d-lg-inline">
       <ModMessageButton
         v-for="stdmsg in filtered"
@@ -252,6 +279,10 @@ const approved = computed(() => {
   return hasCollection('Approved')
 })
 
+const spam = computed(() => {
+  return hasCollection('Spam')
+})
+
 const validActions = computed(() => {
   // The standard messages we show depend on the valid ones for this type of message.
   if (pending.value) {
@@ -262,6 +293,12 @@ const validActions = computed(() => {
     return ret
   } else if (approved.value) {
     return ['Leave Approved Message', 'Delete Approved Message', 'Edit']
+  } else if (spam.value) {
+    const ret = ['Reject', 'Leave', 'Delete', 'Edit']
+    if (!props.cantpost) {
+      ret.push('Approve')
+    }
+    return ret
   }
 
   return []

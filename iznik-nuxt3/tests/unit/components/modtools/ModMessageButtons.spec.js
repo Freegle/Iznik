@@ -683,6 +683,57 @@ describe('ModMessageButtons', () => {
     })
   })
 
+  // Discourse #9780: Spam-collection messages shown in Pending view had no action buttons
+  describe('spam message buttons', () => {
+    it('shows approve button for spam messages appearing in pending view', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Spam' }] }
+      )
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(true)
+    })
+
+    it('shows reject button for spam messages appearing in pending view', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Spam' }] }
+      )
+      expect(wrapper.find('.mod-message-button.reject').exists()).toBe(true)
+    })
+
+    it('shows Delete as Spam button for spam messages appearing in pending view', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Spam' }] }
+      )
+      expect(wrapper.find('.mod-message-button.spam').exists()).toBe(true)
+    })
+
+    it('hides approve button for spam messages when cantpost is true', () => {
+      const wrapper = mountComponent(
+        { cantpost: true },
+        { groups: [{ groupid: 456, collection: 'Spam' }] }
+      )
+      expect(wrapper.find('.mod-message-button.approve').exists()).toBe(false)
+    })
+
+    it('spam computed is true when message has Spam collection', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Spam' }] }
+      )
+      expect(wrapper.vm.spam).toBe(true)
+    })
+
+    it('spam computed is false when message has Pending collection', () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      expect(wrapper.vm.spam).toBe(false)
+    })
+  })
+
   describe('edge cases', () => {
     it('handles message with no groups', () => {
       const wrapper = mountComponent({}, { groups: undefined })
