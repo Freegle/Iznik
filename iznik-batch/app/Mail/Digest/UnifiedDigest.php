@@ -513,14 +513,31 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
      */
     protected function preparePostsForBulk(): Collection
     {
-        return $this->posts->map(function ($post) {
+        return $this->posts->map(function ($post, $index) {
             $message = $post['message'];
             $postedToGroups = $post['postedToGroups'];
             $isOffer = $message->type === 'Offer';
 
-            $postedToText = count($postedToGroups) > 1
-                ? $this->formatPostedTo($postedToGroups)
-                : null;
+            // Primary group name + /explore link for the "Posted by … on <group>"
+            // byline — mirrors preparePosts() so the bulk render byte-matches the
+            // non-bulk one. Resolved from $this->groupLookup (populated by
+            // preparePosts() in the constructor). groupUrl is a tracked URL; its
+            // tracking id differs per recipient but is normalised out of the
+            // byte-identity comparison, exactly like messageUrl.
+            $groupName = null;
+            $groupUrl = null;
+            $primaryGroupId = $postedToGroups[0] ?? null;
+            if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
+                $g = $this->groupLookup[$primaryGroupId];
+                $groupName = $g->namefull ?: $g->nameshort;
+                if ($g->nameshort) {
+                    $groupUrl = $this->trackedUrl(
+                        $this->userSite . '/explore/' . urlencode($g->nameshort),
+                        "group_{$index}",
+                        'group'
+                    );
+                }
+            }
 
             $imageUrl = $this->getMessageImageUrl($message);
             $placeholderUrl = $isOffer
@@ -555,6 +572,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
                 $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
             }
 
+            // Decode HTML entities before deriving item/location names so the
+            // output matches preparePosts() (Blade {{ }} re-escapes on render).
+            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
@@ -565,11 +586,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
                 'thumbImageUrl' => $thumbImageUrl,
                 'trackedImageUrl' => null,
                 'isPlaceholder' => $imageUrl === null,
-                'postedToText' => $postedToText,
+                'groupName' => $groupName,
+                'groupUrl' => $groupUrl,
                 'type' => $message->type,
-                'subject' => $message->subject,
-                'itemName' => $this->extractItemName($message->subject),
-                'locationName' => $this->extractLocationName($message->subject),
+                'subject' => $subject,
+                'itemName' => $this->extractItemName($subject),
+                'locationName' => $this->extractLocationName($subject),
                 'arrivalFormatted' => $arrivalFormatted,
                 'arrivalIso' => $arrivalIso,
                 'distanceText' => $distanceText,
