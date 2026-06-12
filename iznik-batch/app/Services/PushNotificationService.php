@@ -1024,7 +1024,7 @@ class PushNotificationService
             ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
             ->leftJoin('users as su', 'cm.userid', '=', 'su.id')
             ->where('cm.id', $messageId)
-            ->select('cm.id as msgid', 'cm.message', 'cm.date',
+            ->select('cm.id as msgid', 'cm.message', 'cm.type', 'cm.date',
                 'cm.userid as sender_id', 'su.fullname as sender_name',
                 'cr.id as chatid', 'cr.chattype', 'cr.user1', 'cr.groupid')
             ->first();
@@ -1038,6 +1038,12 @@ class PushNotificationService
         $message = $row->message ?? '';
         if (mb_strlen($message) > 256) {
             $message = mb_substr($message, 0, 253) . '...';
+        }
+
+        // For messages with no text (image, address, system types), use a
+        // descriptive fallback so the push body is never a repeat of the title.
+        if ($message === '') {
+            $message = $this->chatMessageTypeFallback($row->type ?? '');
         }
 
         $chatId = (int) $row->chatid;
@@ -1063,6 +1069,28 @@ class PushNotificationService
             'channel_id' => $modtools ? 'modtools' : 'chat_messages',
             'threadId' => 'chat_' . $chatId,
         ];
+    }
+
+    /**
+     * Return a human-readable description for a chat message type that has no
+     * text body (image, address, system messages, etc.).
+     *
+     * Mirrors the labels used in iznik-nuxt3 for chat message rendering and
+     * matches V1 PushNotifications wording where applicable.
+     */
+    private function chatMessageTypeFallback(string $type): string
+    {
+        return match ($type) {
+            'Image'        => 'Sent an image',
+            'Address'      => 'Sent an address',
+            'Interested'   => 'Interested',
+            'Promised'     => 'Promised',
+            'Reneged'      => 'Reneged',
+            'Completed'    => 'Marked as completed',
+            'Nudge'        => 'Sent a nudge',
+            'Reminder'     => 'Sent a reminder',
+            default        => 'Sent a message',
+        };
     }
 
     /**

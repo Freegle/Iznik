@@ -1083,6 +1083,120 @@ class PushNotificationServiceTest extends TestCase
             'Payload message should be truncated for push display (~256 chars)');
     }
 
+    /**
+     * The push body/subtitle must contain the message text — not repeat the
+     * sender's display name.
+     *
+     * Regression: when the chat message has text, 'message' in the payload
+     * must carry that text. The FCM notification body is built as
+     * `$payload['message'] ?: $payload['title']`, so a non-empty 'message'
+     * is the only defence against a double-sender-name push.
+     */
+    public function test_chat_payload_message_contains_text_not_sender_name(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'richard mackay']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Hi, is this still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('richard mackay', $payload['title'],
+            'Title must be the sender name');
+        $this->assertStringContainsString('Hi, is this still available?', $payload['message'],
+            'Payload message must carry the chat text, not the sender name');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Title and body must differ — body must NOT repeat the sender name');
+    }
+
+    /**
+     * Image messages have no text — the push body must fall back to a
+     * descriptive label ("Sent an image"), not repeat the sender name.
+     *
+     * Regression for the bug where title="richard mackay" and body="richard
+     * mackay" both showed the sender name on image-only chat messages.
+     */
+    public function test_chat_payload_image_message_body_is_descriptive_not_sender_name(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'richard mackay']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_IMAGE,
+            'message' => null,  // image-only: no text body
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('richard mackay', $payload['title'],
+            'Title must still be the sender name');
+        $this->assertSame('Sent an image', $payload['message'],
+            'Image message body must be "Sent an image", not the sender name');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Title and body must differ — body must NOT repeat the sender name for image messages');
+    }
+
+    /**
+     * "Interested" type messages have no text body — body must show "Interested".
+     */
+    public function test_chat_payload_interested_message_body_is_interested(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'message' => null,
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('Interested', $payload['message'],
+            '"Interested" type message body must be "Interested"');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Body must not repeat the sender name');
+    }
+
+    /**
+     * "Address" type messages have no text body — body must show "Sent an address".
+     */
+    public function test_chat_payload_address_message_body_is_descriptive(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Bob']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_ADDRESS,
+            'message' => null,
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('Sent an address', $payload['message'],
+            '"Address" type message body must be "Sent an address"');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Body must not repeat the sender name');
+    }
+
     public function test_u2m_mod_to_member_payload_uses_group_volunteers_title(): void
     {
         // V1 hides individual mod identity from members: when a mod replies in
