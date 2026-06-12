@@ -2497,8 +2497,8 @@ type patchMessageRequest struct {
 	Location     *string  `json:"location"`
 	Locationid   *uint64  `json:"locationid"`
 	Groupid      *uint64  `json:"groupid"`
-	Attachments  []uint64 `json:"attachments"`
-	BadAIImages  []uint64 `json:"badAIImages"`
+	Attachments  AttachmentIDs `json:"attachments"`
+	BadAIImages  []uint64      `json:"badAIImages"`
 	Deadline     *string  `json:"deadline"`
 }
 
@@ -3224,8 +3224,8 @@ func PutMessage(c *fiber.Ctx) error {
 		Locationid         *uint64  `json:"locationid"`
 		Availableinitially *int     `json:"availableinitially"`
 		Availablenow       *int     `json:"availablenow"`
-		Attachments        []uint64 `json:"attachments"`
-		Email              string   `json:"email"`
+		Attachments        AttachmentIDs `json:"attachments"`
+		Email              string        `json:"email"`
 	}
 
 	var req PutMessageRequest
