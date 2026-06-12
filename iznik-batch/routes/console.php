@@ -335,8 +335,13 @@ Schedule::command('tn:sync')
 // pilot the new "What's New" format, set that env var to one or more
 // addresses: those users receive the new daily digest IN ADDITION to V1's,
 // for a tracked side-by-side comparison. Set it to '*' for the full cutover.
+// 07:00 UK local. The app runs in UTC, so pin the task to the configured
+// local zone (FREEGLE_TIMEZONE, default Europe/London) and let Laravel
+// resolve BST/GMT — without ->timezone() this would fire at 07:00 UTC (08:00
+// BST in summer) and drift with the clocks.
 Schedule::command('mail:digest:unified --mode=daily')
-    ->dailyAt('08:00')
+    ->timezone(config('freegle.timezone'))
+    ->dailyAt('07:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:digest:unified.daily'))
     ->runInBackground();
@@ -350,7 +355,8 @@ Schedule::command('mail:digest:unified --mode=daily')
 // $dailyShardCount = 4;
 // foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 //     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
-//         ->dailyAt('08:00')
+//         ->timezone(config('freegle.timezone'))
+//         ->dailyAt('07:00')
 //         ->withoutOverlapping()
 //         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
 //         ->runInBackground();
