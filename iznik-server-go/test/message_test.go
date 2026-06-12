@@ -8674,6 +8674,105 @@ func TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent(t *t
 	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 }
 
+// TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped verifies the fix for the
+// TN multi-photo race.  TN polls /api/changes, which reports a message as "Edited" based
+// on the existence of a messages_edits row.  TN then fetches the full message to read its
+// attachments.  If the messages_edits row (the change signal) is written BEFORE the TN
+// photos have been scraped into messages_attachments, TN can fetch in the gap and get a
+// partial photo set — the reported "only 1 photo back, all of them on a forced re-fetch" bug.
+//
+// The fix scrapes TN photos SYNCHRONOUSLY and BEFORE applyPatchMessageCore (which writes
+// messages_edits), matching V1 (http/api/message.php scrapes + saves attachments before
+// calling Message::edit()).  So the change signal only becomes visible once every photo is in.
+//
+// This test deliberately does NOT swap TNPhotoScrapeRunner: it exercises the real production
+// runner, so an asynchronous or wrong-order implementation fails it.
+func TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped(t *testing.T) {
+	prefix := uniquePrefix("patchtn_signalorder")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77804, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-signalorder-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Set up a clean slate for the change signal and attachments we assert on.
+	db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Fake the TN fetch chain so no real HTTP happens.
+	fakeImageURL := "https://img.trashnothing.com/fake/signalorder.jpg"
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string { return []string{fakeImageURL} }
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	// The uploader runs at the moment a photo is about to be stored.  Capture how many
+	// messages_edits rows (the /api/changes signal) exist AT THAT MOMENT.  With the fix
+	// this must be 0: the signal is only written after every photo is in.
+	fakeExternalUID := fmt.Sprintf("freegletusd-tn-signalorder-%d", msgID)
+	editsAtUploadTime := int64(-1)
+	uploaded := make(chan struct{}, 1)
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ?", msgID).Scan(&editsAtUploadTime)
+		select {
+		case uploaded <- struct{}{}:
+		default:
+		}
+		return fakeExternalUID, nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	textbody := "Sofa for collection.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/sigorder1\n"
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": textbody})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77804&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Wait for the upload to have happened (covers a still-asynchronous implementation).
+	// The channel receive synchronises with the uploader goroutine, so the subsequent read
+	// of editsAtUploadTime is race-free.
+	select {
+	case <-uploaded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("TN photo was never uploaded/scraped")
+	}
+
+	// Core assertion: the change signal must NOT have existed while the photo was being stored.
+	assert.Equal(t, int64(0), editsAtUploadTime,
+		"messages_edits (the /api/changes signal) must not be written until all TN photos are scraped — otherwise TN can fetch a partial photo set")
+
+	// After the handler completes, both the photo and the change signal must exist.
+	var tnCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, fakeExternalUID).Scan(&tnCount)
+	assert.Equal(t, int64(1), tnCount, "scraped TN photo should be stored as attachment")
+
+	var editsCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ?", msgID).Scan(&editsCount)
+	assert.True(t, editsCount >= 1, "an edit (change signal) should be recorded after the photos are in")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+}
+
 // TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit verifies that when a
 // TN user edits a post by sending a textbody (even with no pic links), ALL existing
 // attachments — including non-AI ones — are deleted.  TN's textbody is the authoritative
