@@ -203,6 +203,19 @@ Schedule::command('mail:alerts:send')
     ->sendOutputTo(cronLog('mail:alerts:send'))
     ->runInBackground();
 
+// Scheduler heartbeat → Sentry Crons. The one failure mode no per-job guard
+// can cover is the scheduler itself dying — the host `while true; schedule:run;
+// sleep 60` loop exiting, a container recreate, an OOM — which silently stops
+// EVERY scheduled job until it restarts (Laravel's scheduler has no catch-up).
+// This no-op task checks in to Sentry every 5 minutes; if the loop stops,
+// Sentry sees the missed check-in and alerts. Sentry is free for us on the
+// open-source plan, so the check-in volume is a non-issue. checkInMargin=5
+// gives slack for the sleep(60) loop's natural drift before flagging a miss.
+Schedule::call(fn () => null)
+    ->everyFiveMinutes()
+    ->name('scheduler-heartbeat')
+    ->sentryMonitor('scheduler-heartbeat', 5);
+
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
 Schedule::command('monitor:email-health')
