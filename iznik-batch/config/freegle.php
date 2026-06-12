@@ -404,6 +404,26 @@ return [
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.
         'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
+
+        // Shared backlog window for the per-minute processing queues
+        // (messages:contentcheck, chats:process-incoming, memberships:process):
+        // a row left unprocessed longer than this signals a stuck worker.
+        'processing_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_PROCESSING_BACKLOG_MAX_AGE_MIN', 15),
+
+        // users:process-exports — exports are heavier, so a larger window.
+        'exports_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_EXPORTS_BACKLOG_MAX_AGE_MIN', 30),
+
+        // integrations:sync-whatjobs — alert if jobs.seenat hasn't advanced
+        // within this many hours (tolerates the overnight gap + slow cold runs).
+        'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
+
+        // data:git-summary (weekly) — alert if its config timestamp is older
+        // than this many days.
+        'git_summary_max_age_days' => (int) env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
+
+        // data:update-cpi (monthly) — alert if its config timestamp is older
+        // than this many days.
+        'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
     ],
 
     'dedup' => [

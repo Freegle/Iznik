@@ -77,12 +77,21 @@ correctness rules learned while populating the registry:
 
 ## Implemented checks
 
+Eleven per-job checks across all four primitives:
+
 | Task | Primitive | Signal | Notes |
 |---|---|---|---|
 | `stats:generate-daily` | `ProducedSinceCheck` | `stats` rows with `date >= yesterday` (London), floor 1 | Active 06:00–24:00 so it isn't checked before the 02:30 run. Strongest fire-once signal in the system (one `REPLACE` per group/type/day). |
 | `mail:digest:unified --mode=daily` | `ProducedSinceCheck` | `users_digests.lastsent` today WHERE `mode='daily'`, floor 1 | Gated `enabledWhen(daily_allowlist != '')` — inert (skipped) until the daily pilot is switched on. Active 13:00–24:00 (after the 07:00–12:00 send window). |
-| `queue:background-tasks` | `BacklogCheck` | `background_tasks` rows `processed_at IS NULL AND failed_at IS NULL AND attempts < 3` older than 10 min | The Go-API → Laravel task bridge; a stuck worker is the failure mode, not an empty queue. |
-| `spam:refresh-mobile-cidrs` | `FreshnessCheck` | `max(spam_whitelist_ips.date)` WHERE `comment LIKE 'UK mobile:%'`, ≤ 40 days | Monthly job; a 40-day staleness floor tolerates the cadence. |
+| `queue:background-tasks` | `BacklogCheck` | `background_tasks` rows `processed_at IS NULL AND failed_at IS NULL AND attempts < 3` older than 10 min | Go-API → Laravel task bridge; a stuck worker is the failure mode, not an empty queue. |
+| `messages:contentcheck` | `BacklogCheck` | `messages_groups` (joined to live `messages`/`users`) `collection='Pending' AND contentcheck_checked_at IS NULL AND deleted=0` older than 15 min | Moderation pipeline. The joins mirror the worker's exact selection so rows it permanently skips (deleted message / null fromuser) don't false-alarm. |
+| `chats:process-incoming` | `BacklogCheck` | `chat_messages` `processingrequired=1` (by `date`) older than 15 min | Worker clears `processingrequired` on every visited row (success or fail). |
+| `memberships:process` | `BacklogCheck` | `memberships_history` `processingrequired=1` (by `added`) older than 15 min | Welcome-mail / review processing queue. |
+| `users:process-exports` | `BacklogCheck` | `users_exports` `completed IS NULL` (by `requested`) older than 30 min | GDPR exports are rare, so an empty queue is normal — only a genuinely-stuck export fires. |
+| `spam:refresh-mobile-cidrs` | `FreshnessCheck` | `max(spam_whitelist_ips.date)` WHERE `comment LIKE 'UK mobile:%'`, ≤ 40 days | Monthly job; the 40-day floor tolerates the cadence. |
+| `integrations:sync-whatjobs` | `FreshnessCheck` | `max(jobs.seenat)`, ≤ 24h | Gated on `freegle.whatjobs.feed1` being set. 24h floor tolerates the 08:00–22:00 window + slow cold runs. |
+| `data:git-summary` | `CallbackCheck` (config) | unix timestamp in `config['git_summary_last_run']`, ≤ 10 days | Weekly. Missing key ⇒ skipped (may not have run since deploy); unparseable ⇒ breach. |
+| `data:update-cpi` | `CallbackCheck` (config) | ISO-8601 `updated_at` in JSON `config['cpi_annual_data']`, ≤ 40 days | Monthly. Same missing/unparseable handling. |
 
 Thresholds are env-overridable under `config('freegle.monitoring.*')` (see
 `.env.example`). A master kill-switch `FREEGLE_MONITORING_ENABLED=false` no-ops
@@ -119,38 +128,35 @@ stories, birthday, noticeboard thanks, alerts, notification chaseup) adds little
 
 ### Fire-once output — deferred (🟡)
 
-These have a clean "produced output this period" signal but were left out of the
-first cut to keep the registry high-confidence (several need a `config`-JSON
-timestamp parsed via `CallbackCheck`, or have a legitimately-empty upstream).
+Not implemented because a strict output floor would **false-alarm**: the output
+is legitimately zero on many periods (eligibility-gated, due-only, or an upstream
+feed that is genuinely empty), or there is no durable timestamp to key on.
 
-| Task | Cadence | Recommended | Signal |
-|---|---|---|---|
-| `data:update-cpi` | monthly | `CallbackCheck` | JSON `updated_at` inside `config` value `cpi_data` |
-| `data:fetch-app-versions` | 6h | `CallbackCheck` | `config` app-version keys (compare value, not count) |
-| `data:git-summary` | weekly | `CallbackCheck` | unix ts in `config` value `git_summary_last_run` |
-| `domains:update-common` | weekly | `FreshnessCheck` | `domains_common` recency (confirm `updated_at`) |
-| `integrations:sync-whatjobs` | 3h 08–22 | `ProducedSinceCheck` | `jobs` table non-empty after the rebuild/swap |
-| `integrations:sync-restartproject` / `-repaircafewales` / `-reachvolunteering` | daily | `FreshnessCheck` | `communityevents`/`volunteering` rows by `externalid` prefix — **upstream feed can be legitimately empty** |
-| `mail:donations:thank-prep` | daily | `CallbackCheck` | `config` high-water-mark `donation_thank_prep_last_id` advances |
-| `mail:volunteering-digest` / `mail:events-digest` | weekly | `ProducedSinceCheck` | `users_digests.lastsent` mode `volunteering`/`events` — 3-day guard + eligibility means zero can be correct |
-| `groups:check-mod-welfare` | weekly | `ProducedSinceCheck` | `groups_mods_welfare.warnedat` |
-| `groups:welcome-review` | daily | `FreshnessCheck` | `groups.welcomereview` |
-| `messages:process-expired` | daily | `ProducedSinceCheck` | `messages_outcomes` `outcome='Expired'` — zero correct when no deadlines lapsed |
+| Task | Why not (yet) |
+|---|---|
+| `data:fetch-app-versions` | The `config` value is just the version string with **no embedded timestamp**, and the store version rarely changes — no freshness signal without adding instrumentation. |
+| `domains:update-common` | `domains_common` has **no timestamp column** (id/domain/count only) — nothing to key freshness on. |
+| `integrations:sync-restartproject` / `-repaircafewales` / `-reachvolunteering` | `communityevents`/`volunteering` by `externalid` prefix — the upstream feed can be **legitimately empty** of upcoming events, so a floor would false-alarm. |
+| `mail:donations:thank-prep` | Dedup is a `config` id high-water-mark with no timestamp, and it only advances when new donations exist — zero is correct on a quiet day. |
+| `mail:volunteering-digest` / `mail:events-digest` | `users_digests.lastsent` mode `volunteering`/`events`, but the 3-day cadence guard + eligibility mean a zero week is correct. |
+| `groups:check-mod-welfare` | `groups_mods_welfare.warnedat` only advances when an inactive mod is found — zero is the healthy case. |
+| `groups:welcome-review` | Processes only groups *due* for review (≤10/run); most days none are due. |
+| `messages:process-expired` | `messages_outcomes outcome='Expired'` is zero when no deadlines lapsed that day. |
+
+Adding any of these would need a per-job "am I expected to have output *this*
+period?" precondition richer than a simple floor.
 
 ### Cursor / queue staleness — deferred (🟡)
 
-Best served by `BacklogCheck` (pending rows older than X), to be added as the
-"stuck worker" failure modes are prioritised:
+The high-value processing queues are now implemented (see above). These remain,
+to be added with `BacklogCheck`/`FreshnessCheck` as the failure modes are
+prioritised (each needs its exact "pending" predicate verified first):
 
-| Task | Backlog signal |
+| Task | Backlog/freshness signal |
 |---|---|
-| `messages:contentcheck` | `messages_groups` unprocessed pending age |
-| `chats:process-incoming` | `chat_messages.processingrequired=1` age |
-| `memberships:process` | `memberships_history.processingrequired=1` age |
-| `users:process-exports` | `users_exports.completed IS NULL` age |
-| `embeddings:generate` | messages awaiting embeddings age |
+| `embeddings:generate` | messages awaiting embeddings (`messages_spatial successful=0 promised=0` minus `messages_embeddings`) — multi-table predicate, verify before adding |
 | `messages:update-spatial-index` / `messages:update-index` | newest indexed vs newest message |
-| `newsfeed:generate-link-previews` | `link_previews.retrieved` recency vs new URLs |
+| `newsfeed:generate-link-previews` | `link_previews.retrieved` recency vs new URLs (quiet-period false-alarm risk) |
 | `microvolunteering:notify`, `chats:update-expected`, `users:update-modmails` | cursor recency |
 
 ### Not worth monitoring (⚪)

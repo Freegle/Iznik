@@ -95,4 +95,65 @@ class ScheduledOutcomeRegistryTest extends TestCase
         ]);
         $this->assertTrue($check->evaluate(Carbon::now())->isOk());
     }
+
+    private function check(string $slug): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new ScheduledOutcomeRegistry())->checks() as $c) {
+            if ($c->slug() === $slug) {
+                return $c;
+            }
+        }
+        $this->fail("check '{$slug}' not found in registry");
+    }
+
+    /**
+     * The config-freshness checks read a timestamp embedded in a config value
+     * (the config table has no updated_at). Verify the parse + compare for both
+     * the unix-timestamp (git-summary) and JSON-updated_at (cpi) formats.
+     */
+    public function test_config_freshness_checks_parse_and_evaluate(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+        DB::table('config')->whereIn('key', ['git_summary_last_run', 'cpi_annual_data'])->delete();
+
+        $git = $this->check('data:git-summary');
+        $cpi = $this->check('data:update-cpi');
+
+        // Missing key -> skipped (no false breach on a fresh deploy).
+        $this->assertTrue($git->evaluate(Carbon::now())->isSkipped());
+
+        // git-summary: fresh unix timestamp -> ok; stale -> breach.
+        DB::table('config')->insert(['key' => 'git_summary_last_run', 'value' => (string) Carbon::now()->subDays(2)->timestamp]);
+        $this->assertTrue($git->evaluate(Carbon::now())->isOk());
+        DB::table('config')->where('key', 'git_summary_last_run')->update(['value' => (string) Carbon::now()->subDays(30)->timestamp]);
+        $this->assertTrue($git->evaluate(Carbon::now())->isBreach());
+
+        // cpi: fresh ISO-8601 updated_at inside JSON -> ok; stale -> breach.
+        DB::table('config')->insert([
+            'key' => 'cpi_annual_data',
+            'value' => json_encode(['data' => [], 'updated_at' => Carbon::now()->subDays(5)->toIso8601String()]),
+        ]);
+        $this->assertTrue($cpi->evaluate(Carbon::now())->isOk());
+        DB::table('config')->where('key', 'cpi_annual_data')->update([
+            'value' => json_encode(['data' => [], 'updated_at' => Carbon::now()->subDays(60)->toIso8601String()]),
+        ]);
+        $this->assertTrue($cpi->evaluate(Carbon::now())->isBreach());
+    }
+
+    /**
+     * The whatjobs check is gated on a feed being configured, so the smoke test
+     * skips it. Enable it and verify it queries jobs.seenat against the real
+     * schema (empty table -> breach, but the query must run without error).
+     */
+    public function test_whatjobs_check_queries_jobs_table_when_enabled(): void
+    {
+        config(['freegle.whatjobs.feed1' => 'https://example.com/feed']);
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+        DB::table('jobs')->delete();
+
+        $result = $this->check('integrations:sync-whatjobs')->evaluate(Carbon::now());
+
+        // No rows in jobs -> breach ("no rows"), proving the seenat query ran.
+        $this->assertTrue($result->isBreach(), $result->message);
+    }
 }
