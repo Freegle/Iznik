@@ -302,6 +302,47 @@
         </mj-section>
         @endif
 
+        {{-- ════════════════════════════════════════════════════════════════
+             "In this digest" summary index. One line per post, each linking to
+             the post's page on the website (NOT an in-email #anchor — V1's
+             anchor approach rendered inconsistently across clients). The first
+             DigestStyle::SUMMARY_VISIBLE_LINES lines always show; any overflow
+             collapses into a <details>/<summary> "Show N more" disclosure.
+             Apple Mail and modern webmail render the toggle; clients that ignore
+             <details> show the overflow expanded — but it's one short line per
+             post, so the digest never balloons. AMP clients get the native
+             <amp-accordion> equivalent in the AMP MIME part. --}}
+        @php
+            $summaryPosts = collect($posts);
+            $summaryVisible = \App\Mail\Digest\DigestStyle::SUMMARY_VISIBLE_LINES;
+            $summaryHidden = $summaryPosts->slice($summaryVisible);
+            $summaryLink = 'color: ' . \App\Mail\Digest\DigestStyle::OFFER_GREEN . '; text-decoration: none; display: block; margin-bottom: 4px;';
+        @endphp
+        @if($summaryPosts->count() >= 2)
+        <mj-section background-color="#ffffff" padding="16px 20px 4px">
+            <mj-column>
+                <mj-text font-size="13px" color="#212529" padding="0 0 8px 0">
+                    <strong style="text-transform: uppercase; letter-spacing: 0.3px;">In this digest</strong>
+                </mj-text>
+                <mj-text font-size="14px" color="#212529" line-height="1.6" padding="0">
+                    @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
+                    <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                    @endforeach
+                    @if($summaryHidden->isNotEmpty())
+                    <details style="margin-top: 2px;">
+                        <summary style="cursor: pointer; color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; font-weight: 600;">Show {{ $summaryHidden->count() }} more</summary>
+                        <div style="margin-top: 6px;">
+                            @foreach($summaryHidden as $summaryPost)
+                            <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                            @endforeach
+                        </div>
+                    </details>
+                    @endif
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @endif
+
         {{-- Post cards --}}
         @foreach($posts as $index => $post)
         @php $isOffer = $post['type'] === 'Offer'; @endphp

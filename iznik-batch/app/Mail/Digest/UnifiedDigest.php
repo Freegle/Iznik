@@ -666,6 +666,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'view_message'
             );
 
+            // Summary-index link: the top-of-digest "In this digest" list is a
+            // jump-to-post index, so it points at the message's web page WITHOUT
+            // ?reply=1 (we're not asking the reader to reply, just to look) and
+            // carries its own tracking tag so summary clicks are distinguishable
+            // from card clicks. V1's summary used an in-email #anchor that
+            // rendered inconsistently across clients; a real web URL is reliable.
+            $summaryUrl = $this->trackedUrl(
+                $this->userSite . '/message/' . $message->id,
+                "summary_{$index}",
+                'summary_click'
+            );
+
             // Format arrival time for display in UK local time (BST in summer, GMT in winter).
             // Always include minutes (e.g. "Sun 1 Mar, 11:00am") so the time
             // shape is consistent — V1 single.html-style "Mon, 25th May 9:00am".
@@ -719,6 +731,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'message' => $message,
                 'messageText' => $messageText,
                 'messageUrl' => $messageUrl,
+                'summaryUrl' => $summaryUrl,
                 'imageUrl' => $imageUrl,
                 'displayImageUrl' => $displayImageUrl,
                 'heroImageUrl' => $heroImageUrl,

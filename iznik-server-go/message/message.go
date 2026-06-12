@@ -138,9 +138,14 @@ func extractTNImageURLsFromPage(pageURL string) []string {
 	return found
 }
 
-// TNPhotoScrapeRunner launches TN photo scraping.  Swappable in tests to run synchronously.
+// TNPhotoScrapeRunner scrapes TN photos and stores them as attachments.  It runs
+// SYNCHRONOUSLY so the photos are fully in place before the caller writes the edit's
+// change signal (the messages_edits row).  TN polls /api/changes — which reports a
+// message as "Edited" via messages_edits — and then fetches the message to read its
+// attachments; if the signal were visible before the photos landed, TN would get a
+// partial photo set.  Swappable in tests.
 var TNPhotoScrapeRunner = func(db *gorm.DB, msgID uint64, picPageURLs []string) {
-	go scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
+	scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
 }
 
 // scrapeTNPhotosToAttachments downloads TN images from pic-page URLs and inserts
@@ -3039,15 +3044,18 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			}
 		}
 
-		if err := applyPatchMessageCore(c, myid, req); err != nil {
-			return err
-		}
-
-		// TN's textbody is the authoritative photo set for its posts.  Whenever TN
-		// sends a textbody (even an empty one) we delete ALL existing attachments and
-		// then let the scraper add the new set (if pic links were present).
+		// Attachments must reach their final state BEFORE the edit's change signal is
+		// written.  applyPatchMessageCore writes the messages_edits row that /api/changes
+		// reports as "Edited"; TN then fetches the message to read its attachments.  If we
+		// scraped after the signal (or asynchronously), TN could poll in the gap and get a
+		// partial photo set — the "only 1 photo back, all of them on a forced re-fetch" bug.
+		// So we delete the old attachments and synchronously scrape the new ones first, then
+		// call the core.  This matches V1, which scrapes + saves attachments before edit()
+		// (http/api/message.php).
 		//
-		// This fixes two bugs:
+		// TN's textbody is the authoritative photo set for its posts.  Whenever TN sends a
+		// textbody (even an empty one) we delete ALL existing attachments and then let the
+		// scraper add the new set (if pic links were present).  This fixes two further bugs:
 		//   #2 — textbody with no pic links: old non-AI photos were left behind.
 		//   #3 — textbody with new pic links: old non-AI photos coexisted with the new ones.
 		//
@@ -3058,9 +3066,13 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 		}
 
-		// If TN photos were present, scrape them and store as attachments.
+		// If TN photos were present, scrape them and store as attachments (synchronously).
 		if len(picPageURLs) > 0 {
 			TNPhotoScrapeRunner(db, msgID, picPageURLs)
+		}
+
+		if err := applyPatchMessageCore(c, myid, req); err != nil {
+			return err
 		}
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

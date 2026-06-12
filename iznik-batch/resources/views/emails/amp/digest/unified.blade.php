@@ -59,6 +59,51 @@
       }
     }
 
+    /* "In this digest" summary index. One line per post linking to the post's
+       web page; any overflow tucks behind a native amp-accordion "Show N more".
+       Mirrors the MJML <details> summary in the HTML MIME part — the visible
+       cut-off comes from DigestStyle so the two can't drift. */
+    .summary-section {
+      padding: 16px 20px 8px;
+      border-bottom: 1px solid #eeeeee;
+    }
+    .summary-head {
+      font-size: 13px;
+      font-weight: 700;
+      color: #212529;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin: 0 0 8px 0;
+    }
+    .summary-link {
+      display: block;
+      font-size: 14px;
+      line-height: 1.6;
+      color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};
+      text-decoration: none;
+      margin: 0 0 4px 0;
+    }
+    .summary-acc { margin-top: 2px; }
+    .summary-acc section { border: none; }
+    /* The amp runtime force-paints the first child of <section>; beat its
+       :where(amp-accordion > section) > :first-child (0,1,0) rule with a
+       0,1,3 selector, the same trick the per-post reply-toggle uses. */
+    amp-accordion.summary-acc > section > h4.summary-toggle {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      font-weight: normal;
+    }
+    .summary-more {
+      display: inline-block;
+      color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .summary-rest { padding-top: 6px; }
+
     /* Greeting */
     .greeting {
       padding: 20px 20px 10px 20px;
@@ -565,6 +610,39 @@
         @endforeach
       </div>
     </div>
+
+    {{-- "In this digest" summary index — one line per post linking to the
+         post's web page (AMP4Email forbids fragment #anchors anyway, so the
+         web URL is the only correct choice). The first SUMMARY_VISIBLE_LINES
+         always show; overflow collapses into a native <amp-accordion> "Show N
+         more". Mirrors the MJML <details> equivalent. (amp-accordion's
+         disable-session-states attribute is AMP-HTML only — the AMP4Email
+         validator rejects it — so it's omitted here.) --}}
+    @php
+        $summaryPosts = collect($posts);
+        $summaryVisible = \App\Mail\Digest\DigestStyle::SUMMARY_VISIBLE_LINES;
+        $summaryHidden = $summaryPosts->slice($summaryVisible);
+    @endphp
+    @if($summaryPosts->count() >= 2)
+    <div class="summary-section">
+      <p class="summary-head">In this digest</p>
+      @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
+      <a class="summary-link" href="{{ $summaryPost['summaryUrl'] }}">{{ $summaryPost['subject'] }}</a>
+      @endforeach
+      @if($summaryHidden->isNotEmpty())
+      <amp-accordion class="summary-acc">
+        <section>
+          <h4 class="summary-toggle"><span class="summary-more">Show {{ $summaryHidden->count() }} more</span></h4>
+          <div class="summary-rest">
+            @foreach($summaryHidden as $summaryPost)
+            <a class="summary-link" href="{{ $summaryPost['summaryUrl'] }}">{{ $summaryPost['subject'] }}</a>
+            @endforeach
+          </div>
+        </section>
+      </amp-accordion>
+      @endif
+    </div>
+    @endif
 
 
     {{-- Shared amp-mustache templates referenced by id from every post's
