@@ -57,6 +57,9 @@
           :state="itemState"
           @blur="onItemBlur"
         />
+        <div v-if="itemError" class="invalid-feedback d-block">
+          {{ itemError }}
+        </div>
       </div>
 
       <!-- Description -->
@@ -100,6 +103,10 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import OurUploadedImage from '~/components/OurUploadedImage'
 import api from '~/api'
+import {
+  isNumericOnlyItem,
+  INVALID_ITEM_MESSAGE,
+} from '~/composables/useItemValidation'
 
 const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
@@ -145,11 +152,20 @@ onMounted(() => {
 
 // Item validation state - null initially, false if error, true if valid
 const itemState = computed(() => {
+  if (isNumericOnlyItem(item.value)) {
+    return false
+  }
   if (showItemError.value && (!item.value || !item.value.trim())) {
     return false
   }
   return item.value ? true : null
 })
+
+// Error message shown under the item field. A purely-numeric item is never a
+// valid description, so we flag it as soon as it's typed.
+const itemError = computed(() =>
+  isNumericOnlyItem(item.value) ? INVALID_ITEM_MESSAGE : null
+)
 
 // Description validation state
 const descriptionState = computed(() => {
@@ -302,7 +318,7 @@ function onItemBlur() {
 }
 
 function validateAndNext() {
-  if (!item.value || !item.value.trim()) {
+  if (!item.value || !item.value.trim() || isNumericOnlyItem(item.value)) {
     showItemError.value = true
     nextTick(() => {
       const input = document.getElementById('item-name')

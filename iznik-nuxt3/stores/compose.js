@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { useMessageStore } from '~/stores/message'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
+import { isNumericOnlyItem } from '~/composables/useItemValidation'
 
 const defaultOffer = {
   id: 0,
@@ -607,11 +608,13 @@ export const useComposeStore = defineStore({
             message.description && message.description.trim()
           const hasRealPhotos = realPhotos.length > 0
 
-          // A message is valid if there is an item, and either a description or real photos.
+          // A message is valid if there is an item, the item isn't just a number,
+          // and there is either a description or real photos.
           // AI-only photos require a description.
           if (
             !message.item ||
             !message.item.trim() ||
+            isNumericOnlyItem(message.item) ||
             (!hasDescription && !hasRealPhotos)
           ) {
             valid = false
