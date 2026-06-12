@@ -224,6 +224,19 @@ Schedule::command('monitor:email-health')
     ->sendOutputTo(cronLog('monitor:email-health'))
     ->runInBackground();
 
+// Outcome-based monitoring — asserts that scheduled tasks actually DID their
+// work (rows written, cursor advanced), not just that the scheduler is alive.
+// Breaches escalate to Sentry. Runs inline (it's just a few aggregate queries)
+// and is itself heartbeated to Sentry Crons, so a stalled monitor — or a dead
+// scheduler — is visible even when no individual job has breached yet.
+// See docs/scheduled-outcome-monitoring.md.
+Schedule::command('monitor:scheduled-outcomes')
+    ->everyTenMinutes()
+    ->name('scheduled-outcomes-monitor')
+    ->withoutOverlapping()
+    ->sentryMonitor('scheduled-outcomes-monitor', 10)
+    ->sendOutputTo(cronLog('monitor:scheduled-outcomes'));
+
 // Notification chaseup - send emails for unseen, unmailed site notifications.
 // V1: cron/notification_chaseup.php (every 5 minutes)
 Schedule::command('mail:notifications:chaseup')

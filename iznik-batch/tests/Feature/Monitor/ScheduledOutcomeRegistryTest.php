@@ -1,0 +1,98 @@
+<?php
+
+namespace Tests\Feature\Monitor;
+
+use App\Monitoring\OutcomeCheck;
+use App\Monitoring\OutcomeResult;
+use App\Monitoring\ScheduledOutcomeRegistry;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+/**
+ * Smoke tests for the populated registry.
+ *
+ * The most important guarantee here is that every registered check actually
+ * QUERIES THE REAL SCHEMA without error — a typo'd table or column name would
+ * throw a query exception against the migrated test DB and fail this test,
+ * rather than silently false-alarming in production. (Each check legitimately
+ * BREACHES against empty tables; we assert it returns a valid result, not that
+ * it passes.)
+ */
+class ScheduledOutcomeRegistryTest extends TestCase
+{
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
+    public function test_registry_returns_checks(): void
+    {
+        $checks = (new ScheduledOutcomeRegistry())->checks();
+
+        $this->assertNotEmpty($checks);
+        foreach ($checks as $check) {
+            $this->assertInstanceOf(OutcomeCheck::class, $check);
+        }
+    }
+
+    public function test_registry_slugs_are_unique(): void
+    {
+        $slugs = array_map(fn (OutcomeCheck $c) => $c->slug(), (new ScheduledOutcomeRegistry())->checks());
+
+        $this->assertSame(
+            array_values(array_unique($slugs)),
+            array_values($slugs),
+            'Registry slugs must be unique'
+        );
+    }
+
+    public function test_every_check_evaluates_against_real_schema_without_error(): void
+    {
+        // Mid-morning so daytime-windowed checks are active and actually run a query.
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+
+        foreach ((new ScheduledOutcomeRegistry())->checks() as $check) {
+            $result = $check->evaluate(Carbon::now());
+            $this->assertInstanceOf(
+                OutcomeResult::class,
+                $result,
+                "Check {$check->slug()} did not return an OutcomeResult"
+            );
+        }
+    }
+
+    /**
+     * The daily-digest check is SKIPPED by default (empty allowlist), so the
+     * smoke test above never exercises its users_digests query. Enable it and
+     * seed a row to verify the table/column wiring is correct.
+     */
+    public function test_daily_digest_check_queries_users_digests_when_enabled(): void
+    {
+        config(['freegle.digest.daily_allowlist' => 'pilot@example.com']);
+        // 14:00 UTC = 15:00 London — inside the digest check's 13:00-24:00 window.
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+
+        $check = null;
+        foreach ((new ScheduledOutcomeRegistry())->checks() as $c) {
+            if ($c->slug() === 'mail:digest:unified --mode=daily') {
+                $check = $c;
+            }
+        }
+        $this->assertNotNull($check, 'daily digest check not found in registry');
+
+        // No daily send recorded today → breach (query runs against users_digests).
+        DB::table('users_digests')->where('mode', 'daily')->delete();
+        $this->assertTrue($check->evaluate(Carbon::now())->isBreach());
+
+        // A daily send recorded today → OK.
+        $user = $this->createTestUser();
+        DB::table('users_digests')->insert([
+            'userid' => $user->id,
+            'mode' => 'daily',
+            'lastsent' => Carbon::now(),
+        ]);
+        $this->assertTrue($check->evaluate(Carbon::now())->isOk());
+    }
+}

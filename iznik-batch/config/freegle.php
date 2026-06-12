@@ -372,6 +372,40 @@ return [
         'outgoing_stall_window_hours' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Scheduled-task Outcome Monitoring
+    |--------------------------------------------------------------------------
+    |
+    | Thresholds for the monitor:scheduled-outcomes cron job, which asserts that
+    | scheduled tasks actually did their work (not just that the scheduler is
+    | alive). Breaches escalate to Sentry. See docs/scheduled-outcome-monitoring.md.
+    |
+    */
+
+    'monitoring' => [
+        // Master kill-switch. When false, monitor:scheduled-outcomes no-ops.
+        'enabled' => env('FREEGLE_MONITORING_ENABLED', true),
+
+        // stats:generate-daily — minimum per-group stats rows expected for
+        // yesterday once the day's 02:30 run has had time to complete.
+        'stats_daily_min_expected' => (int) env('FREEGLE_MONITORING_STATS_DAILY_MIN', 1),
+
+        // mail:digest:unified --mode=daily — minimum daily-digest sends expected
+        // once the daily pilot is enabled (FREEGLE_DIGEST_DAILY_ALLOWLIST set).
+        'digest_daily_min_expected' => (int) env('FREEGLE_MONITORING_DIGEST_DAILY_MIN', 1),
+
+        // queue:background-tasks — a pending task (unprocessed, unfailed, under
+        // the retry cap) older than this many minutes signals a stuck worker.
+        'background_tasks_max_age_minutes' => (int) env('FREEGLE_MONITORING_BG_TASKS_MAX_AGE_MIN', 10),
+        // Number of such stale-pending tasks tolerated before breaching.
+        'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
+
+        // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
+        // refresh hasn't written a row within this many days.
+        'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
+    ],
+
     'dedup' => [
         // Guard for the dedup:tn artisan command. Defaults to false — the
         // command refuses to run unless this is true, so it's safe to deploy
