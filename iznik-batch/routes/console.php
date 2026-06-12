@@ -643,6 +643,48 @@ Schedule::command('microvolunteering:notify')
     ->sendOutputTo(cronLog('microvolunteering:notify'))
     ->runInBackground();
 
+// Exhort recently-active established users with an on-site notification nudge
+// (default: "Tell us your Freegle story!"). The 90-day per-user cooldown means
+// running every minute over a 5-minute active window simply dedupes; matches V1.
+// V1: cron/user_exhort.php (every minute).
+Schedule::command('notifications:exhort')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('notifications:exhort'))
+    ->runInBackground();
+
+// Refresh UK postcodes (add new, update moved lat/lng) from the Doogal dataset.
+// Downloads + unzips the CSV itself. V1: cron/doogal wrapper (daily at 03:00).
+Schedule::command('locations:update-postcodes')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('locations:update-postcodes'))
+    ->runInBackground();
+
+// Fallback downloader for PayPal donations the IPN missed (last 30 days).
+// V1: cron/paypal_download.php (every 4 hours at :30). Skips if PayPal creds unset.
+Schedule::command('donations:paypal-download')
+    ->cron('30 */4 * * *')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('donations:paypal-download'))
+    ->runInBackground();
+
+// Audit Discourse users against MT mods (watching/bios/bounces) and email a report.
+// V1: cron/discourse_checkusers.php (daily at 03:08). Skips if Discourse API key unset.
+Schedule::command('discourse:check-users')
+    ->dailyAt('03:08')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('discourse:check-users'))
+    ->runInBackground();
+
+// Report Freegle groups not represented by an active mod on Discourse + mods not
+// signed up. V1: cron/discourse_not_signed_up.php (daily at 03:23). Skips if key unset.
+Schedule::command('discourse:not-signed-up')
+    ->dailyAt('03:23')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('discourse:not-signed-up'))
+    ->runInBackground();
+
 // Update cached location names in user settings when the canonical name has changed.
 // V1: cron/users_remap.php (daily at 05:00)
 Schedule::command('users:remap-locations')
