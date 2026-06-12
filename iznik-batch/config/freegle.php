@@ -96,7 +96,7 @@ return [
         'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // Central mods / Volunteer Support address — receives the Discourse
         // checkuser / not-signed-up reports (V1 CENTRALMODS_ADDR).
-        'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteers@ilovefreegle.org'),
+        'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteersupport@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
         // Modbot email — the automated moderator account; excluded from mod-welfare checks.
