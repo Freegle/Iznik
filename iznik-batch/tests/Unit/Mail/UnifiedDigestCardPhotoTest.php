@@ -90,14 +90,20 @@ class UnifiedDigestCardPhotoTest extends TestCase
         $avatarUrl    = 'https://images.ilovefreegle.org/avatar_' . $id . '.jpg';
         $ampReplyUrl  = 'https://api.ilovefreegle.org/amp/reply/' . $id;
 
+        // Summary index ("In this digest") link: its own tracked URL to the
+        // message page, distinct from messageUrl (which carries ?reply=1).
+        $summaryUrl = 'https://api.ilovefreegle.org/e/d/r/STOKEN' . $id . '?url=' . base64_encode($trackedBase);
+
         return [
             'message'          => (object) ['id' => $id],
             'type'             => $type,
             'itemName'         => 'Test Item ' . $id,
+            'subject'          => strtoupper($type) . ': Test Item ' . $id . ' (Edinburgh)',
             'thumbImageUrl'    => $thumbUrl,
             'heroImageUrl'     => $heroUrl,
             'displayImageUrl'  => $displayUrl,
             'messageUrl'       => $messageUrl,
+            'summaryUrl'       => $summaryUrl,
             'fallbackReplyUrl' => $fallbackUrl,
             'locationName'     => 'Edinburgh',
             'distanceText'     => '1.2 miles',

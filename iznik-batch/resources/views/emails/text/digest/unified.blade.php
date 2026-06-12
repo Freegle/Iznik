@@ -10,6 +10,19 @@
 @unless($isSingle)
 Here are {{ $postCount }} new posts from your Freegle communities:
 
+@php($summaryPosts = collect($posts))
+@php($summaryVisible = \App\Mail\Digest\DigestStyle::SUMMARY_VISIBLE_LINES)
+@php($summaryHidden = $summaryPosts->slice($summaryVisible))
+@if($summaryPosts->count() >= 2)
+In this digest:
+@foreach($summaryPosts->take($summaryVisible) as $summaryPost)
+- {!! $summaryPost['subject'] !!}: {{ $summaryPost['summaryUrl'] }}
+@endforeach
+@if($summaryHidden->isNotEmpty())
+...and {{ $summaryHidden->count() }} more below.
+@endif
+
+@endif
 @endunless
 @foreach($posts as $post)
 {!! strtoupper($post['type']) !!}: {!! $post['itemName'] !!}
