@@ -295,26 +295,34 @@ commands:
                 NPROC=$(nproc 2>/dev/null || echo 1)
                 if [ "$NPROC" -ge 4 ]; then
                   WL="1-$((NPROC-1))"
+                  running="$(docker ps -q 2>/dev/null)"
                   # Containers: set the cpuset at the cgroup level so it covers every
                   # current AND future process in each container (e.g. the Chromium
                   # workers Playwright keeps forking). Driver/VM independent; no restart.
-                  for c in $(docker ps -q 2>/dev/null); do
+                  for c in $running; do
                     docker update --cpuset-cpus "$WL" "$c" >/dev/null 2>&1 || true
                   done
-                  # Native: taskset every userspace pid to 1..N-1 EXCEPT the agent
-                  # family ($agent_pids, computed above). Forks inherit affinity, so
-                  # pinning a process pins its future children too; pin each pid once
-                  # (cached in $_pinned) to keep the steady-state exec cost near zero.
-                  # New work each appears as a fresh pid and is pinned on the next pass.
-                  agent_set=" $agent_pids "
-                  for pp in /proc/[0-9]*; do
-                    pid=${pp#/proc/}
-                    [ "$pid" = 1 ] && continue
-                    case "$agent_set" in *" $pid "*) continue ;; esac
-                    [ -n "${_pinned[$pid]:-}" ] && continue
-                    sudo taskset -acp "$WL" "$pid" >/dev/null 2>&1 || true
-                    _pinned[$pid]=1
-                  done
+                  # Native confinement runs ONLY once containers are up (the parallel
+                  # TEST phase). During the image BUILD phase there are no containers but
+                  # many short-lived compiler pids; tasksetting every one floods sudo
+                  # (fork + auth.log write) onto an already disk-heavy phase for no
+                  # benefit — heartbeat starvation is a TEST-phase phenomenon. Skipping
+                  # it keeps the build phase as light as the original watchdog.
+                  if [ -n "$running" ]; then
+                    # taskset every userspace pid to 1..N-1 EXCEPT the agent family
+                    # ($agent_pids, computed above). Forks inherit affinity, so pinning a
+                    # process pins its future children too; pin each pid once (cached in
+                    # $_pinned) to keep the steady-state exec cost near zero.
+                    agent_set=" $agent_pids "
+                    for pp in /proc/[0-9]*; do
+                      pid=${pp#/proc/}
+                      [ "$pid" = 1 ] && continue
+                      case "$agent_set" in *" $pid "*) continue ;; esac
+                      [ -n "${_pinned[$pid]:-}" ] && continue
+                      sudo taskset -acp "$WL" "$pid" >/dev/null 2>&1 || true
+                      _pinned[$pid]=1
+                    done
+                  fi
                 fi
                 sleep 2
               done
