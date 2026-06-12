@@ -266,6 +266,7 @@ commands:
             # seconds because Playwright keeps forking new headless_shell workers.
             # Must run on ALL runner types (self-hosted and Katapult cloud).
             (
+              declare -A _pinned 2>/dev/null || true   # pids already cpuset-confined
               while true; do
                 docker_pids=""
                 for pp in /proc/[0-9]*; do
@@ -283,26 +284,42 @@ commands:
                 # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
                 agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
                 [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
-                # Reserve vCPU0 for the runner heartbeat by confining the WORKLOAD off
-                # it (not by boosting the agent — a boost is inherited by the load).
-                # Containers are already pinned to 1..N-1 by the Docker cgroup-parent
-                # slice set at VM provision time; this also pins the NATIVE test runners
-                # (vitest et al. run natively on Katapult and are top CPU consumers) and,
-                # as a backstop, any container pid that escaped the slice. The agent/
-                # daemon is deliberately left unconfined so its heartbeat always has
-                # vCPU0. taskset needs no daemon changes; re-applied every 2s to catch
-                # freshly-forked workers (Playwright/vitest fork continuously).
+                # Reserve vCPU0 for the runner heartbeat by confining the WHOLE
+                # workload to vCPUs 1..N-1, leaving the circleci agent FAMILY (the
+                # daemon AND the task-agent — the heartbeat goroutine lives in the same
+                # process that drives the tests, so both must keep vCPU0) able to use
+                # vCPU0. This MUST be done from inside the job: a Katapult job can run
+                # on a VM provisioned by a DIFFERENT pipeline, so VM-provision-time
+                # config (cgroup-parent etc.) does not reliably reach the VM the job
+                # lands on — but this watchdog always does. cpuset = hard isolation.
                 NPROC=$(nproc 2>/dev/null || echo 1)
                 if [ "$NPROC" -ge 4 ]; then
                   WL="1-$((NPROC-1))"
-                  for wp in $docker_pids $test_pids; do
-                    sudo taskset -acp "$WL" "$wp" >/dev/null 2>&1 || true
+                  # Containers: set the cpuset at the cgroup level so it covers every
+                  # current AND future process in each container (e.g. the Chromium
+                  # workers Playwright keeps forking). Driver/VM independent; no restart.
+                  for c in $(docker ps -q 2>/dev/null); do
+                    docker update --cpuset-cpus "$WL" "$c" >/dev/null 2>&1 || true
+                  done
+                  # Native: taskset every userspace pid to 1..N-1 EXCEPT the agent
+                  # family ($agent_pids, computed above). Forks inherit affinity, so
+                  # pinning a process pins its future children too; pin each pid once
+                  # (cached in $_pinned) to keep the steady-state exec cost near zero.
+                  # New work each appears as a fresh pid and is pinned on the next pass.
+                  agent_set=" $agent_pids "
+                  for pp in /proc/[0-9]*; do
+                    pid=${pp#/proc/}
+                    [ "$pid" = 1 ] && continue
+                    case "$agent_set" in *" $pid "*) continue ;; esac
+                    [ -n "${_pinned[$pid]:-}" ] && continue
+                    sudo taskset -acp "$WL" "$pid" >/dev/null 2>&1 || true
+                    _pinned[$pid]=1
                   done
                 fi
                 sleep 2
               done
             ) &
-            echo "CPU priority watchdog running: docker containers + native test runners nice +19, agent pinned to nice 0"
+            echo "CPU priority watchdog running: workload nice +19, agent nice 0, and workload cpuset-confined to vCPUs 1..N-1 (vCPU0 reserved for the runner heartbeat)"
 
             while true; do
               echo ""
