@@ -71,7 +71,31 @@ systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/de
 # Port 5001: GHCR pull-through mirror
 # Port 5002: Docker layer cache (BuildKit)
 # Note: "features.buildkit" was removed in Docker 23+; omit it to avoid startup failure.
-cat > /etc/docker/daemon.json << 'EOF'
+#
+# CPU-heartbeat isolation (cgroup v2 cpuset)
+# -----------------------------------------
+# The CircleCI runner agent keeps its heartbeat inside the circleci-runner daemon.
+# During the parallel test phase all vCPUs saturate (Chromium/Playwright renderers
+# + Laravel + Go containers), the run queue gets deep, and the agent can't get
+# scheduled to send its heartbeat -> the job is killed as a (non-retryable)
+# infrastructure_fail. nice -15 (start.sh) and the orb's renice +19 watchdog did NOT
+# hold alone: CFS niceness is a relative weight, not isolation, so a boxful of busy
+# containers can still bury the agent's wake-up latency.
+#
+# Fix: reserve vCPU 0 for the agent. We confine EVERY Docker container to vCPUs
+# 1..N-1 via a systemd slice (AllowedCPUs) referenced as Docker's cgroup-parent.
+# The agent (in circleci-runner.service, left unconfined) then always finds vCPU 0
+# runnable. The container tree is the dominant load and lives under dockerd's own
+# cgroups, so it is NOT reachable by command_prefix/renice — this slice is the only
+# lever that catches it. The native test-agent process tree is handled separately.
+#
+# Best-effort and self-healing: if cgroup v2 / a modern-enough systemd isn't present,
+# or Docker refuses to start with the cgroup-parent, we fall back to the plain
+# daemon.json so the build still runs (slower) rather than failing provisioning.
+# Memory is deliberately NOT capped here: RAM/swap are documented as fine (48G + 20G
+# swap) and a tight MemoryMax would risk OOM-killing test containers.
+write_base_daemon_json() {
+  cat > /etc/docker/daemon.json << 'EOF'
 {
   "registry-mirrors": ["http://${CACHE_SERVER}:5000"],
   "insecure-registries": [
@@ -81,14 +105,82 @@ cat > /etc/docker/daemon.json << 'EOF'
   ]
 }
 EOF
+}
+
+docker_up() {
+  for _i in 1 2 3 4 5; do
+    sleep 3
+    docker info >/dev/null 2>&1 && return 0
+    echo "Waiting for Docker to start (\${_i}/5)..."
+  done
+  return 1
+}
+
+ISOLATE_CPUS=""
+NCPU=\$(nproc 2>/dev/null || echo 1)
+CGROUP_V2=0
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then CGROUP_V2=1; fi
+if [ "\$CGROUP_V2" = 1 ] && [ "\$NCPU" -ge 4 ]; then
+  WORKLOAD_CPUS="1-\$(( NCPU - 1 ))"
+  cat > /etc/systemd/system/ciworkload.slice << SLICEEOF
+[Unit]
+Description=CI workload — Docker containers confined off vCPU0 to protect the CircleCI runner heartbeat
+Before=slices.target
+[Slice]
+AllowedCPUs=\${WORKLOAD_CPUS}
+SLICEEOF
+  systemctl daemon-reload
+  if systemctl start ciworkload.slice 2>/dev/null && \
+     [ "\$(cat /sys/fs/cgroup/ciworkload.slice/cpuset.cpus.effective 2>/dev/null)" = "\$WORKLOAD_CPUS" ]; then
+    ISOLATE_CPUS="\$WORKLOAD_CPUS"
+    echo "[cpuset] vCPU0 reserved for runner agent; containers -> \$WORKLOAD_CPUS (nproc=\$NCPU)"
+  else
+    echo "[cpuset] slice did not apply (old systemd / no cpuset) — continuing WITHOUT CPU isolation"
+    systemctl stop ciworkload.slice 2>/dev/null || true
+  fi
+else
+  echo "[cpuset] skipping CPU isolation (cgroup_v2=\$CGROUP_V2 nproc=\$NCPU)"
+fi
+
+if [ -n "\$ISOLATE_CPUS" ]; then
+  cat > /etc/docker/daemon.json << 'EOF'
+{
+  "registry-mirrors": ["http://${CACHE_SERVER}:5000"],
+  "insecure-registries": [
+    "${CACHE_SERVER}:5000",
+    "${CACHE_SERVER}:5001",
+    "${CACHE_SERVER}:5002"
+  ],
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "cgroup-parent": "ciworkload.slice"
+}
+EOF
+else
+  write_base_daemon_json
+fi
+
 systemctl restart docker
-# Verify Docker came up — fail loudly rather than silently leaving it down
-for _i in 1 2 3 4 5; do
-  sleep 3
-  docker info >/dev/null 2>&1 && break
-  echo "Waiting for Docker to start (\${_i}/5)..."
-done
-docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon did not start after restart"; exit 1; }
+# Verify Docker came up. If the cgroup-parent prevented startup, fall back to the
+# plain daemon.json so the build can still run — isolation is best-effort, not required.
+if ! docker_up; then
+  if [ -n "\$ISOLATE_CPUS" ]; then
+    echo "[cpuset] Docker failed to start with cgroup-parent — reverting to plain daemon.json"
+    write_base_daemon_json
+    ISOLATE_CPUS=""
+    systemctl restart docker
+    docker_up || { echo "ERROR: Docker daemon did not start after restart"; exit 1; }
+  else
+    echo "ERROR: Docker daemon did not start after restart"; exit 1
+  fi
+fi
+
+# Diagnostics — appear in the check-runner job log so each CI run shows whether
+# isolation took effect, plus a sample container's effective cpuset.
+echo "[cpuset] docker \$(docker info --format 'driver={{.CgroupDriver}} cgroupv{{.CgroupVersion}}' 2>/dev/null)"
+if [ -n "\$ISOLATE_CPUS" ]; then
+  SMOKE=\$(docker run --rm --cgroup-parent=ciworkload.slice busybox cat /sys/fs/cgroup/cpuset.cpus.effective 2>/dev/null || echo "unavailable")
+  echo "[cpuset] sample container cpuset.cpus.effective=\$SMOKE (want \$ISOLATE_CPUS)"
+fi
 
 # docker-compose symlink
 ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || \
