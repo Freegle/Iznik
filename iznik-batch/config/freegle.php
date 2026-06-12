@@ -94,6 +94,9 @@ return [
         'thanks_addr' => env('FREEGLE_THANKS_ADDR', env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org')),
         // Mentors address — volunteer support team who handle escalations.
         'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
+        // Central mods / Volunteer Support address — receives the Discourse
+        // checkuser / not-signed-up reports (V1 CENTRALMODS_ADDR).
+        'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteers@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
         // Modbot email — the automated moderator account; excluded from mod-welfare checks.
@@ -108,6 +111,33 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+    ],
+
+    // Discourse forum REST API (V1 discourse_checkusers.php / discourse_not_signed_up.php).
+    // When api_key is empty the Discourse cron commands skip with a warning.
+    'discourse' => [
+        'url' => env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
+        'api_key' => env('DISCOURSE_APIKEY', ''),
+        'api_username' => env('DISCOURSE_API_USERNAME', 'system'),
+        // Discourse category id members are auto-watched onto (V1 ANNOUNCEMENTS_ID).
+        'announcements_category_id' => (int) env('DISCOURSE_ANNOUNCEMENTS_ID', 7),
+    ],
+
+    // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
+    // When username is empty the donations:paypal-download command skips with a warning.
+    'paypal' => [
+        'username' => env('PAYPAL_USERNAME', ''),
+        'password' => env('PAYPAL_PASSWORD', ''),
+        'signature' => env('PAYPAL_SIGNATURE', ''),
+        // Live NVP endpoint; sandbox is https://api-3t.sandbox.paypal.com/nvp
+        'nvp_endpoint' => env('PAYPAL_NVP_ENDPOINT', 'https://api-3t.paypal.com/nvp'),
+        // How many days back to scan for missed transactions.
+        'download_days' => (int) env('PAYPAL_DOWNLOAD_DAYS', 30),
+    ],
+
+    // Doogal UK postcode dataset (V1 cli/doogal.php + cron/doogal wrapper).
+    'doogal' => [
+        'zip_url' => env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
     ],
 
     'digest' => [

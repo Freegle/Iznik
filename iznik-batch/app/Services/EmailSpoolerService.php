@@ -419,8 +419,13 @@ class EmailSpoolerService
             $filename = basename($pendingPath);
             $sendingPath = $this->sendingDir . '/' . $filename;
 
-            // Move to sending directory.
-            if (!rename($pendingPath, $sendingPath)) {
+            // Move to sending directory. Another processor (a second
+            // mail:spool:process run or a supervisor worker) may claim this file
+            // between the glob() above and here, in which case rename() fails on
+            // a now-missing source. Suppress the warning so the source-missing
+            // case takes this graceful skip instead of bubbling up as an
+            // ErrorException via Laravel's error handler.
+            if (!@rename($pendingPath, $sendingPath)) {
                 Log::warning('Could not move spool file to sending', ['file' => $filename]);
                 continue;
             }
