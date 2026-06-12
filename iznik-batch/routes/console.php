@@ -209,12 +209,17 @@ Schedule::command('mail:alerts:send')
 // EVERY scheduled job until it restarts (Laravel's scheduler has no catch-up).
 // This no-op task checks in to Sentry every 5 minutes; if the loop stops,
 // Sentry sees the missed check-in and alerts. Sentry is free for us on the
-// open-source plan, so the check-in volume is a non-issue. checkInMargin=5
-// gives slack for the sleep(60) loop's natural drift before flagging a miss.
+// open-source plan, so the check-in volume is a non-issue. The check-in is
+// deliberately lax to avoid occasional false alarms from the loop's natural
+// drift: checkInMargin=15 gives generous grace before a check-in counts as
+// missed, and failureIssueThreshold=2 means a single sporadic miss won't raise
+// an issue — it takes two consecutive misses — with recoveryThreshold=1
+// clearing it on the next good check-in.
 Schedule::call(fn () => null)
     ->everyFiveMinutes()
     ->name('scheduler-heartbeat')
-    ->sentryMonitor('scheduler-heartbeat', 5);
+    // sentryMonitor(slug, checkInMargin, maxRuntime, updateMonitorConfig, failureIssueThreshold, recoveryThreshold)
+    ->sentryMonitor('scheduler-heartbeat', 15, null, true, 2, 1);
 
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
@@ -223,6 +228,23 @@ Schedule::command('monitor:email-health')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('monitor:email-health'))
     ->runInBackground();
+
+// Outcome-based monitoring — asserts that scheduled tasks actually DID their
+// work (rows written, cursor advanced), not just that the scheduler is alive.
+// Breaches escalate to Sentry. Runs inline (it's just a few aggregate queries)
+// and is itself heartbeated to Sentry Crons, so a stalled monitor — or a dead
+// scheduler — is visible even when no individual job has breached yet.
+// See docs/scheduled-outcome-monitoring.md.
+// Same lax thresholds as the scheduler heartbeat (generous margin + two
+// consecutive misses before an issue) so the monitor's own check-in doesn't
+// false-alarm on occasional scheduler drift.
+Schedule::command('monitor:scheduled-outcomes')
+    ->everyTenMinutes()
+    ->name('scheduled-outcomes-monitor')
+    ->withoutOverlapping()
+    // sentryMonitor(slug, checkInMargin, maxRuntime, updateMonitorConfig, failureIssueThreshold, recoveryThreshold)
+    ->sentryMonitor('scheduled-outcomes-monitor', 20, null, true, 2, 1)
+    ->sendOutputTo(cronLog('monitor:scheduled-outcomes'));
 
 // Notification chaseup - send emails for unseen, unmailed site notifications.
 // V1: cron/notification_chaseup.php (every 5 minutes)
@@ -641,6 +663,48 @@ Schedule::command('microvolunteering:notify')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('microvolunteering:notify'))
+    ->runInBackground();
+
+// Exhort recently-active established users with an on-site notification nudge
+// (default: "Tell us your Freegle story!"). The 90-day per-user cooldown means
+// running every minute over a 5-minute active window simply dedupes; matches V1.
+// V1: cron/user_exhort.php (every minute).
+Schedule::command('notifications:exhort')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('notifications:exhort'))
+    ->runInBackground();
+
+// Refresh UK postcodes (add new, update moved lat/lng) from the Doogal dataset.
+// Downloads + unzips the CSV itself. V1: cron/doogal wrapper (daily at 03:00).
+Schedule::command('locations:update-postcodes')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('locations:update-postcodes'))
+    ->runInBackground();
+
+// Fallback downloader for PayPal donations the IPN missed (last 30 days).
+// V1: cron/paypal_download.php (every 4 hours at :30). Skips if PayPal creds unset.
+Schedule::command('donations:paypal-download')
+    ->cron('30 */4 * * *')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('donations:paypal-download'))
+    ->runInBackground();
+
+// Audit Discourse users against MT mods (watching/bios/bounces) and email a report.
+// V1: cron/discourse_checkusers.php (daily at 03:08). Skips if Discourse API key unset.
+Schedule::command('discourse:check-users')
+    ->dailyAt('03:08')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('discourse:check-users'))
+    ->runInBackground();
+
+// Report Freegle groups not represented by an active mod on Discourse + mods not
+// signed up. V1: cron/discourse_not_signed_up.php (daily at 03:23). Skips if key unset.
+Schedule::command('discourse:not-signed-up')
+    ->dailyAt('03:23')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('discourse:not-signed-up'))
     ->runInBackground();
 
 // Update cached location names in user settings when the canonical name has changed.
