@@ -2139,6 +2139,19 @@ onUnmounted(() => {
       padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
     }
   }
+
+  /* In the centered desktop modal (xl+, where b-modal is NOT fullscreen) the
+     dialog floats with margin around it and the fixed sticky ad sits on the
+     page below it - they don't overlap, so reserving a full ad-height of
+     clearance just leaves a large empty band inside the modal that reads as a
+     second, blank ad slot. Drop it back to normal padding there. The clearance
+     is still needed for the fullscreen modal (lg-down) and the mobile
+     fullscreen-overlay, where the buttons genuinely sit over the fixed ad. */
+  .in-modal &.stickyAdRendered {
+    @media (min-width: 1200px) {
+      padding-bottom: 1rem;
+    }
+  }
 }
 
 .footer-buttons {
