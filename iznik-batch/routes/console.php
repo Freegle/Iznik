@@ -203,6 +203,19 @@ Schedule::command('mail:alerts:send')
     ->sendOutputTo(cronLog('mail:alerts:send'))
     ->runInBackground();
 
+// Scheduler heartbeat → Sentry Crons. The one failure mode no per-job guard
+// can cover is the scheduler itself dying — the host `while true; schedule:run;
+// sleep 60` loop exiting, a container recreate, an OOM — which silently stops
+// EVERY scheduled job until it restarts (Laravel's scheduler has no catch-up).
+// This no-op task checks in to Sentry every 5 minutes; if the loop stops,
+// Sentry sees the missed check-in and alerts. Sentry is free for us on the
+// open-source plan, so the check-in volume is a non-issue. checkInMargin=5
+// gives slack for the sleep(60) loop's natural drift before flagging a miss.
+Schedule::call(fn () => null)
+    ->everyFiveMinutes()
+    ->name('scheduler-heartbeat')
+    ->sentryMonitor('scheduler-heartbeat', 5);
+
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
 Schedule::command('monitor:email-health')
@@ -335,8 +348,23 @@ Schedule::command('tn:sync')
 // pilot the new "What's New" format, set that env var to one or more
 // addresses: those users receive the new daily digest IN ADDITION to V1's,
 // for a tracked side-by-side comparison. Set it to '*' for the full cutover.
+// 07:00 UK local, with morning catch-up. The app runs in UTC, so pin to the
+// configured local zone (FREEGLE_TIMEZONE, default Europe/London) and let
+// Laravel resolve BST/GMT.
+//
+// Laravel's scheduler has no catch-up: a plain dailyAt('07:00') has one due
+// minute, so if schedule:run isn't ticking at exactly 07:00 (container
+// restart, deploy, crash, a long previous tick) the whole day's digest is
+// silently skipped. The once-per-London-day guard in UnifiedDigestService
+// makes repeat runs safe no-ops, so instead of firing once we tick every
+// 30 min across the morning: the first live tick at/after 07:00 sends, the
+// guard turns every later tick into a no-op, and withoutOverlapping stops a
+// second start while the multi-hour run is still going. A missed 07:00 thus
+// self-heals at 07:30/08:00/… instead of being lost for the day.
 Schedule::command('mail:digest:unified --mode=daily')
-    ->dailyAt('08:00')
+    ->timezone(config('freegle.timezone'))
+    ->everyThirtyMinutes()
+    ->between('7:00', '12:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:digest:unified.daily'))
     ->runInBackground();
@@ -350,7 +378,9 @@ Schedule::command('mail:digest:unified --mode=daily')
 // $dailyShardCount = 4;
 // foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 //     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
-//         ->dailyAt('08:00')
+//         ->timezone(config('freegle.timezone'))
+//         ->everyThirtyMinutes()
+//         ->between('7:00', '12:00')
 //         ->withoutOverlapping()
 //         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
 //         ->runInBackground();
@@ -909,7 +939,10 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
-// Volunteering opportunity roundup — weekly to group members.
+// Volunteering opportunity roundup — weekly, ONE combined email per user
+// covering every volunteering-enabled group they belong to (plus global
+// opportunities), deduplicated. A per-user cadence guard (users_digests
+// mode='volunteering', 3-day minimum) makes a same-week re-run a no-op.
 // V1: cron/volunteering.php (weekly Mon 23:00, two mod-2 shards on bulk3 —
 // disabled there 2026-05-12 when this Laravel command took over).
 Schedule::command('mail:volunteering-digest')
@@ -918,7 +951,11 @@ Schedule::command('mail:volunteering-digest')
     ->sendOutputTo(cronLog('mail:volunteering-digest'))
     ->runInBackground();
 
-// Community events roundup — weekly to group members.
+// Community events roundup — weekly, ONE combined email per user covering
+// every event-enabled group they belong to, deduplicated (an event
+// cross-posted to several of the user's groups appears once). A per-user
+// cadence guard (users_digests mode='events', 3-day minimum) makes a
+// same-week re-run a no-op.
 // V1: cron/events.php (weekly Thu 23:00, two mod-2 shards on bulk3 —
 // disabled there 2026-05-12). Single-threaded here; the streaming /
 // activity-filtered query keeps the working set well below V1's count.

@@ -27,7 +27,7 @@ class SendEventsDigestCommand extends Command
             $stats = $service->sendEventDigests($dryRun);
 
             $verb = $dryRun ? 'Would send' : 'Sent';
-            $this->info("{$verb} {$stats['sent']} email(s) for {$stats['groups_processed']} group(s).");
+            $this->info("{$verb} {$stats['sent']} email(s) to {$stats['users_processed']} user(s) across {$stats['groups_processed']} group(s).");
 
             return Command::SUCCESS;
         });

@@ -16,6 +16,11 @@ return [
         'mod' => env('FREEGLE_MOD_SITE', 'https://modtools.org'),
     ],
 
+    // Local timezone for member-facing scheduling (e.g. the daily digest's
+    // 07:00 send). The app itself runs in UTC; scheduled tasks that should
+    // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
+    'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
+
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
