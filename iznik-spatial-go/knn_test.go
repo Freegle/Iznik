@@ -52,7 +52,7 @@ func setupTestIndex(t *testing.T) *Index {
 // polygons — the smaller area must win.
 func TestFindNearestPolygon_PointInsideBothPolygons(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, 0, 51.5, 1)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 1, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(1), results[0].ID, "smallest enclosing area should be returned")
@@ -61,7 +61,7 @@ func TestFindNearestPolygon_PointInsideBothPolygons(t *testing.T) {
 // TestFindNearestPolygon_PointInsideLargeOnly: query inside Large but outside Small.
 func TestFindNearestPolygon_PointInsideLargeOnly(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, -0.04, 51.5, 1)
+	results, err := FindNearestPolygon(idx, -0.04, 51.5, 1, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "large area should be returned when point inside large only")
@@ -71,7 +71,7 @@ func TestFindNearestPolygon_PointInsideLargeOnly(t *testing.T) {
 func TestFindNearestPolygon_PointNearButOutside(t *testing.T) {
 	idx := setupTestIndex(t)
 	// (-0.06, 51.5) is 0.01° west of Large's west edge (-0.05).
-	results, err := FindNearestPolygon(idx, -0.06, 51.5, 1)
+	results, err := FindNearestPolygon(idx, -0.06, 51.5, 1, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "large area should be found via buffer expansion")
@@ -80,7 +80,7 @@ func TestFindNearestPolygon_PointNearButOutside(t *testing.T) {
 // TestFindNearestPolygon_NoMatch: query far from all test geometries returns empty slice.
 func TestFindNearestPolygon_NoMatch(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, 5, 51.5, 1)
+	results, err := FindNearestPolygon(idx, 5, 51.5, 1, nil)
 	require.NoError(t, err)
 	assert.Empty(t, results, "should return no results when no area is within max buffer radius")
 }
@@ -89,7 +89,7 @@ func TestFindNearestPolygon_NoMatch(t *testing.T) {
 func TestFindNearestPolygon_LimitReturnsMultiple(t *testing.T) {
 	idx := setupTestIndex(t)
 	// Query at centre: both polygons match. limit=2 should return both.
-	results, err := FindNearestPolygon(idx, 0, 51.5, 2)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 2, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// First result should be small (smallest area), second large.
@@ -109,10 +109,27 @@ func TestFindNearestPolygon_SmallAreaIsReturnedWithoutFilter(t *testing.T) {
 		"POLYGON((0 51.5, 0.001 51.5, 0.001 51.501, 0 51.501, 0 51.5))")
 	require.NoError(t, InsertItems(idx, []Item{tiny}, nil))
 
-	results, err := FindNearestPolygon(idx, 0.0005, 51.5005, 1)
+	results, err := FindNearestPolygon(idx, 0.0005, 51.5005, 1, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(99), results[0].ID)
+}
+
+// TestFindNearestPolygon_MatchFilterExpandsPastNonMatching: a non-matching item
+// found at an early buffer level must not satisfy the limit — expansion continues
+// until a matching item is found.
+func TestFindNearestPolygon_MatchFilterExpandsPastNonMatching(t *testing.T) {
+	idx := setupTestIndex(t)
+	// Query at centre: Small (id=1) matches first, but the filter only accepts
+	// "Large Area" — expansion must continue and return id=2.
+	onlyLarge := func(extra map[string]any) bool {
+		name, _ := extra["name"].(string)
+		return name == "Large Area"
+	}
+	results, err := FindNearestPolygon(idx, 0, 51.5, 1, onlyLarge)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, int64(2), results[0].ID, "filter must skip non-matching items without counting them")
 }
 
 // TestFindNearestPoints_ReturnsNearestPoint: point dataset query returns nearest point.

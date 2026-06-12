@@ -85,7 +85,7 @@ func (d *JobsDataset) Query(idx *Index, params QueryParams) ([]QueryResult, erro
 	if params.Limit <= 0 {
 		params.Limit = 10
 	}
-	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit)
+	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, nil)
 }
 
 func (d *JobsDataset) Within(idx *Index, params QueryParams) ([]int64, error) {

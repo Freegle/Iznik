@@ -22,14 +22,18 @@ var bufferLevels = [12]float64{
 // This implements the progressive buffer expansion algorithm, matching the V1
 // PostGIS expanding-buffer logic. The function stops expanding as soon as at
 // least `limit` candidates have been found at the current level.
-func FindNearestPolygon(idx *Index, lng, lat float64, limit int) ([]QueryResult, error) {
-	type match struct {
+//
+// match optionally restricts the candidate pool: items whose Extra fields fail
+// the predicate are skipped and do NOT count towards limit, so the buffer keeps
+// expanding until enough matching items are found. nil matches everything.
+func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extra map[string]any) bool) ([]QueryResult, error) {
+	type cand struct {
 		level int
 		area  float64
 		id    int64
 		extra map[string]any
 	}
-	var collected []match
+	var collected []cand
 	seen := make(map[int64]struct{})
 
 	for level, radius := range bufferLevels {
@@ -53,13 +57,17 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int) ([]QueryResult,
 			if c.WKB == nil {
 				continue
 			}
+			if match != nil && !match(c.Extra) {
+				seen[c.ExtID] = struct{}{}
+				continue
+			}
 			g, err := geom.UnmarshalWKB(c.WKB, geom.NoValidate{})
 			if err != nil {
 				continue
 			}
 			if geom.Intersects(g, circle) {
 				seen[c.ExtID] = struct{}{}
-				collected = append(collected, match{level, c.Area, c.ExtID, c.Extra})
+				collected = append(collected, cand{level, c.Area, c.ExtID, c.Extra})
 			}
 		}
 

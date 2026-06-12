@@ -48,26 +48,34 @@ func (d *LocationsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Ti
 }
 
 // Query returns KNN results for the locations dataset using polygon buffer expansion.
-// If params.TypeFilter == "Postcode", only postcode-type locations are returned.
+// TypeFilter restricts the candidate pool during expansion (so the buffer keeps
+// growing until a matching location is found):
+//   - exact type (e.g. "Postcode"): only locations of that type
+//   - "Area": any non-Postcode location — mirrors the V1 PostGIS remap pool,
+//     which synced everything except postcodes
 func (d *LocationsDataset) Query(idx *Index, params QueryParams) ([]QueryResult, error) {
 	if params.Limit <= 0 {
 		params.Limit = 1
 	}
-	results, err := FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit)
-	if err != nil {
-		return nil, err
+
+	var match func(extra map[string]any) bool
+	switch params.TypeFilter {
+	case "":
+		// No filter.
+	case "Area":
+		match = func(extra map[string]any) bool {
+			t, _ := extra["type"].(string)
+			return t != "Postcode"
+		}
+	default:
+		want := params.TypeFilter
+		match = func(extra map[string]any) bool {
+			t, _ := extra["type"].(string)
+			return t == want
+		}
 	}
 
-	if params.TypeFilter != "" {
-		filtered := results[:0]
-		for _, r := range results {
-			if t, _ := r.Extra["type"].(string); t == params.TypeFilter {
-				filtered = append(filtered, r)
-			}
-		}
-		return filtered, nil
-	}
-	return results, nil
+	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, match)
 }
 
 // Within returns all location IDs whose geometry intersects params.Polygon.

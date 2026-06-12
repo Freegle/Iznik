@@ -102,14 +102,19 @@ class PostcodeRemapService
      */
     public function findNearestArea(float $lng, float $lat): ?int
     {
-        $response = Http::get("{$this->spatialServerUrl}/knn", [
-            'lng' => $lng,
-            'lat' => $lat,
+        // type=Area restricts the expanding-buffer search to non-postcode
+        // locations, matching the V1 PostGIS candidate pool (which synced
+        // everything except postcodes).
+        $response = Http::get("{$this->spatialServerUrl}/v1/locations/knn", [
+            'lng'   => $lng,
+            'lat'   => $lat,
+            'limit' => 1,
+            'type'  => 'Area',
         ]);
 
         if ($response->successful()) {
-            $locationid = $response->json('locationid');
-            return $locationid !== null ? (int) $locationid : null;
+            $results = $response->json('results', []);
+            return !empty($results) ? (int) $results[0]['id'] : null;
         }
 
         Log::warning("PostcodeRemapService: spatial server returned {$response->status()} for lng={$lng} lat={$lat}");

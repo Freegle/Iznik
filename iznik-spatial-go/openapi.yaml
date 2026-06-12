@@ -79,7 +79,10 @@ paths:
         For point datasets (messages, newsfeed, userapproxlocs) uses Euclidean distance.
 
         If `polygon` is supplied, only items whose geometry intersects the polygon are returned.
-        The `type` filter is only supported by the `locations` dataset (e.g. `type=Postcode`).
+        The `type` filter is only supported by the `locations` dataset. It is applied
+        during buffer expansion, so the search keeps widening until a matching item
+        is found. Use an exact type (e.g. `type=Postcode`) or `type=Area` for any
+        non-postcode location (the V1 postcode-remap candidate pool).
       parameters:
         - $ref: "#/components/parameters/datasetParam"
         - name: lng
@@ -105,7 +108,7 @@ paths:
         - name: type
           in: query
           required: false
-          description: "locations dataset only: Postcode to restrict to postcode rows"
+          description: "locations dataset only: exact type (e.g. Postcode), or Area for any non-postcode location"
           schema:
             type: string
             example: Postcode
