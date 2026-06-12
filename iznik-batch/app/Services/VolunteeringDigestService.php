@@ -3,234 +3,261 @@
 namespace App\Services;
 
 use App\Mail\Volunteering\VolunteeringDigestMail;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\User;
+use App\Services\Concerns\BuildsUserRoundups;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
+/**
+ * Volunteering-opportunity roundup, unified per user.
+ *
+ * Previously one email per group: a member of several groups received several
+ * roundups, and the same opportunity cross-posted to multiple of their groups
+ * (or a national/global opportunity with no specific group) appeared in each
+ * one. This now sends ONE email per user covering opportunities across ALL
+ * their volunteering-enabled groups plus global opportunities, with each shown
+ * once (deduplicated by opportunity id) and annotated with which of the user's
+ * groups it belongs to.
+ */
 class VolunteeringDigestService
 {
-    // Minimum days between roundups per group (V1: DATEDIFF >= 3)
-    public const MIN_INTERVAL_DAYS = 3;
+    use BuildsUserRoundups;
+
+    /** users_digests.mode value used for the per-user cadence guard. */
+    public const DIGEST_MODE = 'volunteering';
 
     /**
-     * Send volunteering opportunity roundup emails to members of all eligible groups.
+     * Send unified volunteering-opportunity roundups.
      *
-     * V1: VolunteeringDigest::send() called for each group in volunteering.php
-     *
-     * @return array{sent: int, groups_processed: int}
+     * @return array{sent: int, users_processed: int, groups_processed: int}
      */
     public function sendVolunteeringDigests(bool $dryRun = false): array
     {
         $userSite = config('freegle.sites.user');
 
         $sent = 0;
-        $groupsProcessed = 0;
+        $usersProcessed = 0;
 
-        // Find Freegle groups due for a volunteering roundup (not sent in last 3 days).
-        $groups = DB::table('groups')
-            ->where('type', Group::TYPE_FREEGLE)
-            ->where('publish', 1)
-            ->where('onhere', 1)
-            ->where(function ($q) {
-                $q->whereNull('lastvolunteeringroundup')
-                    ->orWhereRaw('DATEDIFF(NOW(), lastvolunteeringroundup) >= ?', [self::MIN_INTERVAL_DAYS]);
-            })
-            ->whereRaw("nameshort NOT LIKE '%playground%'")
-            ->select(['id', 'nameshort', 'settings'])
-            ->get();
+        $eligibleGroups = $this->eligibleGroups('volunteering'); // id => nameshort
+        if (empty($eligibleGroups)) {
+            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => 0];
+        }
+        $groupIds = array_keys($eligibleGroups);
 
-        foreach ($groups as $groupRow) {
-            $group = Group::find($groupRow->id);
-            if (!$group) {
-                continue;
-            }
+        // Pre-fetch active opportunities + their group associations once.
+        // $globalOppIds are opportunities with no specific group (shown to all).
+        [$oppsById, $groupsByOpp, $globalOppIds] = $this->fetchActiveOpportunities($userSite);
 
-            // Skip groups where volunteering setting is disabled (default: enabled).
-            if (!$group->getSetting('volunteering', true)) {
-                if (!$dryRun) {
-                    DB::table('groups')->where('id', $groupRow->id)
-                        ->update(['lastvolunteeringroundup' => now()]);
-                }
-                continue;
-            }
-
-            // Skip closed groups.
-            if ($group->isClosed()) {
-                continue;
-            }
-
-            // Find active volunteering opportunities for this group (or with no specific group).
-            // V1 note: filtering groupid in SQL with IS NULL / NOT IN / NOT EXISTS is unreliable
-            // in MySQL with LEFT JOINs. Fetch all with groupid included and filter in PHP instead.
-            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-            $volunteerings = DB::table('volunteering')
-                ->leftJoin('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
-                ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
-                ->leftJoin('volunteering_dates', 'volunteering_dates.volunteeringid', '=', 'volunteering.id')
-                ->where('volunteering.pending', 0)
-                ->where('volunteering.deleted', 0)
-                ->where('volunteering.expired', 0)
-                ->select([
-                    'volunteering.id',
-                    'volunteering.title',
-                    'volunteering.location',
-                    'volunteering.description',
-                    'volunteering.timecommitment',
-                    'volunteering.online',
-                    'volunteering.contactname',
-                    'volunteering.contactphone',
-                    'volunteering.contactemail',
-                    'volunteering.contacturl',
-                    'volunteering_groups.groupid',
-                    DB::raw('volunteering_images.id AS photo_id'),
-                    DB::raw('volunteering_images.externaluid AS photo_externaluid'),
-                    DB::raw('volunteering_images.externalmods AS photo_externalmods'),
-                    DB::raw('volunteering_dates.applyby AS applyby'),
-                ])
-                ->orderByDesc('volunteering.id')
-                ->get()
-                ->filter(fn ($v) => $v->groupid === null || (int) $v->groupid === (int) $groupRow->id)
-                ->unique('id');
-
-            if ($volunteerings->isEmpty()) {
-                if (!$dryRun) {
-                    DB::table('groups')->where('id', $groupRow->id)
-                        ->update(['lastvolunteeringroundup' => now()]);
-                }
-                continue;
-            }
-
-            $groupsProcessed++;
-
-            // Build structured volunteering data for the template.
-            $tusUploader = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080');
-            $deliveryUrl = config('freegle.delivery.base_url');
-            $volData = $volunteerings->map(function ($v) use ($userSite, $imagesDomain, $tusUploader, $deliveryUrl) {
-                $photoThumb = null;
-                if ($v->photo_id) {
-                    // Prefer externalmods.url (set for Cloudinary/CDN-hosted images)
-                    $mods = $v->photo_externalmods ? json_decode($v->photo_externalmods, true) : [];
-                    if (!empty($mods['url'])) {
-                        $photoThumb = $mods['url'];
-                    } elseif ($v->photo_externaluid) {
-                        $p = strrpos($v->photo_externaluid, 'freegletusd-');
-                        if ($p !== false) {
-                            $fileId = substr($v->photo_externaluid, $p + strlen('freegletusd-'));
-                            $source = $tusUploader . '/' . $fileId;
-                            $photoThumb = $deliveryUrl
-                                ? $deliveryUrl . '?url=' . urlencode($source) . '&w=400'
-                                : $source;
-                        }
-                    } else {
-                        $photoThumb = "{$imagesDomain}/toimg_{$v->photo_id}.jpg";
-                    }
-                }
-
-                $applyby = $v->applyby
-                    ? Carbon::parse($v->applyby)->setTimezone('Europe/London')->format('D, jS F Y')
-                    : null;
-
-                // The DB stores HTML-encoded text (e.g. "Coffee &amp; Cake").
-                // Decode before passing to templates so Blade's {{ }} escaping
-                // produces correct HTML source ("&amp;") rather than the
-                // double-encoded "&amp;amp;" that the email client would render
-                // as the literal string "&amp;" instead of the intended "&".
-                $decode = fn (?string $s): ?string =>
-                    $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
-
-                return [
-                    'id'             => $v->id,
-                    'title'          => $decode($v->title),
-                    'location'       => $decode($v->location),
-                    'description'    => $decode($v->description),
-                    'timecommitment' => $decode($v->timecommitment),
-                    'online'         => (bool) $v->online,
-                    'contactname'    => $decode($v->contactname),
-                    'contactphone'   => $v->contactphone,
-                    'contactemail'   => $v->contactemail,
-                    'contacturl'     => $v->contacturl,
-                    'photo_thumb'    => $photoThumb,
-                    'applyby'        => $applyby,
-                    'url'            => "{$userSite}/volunteering/{$v->id}",
-                ];
-            })->values()->all();
-
-            // Find members who have volunteering enabled and are not opted out.
-            // Activity / holiday / bouncing / simplemail filters come from
-            // User::scopeReceivingOurMails so this query matches the V1
-            // sendOurMails() criteria. Without those, the V2 dry-run was
-            // 1.34× V1's send count (149k vs 111k).
-            $members = User::query()
-                ->select([
-                    'users.id as userId',
-                    'locations.lat',
-                    'locations.lng',
-                ])
-                ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
-                ->where('memberships.groupid', $groupRow->id)
-                ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                ->where('memberships.volunteeringallowed', 1)
-                ->where('memberships.emailfrequency', '!=', 0)
-                ->receivingOurMails()
-                ->get();
-
-            foreach ($members as $member) {
-                $user = User::find($member->userId);
-
-                // V1 parity: skip users whose only emails are on our own per-user
-                // alias domains — those loop back through IncomingMailService
-                // and materialise as chat messages from the noreply system user.
-                $email = $user?->email_preferred;
-                if (!$email) {
-                    continue;
-                }
-
-                $jobAds = collect();
-                if ($member->lat && $member->lng && $user) {
-                    $jobAds = $user->getJobAds()['jobs'];
-                }
-
-                if (!$dryRun) {
-                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
-                    // spool() builds the message (incl. MJML render) up front and
-                    // only swallows permanent address failures internally; a
-                    // transient render/build error re-throws. Without this catch
-                    // it would escape the per-member foreach and abort the whole
-                    // digest run — the resilience SafeMail::sendMailable used to
-                    // provide. Skip the one recipient and keep the loop going.
-                    try {
-                        app(\App\Services\EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
-                            recipientEmail: $email,
-                            groupName: $groupRow->nameshort,
-                            volunteerings: $volData,
-                            unsubscribeUrl: $unsubscribeUrl,
-                            jobAds: $jobAds,
-                            userId: $member->userId,
-                        ), $email);
-                    } catch (\Throwable $e) {
-                        Log::warning('Skipping volunteering digest for member after spool failure; continuing loop', [
-                            'email' => $email,
-                            'user_id' => $member->userId,
-                            'group' => $groupRow->nameshort,
-                            'error' => $e->getMessage(),
-                        ]);
-                        continue;
-                    }
-                }
-                $sent++;
-            }
-
-            if (!$dryRun) {
-                DB::table('groups')->where('id', $groupRow->id)
-                    ->update(['lastvolunteeringroundup' => now()]);
-            }
+        if (empty($oppsById)) {
+            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => count($eligibleGroups)];
         }
 
-        return ['sent' => $sent, 'groups_processed' => $groupsProcessed];
+        foreach ($this->eligibleUsers($groupIds, 'volunteeringallowed', self::DIGEST_MODE) as $userRow) {
+            $usersProcessed++;
+
+            $user = User::find($userRow->id);
+            if (!$user) {
+                continue;
+            }
+
+            $email = $user->email_preferred;
+            if (!$email) {
+                continue;
+            }
+
+            $userGroupIds = $this->userGroupIds($user->id, $groupIds, 'volunteeringallowed');
+            if (empty($userGroupIds)) {
+                continue;
+            }
+
+            $userOpps = $this->opportunitiesForUser($oppsById, $groupsByOpp, $globalOppIds, $userGroupIds, $eligibleGroups);
+            if (empty($userOpps)) {
+                continue;
+            }
+
+            // Local job ads are personalised by the user's location;
+            // getJobAds() returns an empty collection when no location is set.
+            $jobAds = $user->getJobAds()['jobs'] ?? collect();
+
+            if (!$dryRun) {
+                $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
+                // spool() re-throws transient render/build errors (only permanent
+                // address failures are swallowed). Catch so one bad recipient
+                // doesn't abort the whole run.
+                try {
+                    app(EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
+                        recipientEmail: $email,
+                        volunteerings: $userOpps,
+                        unsubscribeUrl: $unsubscribeUrl,
+                        jobAds: $jobAds,
+                        userId: $user->id,
+                    ), $email);
+                } catch (\Throwable $e) {
+                    Log::warning('Skipping volunteering digest for user after spool failure; continuing loop', [
+                        'email' => $email,
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                    continue;
+                }
+            }
+
+            $this->markRoundupSent($user->id, self::DIGEST_MODE, $dryRun);
+            $sent++;
+        }
+
+        return [
+            'sent' => $sent,
+            'users_processed' => $usersProcessed,
+            'groups_processed' => count($eligibleGroups),
+        ];
+    }
+
+    /**
+     * Build the deduplicated, group-attributed opportunity list for one user:
+     * every global opportunity, plus opportunities shared with any of the user's
+     * volunteering-enabled groups, each shown once.
+     *
+     * @param array<int,array>  $oppsById
+     * @param array<int,int[]>  $groupsByOpp     opp id => [group ids] (group-specific opps)
+     * @param array<int,bool>   $globalOppIds    opp id => true for opps with no specific group
+     * @param array<int>        $userGroupIds
+     * @param array<int,array{name:string,url:string}> $eligibleGroups  group id => display name + /explore link
+     * @return array<int,array>
+     */
+    protected function opportunitiesForUser(array $oppsById, array $groupsByOpp, array $globalOppIds, array $userGroupIds, array $eligibleGroups): array
+    {
+        $out = [];
+        foreach ($oppsById as $oid => $oppData) {
+            $isGlobal = isset($globalOppIds[$oid]);
+            $shared = array_values(array_intersect($groupsByOpp[$oid] ?? [], $userGroupIds));
+
+            if (!$isGlobal && empty($shared)) {
+                continue;
+            }
+
+            $oppData['groups'] = array_values(array_filter(array_map(
+                fn ($gid) => $eligibleGroups[$gid] ?? null,
+                $shared
+            )));
+            $out[] = $oppData;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Fetch all active opportunities, returning per-opportunity display data
+     * (keyed by id), the map of opportunity id => its group ids, and the set of
+     * opportunity ids that have no specific group (global / national).
+     *
+     * @return array{0: array<int,array>, 1: array<int,int[]>, 2: array<int,bool>}
+     */
+    protected function fetchActiveOpportunities(string $userSite): array
+    {
+        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+        $tusUploader = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080');
+        $deliveryUrl = config('freegle.delivery.base_url');
+
+        $rawOpps = DB::table('volunteering')
+            ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
+            ->leftJoin('volunteering_dates', 'volunteering_dates.volunteeringid', '=', 'volunteering.id')
+            ->where('volunteering.pending', 0)
+            ->where('volunteering.deleted', 0)
+            ->where('volunteering.expired', 0)
+            ->select([
+                'volunteering.id',
+                'volunteering.title',
+                'volunteering.location',
+                'volunteering.description',
+                'volunteering.timecommitment',
+                'volunteering.online',
+                'volunteering.contactname',
+                'volunteering.contactphone',
+                'volunteering.contactemail',
+                'volunteering.contacturl',
+                DB::raw('volunteering_images.id AS photo_id'),
+                DB::raw('volunteering_images.externaluid AS photo_externaluid'),
+                DB::raw('volunteering_images.externalmods AS photo_externalmods'),
+                DB::raw('volunteering_dates.applyby AS applyby'),
+            ])
+            ->orderByDesc('volunteering.id')
+            ->get()
+            ->unique('id');
+
+        if ($rawOpps->isEmpty()) {
+            return [[], [], []];
+        }
+
+        $oppIds = $rawOpps->pluck('id')->all();
+
+        // Every group association for these opportunities (used both to decide
+        // globality — an opportunity with no rows at all is global — and for the
+        // "shared with" attribution).
+        $groupsByOpp = [];
+        DB::table('volunteering_groups')
+            ->whereIn('volunteeringid', $oppIds)
+            ->get(['volunteeringid', 'groupid'])
+            ->each(function ($row) use (&$groupsByOpp) {
+                if ($row->groupid !== null) {
+                    $groupsByOpp[(int) $row->volunteeringid][] = (int) $row->groupid;
+                }
+            });
+
+        $decode = fn (?string $s): ?string =>
+            $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
+
+        $oppsById = [];
+        $globalOppIds = [];
+        foreach ($rawOpps as $v) {
+            $id = (int) $v->id;
+
+            if (empty($groupsByOpp[$id])) {
+                $globalOppIds[$id] = true;
+            }
+
+            $photoThumb = null;
+            if ($v->photo_id) {
+                $mods = $v->photo_externalmods ? json_decode($v->photo_externalmods, true) : [];
+                if (!empty($mods['url'])) {
+                    $photoThumb = $mods['url'];
+                } elseif ($v->photo_externaluid) {
+                    $p = strrpos($v->photo_externaluid, 'freegletusd-');
+                    if ($p !== false) {
+                        $fileId = substr($v->photo_externaluid, $p + strlen('freegletusd-'));
+                        $source = $tusUploader . '/' . $fileId;
+                        $photoThumb = $deliveryUrl
+                            ? $deliveryUrl . '?url=' . urlencode($source) . '&w=400'
+                            : $source;
+                    }
+                } else {
+                    $photoThumb = "{$imagesDomain}/toimg_{$v->photo_id}.jpg";
+                }
+            }
+
+            $applyby = $v->applyby
+                ? Carbon::parse($v->applyby)->setTimezone('Europe/London')->format('D, jS F Y')
+                : null;
+
+            $oppsById[$id] = [
+                'id'             => $id,
+                'title'          => $decode($v->title),
+                'location'       => $decode($v->location),
+                'description'    => $decode($v->description),
+                'timecommitment' => $decode($v->timecommitment),
+                'online'         => (bool) $v->online,
+                'contactname'    => $decode($v->contactname),
+                'contactphone'   => $v->contactphone,
+                'contactemail'   => $v->contactemail,
+                'contacturl'     => $v->contacturl,
+                'photo_thumb'    => $photoThumb,
+                'applyby'        => $applyby,
+                'url'            => "{$userSite}/volunteering/{$id}",
+                'groups'         => [],
+            ];
+        }
+
+        return [$oppsById, $groupsByOpp, $globalOppIds];
     }
 }

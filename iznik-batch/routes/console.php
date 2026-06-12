@@ -926,7 +926,10 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
-// Volunteering opportunity roundup — weekly to group members.
+// Volunteering opportunity roundup — weekly, ONE combined email per user
+// covering every volunteering-enabled group they belong to (plus global
+// opportunities), deduplicated. A per-user cadence guard (users_digests
+// mode='volunteering', 3-day minimum) makes a same-week re-run a no-op.
 // V1: cron/volunteering.php (weekly Mon 23:00, two mod-2 shards on bulk3 —
 // disabled there 2026-05-12 when this Laravel command took over).
 Schedule::command('mail:volunteering-digest')
@@ -935,7 +938,11 @@ Schedule::command('mail:volunteering-digest')
     ->sendOutputTo(cronLog('mail:volunteering-digest'))
     ->runInBackground();
 
-// Community events roundup — weekly to group members.
+// Community events roundup — weekly, ONE combined email per user covering
+// every event-enabled group they belong to, deduplicated (an event
+// cross-posted to several of the user's groups appears once). A per-user
+// cadence guard (users_digests mode='events', 3-day minimum) makes a
+// same-week re-run a no-op.
 // V1: cron/events.php (weekly Thu 23:00, two mod-2 shards on bulk3 —
 // disabled there 2026-05-12). Single-threaded here; the streaming /
 // activity-filtered query keeps the working set well below V1's count.

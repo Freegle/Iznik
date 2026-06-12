@@ -62,7 +62,6 @@ class AmpersandEncodingTest extends TestCase
         // which email clients render as a single "&".
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             volunteerings:  [$this->makeVolunteeringDecoded()],
             unsubscribeUrl: 'https://example.com/unsubscribe',
         );
@@ -127,7 +126,6 @@ class AmpersandEncodingTest extends TestCase
     {
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             events:         [$this->makeEventDecoded()],
             unsubscribeUrl: 'https://example.com/unsubscribe',
         );

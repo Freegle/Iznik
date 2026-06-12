@@ -33,7 +33,6 @@ class VolunteeringDigestMailTest extends TestCase
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             volunteerings:  [$this->makeVolunteering(42)],
             unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
@@ -57,7 +56,6 @@ class VolunteeringDigestMailTest extends TestCase
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             volunteerings:  [$this->makeVolunteering()],
             unsubscribeUrl: $unsubscribeUrl,
         );
@@ -119,7 +117,6 @@ class VolunteeringDigestMailTest extends TestCase
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             volunteerings:  [$this->makeVolunteering(1)],
             unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
             jobAds:         collect([$this->makeJobAd(99)]),
