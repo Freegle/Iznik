@@ -83,21 +83,6 @@ class DoogalService
      */
     public function process(string $csvPath, ?callable $progress = null): array
     {
-        // Build an in-memory index of existing locations whose name contains a
-        // space (i.e. full postcodes), keyed by the space-stripped lowercase
-        // name — matching V1's $locIndex.
-        $locIndex = [];
-        DB::table('locations')
-            ->select('id', 'name', 'lat', 'lng', 'type')
-            ->whereRaw("LOCATE(' ', name) > 0")
-            ->orderBy('id')
-            ->chunk(10000, function ($locs) use (&$locIndex) {
-                foreach ($locs as $loc) {
-                    $canon = strtolower(str_replace(' ', '', $loc->name));
-                    $locIndex[$canon] = $loc;
-                }
-            });
-
         $fh = fopen($csvPath, 'r');
         if ($fh === false) {
             throw new \RuntimeException("Could not open CSV: {$csvPath}");
@@ -108,7 +93,61 @@ class DoogalService
         $updated = 0;
         $failed = 0;
 
-        while (($fields = fgetcsv($fh)) !== false) {
+        // V1 pre-loaded EVERY full postcode (~2M rows) into an in-memory index
+        // keyed by canonical name. On the production dataset that build exhausts
+        // PHP's memory_limit (observed: zend_mm_heap corruption), so instead we
+        // stream the CSV and resolve existing postcodes one bounded batch at a
+        // time via a single indexed `name IN (...)` lookup. Peak memory is now a
+        // function of the batch size, not the table size. `locations.name` is
+        // fully indexed, so each batch lookup is cheap.
+        $batchSize = 2000;
+        $batch = []; // canon => ['pc' => string, 'lat' => string, 'lng' => string]
+
+        $flush = function () use (&$batch, &$added, &$updated, &$failed) {
+            if (!$batch) {
+                return;
+            }
+
+            // One indexed lookup for this batch's postcodes; key the result by
+            // the same space-stripped lowercase canon used to key the batch.
+            $existing = [];
+            DB::table('locations')
+                ->select('id', 'name', 'lat', 'lng', 'type')
+                ->whereIn('name', array_column($batch, 'pc'))
+                ->get()
+                ->each(function ($loc) use (&$existing) {
+                    $existing[strtolower(str_replace(' ', '', $loc->name))] = $loc;
+                });
+
+            foreach ($batch as $canon => $row) {
+                if (isset($existing[$canon])) {
+                    // Existing postcode: refresh only if lat/lng changed at 2dp,
+                    // or if the location wasn't previously typed as a Postcode.
+                    // Smaller differences happen constantly and aren't worth a write.
+                    $old = $existing[$canon];
+                    $newlat = round((float) $row['lat'], 2);
+                    $newlng = round((float) $row['lng'], 2);
+                    $oldlat = round((float) $old->lat, 2);
+                    $oldlng = round((float) $old->lng, 2);
+
+                    if ($newlat != $oldlat || $newlng != $oldlng || $old->type !== 'Postcode') {
+                        $this->updatePostcode((int) $old->id, (float) $row['lat'], (float) $row['lng']);
+                        $updated++;
+                    }
+                } else {
+                    $id = $this->createPostcode($row['pc'], (float) $row['lng'], (float) $row['lat']);
+                    if ($id) {
+                        $added++;
+                    } else {
+                        $failed++;
+                    }
+                }
+            }
+
+            $batch = [];
+        };
+
+        while (($fields = fgetcsv($fh, escape: '')) !== false) {
             $processed++;
 
             if ($progress && $processed % 1000 === 0) {
@@ -128,31 +167,16 @@ class DoogalService
                 continue;
             }
 
-            $canon = strtolower(str_replace(' ', '', $pc));
+            // Last write wins on a duplicate postcode within a batch, matching
+            // V1's single-keyed index.
+            $batch[strtolower(str_replace(' ', '', $pc))] = ['pc' => $pc, 'lat' => $lat, 'lng' => $lng];
 
-            if (isset($locIndex[$canon])) {
-                // Existing postcode: refresh only if lat/lng changed at 2dp, or
-                // if the location wasn't previously typed as a Postcode. Smaller
-                // differences happen constantly and aren't worth a write.
-                $old = $locIndex[$canon];
-                $newlat = round((float) $lat, 2);
-                $newlng = round((float) $lng, 2);
-                $oldlat = round((float) $old->lat, 2);
-                $oldlng = round((float) $old->lng, 2);
-
-                if ($newlat != $oldlat || $newlng != $oldlng || $old->type !== 'Postcode') {
-                    $this->updatePostcode((int) $old->id, (float) $lat, (float) $lng);
-                    $updated++;
-                }
-            } else {
-                $id = $this->createPostcode($pc, (float) $lng, (float) $lat);
-                if ($id) {
-                    $added++;
-                } else {
-                    $failed++;
-                }
+            if (count($batch) >= $batchSize) {
+                $flush();
             }
         }
+
+        $flush();
 
         fclose($fh);
 
@@ -239,21 +263,67 @@ class DoogalService
     /**
      * Re-sync any locations_spatial rows whose geometry has drifted from the
      * canonical location geometry (V1's closing "Check loc index" pass).
+     *
+     * First repairs the root cause of perpetual churn: ~33k legacy locations
+     * still carry SRID 0 on geometry/ourgeometry while the rest of the table —
+     * and their locations_spatial copy — use the canonical SRID (3857). The
+     * coordinates are identical; only the SRID label is wrong, so the drift test
+     * below (`!=`, which is SRID-sensitive) flagged every one of them on EVERY
+     * run, and the original code "fixed" them by rewriting locations_spatial
+     * (already the right SRID) — never the SRID-0 source — so they never
+     * converged. Relabelling with ST_SRID does NOT move any coordinate; it just
+     * stamps the correct SRID, after which the rows match and stop being flagged.
+     *
+     * All passes are chunked by id so the candidate set is never buffered
+     * wholesale (a bulk change must not blow the memory limit, as the old
+     * in-memory postcode index did). One UPDATE per row keeps Galera happy.
      */
     private function fixSpatialIndex(): void
     {
-        $badlocs = DB::select(
-            'SELECT locations.id, ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE locations.geometry END) AS g '
-            .'FROM locations INNER JOIN locations_spatial ON locations_spatial.locationid = locations.id '
-            .'WHERE CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE locations.geometry END != locations_spatial.geometry'
-        );
+        // Pass 1: relabel wrong-SRID source geometry (coordinates unchanged).
+        DB::table('locations')
+            ->whereRaw('ST_SRID(geometry) <> ?', [$this->srid])
+            ->select('id')
+            ->orderBy('id')
+            ->chunkById(1000, function ($rows) {
+                foreach ($rows as $r) {
+                    DB::update('UPDATE locations SET geometry = ST_SRID(geometry, ?) WHERE id = ?', [$this->srid, $r->id]);
+                }
+            });
 
-        foreach ($badlocs as $bad) {
-            DB::update(
-                'UPDATE locations_spatial SET geometry = ST_GeomFromText(?, ?) WHERE locationid = ?',
-                [$bad->g, $this->srid, $bad->id]
-            );
-        }
+        DB::table('locations')
+            ->whereNotNull('ourgeometry')
+            ->whereRaw('ST_SRID(ourgeometry) <> ?', [$this->srid])
+            ->select('id')
+            ->orderBy('id')
+            ->chunkById(1000, function ($rows) {
+                foreach ($rows as $r) {
+                    DB::update('UPDATE locations SET ourgeometry = ST_SRID(ourgeometry, ?) WHERE id = ?', [$this->srid, $r->id]);
+                }
+            });
+
+        // Pass 2: re-sync locations_spatial wherever the canonical geometry
+        // genuinely differs. With SRIDs now consistent, `!=` only fires on real
+        // positional drift.
+        DB::table('locations')
+            ->join('locations_spatial', 'locations_spatial.locationid', '=', 'locations.id')
+            ->whereRaw(
+                '(CASE WHEN locations.ourgeometry IS NOT NULL THEN locations.ourgeometry ELSE locations.geometry END) '
+                .'<> locations_spatial.geometry'
+            )
+            ->select(
+                'locations.id',
+                DB::raw('ST_AsText(CASE WHEN locations.ourgeometry IS NOT NULL THEN locations.ourgeometry ELSE locations.geometry END) AS g')
+            )
+            ->orderBy('locations.id')
+            ->chunkById(1000, function ($badlocs) {
+                foreach ($badlocs as $bad) {
+                    DB::update(
+                        'UPDATE locations_spatial SET geometry = ST_GeomFromText(?, ?) WHERE locationid = ?',
+                        [$bad->g, $this->srid, $bad->id]
+                    );
+                }
+            }, 'locations.id', 'id');
     }
 
     /**

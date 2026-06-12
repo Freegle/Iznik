@@ -2,9 +2,9 @@
   <div>
     <div class="intro-text mb-3">
       <p>
-        Help us train Freegle's AI to spot electrical items needing
-        recycling. For the item below, tell us what condition it's in,
-        roughly how heavy it is, and how big it is.
+        Help us train Freegle's AI to recognise items from their photos.
+        For the item below, tell us what condition it's in, roughly how
+        heavy it is, and how big it is.
       </p>
     </div>
 
