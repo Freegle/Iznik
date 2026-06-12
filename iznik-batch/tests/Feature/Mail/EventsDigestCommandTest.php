@@ -178,11 +178,21 @@ class EventsDigestCommandTest extends TestCase
             if (count($mail->events) !== 1) {
                 return false;
             }
+            // Each group is a ['name' => , 'url' => ] pair for the "Posted on
+            // <group>" byline: the friendly name plus its /explore link.
             $groups = $mail->events[0]['groups'] ?? [];
-            sort($groups);
-            $expected = [$group1->nameshort, $group2->nameshort];
-            sort($expected);
-            return $groups === $expected;
+            $names = array_column($groups, 'name');
+            sort($names);
+            $expectedNames = [$group1->namefull, $group2->namefull];
+            sort($expectedNames);
+            if ($names !== $expectedNames) {
+                return false;
+            }
+
+            $urls = array_column($groups, 'url');
+            return collect([$group1, $group2])->every(
+                fn ($g) => collect($urls)->contains(fn ($u) => str_contains($u, '/explore/' . $g->nameshort))
+            );
         });
     }
 

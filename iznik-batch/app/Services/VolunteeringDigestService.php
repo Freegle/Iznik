@@ -123,7 +123,7 @@ class VolunteeringDigestService
      * @param array<int,int[]>  $groupsByOpp     opp id => [group ids] (group-specific opps)
      * @param array<int,bool>   $globalOppIds    opp id => true for opps with no specific group
      * @param array<int>        $userGroupIds
-     * @param array<int,string> $eligibleGroups  group id => nameshort
+     * @param array<int,array{name:string,url:string}> $eligibleGroups  group id => display name + /explore link
      * @return array<int,array>
      */
     protected function opportunitiesForUser(array $oppsById, array $groupsByOpp, array $globalOppIds, array $userGroupIds, array $eligibleGroups): array

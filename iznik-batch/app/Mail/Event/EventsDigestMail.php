@@ -14,7 +14,8 @@ class EventsDigestMail extends MjmlMailable
     /**
      * @param array $events Deduplicated events across all the recipient's
      *                      event-enabled groups. Each carries a 'groups' array
-     *                      of the recipient's group names it is shared with.
+     *                      of ['name' => , 'url' => ] pairs for the recipient's
+     *                      groups it was posted on.
      */
     public function __construct(
         public readonly string $recipientEmail,

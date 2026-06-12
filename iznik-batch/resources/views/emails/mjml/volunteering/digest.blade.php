@@ -46,8 +46,14 @@
         </mj-text>
         @endif
         @if (!empty($vol['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $vol['groups']
+        );
+        @endphp
         <mj-text font-size="11px" color="#999999" padding="0 0 4px">
-          Shared with {{ implode(', ', $vol['groups']) }}
+          Posted on {!! implode(', ', $groupLinks) !!}
         </mj-text>
         @endif
       </mj-column>
@@ -79,8 +85,14 @@
         </mj-text>
         @endif
         @if (!empty($vol['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $vol['groups']
+        );
+        @endphp
         <mj-text font-size="11px" color="#999999" padding="0 0 4px">
-          Shared with {{ implode(', ', $vol['groups']) }}
+          Posted on {!! implode(', ', $groupLinks) !!}
         </mj-text>
         @endif
       </mj-column>

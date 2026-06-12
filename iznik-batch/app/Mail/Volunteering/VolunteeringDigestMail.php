@@ -16,8 +16,9 @@ class VolunteeringDigestMail extends MjmlMailable
      * @param array $volunteerings Deduplicated opportunities across all the
      *                             recipient's volunteering-enabled groups (plus
      *                             global opportunities). Each carries a 'groups'
-     *                             array of the recipient's group names it is
-     *                             shared with (empty for global opportunities).
+     *                             array of ['name' => , 'url' => ] pairs for the
+     *                             recipient's groups it was posted on (empty for
+     *                             global opportunities).
      */
     public function __construct(
         public readonly string $recipientEmail,

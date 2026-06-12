@@ -25,23 +25,29 @@ trait BuildsUserRoundups
     public const MIN_INTERVAL_DAYS = 3;
 
     /**
-     * Freegle groups eligible for a roundup of the given kind, keyed id => nameshort.
+     * Freegle groups eligible for a roundup of the given kind, keyed by id.
      *
      * Mirrors the per-group eligibility the old per-group services applied:
      * published, on-here Freegle groups that aren't playgrounds, aren't closed,
      * and have the relevant feature setting enabled (default on).
      *
+     * Each value carries the friendly display name plus the /explore link for
+     * the group, so the roundup can show a "Posted on <group>" byline matching
+     * the message digest (UnifiedDigest "Posted by … on <group>").
+     *
      * @param string $settingKey 'communityevents' | 'volunteering'
-     * @return array<int,string>
+     * @return array<int,array{name:string,url:string}>
      */
     protected function eligibleGroups(string $settingKey): array
     {
+        $userSite = config('freegle.sites.user');
+
         $candidates = Group::query()
             ->where('type', Group::TYPE_FREEGLE)
             ->where('publish', 1)
             ->where('onhere', 1)
             ->whereRaw("nameshort NOT LIKE '%playground%'")
-            ->get(['id', 'nameshort', 'settings']);
+            ->get(['id', 'nameshort', 'namefull', 'settings']);
 
         $eligible = [];
         foreach ($candidates as $group) {
@@ -51,7 +57,10 @@ trait BuildsUserRoundups
             if ($group->isClosed()) {
                 continue;
             }
-            $eligible[(int) $group->id] = $group->nameshort;
+            $eligible[(int) $group->id] = [
+                'name' => $group->namefull ?: $group->nameshort,
+                'url'  => $userSite . '/explore/' . rawurlencode($group->nameshort),
+            ];
         }
 
         return $eligible;

@@ -124,7 +124,7 @@ class EventsDigestService
      * @param array<int,array>  $eventsById     eventid => event data (start-ordered)
      * @param array<int,int[]>  $groupsByEvent  eventid => [group ids]
      * @param array<int>        $userGroupIds   the user's eligible group ids
-     * @param array<int,string> $eligibleGroups group id => nameshort
+     * @param array<int,array{name:string,url:string}> $eligibleGroups group id => display name + /explore link
      * @return array<int,array>
      */
     protected function eventsForUser(array $eventsById, array $groupsByEvent, array $userGroupIds, array $eligibleGroups): array
