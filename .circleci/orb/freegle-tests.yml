@@ -266,6 +266,7 @@ commands:
             # seconds because Playwright keeps forking new headless_shell workers.
             # Must run on ALL runner types (self-hosted and Katapult cloud).
             (
+              declare -A _pinned 2>/dev/null || true   # pids already cpuset-confined
               while true; do
                 docker_pids=""
                 for pp in /proc/[0-9]*; do
@@ -283,10 +284,42 @@ commands:
                 # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
                 agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
                 [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
+                # Reserve vCPU0 for the runner heartbeat by confining the WHOLE
+                # workload to vCPUs 1..N-1, leaving the circleci agent FAMILY (the
+                # daemon AND the task-agent — the heartbeat goroutine lives in the same
+                # process that drives the tests, so both must keep vCPU0) able to use
+                # vCPU0. This MUST be done from inside the job: a Katapult job can run
+                # on a VM provisioned by a DIFFERENT pipeline, so VM-provision-time
+                # config (cgroup-parent etc.) does not reliably reach the VM the job
+                # lands on — but this watchdog always does. cpuset = hard isolation.
+                NPROC=$(nproc 2>/dev/null || echo 1)
+                if [ "$NPROC" -ge 4 ]; then
+                  WL="1-$((NPROC-1))"
+                  # Containers: set the cpuset at the cgroup level so it covers every
+                  # current AND future process in each container (e.g. the Chromium
+                  # workers Playwright keeps forking). Driver/VM independent; no restart.
+                  for c in $(docker ps -q 2>/dev/null); do
+                    docker update --cpuset-cpus "$WL" "$c" >/dev/null 2>&1 || true
+                  done
+                  # Native: taskset every userspace pid to 1..N-1 EXCEPT the agent
+                  # family ($agent_pids, computed above). Forks inherit affinity, so
+                  # pinning a process pins its future children too; pin each pid once
+                  # (cached in $_pinned) to keep the steady-state exec cost near zero.
+                  # New work each appears as a fresh pid and is pinned on the next pass.
+                  agent_set=" $agent_pids "
+                  for pp in /proc/[0-9]*; do
+                    pid=${pp#/proc/}
+                    [ "$pid" = 1 ] && continue
+                    case "$agent_set" in *" $pid "*) continue ;; esac
+                    [ -n "${_pinned[$pid]:-}" ] && continue
+                    sudo taskset -acp "$WL" "$pid" >/dev/null 2>&1 || true
+                    _pinned[$pid]=1
+                  done
+                fi
                 sleep 2
               done
             ) &
-            echo "CPU priority watchdog running: docker containers + native test runners nice +19, agent pinned to nice 0"
+            echo "CPU priority watchdog running: workload nice +19, agent nice 0, and workload cpuset-confined to vCPUs 1..N-1 (vCPU0 reserved for the runner heartbeat)"
 
             while true; do
               echo ""
@@ -305,6 +338,24 @@ commands:
               ps aux --sort=-%mem | head -6
               echo "--- Docker Stats ---"
               docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "No containers running"
+              # --- [cpuset-evidence] proof the real work and the heartbeat are on
+              # different vCPUs: vCPU0 keeps idle headroom while 1..N-1 saturate;
+              # every container + native test runner is on 1..N-1; the agent can use 0.
+              echo "--- [cpuset-evidence] per-vCPU utilisation (vCPU0 should keep %idle while 1..N-1 saturate) ---"
+              mpstat -P ALL 1 1 2>/dev/null | sed 's/^/  /' || { grep -E '^cpu[0-9]' /proc/stat | sed 's/^/  /'; }
+              echo "--- [cpuset-evidence] container effective cpuset (real work; want 1..N-1, MUST NOT contain 0) ---"
+              for f in $(find /sys/fs/cgroup -path '*docker-*' -name cpuset.cpus.effective 2>/dev/null); do
+                p=${f#/sys/fs/cgroup/}; p=${p%/cpuset.cpus.effective}
+                echo "  $p = $(cat "$f" 2>/dev/null)"
+              done | head -40
+              echo "--- [cpuset-evidence] native test-runner affinity (want 1..N-1) ---"
+              for tp in $(pgrep -f 'vitest|playwright|phpunit|go-build|artisan test' 2>/dev/null | head -20); do
+                echo "  pid $tp $(cat /proc/$tp/comm 2>/dev/null) -> $(taskset -cp $tp 2>/dev/null | sed 's/.*: //')"
+              done
+              echo "--- [cpuset-evidence] runner agent/heartbeat placement (allowed should include 0) ---"
+              for ap in $(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | head -10); do
+                echo "  agent pid $ap on vCPU $(ps -o psr= -p $ap 2>/dev/null | tr -d ' ') allowed $(taskset -cp $ap 2>/dev/null | sed 's/.*: //')"
+              done
               sleep 30
             done
 
