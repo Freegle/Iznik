@@ -438,25 +438,29 @@ platform :ios do
       xcodeproj: "ios/App/App.xcodeproj"
     )
 
-    # Get latest TestFlight build number
+    # Get the latest TestFlight build number ACROSS ALL versions (no `version:`).
+    # A version-scoped query returns 0 for a brand-new marketing version, which
+    # then falls to the floor below — producing the SAME build number as the
+    # previous version (a collision that breaks auto-submit, which then can't
+    # tell the two builds apart). The global latest + 1 is always unique and
+    # monotonic, so each new build gets a distinct number.
     begin
       latest_build = latest_testflight_build_number(
-        version: version,
         initial_build_number: 0,
         app_identifier: "org.ilovefreegle.iphone"
       )
-      UI.message("📊 Latest TestFlight build for v#{version}: #{latest_build}")
+      UI.message("📊 Latest TestFlight build across all versions: #{latest_build}")
     rescue => e
-      UI.message("ℹ️  No existing builds for v#{version}, starting at 0")
+      UI.message("ℹ️  Could not fetch latest build number, starting at 0")
       latest_build = 0
     end
 
     new_build = latest_build + 1
 
-    # Ensure build number is at least 1272
+    # Safety floor only — with the global query above this should never trigger.
     min_build_number = 1272
     if new_build < min_build_number
-      UI.message("📊 Jumping from build number #{new_build} to minimum #{min_build_number}")
+      UI.message("📊 Flooring build number #{new_build} to minimum #{min_build_number}")
       new_build = min_build_number
     end
 
@@ -552,14 +556,16 @@ platform :ios do
       xcodeproj: "ios/App/App.xcodeproj"
     )
 
+    # Global latest build (no `version:`) so a new marketing version doesn't
+    # collide with the previous version's build number — see the Freegle beta
+    # lane above for the full explanation.
     begin
       latest_build = latest_testflight_build_number(
-        version: version,
         initial_build_number: 0,
         app_identifier: "org.ilovefreegle.modtools"
       )
     rescue => e
-      UI.message("ℹ️  No existing builds for v#{version}, starting at 0")
+      UI.message("ℹ️  Could not fetch latest build number, starting at 0")
       latest_build = 0
     end
 

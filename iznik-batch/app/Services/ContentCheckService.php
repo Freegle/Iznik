@@ -24,6 +24,24 @@ class ContentCheckService
     public const CHECK_URL               = 'Url';
     public const CHECK_MONEY             = 'Money';
     public const CHECK_LANGUAGE          = 'Language';
+    public const CHECK_NOT_AN_ITEM       = 'NotAnItem';
+
+    /**
+     * Candidate languages for the content-check language detector. Restricted to
+     * languages realistically seen on UK Freegle — English/Welsh, the main UK
+     * community languages, and frequent spam origins — so the detector cannot
+     * rank constructed/obscure languages (Interlingua, Occitan, Esperanto, Ido,
+     * Latin) top on short English and raise a false "not English" flag
+     * (Discourse #9481). Scandinavian (nb/nn/da/sv) is intentionally kept.
+     */
+    private const LANGUAGE_DETECT_SET = [
+        'en', 'cy', 'ga', 'gd', 'fr', 'de', 'nl', 'es', 'pt-BR', 'pt-PT', 'it',
+        'pl', 'ro', 'cs', 'sk', 'lt', 'lv', 'bg', 'hu', 'hr', 'sl', 'sr-Latn',
+        'uk', 'ru', 'ar', 'fa', 'ur', 'tr', 'so', 'he', 'zh-Hans', 'zh-Hant',
+        'ja', 'ko', 'vi', 'th', 'tl', 'id', 'ms-Latn', 'hi', 'bn', 'gu', 'ta',
+        'ml', 'sq', 'el-monoton', 'sv', 'da', 'nb', 'nn', 'fi', 'et', 'eu',
+        'ca', 'gl',
+    ];
     public const CHECK_IP_ABUSE          = 'IpAbuse';
     public const CHECK_BULK_MAIL         = 'BulkMail';
     public const CHECK_SUBJECT_REPEAT    = 'SubjectRepeat';
@@ -109,7 +127,10 @@ class ContentCheckService
         if ($r = $this->checkVagueItem($itemName)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkPhoneNumbers($subject, $textbody)) {
+        if ($r = $this->checkNotAnItem($subject, $textbody, $itemName)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPhoneNumbers($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkPII($subject, $textbody, $groupid)) {
@@ -157,8 +178,9 @@ class ContentCheckService
      * Phone numbers are deliberately NOT checked in chat: sharing a phone
      * number is normal and expected when arranging a handover, so flagging it
      * produced too many false positives. (V1's Spam::checkReview() never
-     * checked phone numbers either.) The checkPhoneNumbers() check still runs
-     * for posts via checkMessage().
+     * checked phone numbers either.) The checkPhoneNumbers() check runs for
+     * posts via checkMessage(), but only when the group's restrictpersonalinfo
+     * rule is set.
      *
      * @return array|null Reason ['check','category','action','detail'] or null.
      */
@@ -708,15 +730,123 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
+    // Not-an-item — flag posts that are non-physical requests/offers (services,
+    // accommodation/rentals, jobs/work, help/advice) rather than a physical
+    // object. Freegle is for giving away things, so these are diverted to mods
+    // for review (action=flag, NOT auto-blocked). Keyword design is word-boundary
+    // + exclusion-guarded, validated against the production reject log to avoid
+    // false positives on real items: "vacuum cleaner" is not a cleaner-person,
+    // "removal boxes" is not a removal service, "job lot" is a bundle of goods,
+    // "dinner service" is crockery, and "ladder loan" is borrowing an item
+    // (which Freegle allows).
+    // -------------------------------------------------------------------------
+
+    /** Physical-item phrases that collide with non-item keywords — skip these. */
+    private const NOT_AN_ITEM_EXCLUSIONS = [
+        '/\b(vacuum|patio|window|oven|carpet|drain|fabric|pressure|jet|steam|spot|paint|tile|glass|leather|toilet|kitchen|shower|hoover|floor|wheel|pool|gutter|bbq|grill|mould|mold|nit|comb)\s+cleaner/',
+        '/\b(removal|moving|packing|cardboard|home|house|strong|storage|archive)\s+(box|boxes|crate|crates|bag|bags|paper)/',
+        '/\b(hair|paint|stain|tick|rust|odou?r|live|nit|mole|wart|graffiti|ear\s?wax)\s+removal/',
+        '/\bremoval\s+(box|boxes|cream|kit|tool|tools)/',
+        '/\bjob\s*lot\b/',
+        '/\b(dinner|tea|coffee|table|place|china|dining)\s+service\b/',
+        '/\b(loan|borrow|lend)\b/',
+        '/gardener[\'’]?s\s+world/',
+        '/\bdecorator[\'’]?s?\s+(spare|spares|tool|tools|paint|table|caddy|kit|trestle)/',
+        '/\b(motorway|emergency|bus|train|rail|ferry|postal|customer|council|nhs|social|financial|funeral|armed|secret|support|care|delivery)\s+services?\b/',
+    ];
+
+    /** Non-item trigger patterns, grouped by category; first match wins. */
+    private const NOT_AN_ITEM_PATTERNS = [
+        'accommodation' => [
+            '/\b(room|rooms|flat|house|garage|lock\s?-?\s?up|warehouse|studio|annexe?|bedsit|bedroom|property|driveway|parking\s+space)\b[^.!?\n]{0,30}\b(to|for)\s+(rent|let)\b/',
+            '/\bto let\b/', '/\bfor rent\b/', '/\bto rent\b/', '/\brenting\b/',
+            '/\blodger\b/', '/\bflat\s?share\b/', '/\bhouse\s?share\b/',
+            '/\baccommodation\b/', '/\btenant\b/', '/\broom available\b/',
+        ],
+        'service' => [
+            '/\bman\s+(with|and)\s+a?\s?(van|car)\b/', '/\bman\s*&\s*van\b/',
+            '/\b(cleaner|gardener|plumber|electrician|decorator|builder|tutor|handyman|hairdresser|barber|painter|joiner|locksmith)\s+(wanted|needed|required|available)\b/',
+            '/\b(need(ed)?|looking\s+for|want(ed)?|require[d]?)\s+a\s+(cleaner|gardener|plumber|electrician|decorator|builder|tutor|handyman|babysitter|child\s?minder|dog\s?walker|hairdresser|barber)\b/',
+            '/\b(domestic|house|home|office|end[\s-]of[\s-]tenancy)\s+cleaner\b/',
+            '/\b(cleaning|gardening|ironing|babysitting|child\s?minding|tutoring|decorating|plumbing|catering|delivery|moving)\s+service\b/',
+            '/\bdog\s?walk(er|ing)\b/', '/\bbaby\s?sit(ter|ting)\b/',
+            '/\bchild\s?mind(er|ing)\b/', '/\bhandy\s?man\b/', '/\bmassage\b/',
+            '/\bskill\s?swap\b/', '/\bservices\b/', '/\bservice\s+offered\b/',
+        ],
+        'work' => [
+            '/\bvacanc(y|ies)\b/', '/\bhiring\b/', '/\bwork\s+wanted\b/',
+            '/\b(part|full)[\s-]?time\s+job\b/', '/\bemployment\b/',
+            '/\bjob\s+vacancy\b/', '/\blooking\s+for\s+work\b/', '/\bzero\s+hours?\b/',
+        ],
+        'advice' => [
+            '/\badvice\b/', '/\bany\s+recommendations?\b/',
+            '/\bcan\s+(anyone|someone)\s+recommend\b/',
+            '/\blooking\s+for\s+(advice|recommendations?|someone\s+to)\b/',
+            '/\brecommendations?\s+for\s+a\b/',
+        ],
+    ];
+
+    /**
+     * Flag a post that appears to be a non-physical request/offer rather than an
+     * item. Pure text; returns a flag reason (kept Pending for mod review) or null.
+     */
+    public function checkNotAnItem(string $subject, string $textbody, ?string $itemName = null): ?array
+    {
+        $hay = strtolower(trim($subject . ' ' . $textbody . ' ' . ($itemName ?? '')));
+        if ($hay === '') {
+            return null;
+        }
+
+        // Exclusion guard: physical items that would otherwise match a keyword.
+        foreach (self::NOT_AN_ITEM_EXCLUSIONS as $ex) {
+            if (preg_match($ex, $hay)) {
+                return null;
+            }
+        }
+
+        foreach (self::NOT_AN_ITEM_PATTERNS as $category => $patterns) {
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $hay, $m)) {
+                    $matched = trim($m[0]);
+                    return [
+                        'check'    => self::CHECK_NOT_AN_ITEM,
+                        'category' => $category,
+                        'action'   => 'flag',
+                        'detail'   => "Post may be a non-physical request ({$category}) rather than an item — matched \"{$matched}\"",
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
     // Phone numbers — UK format check, applied to posts only (NOT chat: sharing
     // a number to arrange a handover is normal). Requires a proper UK prefix
     // (0, +44, or 0044) followed by 9–10 digits (with optional spaces/hyphens).
     // This specificity avoids false positives from short numeric strings like
     // flat numbers or times.
+    //
+    // Only flagged when the group's restrictpersonalinfo rule is set — phone
+    // numbers are explicitly called out in that setting's description ("eg
+    // telephone numbers, addresses"). Groups without the rule never see this
+    // flag. (V1 had no universal phone-number check; the setting description
+    // makes the intent clear.)
     // -------------------------------------------------------------------------
 
-    public function checkPhoneNumbers(string $subject, string $textbody): ?array
+    public function checkPhoneNumbers(string $subject, string $textbody, int $groupid): ?array
     {
+        $rulesJson = DB::table('groups')->where('id', $groupid)->value('rules');
+        if ($rulesJson) {
+            $rules = is_string($rulesJson) ? json_decode($rulesJson, true) : $rulesJson;
+            if (empty($rules['restrictpersonalinfo'])) {
+                return null;
+            }
+        } else {
+            return null;
+        }
+
         $haystack = $subject . ' ' . $textbody;
 
         // (?<!\d) / (?!\d) instead of \b — \b doesn't fire before a literal "+"
@@ -734,8 +864,10 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // PII — external email addresses, only when group rule restrictpersonalinfo
-    // is set. Phone numbers in posts are checked via checkPhoneNumbers().
+    // PII — external email addresses, gated by the group rule restrictpersonalinfo.
+    // Phone numbers are also gated by the same rule via checkPhoneNumbers().
+    // Both checks are described by the setting: "Do you restrict personal info
+    // in posts eg telephone numbers, addresses?"
     // -------------------------------------------------------------------------
 
     public function checkPII(string $subject, string $textbody, int $groupid): ?array
@@ -977,20 +1109,27 @@ class ContentCheckService
     // Language detection — flag non-English/Welsh messages over 50 chars
     // (V1 Spam.php parity using patrickschur/language-detection).
     // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
-    // P(top language) — the same lax threshold V1 uses.
+    // P(top language) — the same lax threshold V1 uses (Spam.php line 413).
+    // The optional $detector callable accepts the lowercased text and returns
+    // an array of language => probability; used in tests for deterministic results.
     // -------------------------------------------------------------------------
 
-    public function checkLanguage(string $subject, string $textbody): ?array
+    public function checkLanguage(string $subject, string $textbody, ?callable $detector = null): ?array
     {
         $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
 
-        if (strlen($text) <= 50) {
+        // Skip text too short for reliable language detection. The detector is a
+        // coin-flip below ~80 chars (it mis-ranks terse English replies like
+        // "Yes please can collect. … Possible collection times: Asap"), and such
+        // short replies carry little spam risk, so checking them only generates
+        // false "not English" flags (Discourse #9481). V1 used 50; raised to 80.
+        if (strlen($text) <= 80) {
             return null;
         }
 
         try {
-            $ld   = new Language();
-            $lang = $ld->detect($text)->close();
+            $detect = $detector ?? static fn(string $t) => (new Language(self::LANGUAGE_DETECT_SET))->detect($t)->close();
+            $lang   = $detect($text);
 
             if (empty($lang)) {
                 return null;
@@ -1027,11 +1166,58 @@ class ContentCheckService
      */
     private const IP_ABUSE_ID_CAP = 50;
 
+    /**
+     * Return true if $ip is in spam_whitelist_ips (exact match or IPv4 CIDR).
+     * V1 parity: Spam.php lines 105-114 nullified the IP before correlation
+     * queries when it matched spam_whitelist_ips. This method extends V1's
+     * exact-match with CIDR support so CDN ranges (e.g. 162.158.0.0/15) can
+     * be whitelisted without enumerating every individual address.
+     */
+    private function isIpWhitelisted(string $ip): bool
+    {
+        if (DB::table('spam_whitelist_ips')->where('ip', $ip)->exists()) {
+            return true;
+        }
+
+        // Check CIDR entries (rows whose ip value contains a '/')
+        $cidrs = DB::table('spam_whitelist_ips')
+            ->where('ip', 'like', '%/%')
+            ->pluck('ip');
+
+        $ipLong = ip2long($ip);
+        if ($ipLong === false) {
+            return false; // IPv6 — no CIDR support yet
+        }
+
+        foreach ($cidrs as $cidr) {
+            [$net, $prefix] = explode('/', $cidr, 2);
+            $netLong = ip2long($net);
+            if ($netLong === false) {
+                continue;
+            }
+            $prefixInt = (int)$prefix;
+            $mask = $prefixInt >= 32 ? -1 : ~((1 << (32 - $prefixInt)) - 1);
+            if (($ipLong & $mask) === ($netLong & $mask)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function checkIpAbuse(int $msgid): ?array
     {
         $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
 
         if (!$fromip) {
+            return null;
+        }
+
+        // V1 parity (Spam.php lines 105-114): skip whitelisted IPs.
+        // Shared CDN/proxy egress IPs (e.g. Cloudflare) are added to
+        // spam_whitelist_ips; flagging them produces false positives because
+        // many distinct, well-behaved users share the same egress IP.
+        if ($this->isIpWhitelisted($fromip)) {
             return null;
         }
 

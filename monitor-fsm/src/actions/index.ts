@@ -2,7 +2,7 @@ import type { ActionDefinition } from 'ai-flower'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
 import { DISCOURSE_BASE } from '../discourse.js'
 import {
@@ -97,11 +97,101 @@ const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
  * the reply under the SPECIFIC reporting post (only meaningful for post > 1; a
  * reply to the OP is a normal topic reply and Discourse normalises it).
  */
-async function postDiscourseReply(
+/**
+ * How long to wait before retrying a Discourse 429. Prefers the Retry-After
+ * header, falls back to the rate-limit body's `extras.wait_seconds`, then a
+ * sensible default. Returns seconds.
+ */
+export function parseRetryAfter(header: string | null, body: string): number {
+  const fromHeader = header ? Number(header) : NaN
+  if (Number.isFinite(fromHeader) && fromHeader > 0) return fromHeader
+  try {
+    const j = JSON.parse(body) as { extras?: { wait_seconds?: unknown } }
+    const w = Number(j?.extras?.wait_seconds)
+    if (Number.isFinite(w) && w > 0) return w
+  } catch { /* body not JSON */ }
+  return 5
+}
+
+// Bot accounts whose PR comments are never a human review signal.
+const BOT_COMMENT_LOGINS = new Set([
+  'netlify', 'github-actions', 'codecov', 'codecov-commenter', 'coderabbitai',
+  'sonarcloud', 'dependabot', 'vercel',
+])
+
+// Phrases a human uses when closing an FSM PR to mean "this is NOT an actionable
+// code bug — do not try again", as opposed to "the fix is wrong, redo it" (for
+// which they leave the PR open with changes requested). On a CLOSED PR these park
+// the bug instead of triggering the retry-once-then-escalate path.
+const WONTFIX_CLOSE_PATTERNS = [
+  'no fix required', 'no fix needed', 'no fix is required', 'no fix is needed',
+  'not a bug', 'not a code bug', "isn't a bug", 'not a real bug',
+  'no actionable', 'not actionable', 'no action required', 'no action needed',
+  'wontfix', "won't fix", 'wont fix', 'will not fix',
+  'working as designed', 'working as intended', 'by design', 'as designed',
+  'perception complaint', 'bad fix',
+]
+
+// Marker the FSM puts in its OWN auto-close comments (failed adversarial review) so
+// detectWontfixClose can tell them apart from a human "not a bug" close: the FSM's
+// auto-close means "retry then escalate", a human wontfix means "park, never retry".
+export const FSM_AUTOCLOSE_MARKER = '<!-- fsm-auto-close: failed-review -->'
+
+/**
+ * Build the comment for auto-closing an FSM fix PR that failed adversarial review.
+ * Lists the blockers and carries FSM_AUTOCLOSE_MARKER so it is not mistaken for a
+ * human wontfix close (which would wrongly park the bug instead of retrying it).
+ */
+export function buildFailedReviewCloseComment(
+  prNumber: number,
+  issues: Array<{ category?: string; description?: string; severity?: string }>,
+): string {
+  const blockers = (issues ?? []).filter((i) => i?.severity === 'error')
+  const body = blockers.length
+    ? blockers.map((b) => `- **${b.category ?? 'issue'}**: ${(b.description ?? '').slice(0, 300)}`).join('\n')
+    : '- (no specific blockers recorded)'
+  return [
+    `Auto-closed by the monitor's adversarial review (PR #${prNumber}) — this fix did not pass and is not ready to merge.`,
+    '',
+    body,
+    '',
+    'The underlying bug will be re-attempted, then escalated for human triage if it keeps failing review. Reopen if this was closed in error.',
+    FSM_AUTOCLOSE_MARKER,
+  ].join('\n')
+}
+
+/**
+ * Did a human leave a "this is not an actionable bug" signal on a (closed) PR?
+ * Scans non-bot comments for a WONTFIX_CLOSE_PATTERN. Returns the matched comment
+ * excerpt so the bug's reason can quote the human's decision.
+ */
+export function detectWontfixClose(
+  comments: Array<{ author?: { login?: string } | null; body?: string | null }>,
+): { wontfix: boolean; reason?: string } {
+  for (const c of comments ?? []) {
+    const login = (c?.author?.login ?? '').toLowerCase()
+    if (!login || BOT_COMMENT_LOGINS.has(login) || login.endsWith('[bot]')) continue
+    const body = c?.body ?? ''
+    // The FSM's own auto-close (failed review) means retry, not park — never treat
+    // it as a human wontfix even though it quotes blocker text that may match.
+    if (body.includes(FSM_AUTOCLOSE_MARKER)) continue
+    const hay = body.toLowerCase()
+    if (WONTFIX_CLOSE_PATTERNS.some((p) => hay.includes(p))) {
+      return { wontfix: true, reason: body.replace(/\s+/g, ' ').trim().slice(0, 200) }
+    }
+  }
+  return { wontfix: false }
+}
+
+export async function postDiscourseReply(
   topicId: number,
   raw: string,
   replyToPostNumber?: number,
+  opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
 ): Promise<{ ok: boolean; error?: string }> {
+  const maxRetries = opts.maxRetries ?? 4
+  const sleepFn = opts.sleepFn ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+
   let apiKey: string | null = null
   try {
     const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
@@ -114,22 +204,38 @@ async function postDiscourseReply(
   const payload: Record<string, unknown> = { topic_id: topicId, raw }
   if (replyToPostNumber && replyToPostNumber > 1) payload.reply_to_post_number = replyToPostNumber
 
-  try {
-    const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
-      method: 'POST',
-      headers: {
-        'User-Api-Key': apiKey,
-        'Api-Username': 'Edward_Hibbert',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    })
-    if (resp.status === 200 || resp.status === 201) return { ok: true }
-    const text = await resp.text().catch(() => '')
-    return { ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 300)}` }
-  } catch (err) {
-    return { ok: false, error: String(err) }
+  let lastError = ''
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
+        method: 'POST',
+        headers: {
+          'User-Api-Key': apiKey,
+          'Api-Username': 'Edward_Hibbert',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      if (resp.status === 200 || resp.status === 201) return { ok: true }
+
+      const text = await resp.text().catch(() => '')
+      lastError = `HTTP ${resp.status}: ${text.slice(0, 300)}`
+
+      // Discourse rate-limits writes hard. Rather than dropping the reply (and
+      // hammering on the next iteration), respect Retry-After and back off so the
+      // burst self-throttles. Cap the wait so one pathological value can't stall
+      // the whole iteration.
+      if (resp.status === 429 && attempt < maxRetries - 1) {
+        const waitSecs = Math.min(parseRetryAfter(resp.headers.get('Retry-After'), text), 60)
+        await sleepFn(waitSecs * 1000)
+        continue
+      }
+      return { ok: false, error: lastError }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
   }
+  return { ok: false, error: lastError }
 }
 
 /**
@@ -646,7 +752,33 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
               `SELECT topic, post, pr_rejections FROM discourse_bug
                WHERE pr_number = ? AND state NOT IN ('fixed','confirmed','deferred','off-topic','duplicate')`
             ).all(pr.number) as Array<{ topic: number; post: number; pr_rejections: number }>
+
+            // Distinguish "the human closed this because it is NOT a code bug" (park it,
+            // never retry) from "the fix was wrong, try again" (retry-once-then-escalate).
+            // Re-attempting after a wontfix close just churns out duplicate bad PRs —
+            // exactly what happened with #9753 (#631 closed "no actionable code bug" → the
+            // FSM produced #660). A wontfix signal in a human close comment means STOP.
+            let wontfix: { wontfix: boolean; reason?: string } = { wontfix: false }
+            if (bugs.length > 0) {
+              const cres = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'comments'])
+              if (cres.code === 0) {
+                try {
+                  const parsed = JSON.parse(cres.stdout) as { comments?: Array<{ author?: { login?: string } | null; body?: string | null }> }
+                  wontfix = detectWontfixClose(parsed.comments ?? [])
+                } catch { /* malformed comments json — fall through to reopen */ }
+              }
+            }
+
             for (const bug of bugs) {
+              if (wontfix.wontfix) {
+                db.prepare(
+                  `UPDATE discourse_bug SET state='deferred', pr_number=NULL,
+                     reason=?, last_seen_at=datetime('now')
+                   WHERE topic=? AND post=?`
+                ).run(`Human closed PR #${pr.number} as not-a-bug: ${wontfix.reason ?? 'no fix required'}`, bug.topic, bug.post)
+                out(`sync_pr_states: PR #${pr.number} CLOSED as wontfix — parked bug ${bug.topic}/${bug.post} (no retry)`)
+                continue
+              }
               reopenBugAfterRejection(db, bug.topic, bug.post, pr.number)
               insertReviewerFeedback(db, {
                 kind: 'pr_rejected',
@@ -1007,15 +1139,35 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
     paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' } } },
     handler: async (params) => {
       const recentLimit = (params.recentLimit as number) ?? 30
+      // Discourse rate-limits aggressively, and this GET runs in the same iteration
+      // as a burst of reply POSTs — so a raw urlopen here regularly 429'd and the
+      // step silently returned zero topics (missing genuinely-active bug reports).
+      // Use the same retry-with-backoff helper as fetch_topic_updates so a 429 is
+      // ridden out (respecting Retry-After) instead of dropping the pre-check.
       const script = `
-import json, urllib.request, sys
+import json, urllib.request, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-req = urllib.request.Request(
-    '${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}',
-    headers={'User-Api-Key': api_key}
-)
-d = json.load(urllib.request.urlopen(req, timeout=15))
+headers = {'User-Api-Key': api_key}
+
+def fetch(url, retries=4):
+    """GET a Discourse URL with rate-limit backoff for 429."""
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                retry_after = e.headers.get('Retry-After')
+                sleep_s = float(retry_after) if retry_after else delay
+                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
+                time.sleep(sleep_s)
+                delay *= 2
+                continue
+            raise
+
+d = fetch('${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}')
 topics = [{'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']} for t in d['topic_list']['topics']]
 print(json.dumps(topics))
 `
@@ -1355,10 +1507,10 @@ print(urllib.request.urlopen(req).read().decode())
         '--author', '@me',
         '--state', 'open',
         '--limit', '30',
-        '--json', 'number,title,url,headRefOid,mergeStateStatus',
+        '--json', 'number,title,url,headRefName,headRefOid,mergeStateStatus',
       ])
       if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], behindPRs: [], allGreen: true, error: listRes.stderr }
-      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string; mergeStateStatus: string }>
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefName: string; headRefOid: string; mergeStateStatus: string }>
 
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
@@ -1413,6 +1565,29 @@ print(urllib.request.urlopen(req).read().decode())
       // This lets us attempt again if future master changes re-break the PR.
       const db = getDb()
       const redAndPendingNums = new Set([...redPRs.map(p => p.number), ...pendingPRs.map(p => p.number)])
+
+      // Build a branch → worktree-path map once, so that when a PR goes green we
+      // can release any local container stack a fix delegate spun up to test it.
+      // The fix is already validated on the cloud runner; the local worktree
+      // containers (a full ~30-service compose stack) are pure waste afterwards.
+      // We `docker stop` (NOT `down`) so nothing is lost and the user can restart
+      // instantly. The main FSM worktree's own stack is always left running.
+      const MAIN_WORKTREE = '/home/edward/FreegleDockerWSL'
+      const branchToWorktree = new Map<string, string>()
+      try {
+        const wtRes = await sh('git', ['-C', MAIN_WORKTREE, 'worktree', 'list', '--porcelain'])
+        if (wtRes.code === 0) {
+          let curPath: string | null = null
+          for (const raw of wtRes.stdout.split('\n')) {
+            if (raw.startsWith('worktree ')) curPath = raw.slice('worktree '.length).trim()
+            else if (raw.startsWith('branch ') && curPath) {
+              const b = raw.slice('branch '.length).trim().replace(/^refs\/heads\//, '')
+              if (b) branchToWorktree.set(b, curPath)
+            }
+          }
+        }
+      } catch { /* worktree listing is best-effort */ }
+
       for (const pr of prs) {
         if (!redAndPendingNums.has(pr.number)) {
           const key = `pr_fix_attempts_${pr.number}`
@@ -1420,6 +1595,46 @@ print(urllib.request.urlopen(req).read().decode())
           if (existing && existing !== '0') {
             kvSet(db, key, '0')
             out(`check_my_open_pr_ci: PR #${pr.number} is green — reset fix attempt counter (was ${existing})`)
+          }
+
+          // PR is green → release the worktree's container stack if a fix delegate
+          // left one running. Skipped when the worktree is the main FSM checkout, or
+          // when another session is actively working in it. Idempotent, best-effort.
+          const wt = pr.headRefName ? branchToWorktree.get(pr.headRefName) : undefined
+          if (wt && wt !== MAIN_WORKTREE) {
+            try {
+              // Don't disturb a worktree another session is using: a parallel Claude
+              // session (or a human) leaves live processes whose cwd is under the
+              // worktree (editors, dev servers, CI-watch loops, even a `sleep`). The
+              // FSM's own delegates run in throwaway /tmp worktrees, so they never
+              // match this. If anything is cwd'd in there, leave the stack up.
+              let inUse = false
+              try {
+                for (const ent of readdirSync('/proc')) {
+                  if (!/^\d+$/.test(ent)) continue
+                  let cwd: string
+                  try { cwd = readlinkSync(`/proc/${ent}/cwd`) } catch { continue }
+                  if (cwd === wt || cwd.startsWith(wt + '/')) { inUse = true; break }
+                }
+              } catch { /* /proc scan best-effort */ }
+
+              if (inUse) {
+                out(`check_my_open_pr_ci: PR #${pr.number} green — worktree ${wt} in active use (live process cwd'd there), leaving containers up`)
+              } else {
+                const psRes = await sh('docker', ['ps', '-q', '--filter', `label=com.docker.compose.project.working_dir=${wt}`])
+                const ids = psRes.code === 0 ? psRes.stdout.split('\n').map(s => s.trim()).filter(Boolean) : []
+                if (ids.length > 0) {
+                  const stopRes = await sh('docker', ['stop', ...ids])
+                  if (stopRes.code === 0) {
+                    out(`check_my_open_pr_ci: PR #${pr.number} green — stopped ${ids.length} worktree container(s) at ${wt}`)
+                  } else {
+                    out(`check_my_open_pr_ci: PR #${pr.number} green — failed to stop containers at ${wt}: ${stopRes.stderr.slice(-200)}`)
+                  }
+                }
+              }
+            } catch (err: any) {
+              out(`check_my_open_pr_ci: PR #${pr.number} container cleanup error: ${String(err?.message || err).slice(-200)}`)
+            }
           }
         }
       }
@@ -1995,11 +2210,40 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         else summary = `[${t.id}] exited ${result.code} (${toolCount} tools)`
         out(summary)
 
+        // A timed-out agent did not complete its protocol (no OUTCOME marker, no
+        // self-review), so any PR it managed to open is incomplete/unverified work.
+        // Close it so it never reaches the operator as a "ready" fix (e.g. #666);
+        // VERIFY_DISCOURSE_BATCH defers the bug for human triage. Only FSM fix/ or
+        // fix- branches that are still OPEN; the marker keeps it out of the human
+        // wontfix path. Best-effort — a gh failure must not break result collection.
+        let autoClosedTimedOut = false
+        if (timedOut && prNumber !== undefined) {
+          try {
+            const { stdout: bo } = await exec(
+              'gh', ['pr', 'view', String(prNumber), '--repo', 'Freegle/Iznik', '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+              { timeout: 20 * 1000 },
+            )
+            const [br, st] = (bo || '').trim().split(' ')
+            if (/^fix[/-]/.test(br ?? '') && st === 'OPEN') {
+              await exec(
+                'gh', ['pr', 'close', String(prNumber), '--repo', 'Freegle/Iznik', '--delete-branch', '--comment',
+                  `Auto-closed: the fix agent for this PR timed out before completing its protocol (no verification or self-review), so the PR is incomplete. The bug is deferred for human triage. Reopen if this was closed in error.\n${FSM_AUTOCLOSE_MARKER}`],
+                { timeout: 30 * 1000 },
+              )
+              autoClosedTimedOut = true
+              out(`delegate_parallel_tasks: auto-closed incomplete PR #${prNumber} from timed-out task ${t.id}`)
+            }
+          } catch (e: any) {
+            outWarn(`delegate_parallel_tasks: could not close timed-out PR #${prNumber}: ${e.message}`)
+          }
+        }
+
         return {
           id: t.id,
           exitCode: result.code,
           timedOut,
           timeoutReason: result.killReason,
+          autoClosedTimedOut,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -2126,9 +2370,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const fixed = bugsFixed.filter(b => b.outcome === 'fixed')
       const deferred = bugsFixed.filter(b => b.outcome === 'deferred')
       if (fixed.length > 0) {
-        lines.push('## Discourse bugs fixed', '')
+        lines.push('## Discourse bugs: fix PRs opened', '')
+        lines.push('_These PRs have passed automated review but are not yet merged or deployed (awaiting merge + deploy)._', '')
         for (const b of fixed) {
-          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber}` : ''}`)
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber} (awaiting merge + deploy)` : ''}`)
         }
         lines.push('')
       }
@@ -2589,7 +2834,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0
         })
-        const bugBatch = sorted.slice(0, MAX_PARALLEL_BUGS)
+        // One bug per topic per dispatch: two posts on the same topic are almost
+        // always the same underlying issue, so dispatching both spawns duplicate PRs
+        // (e.g. #661/#662, both rewriting the same donate link for topic 9692). Keep
+        // the oldest post per topic; a genuinely-distinct second bug is picked up a
+        // later iteration (where the first post's PR makes topicsWithActivePr skip it).
+        const seenDispatchTopics = new Set<number>()
+        const bugBatch = sorted
+          .filter((b) => {
+            const t = Number(b.topic)
+            if (seenDispatchTopics.has(t)) return false
+            seenDispatchTopics.add(t)
+            return true
+          })
+          .slice(0, MAX_PARALLEL_BUGS)
         const batchKeys = bugBatch.map(b => `${b.topic}.${b.post}`).join(', ')
         return {
           _transition: 'PARALLEL_FIX_BUGS',
@@ -2780,8 +3038,36 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
           ...(Array.isArray(review.info) ? review.info.map((i: any) => ({ ...i, severity: 'info' })) : []),
         ]
 
+        // A failed review must NOT leave a bad PR open for the human to find (that's
+        // how #661/#662/#663/#668/#670 reached the operator). Auto-close the PR; the
+        // bug then re-enters the reopen→retry→escalate path via sync_pr_states. Only
+        // touch FSM-authored fix branches (fix/ or fix-), never a human PR, and never
+        // a passing one. The close comment carries FSM_AUTOCLOSE_MARKER so it is not
+        // mistaken for a human wontfix (which would park instead of retry).
+        let autoClosed = false
+        if (!passed) {
+          try {
+            const { stdout: branchOut } = await exec(
+              'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+              { timeout: 20 * 1000 },
+            )
+            const [branch, state] = (branchOut || '').trim().split(' ')
+            if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+              await exec(
+                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, issues)],
+                { timeout: 30 * 1000 },
+              )
+              autoClosed = true
+              out(`adversarial_review_pr: auto-closed PR #${prNumber} (failed review: ${issues.filter((i: any) => i.severity === 'error').map((i: any) => i.category).join(', ') || 'blockers'})`)
+            }
+          } catch (e: any) {
+            outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
+          }
+        }
+
         return {
           passed,
+          autoClosed,
           issues,
           summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
         }

@@ -77,24 +77,38 @@ export const useComposeStore = defineStore({
       // Extract the server attachment id from message.attachments.
       if (message.attachments) {
         const hasRealPhoto = message.attachments.some(
-          (a) => a.id && typeof a.id === 'number' && !(a.externalmods && a.externalmods.ai)
+          (a) =>
+            a.id &&
+            typeof a.id === 'number' &&
+            !(a.externalmods && a.externalmods.ai)
         )
 
         for (const attachment of message.attachments) {
-          // AI illustrations need to be converted to real server-side attachments,
+          // AI illustrations need to be included as real server-side attachments,
           // but are suppressed when the user has uploaded their own real photo.
           if (attachment.externalmods && attachment.externalmods.ai) {
-            if (!hasRealPhoto && attachment.ouruid) {
-              try {
-                const result = await this.$api.image.post({
-                  externaluid: attachment.ouruid,
-                  externalmods: { ai: true },
-                })
-                if (result.id) {
-                  attids.push(result.id)
+            if (!hasRealPhoto) {
+              if (typeof attachment.id === 'number') {
+                // details.vue already called POST /image to get a real numeric id.
+                // Use it directly — don't call image.post() again.
+                attids.push(attachment.id)
+              } else if (attachment.ouruid) {
+                // Fallback: materialise the attachment now (e.g. POST /image failed
+                // earlier, or an older client stored ouruid without a real id).
+                try {
+                  const result = await this.$api.image.post({
+                    externaluid: attachment.ouruid,
+                    externalmods: { ai: true },
+                  })
+                  if (result.id) {
+                    attids.push(result.id)
+                  }
+                } catch (e) {
+                  console.error(
+                    'Failed to create AI illustration attachment:',
+                    e
+                  )
                 }
-              } catch (e) {
-                console.error('Failed to create AI illustration attachment:', e)
               }
             }
             continue
@@ -404,7 +418,31 @@ export const useComposeStore = defineStore({
 
               for (const att in message.attachments) {
                 const attachment = message.attachments[att]
-                if (attachment.externalmods && attachment.externalmods.ai && hasRealPhoto) {
+                if (attachment.externalmods && attachment.externalmods.ai) {
+                  // AI illustrations: include only when there is no real user photo.
+                  if (!hasRealPhoto) {
+                    if (typeof attachment.id === 'number') {
+                      // Already a real server-side id — use it directly.
+                      attids.push(attachment.id)
+                    } else if (attachment.ouruid) {
+                      // Materialise the attachment via POST /image so the PATCH
+                      // receives a valid uint64 id (never a synthetic 'ai-...' string).
+                      try {
+                        const result = await this.$api.image.post({
+                          externaluid: attachment.ouruid,
+                          externalmods: { ai: true },
+                        })
+                        if (result.id) {
+                          attids.push(result.id)
+                        }
+                      } catch (e) {
+                        console.error(
+                          'Failed to create AI illustration attachment:',
+                          e
+                        )
+                      }
+                    }
+                  }
                   continue
                 }
                 if (attachment.id && typeof attachment.id === 'number') {

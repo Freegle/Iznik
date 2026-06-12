@@ -16,9 +16,28 @@ return [
         'mod' => env('FREEGLE_MOD_SITE', 'https://modtools.org'),
     ],
 
+    // Local timezone for member-facing scheduling (e.g. the daily digest's
+    // 07:00 send). The app itself runs in UTC; scheduled tasks that should
+    // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
+    'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
+
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
+    ],
+
+    'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
+
+    'donations' => [
+        // One-off donations below this amount (£) don't warrant a manual
+        // thank-you (V1 Donations::MANUAL_THANKS). Recurring donations are
+        // thanked once, on the first payment, regardless of amount.
+        'manual_thanks' => (float) env('FREEGLE_MANUAL_THANKS', 20),
+
+        // Payer emails that must never trigger a thank-you (PayPal Giving Fund,
+        // Tipalti). Comma-separated; mirrors the Go DONATIONS_EXCLUDE so both
+        // sides share one source of truth.
+        'excluded_payers' => env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
     ],
 
     'branding' => [
@@ -139,10 +158,12 @@ return [
         'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
         'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
 
-        // Placeholder images for posts without photos (digest emails)
-        // These default to the generic placeholder until type-specific SVGs are deployed.
-        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
-        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
+        // Placeholder images for posts without photos (digest emails).
+        // Type-specific: green OFFER / blue WANTED, matching the in-app
+        // MessagePhotoPlaceholder gradients. Served from the user site
+        // (iznik-nuxt3/public/placeholder-offer.png / placeholder-wanted.png).
+        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-offer.png'),
+        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
     // GeoIP database for IP country lookups

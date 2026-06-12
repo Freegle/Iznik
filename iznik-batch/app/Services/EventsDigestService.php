@@ -3,203 +3,245 @@
 namespace App\Services;
 
 use App\Mail\Event\EventsDigestMail;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\User;
+use App\Services\Concerns\BuildsUserRoundups;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
+/**
+ * Community-event roundup, unified per user.
+ *
+ * Previously one email per group: a member of several groups received several
+ * roundups, and the same event cross-posted to multiple of their groups
+ * appeared in each one. This now sends ONE email per user covering upcoming
+ * events across ALL their event-enabled groups, with each event shown once
+ * (deduplicated by event id) and annotated with which of the user's groups it
+ * belongs to.
+ */
 class EventsDigestService
 {
-    // Minimum days between roundups per group (V1: DATEDIFF >= 3)
-    public const MIN_INTERVAL_DAYS = 3;
+    use BuildsUserRoundups;
+
+    /** users_digests.mode value used for the per-user cadence guard. */
+    public const DIGEST_MODE = 'events';
+
+    /** Only include events starting within this many days. */
+    public const HORIZON_DAYS = 30;
 
     /**
-     * Send community event roundup emails to members of all eligible groups.
+     * Send unified community-event roundups.
      *
-     * @return array{sent: int, groups_processed: int}
+     * @return array{sent: int, users_processed: int, groups_processed: int}
      */
     public function sendEventDigests(bool $dryRun = false): array
     {
         $userSite = config('freegle.sites.user');
 
         $sent = 0;
-        $groupsProcessed = 0;
+        $usersProcessed = 0;
 
-        // Find Freegle groups due for an event roundup (not sent in last 3 days).
-        $groups = DB::table('groups')
-            ->where('type', Group::TYPE_FREEGLE)
-            ->where('publish', 1)
-            ->where('onhere', 1)
-            ->where(function ($q) {
-                $q->whereNull('lasteventsroundup')
-                    ->orWhereRaw('DATEDIFF(NOW(), lasteventsroundup) >= ?', [self::MIN_INTERVAL_DAYS]);
-            })
-            ->whereRaw("nameshort NOT LIKE '%playground%'")
-            ->select(['id', 'nameshort', 'settings'])
-            ->get();
+        $eligibleGroups = $this->eligibleGroups('communityevents'); // id => nameshort
+        if (empty($eligibleGroups)) {
+            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => 0];
+        }
+        $groupIds = array_keys($eligibleGroups);
 
-        foreach ($groups as $groupRow) {
-            // Instantiate the Group model to use getSetting().
-            $group = Group::find($groupRow->id);
-            if (!$group) {
+        // Pre-fetch all upcoming events + their group associations + images once,
+        // rather than per user. The working set (events in the next 30 days
+        // across all groups) is small and bounded.
+        [$eventsById, $groupsByEvent] = $this->fetchUpcomingEvents($groupIds, $userSite);
+
+        if (empty($eventsById)) {
+            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => count($eligibleGroups)];
+        }
+
+        foreach ($this->eligibleUsers($groupIds, 'eventsallowed', self::DIGEST_MODE) as $userRow) {
+            $usersProcessed++;
+
+            $user = User::find($userRow->id);
+            if (!$user) {
                 continue;
             }
 
-            // Skip groups where communityevents setting is disabled (default: enabled).
-            if (!$group->getSetting('communityevents', true)) {
-                if (!$dryRun) {
-                    DB::table('groups')->where('id', $groupRow->id)
-                        ->update(['lasteventsroundup' => now()]);
-                }
+            // V1 parity: pick the user's preferred external email; skip if they
+            // only have internal-alias addresses.
+            $email = $user->email_preferred;
+            if (!$email) {
                 continue;
             }
 
-            // Skip closed groups.
-            if ($group->isClosed()) {
+            $userGroupIds = $this->userGroupIds($user->id, $groupIds, 'eventsallowed');
+            if (empty($userGroupIds)) {
                 continue;
             }
 
-            // Find upcoming community events for this group (starting within the next 30 days).
-            $rawEvents = DB::table('communityevents')
-                ->join('communityevents_groups', function ($join) use ($groupRow) {
-                    $join->on('communityevents_groups.eventid', '=', 'communityevents.id')
-                        ->where('communityevents_groups.groupid', '=', $groupRow->id);
-                })
-                ->join('communityevents_dates', 'communityevents_dates.eventid', '=', 'communityevents.id')
-                ->where('communityevents_dates.start', '>=', now())
-                ->whereRaw('DATEDIFF(communityevents_dates.start, NOW()) <= 30')
-                ->where('communityevents.pending', 0)
-                ->where('communityevents.deleted', 0)
-                ->orderBy('communityevents_dates.start')
-                ->select([
-                    'communityevents.id',
-                    'communityevents.title',
-                    'communityevents.location',
-                    'communityevents.description',
-                    'communityevents.contactname',
-                    'communityevents.contactphone',
-                    'communityevents.contactemail',
-                    'communityevents.contacturl',
-                    'communityevents_dates.start',
-                    'communityevents_dates.end',
-                ])
-                ->get()
-                ->unique('id');
-
-            if ($rawEvents->isEmpty()) {
-                if (!$dryRun) {
-                    DB::table('groups')->where('id', $groupRow->id)
-                        ->update(['lasteventsroundup' => now()]);
-                }
+            $userEvents = $this->eventsForUser($eventsById, $groupsByEvent, $userGroupIds, $eligibleGroups);
+            if (empty($userEvents)) {
                 continue;
-            }
-
-            // Batch-fetch first non-archived image per event.
-            $eventIds = $rawEvents->pluck('id')->all();
-            $images = DB::table('communityevents_images')
-                ->whereIn('eventid', $eventIds)
-                ->where('archived', 0)
-                ->orderBy('eventid')
-                ->orderBy('id')
-                ->get()
-                ->groupBy('eventid')
-                ->map(fn ($imgs) => $imgs->first());
-
-            // Build structured event data for the template.
-            $eventData = $rawEvents->map(function ($event) use ($userSite, $images) {
-                $start = Carbon::parse($event->start)->setTimezone('Europe/London')->format('D, jS F g:ia');
-                $end   = ($event->end && $event->end !== '0000-00-00 00:00:00')
-                    ? Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia')
-                    : null;
-
-                $imageUrl = null;
-                if ($images->has($event->id)) {
-                    $img  = $images->get($event->id);
-                    $mods = $img->externalmods ? json_decode($img->externalmods, true) : [];
-                    $imageUrl = $mods['url'] ?? "{$userSite}/communityevent/{$event->id}/image/{$img->id}";
-                }
-
-                return [
-                    'id'           => $event->id,
-                    'title'        => $event->title,
-                    'location'     => $event->location,
-                    'description'  => $event->description,
-                    'contactname'  => $event->contactname,
-                    'contactphone' => $event->contactphone,
-                    'contactemail' => $event->contactemail,
-                    'contacturl'   => $event->contacturl,
-                    'start'        => $start,
-                    'end'          => $end,
-                    'imageUrl'     => $imageUrl,
-                    'url'          => "{$userSite}/communityevent/{$event->id}",
-                ];
-            })->values()->all();
-
-            $groupsProcessed++;
-
-            // Find members who have events enabled and are not opted out.
-            // Activity / holiday / bouncing / simplemail filters live on
-            // User::scopeReceivingOurMails so events + volunteering digests +
-            // any future bulk-mail batch job share the same definition of
-            // "deliverable" — V1 events.php enforced these via sendOurMails()
-            // per recipient, and skipping them inflated the V2 dry-run from
-            // ~49k (V1 baseline) to 722k sends.
-            $members = User::query()
-                ->select(['users.id as userId'])
-                ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->where('memberships.groupid', $groupRow->id)
-                ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                ->where('memberships.eventsallowed', 1)
-                ->where('memberships.emailfrequency', '!=', 0)
-                ->receivingOurMails()
-                ->get();
-
-            foreach ($members as $member) {
-                // V1 parity: pick the user's preferred external email and skip
-                // when they have none (only internal-alias addresses).
-                $email = User::find($member->userId)?->email_preferred;
-                if (!$email) {
-                    continue;
-                }
-
-                if (!$dryRun) {
-                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
-                    // spool() builds the message (incl. MJML render) up front and
-                    // only swallows permanent address failures internally; a
-                    // transient render/build error re-throws. Without this catch
-                    // it would escape the per-member foreach and abort the whole
-                    // digest run — the resilience SafeMail::sendMailable used to
-                    // provide. Skip the one recipient and keep the loop going.
-                    try {
-                        app(\App\Services\EmailSpoolerService::class)->spool(new EventsDigestMail(
-                            recipientEmail: $email,
-                            groupName: $groupRow->nameshort,
-                            events: $eventData,
-                            unsubscribeUrl: $unsubscribeUrl,
-                            userId: $member->userId,
-                        ), $email);
-                    } catch (\Throwable $e) {
-                        Log::warning('Skipping events digest for member after spool failure; continuing loop', [
-                            'email' => $email,
-                            'user_id' => $member->userId,
-                            'group' => $groupRow->nameshort,
-                            'error' => $e->getMessage(),
-                        ]);
-                        continue;
-                    }
-                }
-                $sent++;
             }
 
             if (!$dryRun) {
-                DB::table('groups')->where('id', $groupRow->id)
-                    ->update(['lasteventsroundup' => now()]);
+                $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
+                // spool() builds the message (incl. MJML render) up front and only
+                // swallows permanent address failures; a transient render/build
+                // error re-throws. Catch it so one bad recipient doesn't abort the
+                // whole run.
+                try {
+                    app(EmailSpoolerService::class)->spool(new EventsDigestMail(
+                        recipientEmail: $email,
+                        events: $userEvents,
+                        unsubscribeUrl: $unsubscribeUrl,
+                        userId: $user->id,
+                    ), $email);
+                } catch (\Throwable $e) {
+                    Log::warning('Skipping events digest for user after spool failure; continuing loop', [
+                        'email' => $email,
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                    continue;
+                }
             }
+
+            $this->markRoundupSent($user->id, self::DIGEST_MODE, $dryRun);
+            $sent++;
         }
 
-        return ['sent' => $sent, 'groups_processed' => $groupsProcessed];
+        return [
+            'sent' => $sent,
+            'users_processed' => $usersProcessed,
+            'groups_processed' => count($eligibleGroups),
+        ];
+    }
+
+    /**
+     * Build the deduplicated, group-attributed event list for one user.
+     *
+     * An event that belongs to several of the user's groups appears once, with
+     * the names of those groups attached.
+     *
+     * @param array<int,array>  $eventsById     eventid => event data (start-ordered)
+     * @param array<int,int[]>  $groupsByEvent  eventid => [group ids]
+     * @param array<int>        $userGroupIds   the user's eligible group ids
+     * @param array<int,array{name:string,url:string}> $eligibleGroups group id => display name + /explore link
+     * @return array<int,array>
+     */
+    protected function eventsForUser(array $eventsById, array $groupsByEvent, array $userGroupIds, array $eligibleGroups): array
+    {
+        $out = [];
+        foreach ($eventsById as $eid => $eventData) {
+            $shared = array_values(array_intersect($groupsByEvent[$eid] ?? [], $userGroupIds));
+            if (empty($shared)) {
+                continue;
+            }
+            $eventData['groups'] = array_values(array_filter(array_map(
+                fn ($gid) => $eligibleGroups[$gid] ?? null,
+                $shared
+            )));
+            $out[] = $eventData;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Fetch all upcoming events for the eligible groups, returning both the
+     * per-event display data (keyed by id, ordered by start) and the map of
+     * event id => the eligible group ids it belongs to.
+     *
+     * @param array<int> $groupIds
+     * @return array{0: array<int,array>, 1: array<int,int[]>}
+     */
+    protected function fetchUpcomingEvents(array $groupIds, string $userSite): array
+    {
+        $rawEvents = DB::table('communityevents')
+            ->join('communityevents_groups', 'communityevents_groups.eventid', '=', 'communityevents.id')
+            ->join('communityevents_dates', 'communityevents_dates.eventid', '=', 'communityevents.id')
+            ->whereIn('communityevents_groups.groupid', $groupIds)
+            ->where('communityevents_dates.start', '>=', now())
+            ->whereRaw('DATEDIFF(communityevents_dates.start, NOW()) <= ?', [self::HORIZON_DAYS])
+            ->where('communityevents.pending', 0)
+            ->where('communityevents.deleted', 0)
+            ->orderBy('communityevents_dates.start')
+            ->select([
+                'communityevents.id',
+                'communityevents.title',
+                'communityevents.location',
+                'communityevents.description',
+                'communityevents.contactname',
+                'communityevents.contactphone',
+                'communityevents.contactemail',
+                'communityevents.contacturl',
+                'communityevents_dates.start',
+                'communityevents_dates.end',
+            ])
+            ->get()
+            ->unique('id'); // earliest upcoming date per event (rows are start-ordered)
+
+        if ($rawEvents->isEmpty()) {
+            return [[], []];
+        }
+
+        $eventIds = $rawEvents->pluck('id')->all();
+
+        // All eligible-group associations per event (for dedup + attribution).
+        $groupsByEvent = [];
+        DB::table('communityevents_groups')
+            ->whereIn('eventid', $eventIds)
+            ->whereIn('groupid', $groupIds)
+            ->get(['eventid', 'groupid'])
+            ->each(function ($row) use (&$groupsByEvent) {
+                $groupsByEvent[(int) $row->eventid][] = (int) $row->groupid;
+            });
+
+        // First non-archived image per event.
+        $images = DB::table('communityevents_images')
+            ->whereIn('eventid', $eventIds)
+            ->where('archived', 0)
+            ->orderBy('eventid')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('eventid')
+            ->map(fn ($imgs) => $imgs->first());
+
+        // The DB stores HTML-encoded text (e.g. "Soup &amp; Song"). Decode before
+        // passing to Blade so {{ }} escaping yields "&amp;" not double-encoded
+        // "&amp;amp;".
+        $decode = fn (?string $s): ?string =>
+            $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
+
+        $eventsById = [];
+        foreach ($rawEvents as $event) {
+            $start = Carbon::parse($event->start)->setTimezone('Europe/London')->format('D, jS F g:ia');
+            $end = ($event->end && $event->end !== '0000-00-00 00:00:00')
+                ? Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia')
+                : null;
+
+            $imageUrl = null;
+            if ($images->has($event->id)) {
+                $img = $images->get($event->id);
+                $mods = $img->externalmods ? json_decode($img->externalmods, true) : [];
+                $imageUrl = $mods['url'] ?? "{$userSite}/communityevent/{$event->id}/image/{$img->id}";
+            }
+
+            $eventsById[(int) $event->id] = [
+                'id'           => (int) $event->id,
+                'title'        => $decode($event->title),
+                'location'     => $decode($event->location),
+                'description'  => $decode($event->description),
+                'contactname'  => $decode($event->contactname),
+                'contactphone' => $event->contactphone,
+                'contactemail' => $event->contactemail,
+                'contacturl'   => $event->contacturl,
+                'start'        => $start,
+                'end'          => $end,
+                'imageUrl'     => $imageUrl,
+                'url'          => "{$userSite}/communityevent/{$event->id}",
+                'groups'       => [],
+            ];
+        }
+
+        return [$eventsById, $groupsByEvent];
     }
 }

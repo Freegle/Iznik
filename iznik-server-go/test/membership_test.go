@@ -820,6 +820,13 @@ func getActualRole(groupID, userID uint64) string {
 	return role
 }
 
+func getActualSystemrole(userID uint64) string {
+	db := database.DBConn
+	var systemrole string
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	return systemrole
+}
+
 func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 	prefix := uniquePrefix("role_own2mod")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
@@ -839,6 +846,118 @@ func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 	// Verify log entry.
 	db := database.DBConn
 	assert.NotNil(t, findLog(db, "User", "RoleChange", memberID), "Role change should create a RoleChange log entry")
+}
+
+/*
+V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808).
+A per-group Member→Moderator/Owner promotion must propagate to users.systemrole
+so the frontend crown gate (ModLogUser.vue's `systemrole !== 'User'`) renders
+correctly. Without this, a Trainee mod showed the crown on the members page
+(per-group role read) but the plain User icon in the group logs (global
+systemrole read) — Discourse #9481 post 545.
+*/
+
+func TestPatchMembershipsPromoteSetsSystemroleModerator(t *testing.T) {
+	prefix := uniquePrefix("role_sysmod_pm")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	assert.Equal(t, "User", getActualSystemrole(memberID), "baseline")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualSystemrole(memberID),
+		"Member→Moderator must flip users.systemrole to Moderator (V1 parity)")
+}
+
+func TestPatchMembershipsPromoteToOwnerSetsSystemroleModerator(t *testing.T) {
+	// V1 set systemrole='Moderator' for both ROLE_MODERATOR and ROLE_OWNER promotions.
+	prefix := uniquePrefix("role_sysmod_po")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Owner")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualSystemrole(memberID),
+		"Member→Owner must still flip users.systemrole to Moderator (V1 parity)")
+}
+
+func TestPatchMembershipsPromoteDoesNotDemoteSupportOrAdmin(t *testing.T) {
+	// V1 guards the promote UPDATE with `WHERE systemrole = 'User'` so Support
+	// and Admin are never silently downgraded to Moderator on a per-group role change.
+	prefix := uniquePrefix("role_sysmod_admin")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, adminID, groupID, "Member")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, adminID, "Moderator")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Admin", getActualSystemrole(adminID),
+		"Admin systemrole must NOT be overwritten by a per-group promotion (V1 guard)")
+}
+
+func TestPatchMembershipsDemoteToMemberClearsSystemroleWhenLastModGroup(t *testing.T) {
+	prefix := uniquePrefix("role_sysmod_dm1")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, modID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "User", getActualSystemrole(modID),
+		"demoting the user's last Mod/Owner group must revert systemrole to User (V1 parity)")
+}
+
+func TestPatchMembershipsDemoteKeepsSystemroleWhenStillModElsewhere(t *testing.T) {
+	prefix := uniquePrefix("role_sysmod_dm2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	groupID1 := CreateTestGroup(t, prefix+"_g1")
+	groupID2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, ownerID, groupID1, "Owner")
+	CreateTestMembership(t, ownerID, groupID2, "Owner")
+	CreateTestMembership(t, modID, groupID1, "Moderator")
+	CreateTestMembership(t, modID, groupID2, "Moderator")
+
+	// Demote on group 1 only — user is still a Moderator on group 2.
+	resp := patchMembershipRole(t, ownerToken, groupID1, modID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualSystemrole(modID),
+		"systemrole must stay Moderator while the user still holds Mod/Owner on another group (V1 parity)")
+}
+
+func TestPatchMembershipsDemoteDoesNotTouchSupportSystemrole(t *testing.T) {
+	// Symmetric to the promote-guard test: a per-group demote must never
+	// rewrite Support/Admin systemrole down to User. V1's demote UPDATE only
+	// triggers when the user's CURRENT systemrole is exactly 'Moderator'.
+	prefix := uniquePrefix("role_sysmod_dm_admin")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, adminID, groupID, "Moderator")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, adminID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Admin", getActualSystemrole(adminID),
+		"Admin systemrole must survive a per-group demote (V1 demote runs only when current=Moderator)")
 }
 
 func TestPatchMembershipsOwnerPromotesMemberToOwner(t *testing.T) {

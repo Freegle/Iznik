@@ -697,9 +697,7 @@ describe('compose store', () => {
       mockImagePost.mockResolvedValue({ id: 77 })
       mockMessagePut.mockResolvedValue({ id: 99 })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      const errSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => {})
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       await store.createDraft(
         {
@@ -767,6 +765,94 @@ describe('compose store', () => {
       expect(patchArgs.attachments).toEqual([5])
 
       logSpy.mockRestore()
+    })
+  })
+
+  describe('AI illustration preserved in repost path (no real photo)', () => {
+    it('converts AI illustration to real attachment via image.post() when reposting with no real photo', async () => {
+      // Regression: repost path (message.repostof set) silently drops AI illustrations
+      // when there is no real user photo. The PATCH payload ends up with no attachments,
+      // so the AI image is permanently lost. The fix: call image.post(ouruid) in the
+      // repost path, just as createDraft already does.
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Old sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [
+            {
+              id: null,
+              ouruid: 'ai-uid-xyz',
+              externalmods: { ai: true },
+              isAiIllustration: true,
+            },
+          ],
+        },
+      ]
+
+      mockImagePost.mockResolvedValue({ id: 88 })
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // image.post() must be called to create a real server-side attachment
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'ai-uid-xyz',
+        externalmods: { ai: true },
+      })
+      // The resulting real numeric id must appear in the PATCH payload
+      const patchArgs = mockMessagePatch.mock.calls[0][0]
+      expect(patchArgs.attachments).toContain(88)
+      // No non-numeric strings in attachments
+      patchArgs.attachments.forEach((id) => {
+        expect(typeof id).toBe('number')
+      })
+
+      logSpy.mockRestore()
+    })
+
+    it('uses pre-created numeric id directly when AI attachment already has one (no double image.post())', async () => {
+      // When details.vue calls image.post() eagerly and stores the real numeric id,
+      // createDraft should use that id directly without calling image.post() again.
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessagePut.mockResolvedValue({ id: 99 })
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Test',
+          attachments: [
+            {
+              id: 55, // real numeric id already created by details.vue
+              ouruid: 'abc123',
+              externalmods: { ai: true },
+              isAiIllustration: true,
+            },
+          ],
+        },
+        'test@example.com'
+      )
+
+      // image.post() must NOT be called again (would double-create the attachment)
+      expect(mockImagePost).not.toHaveBeenCalled()
+      // The existing numeric id must be in the PUT payload
+      expect(mockMessagePut).toHaveBeenCalledWith(
+        expect.objectContaining({ attachments: [55] })
+      )
     })
   })
 })

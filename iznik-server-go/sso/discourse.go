@@ -99,21 +99,39 @@ func DiscourseSSO(c *fiber.Ctx) error {
 
 // validateDiscourseSession validates the cookie against the sessions table.
 // The user must be a Freegle moderator.
+//
+// Authentication uses id+token only. The series field is intentionally ignored:
+// PR #679 (2026-06-09) changed the session emitter to output series as a JSON
+// number (uint64) rather than a string, which caused json.Unmarshal to error
+// when trying to decode a number into a string field — producing an infinite
+// ModTools ⇄ Discourse redirect loop for all moderators. Authenticating by
+// id+token alone (matching the approach in auth/auth.go WhoAmI) fixes the loop
+// and is sufficient because token is a cryptographically random secret.
+// parseSSOCookie extracts the session id and token from the Iznik-Discourse-SSO
+// cookie. Series is deliberately ignored: PR #679 changed it from a JSON string
+// to a JSON number, so a struct field of either type would break on the other —
+// dropping it from the parse struct makes the cookie format-agnostic. Pure (no
+// DB), so the numeric-series regression is unit-testable without a connection.
+func parseSSOCookie(cookieValue string) (id uint64, token string, err error) {
+	var cookie struct {
+		ID    uint64 `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(cookieValue), &cookie); err != nil {
+		return 0, "", fmt.Errorf("invalid cookie JSON: %w", err)
+	}
+	if cookie.ID == 0 || cookie.Token == "" {
+		return 0, "", fmt.Errorf("incomplete cookie data")
+	}
+	return cookie.ID, cookie.Token, nil
+}
+
 func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	db := database.DBConn
 
-	var cookie struct {
-		ID     uint64 `json:"id"`
-		Series string `json:"series"`
-		Token  string `json:"token"`
-	}
-
-	if err := json.Unmarshal([]byte(cookieValue), &cookie); err != nil {
-		return nil, fmt.Errorf("invalid cookie JSON: %w", err)
-	}
-
-	if cookie.ID == 0 || cookie.Series == "" || cookie.Token == "" {
-		return nil, fmt.Errorf("incomplete cookie data")
+	cookieID, cookieToken, err := parseSSOCookie(cookieValue)
+	if err != nil {
+		return nil, err
 	}
 
 	// Look up session — user must have a moderator/admin/support systemrole.
@@ -125,8 +143,8 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	db.Raw(`SELECT sessions.userid FROM sessions
 		INNER JOIN users ON sessions.userid = users.id
 		WHERE users.systemrole IN ('Admin', 'Support', 'Moderator')
-		AND sessions.id = ? AND sessions.series = ? AND sessions.token = ?`,
-		cookie.ID, cookie.Series, cookie.Token).Scan(&sessions)
+		AND sessions.id = ? AND sessions.token = ?`,
+		cookieID, cookieToken).Scan(&sessions)
 
 	if len(sessions) == 0 {
 		return nil, fmt.Errorf("no valid moderator session found")

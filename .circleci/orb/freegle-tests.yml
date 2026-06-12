@@ -70,13 +70,14 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      # 11 = the historical max worker count. Restored after the 2026-06-01 OOM
-      # outage (9 workers OOM-killed the VM with only a 2G swapfile). The job now
-      # ensures a 20G swapfile at runtime (see "Install system dependencies"),
-      # so peak spikes (11 Chromium + Laravel + Go + the container stack) swap
-      # instead of OOM-killing the runner. If build-test-katapult goes back to
-      # infrastructure_fail in the parallel test phase, lower this first.
-      PW_WORKERS: 11
+      # PW_WORKERS reduced 11 -> 6 (orb 1.1.339) then 6 -> 4 (orb 1.1.340) to
+      # stop build-test-katapult CPU-heartbeat starvation in the parallel test
+      # phase. RAM/swap are fine (20G swapfile), but Chromium workers + Laravel +
+      # Go + Vitest saturated all 16 cores so the CircleCI agent couldn't
+      # heartbeat and the job was killed (infrastructure_fail). nice-demoting the
+      # test runners (orb 1.1.338) did NOT hold alone. 4 matches the stable
+      # machine-executor-large value.
+      PW_WORKERS: 4
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
@@ -245,29 +246,47 @@ commands:
             echo "Resource monitor started - logging every 30 seconds"
 
             # --- CPU priority watchdog (all runner types including Katapult) ---
-            # Root cause of build-test-katapult infrastructure_fail: during the
-            # Playwright phase load runs to ~30 and the CircleCI runner agent can't
-            # get CPU to send its heartbeat, so the control plane declares the VM
-            # dead (memory is fine; swap stays unused — it is NOT an OOM). Fix by
-            # scheduling priority, NOT by dropping workers: raise the runner/agent
-            # (nice -15) and lower every Docker test-container process (nice +15),
-            # re-applied every few seconds because Playwright keeps forking new
-            # headless_shell workers. Batched into two renice calls to stay cheap.
-            # Must run on ALL runner types (self-hosted and Katapult cloud) — the
-            # high CPU load affects the agent heartbeat on both.
+            # Root cause of build-test-katapult infrastructure_fail ("This job
+            # appears to have stopped responding"): during the parallel test phase
+            # load runs to ~30 on the 16-CPU VM (the Playwright container alone
+            # peaks at ~700% CPU) and the CircleCI agent can't get CPU to send its
+            # heartbeat, so the control plane declares the VM dead. Memory is fine,
+            # swap stays unused, iowait ~0 — it is purely CPU scheduling, NOT an OOM
+            # or disk problem. Fix by scheduling priority, NOT by dropping workers.
+            #
+            # DEMOTE the load, do NOT boost the agent. An earlier version raised the
+            # agent to nice -15, but a negative nice is INHERITED by every process
+            # the agent spawns — in build 18723 the vitest/Go/Playwright drivers all
+            # ran at nice -15 too (ps STAT "S<l+") and competed with the heartbeat at
+            # the same top priority, so boosting the agent boosted the load with it
+            # and the heartbeat was still starved. Instead: push every Docker
+            # container process hard down (nice +19) and pin the agent at default
+            # priority (0, never negative so nothing inherits a boost). The heartbeat
+            # then reliably out-schedules the +19 test workload. Re-applied every few
+            # seconds because Playwright keeps forking new headless_shell workers.
+            # Must run on ALL runner types (self-hosted and Katapult cloud).
             (
               while true; do
-                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | tr '\n' ' ')
-                [ -n "$agent_pids" ] && sudo renice -n -15 -p $agent_pids >/dev/null 2>&1 || true
                 docker_pids=""
                 for pp in /proc/[0-9]*; do
-                  grep -qa 'docker' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
+                  grep -qa 'docker\|containerd' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
                 done
-                [ -n "$docker_pids" ] && sudo renice -n 15 -p $docker_pids >/dev/null 2>&1 || true
-                sleep 5
+                [ -n "$docker_pids" ] && sudo renice -n 19 -p $docker_pids >/dev/null 2>&1 || true
+                # Also demote NATIVE (non-container) test-runner processes. Vitest
+                # runs natively on Katapult and, with the test drivers, are top CPU
+                # consumers at the agent's own priority — during the parallel-phase
+                # ramp (load spikes to ~40 on 16 cores) they starve the agent's
+                # heartbeat and the control plane declares the VM dead. Containerised
+                # runners are already +19; re-applying is harmless.
+                test_pids=$(pgrep -f 'vitest|playwright|phpunit|go-build|/test/|artisan test' 2>/dev/null | tr '\n' ' ')
+                [ -n "$test_pids" ] && sudo renice -n 19 -p $test_pids >/dev/null 2>&1 || true
+                # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
+                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
+                [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
+                sleep 2
               done
             ) &
-            echo "CPU priority watchdog running: agent nice -15, docker containers nice +15"
+            echo "CPU priority watchdog running: docker containers + native test runners nice +19, agent pinned to nice 0"
 
             while true; do
               echo ""
@@ -302,6 +321,16 @@ commands:
           auto_rerun_delay: 10s
           command: |
             echo "<< parameters.reason >>"
+
+            # Authenticate to Docker Hub to escape the shared-IP anonymous pull
+            # rate limit (toomanyrequests on redis/traefik/etc). Read-only PAT from
+            # the DOCKERHUB_* CircleCI env vars; safe no-op when they are not set.
+            if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Logging in to Docker Hub as ${DOCKERHUB_USERNAME:-freeglegeeks}..."
+              echo "$DOCKERHUB_TOKEN" | docker login -u "${DOCKERHUB_USERNAME:-freeglegeeks}" --password-stdin \
+                && echo "Docker Hub login OK" \
+                || echo "Docker Hub login failed - continuing unauthenticated"
+            fi
 
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
@@ -347,6 +376,17 @@ commands:
                 && echo "Done — daemon config updated" \
                 || echo "⚠️  Could not update daemon.json (non-critical)"
             fi
+            # The mirror may be in daemon.json (from VM provisioning) yet NOT loaded
+            # by the running dockerd (started before the config, or never reloaded),
+            # so pulls bypass the mirror and hit Docker Hub directly (toomanyrequests).
+            # Verify the RUNNING daemon has it; reload (then restart) if not.
+            if ! docker info 2>/dev/null | grep -q "185.44.254.6:5000"; then
+              echo "Mirror absent from running daemon — reloading docker to load registry-mirrors..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 3
+            fi
+            echo "Registry mirrors in running daemon:"
+            docker info 2>/dev/null | grep -A2 "Registry Mirrors" || echo "  (none reported)"
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
               docker system prune -f || true

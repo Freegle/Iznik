@@ -526,24 +526,27 @@ describe('ModPhotoModal', () => {
       expect(closeBtn.attributes('data-variant')).toBe('white')
     })
 
-    it('has Close button and AI-delete modal buttons', () => {
+    it('renders only the Close button (AI-delete modal removed)', () => {
       const wrapper = mountComponent()
       const buttons = wrapper.findAll('button')
-      // Close + "Not relevant" + "Bad AI image" + Cancel = 4
-      expect(buttons.length).toBe(4)
+      // The "bad AI image for any post" control moved to the AI Images page, so the
+      // only button left in this modal is Close.
+      expect(buttons.length).toBe(1)
+      expect(buttons[0].text()).toBe('Close')
     })
   })
 
-  describe('AI image deletion modal', () => {
-    it('renders AI-delete choice buttons', () => {
+  describe('AI image removal (no modal)', () => {
+    it('no longer renders the AI-delete choice buttons', () => {
       const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Not relevant to this post')
-      expect(wrapper.text()).toContain('Bad AI image for any post of this item')
+      expect(wrapper.text()).not.toContain('Not relevant to this post')
+      expect(wrapper.text()).not.toContain(
+        'Bad AI image for any post of this item'
+      )
     })
 
-    it('calls patch without badAIImages for non-AI attachment on removePhoto', async () => {
+    it('removePhoto patches directly for a non-AI attachment', async () => {
       const wrapper = mountComponent()
-      // Default attachment has no ai:true in mods — non-AI path
       await wrapper.vm.removePhoto(123)
       await flushPromises()
 
@@ -553,31 +556,7 @@ describe('ModPhotoModal', () => {
       })
     })
 
-    it('calls patch with badAIImages when doRemove called with isBadForAnyPost=true', async () => {
-      const wrapper = mountComponent()
-      await wrapper.vm.doRemove(123, true)
-      await flushPromises()
-
-      expect(mockMessageStore.patch).toHaveBeenCalledWith({
-        id: 456,
-        attachments: [124, 125],
-        badAIImages: [123],
-      })
-    })
-
-    it('calls patch without badAIImages when doRemove called with isBadForAnyPost=false', async () => {
-      const wrapper = mountComponent()
-      await wrapper.vm.doRemove(123, false)
-      await flushPromises()
-
-      expect(mockMessageStore.patch).toHaveBeenCalledWith({
-        id: 456,
-        attachments: [124, 125],
-      })
-    })
-
-    it('shows AI delete modal for AI attachment on removePhoto', async () => {
-      // Attachment with ai:true externalmods
+    it('removePhoto patches an AI attachment directly without intercepting via a modal', async () => {
       const wrapper = mountComponent({
         attachmentid: 200,
         _messageData: {
@@ -593,57 +572,31 @@ describe('ModPhotoModal', () => {
       await wrapper.vm.removePhoto(200)
       await flushPromises()
 
-      // Should NOT have patched yet (modal intercepts)
-      expect(mockMessageStore.patch).not.toHaveBeenCalled()
-      // pendingRemoveId should be set
-      expect(wrapper.vm.pendingRemoveId).toBe(200)
-    })
-
-    it('calls patch with badAIImages after confirmRemove(true)', async () => {
-      const wrapper = mountComponent({
-        attachmentid: 200,
-        _messageData: {
-          id: 456,
-          subject: 'Test',
-          attachments: [
-            { id: 200, externalmods: JSON.stringify({ ai: true }) },
-            { id: 201 },
-          ],
-        },
-      })
-
-      await wrapper.vm.removePhoto(200)
-      await wrapper.vm.confirmRemove(true)
-      await flushPromises()
-
-      expect(mockMessageStore.patch).toHaveBeenCalledWith({
-        id: 456,
-        attachments: [201],
-        badAIImages: [200],
-      })
-    })
-
-    it('calls patch without badAIImages after confirmRemove(false)', async () => {
-      const wrapper = mountComponent({
-        attachmentid: 200,
-        _messageData: {
-          id: 456,
-          subject: 'Test',
-          attachments: [
-            { id: 200, externalmods: JSON.stringify({ ai: true }) },
-            { id: 201 },
-          ],
-        },
-      })
-
-      await wrapper.vm.removePhoto(200)
-      await wrapper.vm.confirmRemove(false)
-      await flushPromises()
-
+      // Patches immediately — no "why are you removing it?" modal.
       expect(mockMessageStore.patch).toHaveBeenCalledWith({
         id: 456,
         attachments: [201],
       })
+    })
+
+    it('never sends badAIImages in the patch payload', async () => {
+      const wrapper = mountComponent({
+        attachmentid: 200,
+        _messageData: {
+          id: 456,
+          subject: 'Test',
+          attachments: [
+            { id: 200, externalmods: JSON.stringify({ ai: true }) },
+            { id: 201 },
+          ],
+        },
+      })
+
+      await wrapper.vm.removePhoto(200)
+      await flushPromises()
+
+      const payload = mockMessageStore.patch.mock.calls[0][0]
+      expect(payload).not.toHaveProperty('badAIImages')
     })
   })
 })

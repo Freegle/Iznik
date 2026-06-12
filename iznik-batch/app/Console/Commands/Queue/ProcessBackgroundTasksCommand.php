@@ -428,6 +428,22 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Reopen any 'Closed' chat rosters for a chat so it reappears in the
+     * recipient's chat list after a new message. The ModTools chat list filters
+     * out rooms whose roster status is 'Closed' (iznik-server-go
+     * chat/chatroom.go), so a mod who had previously closed a User2Mod chat would
+     * not see it again even after sending a modmail to it (Discourse #9481/541).
+     * Mirrors the reopen in V2 CreateChatMessage; 'Blocked' rosters are left as-is.
+     */
+    protected function reopenClosedRosters(int $chatId): void
+    {
+        DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('status', 'Closed')
+            ->update(['status' => 'Offline']);
+    }
+
+    /**
      * Handle mod standard message emails (approve, reject, reply).
      *
      * Looks up the message poster, group, and mod info, then:
@@ -582,6 +598,13 @@ class ProcessBackgroundTasksCommand extends Command
                     'processingrequired' => 0,
                     'processingsuccessful' => 1,
                 ]);
+
+                // Reopen any closed rosters so the chat reappears in the acting
+                // mod's (and the member's) chat list, mirroring V2 CreateChatMessage
+                // (iznik-server-go chat/chatmessage.go). Without this, a chat the mod
+                // had previously closed stays hidden from their ModTools chats list
+                // even after they send this modmail (Discourse #9481/541).
+                $this->reopenClosedRosters((int) $chatRoom->id);
             }
         }
 
@@ -714,6 +737,10 @@ class ProcessBackgroundTasksCommand extends Command
                     ['chatid', 'userid'],
                     ['lastmsgemailed', 'lastemailed']
                 );
+
+                // Reopen any closed rosters so the chat reappears in the acting
+                // mod's (and the member's) chat list — see reopenClosedRosters().
+                $this->reopenClosedRosters((int) $chatRoom->id);
             }
 
             // Only create the User/Mailed log for email_mod_stdmsg (direct mod message to member).

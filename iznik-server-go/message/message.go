@@ -938,7 +938,7 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 		if err1 == nil && err2 == nil {
 			msgs := []MessageSummary{}
 
-			sql := "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, " +
+			sql := "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, " +
 				"messages_spatial.id AS spatialid, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, " +
@@ -1101,7 +1101,17 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 			expireTime = maxReposts
 		}
 
-		daysAgo := int(now.Sub(m.Arrival).Hours() / 24)
+		// Age the post against the same expireTime V1 uses (maxagetoshow /
+		// EXPIRE_TIME = 90 days, or the repost window). For Rejected posts age by
+		// the ORIGINAL date (messages.date) rather than arrival: a rejected post's
+		// arrival can be recent while the post itself is years old, which would
+		// otherwise keep a long-dead rejected message in the member's active posts
+		// (Discourse topic 9481/561). V1 capped a member's own posts by age too.
+		ageBasis := m.Arrival
+		if m.Collection == utils.COLLECTION_REJECTED && !m.Date.IsZero() {
+			ageBasis = m.Date
+		}
+		daysAgo := int(now.Sub(ageBasis).Hours() / 24)
 		if daysAgo > expireTime {
 			candidateIDs = append(candidateIDs, m.ID)
 			candidateIndices[m.ID] = append(candidateIndices[m.ID], i)
@@ -2699,9 +2709,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
-	// Reconstruct subject from type + item + location when item/type/location changed
-	//.
-	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil {
+	// Reconstruct subject from type + item + location when item/type/location changed,
+	// but ONLY when the caller did not supply an explicit subject.  An explicit subject
+	// always wins — passing msgtype alongside a new subject must not silently clobber it.
+	if req.Subject == nil && (req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil) {
 		var msgType string
 		var itemName *string
 		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
@@ -3032,16 +3043,19 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			return err
 		}
 
-		// Remove any AI attachment whenever textbody is updated (both cases).
+		// TN's textbody is the authoritative photo set for its posts.  Whenever TN
+		// sends a textbody (even an empty one) we delete ALL existing attachments and
+		// then let the scraper add the new set (if pic links were present).
+		//
+		// This fixes two bugs:
+		//   #2 — textbody with no pic links: old non-AI photos were left behind.
+		//   #3 — textbody with new pic links: old non-AI photos coexisted with the new ones.
+		//
+		// recordAIDeletions is called with an empty keep-list so any AI attachment is
+		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
-			var aiCount int64
-			db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-				msgID, `%"ai":true%`).Scan(&aiCount)
-			if aiCount > 0 {
-				recordAIDeletions(db, myid, msgID, []uint64{}, nil)
-				db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-					msgID, `%"ai":true%`)
-			}
+			recordAIDeletions(db, myid, msgID, []uint64{}, nil)
+			db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 		}
 
 		// If TN photos were present, scrape them and store as attachments.

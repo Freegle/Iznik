@@ -279,7 +279,7 @@ describe('chat store', () => {
   })
 
   describe('unhide', () => {
-    it('sets chat status to Online and resets showClosed', async () => {
+    it('sets chat status to Online without resetting showClosed', async () => {
       const store = useChatStore()
       store.config = {}
       store.listByChatId[7] = { id: 7, status: 'Closed' }
@@ -291,7 +291,9 @@ describe('chat store', () => {
 
       expect(mockUnHideChat).toHaveBeenCalledWith(7)
       expect(store.listByChatId[7].status).toBe('Online')
-      expect(store.showClosed).toBe(false)
+      // showClosed must be preserved so the user stays on the hidden-chats view
+      // when selectively unhiding (#9690/14).
+      expect(store.showClosed).toBe(true)
     })
   })
 

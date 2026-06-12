@@ -5,11 +5,13 @@ namespace App\Console\Commands\Mail;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Traits\FeatureFlags;
 use App\Services\UnifiedDigestService;
+use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 
 class SendUnifiedDigestCommand extends Command
 {
     use FeatureFlags;
+    use GracefulShutdown;
     use PreventsOverlapping;
 
     /**
@@ -71,6 +73,13 @@ class SendUnifiedDigestCommand extends Command
 
     protected function doHandle(UnifiedDigestService $service): int
     {
+        // SIGTERM/SIGINT (and an optional abort file) flip a flag the service
+        // checks between users (daily) or between groups (immediate), so a
+        // long --mode=daily run can be drained cleanly without tearing a
+        // per-user spool write. The 2026-06-11 manual rollout had to be
+        // SIGTERM'd with no graceful path; this wires one in for next time.
+        $this->registerShutdownHandlers();
+
         $mode = $this->option('mode');
         $userId = $this->option('user') ? (int) $this->option('user') : null;
         $groupId = $this->option('group') ? (int) $this->option('group') : null;
@@ -142,14 +151,24 @@ class SendUnifiedDigestCommand extends Command
         // read its keys regardless of which mode ran.
         $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'no_new_posts' => 0, 'errors' => 0];
 
+        $shouldStop = fn () => $this->shouldStop();
+
         for ($i = 0; $i < $maxIterations; $i++) {
-            $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
+            $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards, $shouldStop);
 
             // Daily mode returns a different stat shape — match keys best-effort.
             foreach (['groups_processed', 'users_processed', 'emails_sent', 'no_new_posts_groups', 'no_new_posts', 'errors'] as $k) {
                 if (isset($r[$k])) {
                     $stats[$k] += $r[$k];
                 }
+            }
+
+            // Service signalled a clean stop (SIGTERM/SIGINT/abort-file) —
+            // break the outer max-iterations loop too rather than starting
+            // a fresh batch.
+            if (!empty($r['stopped'])) {
+                $this->info('Shutdown signal received — stopped between batches.');
+                break;
             }
 
             // Sleep briefly between idle iterations so we don't hammer

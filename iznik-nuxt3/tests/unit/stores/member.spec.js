@@ -2,15 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 const mockReviewIgnore = vi.fn().mockResolvedValue()
+const mockRemoveMember = vi.fn().mockResolvedValue()
 const mockFetchMembers = vi.fn()
 const mockMergeAsk = vi.fn().mockResolvedValue()
 const mockMergeIgnore = vi.fn().mockResolvedValue()
+const mockMembershipsUpdate = vi.fn().mockResolvedValue({ ret: 0 })
 
 vi.mock('~/api', () => ({
   default: () => ({
     memberships: {
       reviewIgnore: mockReviewIgnore,
+      remove: mockRemoveMember,
       fetchMembers: mockFetchMembers,
+      update: mockMembershipsUpdate,
     },
     merge: {
       ask: mockMergeAsk,
@@ -28,6 +32,14 @@ vi.mock('~/stores/auth', () => ({
   }),
 }))
 
+const mockUserStoreFetch = vi.fn().mockResolvedValue({})
+
+vi.mock('~/stores/user', () => ({
+  useUserStore: () => ({
+    fetch: mockUserStoreFetch,
+  }),
+}))
+
 describe('member store', () => {
   let useMemberStore
 
@@ -39,26 +51,40 @@ describe('member store', () => {
   })
 
   describe('spamignore', () => {
-    it('removes entire user entry on ignore (backend clears all mod groups at once)', async () => {
+    it('removes only acted-on group and keeps entry when other memberships remain (Discourse #9481)', async () => {
+      // The backend is now per-group: ReviewIgnore only clears the one group clicked
+      // (reverted in commit 4749246f6 from the all-groups approach in e67355026).
+      // The frontend must keep the store entry when other memberships remain so the
+      // card stays visible for groups still under review.
       const store = useMemberStore()
       store.config = {}
 
-      // Simulate a member in review on two groups.
       store.list[123] = {
         id: 123,
         userid: 456,
         memberships: [
-          { id: 111, groupid: 789, membershipid: 111 },
-          { id: 222, groupid: 999, membershipid: 222 },
+          {
+            id: 111,
+            groupid: 789,
+            membershipid: 111,
+            reviewrequestedat: '2024-01-01T10:00:00Z',
+          },
+          {
+            id: 222,
+            groupid: 999,
+            membershipid: 222,
+            reviewrequestedat: '2024-01-01T10:00:00Z',
+          },
         ],
       }
 
-      // Ignore on group 789 — backend now clears ALL mod groups, so the
-      // whole entry should be removed immediately (Discourse #9618 fix).
       await store.spamignore({ userid: 456, groupid: 789 })
 
       expect(mockReviewIgnore).toHaveBeenCalledWith(456, 789)
-      expect(store.list[123]).toBeUndefined()
+      // Entry kept — group 999 still has a pending review.
+      expect(store.list[123]).toBeDefined()
+      expect(store.list[123].memberships.length).toBe(1)
+      expect(store.list[123].memberships[0].groupid).toBe(999)
     })
 
     it('removes entire entry when single membership is ignored', async () => {
@@ -72,6 +98,48 @@ describe('member store', () => {
       }
 
       await store.spamignore({ userid: 456, groupid: 789 })
+
+      expect(store.list[123]).toBeUndefined()
+    })
+  })
+
+  describe('remove - Spam review context', () => {
+    beforeEach(() => {
+      mockRemoveMember.mockResolvedValue()
+    })
+
+    it('keeps entry when other memberships remain after remove (Discourse #9481)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      store.list[123] = {
+        id: 123,
+        userid: 456,
+        memberships: [
+          { id: 111, groupid: 789, membershipid: 111 },
+          { id: 222, groupid: 999, membershipid: 222 },
+        ],
+      }
+
+      await store.remove(456, 789)
+
+      // Entry kept — group 999 still listed for review.
+      expect(store.list[123]).toBeDefined()
+      expect(store.list[123].memberships.length).toBe(1)
+      expect(store.list[123].memberships[0].groupid).toBe(999)
+    })
+
+    it('removes entire entry when only membership is removed in Spam context', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      store.list[123] = {
+        id: 123,
+        userid: 456,
+        memberships: [{ id: 111, groupid: 789, membershipid: 111 }],
+      }
+
+      await store.remove(456, 789)
 
       expect(store.list[123]).toBeUndefined()
     })
@@ -176,7 +244,11 @@ describe('member store', () => {
 
       const store = useMemberStore()
       store.config = {}
-      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+      })
 
       expect(store.context).toBe(456)
     })
@@ -197,7 +269,11 @@ describe('member store', () => {
       const store = useMemberStore()
       store.config = {}
 
-      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+      })
       await store.fetchMembers({
         collection: 'Approved',
         groupid: 1,
@@ -219,7 +295,11 @@ describe('member store', () => {
 
       const store = useMemberStore()
       store.config = {}
-      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+      })
 
       expect(store.context).toBeNull()
     })
@@ -327,6 +407,76 @@ describe('member store', () => {
       expect(store.list[100].displayname).toBe('Existing')
       // New synthetic entry for user 200 should exist.
       expect(store.list[200]._syntheticRelated).toBe(true)
+    })
+  })
+
+  /*
+   * Regression — Discourse #9481 post 545 ("Trainee not showing as a Mod in
+   * the group logs"). PATCH /memberships with a `role` triggers V1's
+   * setRole -> updateSystemRole UPDATE on users.systemrole, but the
+   * cached userStore entry stays stale and ModLogUser's crown gate keeps
+   * failing on the next render. memberStore.update must force-refresh the
+   * userStore entry whenever the patch carries a role.
+   */
+  describe('update — force-refresh userStore on role change', () => {
+    it('calls userStore.fetch(userid, true) when params include a role', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ userid: 42, groupid: 7, role: 'Moderator' })
+
+      expect(mockMembershipsUpdate).toHaveBeenCalledWith({
+        userid: 42,
+        groupid: 7,
+        role: 'Moderator',
+      })
+      expect(mockUserStoreFetch).toHaveBeenCalledTimes(1)
+      expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
+    })
+
+    it('force-refreshes on demote too (role=Member clears users.systemrole when no other Mod groups remain)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ userid: 42, groupid: 7, role: 'Member' })
+
+      expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
+    })
+
+    it('does NOT force-refresh when params lack a role (e.g. emailfrequency-only patch)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ userid: 42, groupid: 7, emailfrequency: 24 })
+
+      expect(mockMembershipsUpdate).toHaveBeenCalled()
+      expect(mockUserStoreFetch).not.toHaveBeenCalled()
+    })
+
+    it('does NOT force-refresh when role is set but userid is missing (defensive: bad caller, nothing to invalidate)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ groupid: 7, role: 'Moderator' })
+
+      expect(mockUserStoreFetch).not.toHaveBeenCalled()
+    })
+
+    it('returns the API response untouched (force-refresh is a side-effect, not a transform)', async () => {
+      mockMembershipsUpdate.mockResolvedValueOnce({
+        ret: 0,
+        status: 'Success',
+      })
+      const store = useMemberStore()
+      store.config = {}
+
+      const data = await store.update({
+        userid: 42,
+        groupid: 7,
+        role: 'Moderator',
+      })
+
+      expect(data).toEqual({ ret: 0, status: 'Success' })
     })
   })
 })

@@ -1325,6 +1325,9 @@ func isValidRedirectURL(url string) bool {
 	// Allow modtools.org for moderator chat links
 	allowedDomains = append(allowedDomains, "modtools.org")
 
+	// Allow freegle.in for Freegle PayPal short links (e.g. donate CTA)
+	allowedDomains = append(allowedDomains, "freegle.in")
+
 	for _, domain := range allowedDomains {
 		if strings.Contains(url, domain) {
 			return true

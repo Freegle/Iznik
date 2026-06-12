@@ -221,13 +221,15 @@ class ContentCheckServiceTest extends TestCase
     }
 
     // =========================================================================
-    // checkPhoneNumbers — public, pure regex
+    // checkPhoneNumbers — gated by group restrictpersonalinfo rule
     // =========================================================================
 
     #[DataProvider('phoneNumberProvider')]
     public function test_check_phone_numbers(string $subject, string $body, bool $expectFlag): void
     {
-        $result = $this->service->checkPhoneNumbers($subject, $body);
+        // Phone number check is gated by restrictpersonalinfo; use a group that has it set.
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
+        $result = $this->service->checkPhoneNumbers($subject, $body, $group->id);
 
         if ($expectFlag) {
             $this->assertNotNull($result);
@@ -236,6 +238,15 @@ class ContentCheckServiceTest extends TestCase
         } else {
             $this->assertNull($result);
         }
+    }
+
+    public function test_check_phone_numbers_not_flagged_without_group_rule(): void
+    {
+        // Groups without restrictpersonalinfo must not have posts flagged for phone numbers.
+        $group = $this->createTestGroup();
+        $result = $this->service->checkPhoneNumbers('', 'Call 07911 123456 for details', $group->id);
+
+        $this->assertNull($result, 'Phone number must not flag when group has no restrictpersonalinfo rule');
     }
 
     public static function phoneNumberProvider(): array
@@ -316,6 +327,66 @@ class ContentCheckServiceTest extends TestCase
             'both symbols'           => ['£ and $ offer', 'text', true],
             'euro symbol no flag'    => ['', '€100 value', false],
             'hash no flag'           => ['', '#100', false],
+        ];
+    }
+
+    // =========================================================================
+    // checkNotAnItem — public, pure (non-physical-item detection)
+    // Positive/negative cases are drawn from the production reject log.
+    // =========================================================================
+
+    #[DataProvider('notAnItemProvider')]
+    public function test_check_not_an_item(string $subject, string $body, ?string $category): void
+    {
+        $result = $this->service->checkNotAnItem($subject, $body);
+
+        if ($category === null) {
+            $this->assertNull($result, "Expected NO flag for: {$subject} {$body}");
+        } else {
+            $this->assertNotNull($result, "Expected a flag for: {$subject} {$body}");
+            $this->assertSame(ContentCheckService::CHECK_NOT_AN_ITEM, $result['check']);
+            $this->assertSame('flag', $result['action']);
+            $this->assertSame($category, $result['category']);
+        }
+    }
+
+    public static function notAnItemProvider(): array
+    {
+        return [
+            // --- positives: flag, with expected category ---
+            'cleaner wanted'      => ['WANTED: Cleaner wanted', '', 'service'],
+            'man with a van'      => ['WANTED: Man with a Van', '', 'service'],
+            'man and car removal' => ['WANTED: man and car removal', '', 'service'],
+            'dog walker'          => ['WANTED: dog walker', '', 'service'],
+            'babysitter needed'   => ['WANTED: babysitter needed', '', 'service'],
+            'gardening service'   => ['OFFER: gardening service available', '', 'service'],
+            'services plural'     => ['OFFER: Services', '', 'service'],
+            'room to rent'        => ['OFFER: Room to rent', '', 'accommodation'],
+            'warehouse to rent'   => ['WANTED: Storage warehouse to rent', '', 'accommodation'],
+            'garage to rent'      => ['WANTED: Lockup garage to rent', '', 'accommodation'],
+            'lodger'              => ['WANTED: lodger wanted', '', 'accommodation'],
+            'job vacancy'         => ['', 'I have a job vacancy to fill', 'work'],
+            'part time job'       => ['WANTED: part time job', '', 'work'],
+            'food advice'         => ['WANTED: Food advice', '', 'advice'],
+
+            // --- negatives: real production items that must NOT trip ---
+            'vacuum cleaner'      => ['OFFER: Shark vacuum cleaner', '', null],
+            'patio cleaner'       => ['OFFER: Patio Cleaner', '', null],
+            'plain vacuum'        => ['WANTED: Vacuum cleaner', '', null],
+            'removal boxes'       => ['WANTED: Removal boxes', '', null],
+            'hair removal cream'  => ['OFFER: Nads hair removal cream', '', null],
+            'job lot'             => ['OFFER: job lot of books', '', null],
+            'dinner service'      => ['OFFER: Dinner service', '', null],
+            'ladder loan'         => ['WANTED: Ladder loan', '', null],
+            'loan camera'         => ['WANTED: Loan IR camera', '', null],
+            'gardeners world'     => ["OFFER: Gardener's World magazines", '', null],
+            'decorator spares'    => ['OFFER: Decorator spares', '', null],
+            'different items'     => ['WANTED: different items', '', null],
+            'lifted turf'         => ['OFFER: Lifted turf', '', null],
+            'guitar tutor'        => ['OFFER: Guitar tutor', '', null],
+            'plain sofa'          => ['WANTED: Sofa', '', null],
+            'garden soil'         => ['OFFER: Garden soil', '', null],
+            'motorway services'   => ['WANTED: footstool', 'Collection near the motorway services', null],
         ];
     }
 
@@ -430,7 +501,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_language_short_text_skipped(): void
     {
-        // Text <= 50 chars is never checked regardless of content
+        // Text <= 80 chars is never checked regardless of content
         $result = $this->service->checkLanguage('', 'Hola'); // 4 chars
         $this->assertNull($result);
     }
@@ -440,6 +511,31 @@ class ContentCheckServiceTest extends TestCase
         $text = 'I have a sofa and two chairs that I no longer need. They are in good condition and free to collect.';
         $result = $this->service->checkLanguage('', $text);
         $this->assertNull($result);
+    }
+
+    public function test_check_language_real_world_terse_english_reply_not_flagged(): void
+    {
+        // Regression: this exact production chat reply (chat_messages 108721900)
+        // was shown in ModTools chat review as "It might not be in English". At 60
+        // chars it now falls below the 80-char detection gate, so it is no longer
+        // checked — it was a false positive (terse English the library misranks as
+        // a Latinate conlang). Uses the REAL detector (not a mock).
+        $text = "Yes please can collect.Paul\n\nPossible collection times: Asap";
+        $this->assertLessThan(80, strlen(trim($text)));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Terse English reply must not be flagged as non-English');
+    }
+
+    public function test_check_language_long_english_not_flagged_with_restricted_set(): void
+    {
+        // Longer English (>80 chars) where the FULL library would rank a Latinate
+        // conlang (Interlingua/Occitan) top; with the restricted UK language set
+        // English ranks top, so it is accepted. Uses the REAL detector to lock in
+        // that the restricted set prevents conlang false positives (Discourse #9481).
+        $text = 'Hi there, yes I would love these if still available, I can come and collect them this afternoon if that suits you, thank you so much';
+        $this->assertGreaterThan(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Long English must rank English top with the restricted set and not be flagged');
     }
 
     public function test_check_language_xxx_stripped_before_check(): void
@@ -457,6 +553,30 @@ class ContentCheckServiceTest extends TestCase
         $result = $this->service->checkLanguage('', $text);
         // Language detection may or may not flag this; we assert the return type is correct
         $this->assertTrue($result === null || $result['check'] === ContentCheckService::CHECK_LANGUAGE);
+    }
+
+    public function test_check_language_text_below_80_chars_skipped(): void
+    {
+        // The detection gate was raised 50→80: detection is a coin-flip on short
+        // text, so a sub-80-char message is skipped before detection even if a
+        // detector would flag it. This is how terse English replies (Discourse
+        // #9481) stop being false-flagged.
+        $alwaysFlags = static fn(string $text) => ['fr' => 0.90, 'en' => 0.10];
+        $text = 'Yes please can collect this thanks very much';
+        $this->assertLessThanOrEqual(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text, $alwaysFlags);
+        $this->assertNull($result, 'Sub-80-char text must be skipped before language detection');
+    }
+
+    public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
+    {
+        // A message where the top language is far above the English probability
+        // (ratio 0.3, well below both 0.8 and 0.9) must still be flagged.
+        $nonEnglishDetector = static fn(string $text) => ['fr' => 0.70, 'en' => 0.21];
+        $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
+        $result = $this->service->checkLanguage('', $text, $nonEnglishDetector);
+        $this->assertNotNull($result);
+        $this->assertEquals(ContentCheckService::CHECK_LANGUAGE, $result['check']);
     }
 
     // =========================================================================

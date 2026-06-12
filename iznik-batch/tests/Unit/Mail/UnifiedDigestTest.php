@@ -3,7 +3,9 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
+use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Illuminate\Mail\Mailable;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
@@ -24,16 +26,19 @@ class UnifiedDigestTest extends TestCase
     }
 
     /**
-     * Spool the mailable and return the decoded spool-file array. This is
-     * how the real mail path captures everything (subject, body, all custom
-     * headers, reply-to) — so assertions here exercise the actual
-     * production capture pipeline rather than poking at Symfony internals.
+     * Spool the mailable and return the decoded spool file data.
+     *
+     * @return array{from: array, reply_to: array, headers: array, html: string, ...}
      */
-    private function spoolAndLoad(UnifiedDigest $mail, string $recipient): array
+    private function spoolAndLoad(Mailable $mailable, string $recipient): array
     {
-        $id = $this->spooler->spool($mail, $recipient);
-        return json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $id = $this->spooler->spool($mailable, $recipient);
+        $path = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $data = json_decode(file_get_contents($path), true);
+
+        return $data ?? [];
     }
+
 
     public function test_can_be_constructed(): void
     {
@@ -660,6 +665,57 @@ class UnifiedDigestTest extends TestCase
         // mangle it). Look for the distinct first-line tail.
         $this->assertStringContainsString('First line of description', $html);
         $this->assertStringContainsString('New paragraph after blank', $html);
+    }
+
+    public function test_daily_no_photo_post_shows_type_specific_placeholder(): void
+    {
+        // A daily-digest post with no photo renders a TYPE-SPECIFIC placeholder
+        // (green OFFER / blue WANTED, matching the in-app MessagePhotoPlaceholder)
+        // rather than a real photo. An OFFER post must use the OFFER placeholder
+        // and a WANTED post the WANTED placeholder — never each other's.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        // No attachment → no photo → isPlaceholder → type placeholder.
+        $offerMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Coloplast supplies (Craigmount EH12)',
+            'type' => 'Offer',
+        ]);
+        $wantedMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'WANTED: Child\'s bike (Craigmount EH12)',
+            'type' => 'Wanted',
+        ]);
+
+        $posts = collect([
+            ['message' => $offerMsg, 'postedToGroups' => [$group->id]],
+            ['message' => $wantedMsg, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled HTML body should not be empty');
+
+        $offerPlaceholder = config('freegle.images.offer_placeholder');
+        $wantedPlaceholder = config('freegle.images.wanted_placeholder');
+        $this->assertNotEmpty($offerPlaceholder, 'offer_placeholder config should be set');
+        $this->assertNotEmpty($wantedPlaceholder, 'wanted_placeholder config should be set');
+
+        $this->assertStringContainsString(
+            $offerPlaceholder,
+            $html,
+            'A photo-less OFFER post should render the OFFER placeholder image'
+        );
+        $this->assertStringContainsString(
+            $wantedPlaceholder,
+            $html,
+            'A photo-less WANTED post should render the WANTED placeholder image'
+        );
     }
 
     public function test_amp_content_excluded_when_disabled(): void

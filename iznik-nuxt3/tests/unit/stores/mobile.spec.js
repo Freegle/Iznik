@@ -75,7 +75,7 @@ vi.stubGlobal('useRuntimeConfig', () => ({
 const mockRouterPush = vi.fn()
 vi.stubGlobal('useRouter', () => ({
   push: mockRouterPush,
-  currentRoute: { path: '/' },
+  currentRoute: { value: { path: '/' } },
 }))
 
 describe('mobile store', () => {
@@ -591,6 +591,248 @@ describe('mobile store', () => {
       await store.getDeviceInfo(mockDevice)
 
       expect(store.deviceuserinfo).toBe('android 13')
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('initDeepLinks', () => {
+    let store
+    let capturedListener
+    let mockApp
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'appUrlOpen') capturedListener = fn
+        }),
+      }
+      // initDeepLinks guards with `if (process.client)`; enable it for tests.
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    async function triggerDeepLink(url) {
+      vi.useFakeTimers()
+      store.initDeepLinks(mockApp)
+      expect(capturedListener).not.toBeNull()
+      await capturedListener({ url })
+      vi.runAllTimers()
+    }
+
+    it('navigates to /chats/:id for a current-format chat deep link', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('https://www.ilovefreegle.org/chats/12345')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('rewrites old /chat/:id deep link to /chats/:id', async () => {
+      // AssertFlip: before the fix initDeepLinks has no /chat/ → /chats/ replacement,
+      // so push is called with '/chat/12345' (wrong). After fix it is '/chats/12345'.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('https://www.ilovefreegle.org/chat/12345')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('does not navigate for a URL that does not contain ilovefreegle.org', async () => {
+      // AssertFlip: before the fix `ilfpos !== false` is always true (indexOf never
+      // returns false), so a freegle:// URL navigates to substring(15) = '/12345'.
+      // After fix `ilfpos !== -1` correctly skips non-ilovefreegle.org URLs.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('freegle://chats/12345')
+
+      expect(mockRouterPush).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('reRegisterPush', () => {
+    function makePushPlugin(receive = 'granted') {
+      return {
+        checkPermissions: vi.fn().mockResolvedValue({ receive }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+    }
+
+    beforeEach(() => {
+      // reRegisterPush guards with `if (!process.client ...)`; enable the
+      // client environment so the checkPermissions/register path runs (same
+      // pattern as the initDeepLinks and other native-guarded blocks above).
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    it('calls register() on a native app with a stored plugin and granted permission', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = makePushPlugin('granted')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.checkPermissions).toHaveBeenCalled()
+      expect(plugin.register).toHaveBeenCalled()
+    })
+
+    it('does NOT call register() when not on the app', async () => {
+      const store = useMobileStore()
+      store.isApp = false
+      const plugin = makePushPlugin('granted')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call register() when no plugin reference is stored', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      store.pushPlugin = null
+
+      // Should simply no-op without throwing.
+      await expect(store.reRegisterPush()).resolves.toBeUndefined()
+    })
+
+    it('does NOT call register() when permission is not granted', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = makePushPlugin('denied')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.checkPermissions).toHaveBeenCalled()
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('swallows errors thrown during re-registration', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockRejectedValue(new Error('boom')),
+      }
+      store.pushPlugin = plugin
+
+      await expect(store.reRegisterPush()).resolves.toBeUndefined()
+    })
+  })
+
+  describe('initWakeUpActions resume handler', () => {
+    let store
+    let capturedListener
+    let mockApp
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'resume') capturedListener = fn
+        }),
+      }
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    it('re-registers push on resume when on a native app', async () => {
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+
+      store.initWakeUpActions(mockApp)
+      expect(capturedListener).not.toBeNull()
+
+      await capturedListener({})
+      // Allow the async reRegisterPush() to settle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      expect(plugin.register).toHaveBeenCalled()
+    })
+
+    it('does not re-register push on resume when not on the app', async () => {
+      store.isApp = false
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+
+      store.initWakeUpActions(mockApp)
+      await capturedListener({})
+      await Promise.resolve()
+      await Promise.resolve()
+
+      // Existing resume behaviour still runs.
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      // But registration is not re-triggered off-app.
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('handleNotification duplicate-navigation guard', () => {
+    it('skips router.push when already on the target chat route', async () => {
+      // AssertFlip: before the fix, router.currentRoute.path is accessed directly
+      // on the Vue Router 4 Ref — which is undefined — so the guard never fires
+      // and push is always called. After fix, router.currentRoute.value.path is
+      // used and the guard correctly prevents redundant navigation.
+      vi.stubGlobal('useRouter', () => ({
+        push: mockRouterPush,
+        currentRoute: { value: { path: '/chats/12345' } },
+      }))
+
+      vi.mock('@capacitor/app', () => ({
+        App: { getState: () => Promise.resolve({ isActive: false }) },
+      }))
+
+      const store = useMobileStore()
+      store.config = { public: {} }
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          okToMove: true,
+          data: {
+            channel_id: 'chat_messages',
+            badge: '0',
+            modtools: '0',
+            route: '/chats/12345',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockRouterPush).not.toHaveBeenCalled()
+
+      // Restore default mock for subsequent tests.
+      vi.stubGlobal('useRouter', () => ({
+        push: mockRouterPush,
+        currentRoute: { value: { path: '/' } },
+      }))
       logSpy.mockRestore()
     })
   })

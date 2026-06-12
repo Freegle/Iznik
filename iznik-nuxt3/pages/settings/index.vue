@@ -124,10 +124,12 @@ const ProfileModal = defineAsyncComponent(() =>
 
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
 
 .settings-page {
   min-height: 100vh;
   background: $color-gray--lighter;
+  padding-bottom: $page-bottom-padding;
 }
 
 .settings-content {

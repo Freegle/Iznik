@@ -105,8 +105,10 @@ func TestCommentGetList(t *testing.T) {
 	assert.Nil(t, firstComment["user"])   // No nested user
 	assert.Nil(t, firstComment["byuser"]) // No nested byuser
 
-	// Context should be present for pagination
+	// Context should be present for pagination and contain an id field
 	assert.NotNil(t, result["context"])
+	ctx := result["context"].(map[string]interface{})
+	assert.NotNil(t, ctx["id"])
 
 	// Cleanup
 	db.Exec("DELETE FROM users_comments WHERE groupid = ?", groupID)
@@ -458,6 +460,78 @@ func TestCommentEditWithFlagOthers(t *testing.T) {
 	// Cleanup
 	db.Exec("DELETE FROM users_comments WHERE id = ?", commentID)
 	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
+}
+
+// TestCommentGetListPagination verifies that keyset pagination on `id` works:
+// page 1 (no context) returns 10 rows and a non-null context; page 2
+// (context = page-1's last id) returns the next distinct rows, not a repeat.
+func TestCommentGetListPagination(t *testing.T) {
+	prefix := uniquePrefix("cmget_page")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Insert 15 comments — some with reviewed=NULL (common for unreviewed notes)
+	// to confirm the id-based cursor handles NULLs correctly.
+	db := database.DBConn
+	for i := 0; i < 15; i++ {
+		if i%3 == 0 {
+			db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, flag) VALUES (?, ?, ?, ?, 0)",
+				targetID, groupID, modID, fmt.Sprintf("Note %d", i))
+		} else {
+			db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, flag, reviewed) VALUES (?, ?, ?, ?, 0, NOW())",
+				targetID, groupID, modID, fmt.Sprintf("Note %d", i))
+		}
+	}
+
+	// --- Page 1: no context ---
+	req1 := httptest.NewRequest("GET", fmt.Sprintf("/api/comment?groupid=%d&jwt=%s", groupID, modToken), nil)
+	resp1, _ := getApp().Test(req1)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var page1 map[string]interface{}
+	json2.Unmarshal(rsp(resp1), &page1)
+
+	page1Comments := page1["comments"].([]interface{})
+	assert.Equal(t, 10, len(page1Comments), "page 1 should return exactly 10 comments")
+
+	// Context must be non-null and contain an id
+	assert.NotNil(t, page1["context"], "page 1 context must be non-null")
+	page1Ctx := page1["context"].(map[string]interface{})
+	assert.NotNil(t, page1Ctx["id"], "page 1 context must have an id field")
+
+	// Collect page-1 ids
+	page1IDs := make(map[float64]bool)
+	for _, c := range page1Comments {
+		cm := c.(map[string]interface{})
+		page1IDs[cm["id"].(float64)] = true
+	}
+
+	// --- Page 2: use context id from page 1 ---
+	contextID := page1Ctx["id"].(float64)
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/comment?groupid=%d&context=%d&jwt=%s", groupID, int(contextID), modToken), nil)
+	resp2, _ := getApp().Test(req2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &page2)
+
+	page2Comments := page2["comments"].([]interface{})
+	assert.GreaterOrEqual(t, len(page2Comments), 1, "page 2 should return remaining comments")
+	assert.LessOrEqual(t, len(page2Comments), 10, "page 2 should return at most 10 comments")
+
+	// Page 2 must not repeat any id from page 1
+	for _, c := range page2Comments {
+		cm := c.(map[string]interface{})
+		id := cm["id"].(float64)
+		assert.False(t, page1IDs[id], "page 2 must not repeat ids from page 1 (got id %v)", id)
+	}
+
+	// Cleanup
+	db.Exec("DELETE FROM users_comments WHERE groupid = ?", groupID)
 }
 
 func TestCommentDeleteByAdmin(t *testing.T) {

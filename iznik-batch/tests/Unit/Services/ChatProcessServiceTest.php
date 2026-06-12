@@ -265,6 +265,51 @@ class ChatProcessServiceTest extends TestCase
         $this->assertEquals(1, $updated->processingsuccessful);
     }
 
+    // Regression: Discourse #9656. Once a member has a message held for review,
+    // EVERY subsequent message must also be held until a mod clears them. V1's
+    // chat_process daemon processed one message at a time, so the hold chain
+    // propagated naturally. This service processes a whole burst at once, and the
+    // chain query previously looked at the newest OTHER row (id != $id) — which,
+    // mid-batch, is a later not-yet-processed message with reviewrequired = 0, so
+    // the chain broke and innocuous messages between worry-word ones were
+    // delivered. The chain must follow the immediately preceding message.
+    public function test_hold_chain_propagates_across_a_burst_of_messages(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        // An earlier message from user1 is already held for review.
+        $this->createTestChatMessage($room, $user1, [
+            'reviewrequired' => 1,
+            'processingrequired' => 0,
+            'processingsuccessful' => 1,
+        ]);
+
+        // Two further innocuous messages arrive in the SAME batch (both pending).
+        // The second has the higher id, so under the old id != $id query it is the
+        // "newest other row" seen while processing the first.
+        $first = $this->createTestChatMessage($room, $user1, [
+            'message' => 'innocuous one',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+        $second = $this->createTestChatMessage($room, $user1, [
+            'message' => 'innocuous two',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $u1 = DB::table('chat_messages')->where('id', $first->id)->first();
+        $u2 = DB::table('chat_messages')->where('id', $second->id)->first();
+        $this->assertEquals(1, $u1->reviewrequired, 'message after a held one must also be held');
+        $this->assertEquals(1, $u2->reviewrequired, 'hold chain must continue through the whole burst');
+    }
+
     // --- Content checks for Moderated members (regression: Discourse #9706) ---
     //
     // V1 ChatMessage::process() ran Spam::checkReview() on Moderated members'

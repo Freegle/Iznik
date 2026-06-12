@@ -10,8 +10,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -65,6 +65,47 @@ func getExcludedPayers() []string {
 		}
 	}
 	return result
+}
+
+// MatchUserByEmailOrPriorDonation finds a still-valid Freegle user for a payer
+// email, mirroring V1 donateipn.php / User::findByEmail. It tries, in order:
+//
+//  1. an exact or canonical match against a registered address — V1 matched
+//     `email = ? OR canon = ?`, but the Go IPN handlers had dropped the canon
+//     leg, so variant addresses (gmail dots/+tags, googlemail, TN variants)
+//     stopped matching; and
+//  2. a prior donation from the same Payer that is already linked to a
+//     non-deleted user. This catches recurring donors whose Freegle email later
+//     changed or was removed while PayPal keeps billing the original address.
+//     The `users.deleted IS NULL` guard makes it merge-safe: a merged-away
+//     account is marked deleted (and its donations reassigned to the survivor),
+//     so we never re-link to a dead account — we just fall through to unmatched.
+//
+// Returns 0 when there is no confident match.
+func MatchUserByEmailOrPriorDonation(email string) uint64 {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return 0
+	}
+
+	gdb := database.DBConn
+	var userID uint64
+
+	// 1. Registered address, exact or canonical (reuses the shared util so the
+	//    canon form matches how addresses are stored).
+	canon := user.CanonicalizeEmail(email)
+	gdb.Raw("SELECT userid FROM users_emails WHERE (email = ? OR canon = ?) AND userid IS NOT NULL LIMIT 1",
+		email, canon).Scan(&userID)
+	if userID > 0 {
+		return userID
+	}
+
+	// 2. Prior donation from the same Payer, linked to a still-valid user.
+	gdb.Raw("SELECT ud.userid FROM users_donations ud "+
+		"JOIN users u ON u.id = ud.userid "+
+		"WHERE ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL "+
+		"ORDER BY ud.timestamp DESC LIMIT 1", email).Scan(&userID)
+	return userID
 }
 
 // GetDonations returns donation target and amount raised for the current month
@@ -208,11 +249,38 @@ func AddDonation(c *fiber.Ctx) error {
 
 	name := donor.Name
 
-	// Get preferred email: external email first, then any email.
+	// Get the donor's preferred email, mirroring V1 getEmailPreferred().
+	//
+	// First pass: prefer an external address, skipping our-domain aliases
+	// (@users.ilovefreegle.org, @groups.ilovefreegle.org, @direct.ilovefreegle.org,
+	// @republisher.freegle.in) and Yahoo Groups addresses. These are internal routing
+	// addresses, not the donor's real contact email.
+	//
+	// Second pass: if no external address exists (e.g. social-login-only users whose
+	// only email is the alias), fall back to any email including the alias.
 	db.Raw(`SELECT email FROM users_emails
 		WHERE userid = ?
-		ORDER BY preferred DESC, email ASC
-		LIMIT 1`, req.UserID).Scan(&preferredEmail)
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE '%@yahoogroups.%'
+		ORDER BY preferred DESC, added DESC
+		LIMIT 1`,
+		req.UserID,
+		"%@"+utils.USER_DOMAIN,
+		"%@groups.ilovefreegle.org",
+		"%@direct.ilovefreegle.org",
+		"%@republisher.freegle.in",
+	).Scan(&preferredEmail)
+
+	if preferredEmail == "" {
+		// Second pass: no external email found; accept any email including our-domain aliases.
+		db.Raw(`SELECT email FROM users_emails
+			WHERE userid = ?
+			ORDER BY preferred DESC, added DESC
+			LIMIT 1`, req.UserID).Scan(&preferredEmail)
+	}
 
 	if preferredEmail == "" {
 		preferredEmail = "unknown"
@@ -242,9 +310,9 @@ func AddDonation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Add failed")
 	}
 
-	// For non-zero amounts: create Gift Aid notification and queue email.
+	// For non-zero amounts: create a Gift Aid prompt. Thanking is handled by
+	// the daily mail:donations:thank-prep digest, not a per-donation email.
 	if req.Amount > 0 {
-		// Check if user needs a Gift Aid prompt.
 		var giftAidPeriod *string
 		db.Raw("SELECT period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1", req.UserID).Scan(&giftAidPeriod)
 
@@ -252,17 +320,6 @@ func AddDonation(c *fiber.Ctx) error {
 			// Create a GiftAid notification for the user.
 			db.Exec("INSERT INTO users_notifications (touser, type, timestamp, seen) VALUES (?, 'GiftAid', NOW(), 0)",
 				req.UserID)
-		}
-
-		// Queue email to info@ilovefreegle.org.
-		if err := queue.QueueTask(queue.TaskEmailDonateExternal, map[string]interface{}{
-			"user_id":    req.UserID,
-			"user_name":  name,
-			"user_email": preferredEmail,
-			"amount":     req.Amount,
-			"source":     "external",
-		}); err != nil {
-			log.Printf("Failed to queue donate-external email for user %d: %v", req.UserID, err)
 		}
 	}
 

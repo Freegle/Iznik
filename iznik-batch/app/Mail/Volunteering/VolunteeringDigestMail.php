@@ -11,9 +11,17 @@ use Illuminate\Support\Collection;
 class VolunteeringDigestMail extends MjmlMailable
 {
     use TrackableEmail;
+
+    /**
+     * @param array $volunteerings Deduplicated opportunities across all the
+     *                             recipient's volunteering-enabled groups (plus
+     *                             global opportunities). Each carries a 'groups'
+     *                             array of ['name' => , 'url' => ] pairs for the
+     *                             recipient's groups it was posted on (empty for
+     *                             global opportunities).
+     */
     public function __construct(
         public readonly string $recipientEmail,
-        public readonly string $groupName,
         public readonly array $volunteerings,
         public readonly string $unsubscribeUrl,
         public readonly Collection $jobAds = new Collection(),
@@ -27,13 +35,13 @@ class VolunteeringDigestMail extends MjmlMailable
             $this->userId,
             null,
             $this->getSubject(),
-            ['group' => $this->groupName, 'vol_count' => count($this->volunteerings)]
+            ['vol_count' => count($this->volunteerings)]
         );
     }
 
     protected function getSubject(): string
     {
-        return "[{$this->groupName}] Volunteer Opportunity Roundup";
+        return 'Volunteer opportunities near you';
     }
 
     public function envelope(): Envelope
@@ -41,7 +49,7 @@ class VolunteeringDigestMail extends MjmlMailable
         return new Envelope(
             from: new Address(
                 config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
-                $this->groupName
+                config('freegle.site_name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail)],
             subject: $this->getSubject(),
@@ -62,13 +70,15 @@ class VolunteeringDigestMail extends MjmlMailable
         });
 
         return $this->mjmlView('emails.mjml.volunteering.digest', [
-            'groupName'      => $this->groupName,
             'volunteerings'  => $this->volunteerings,
             'userSite'       => $userSite,
             'unsubscribeUrl' => $this->unsubscribeUrl,
             'email'          => $this->recipientEmail,
             'jobAds'         => $jobAds,
             'jobsUrl'        => $this->trackedUrl("{$userSite}/jobs", 'jobs_link', 'jobs'),
+            // Keep the freegle.in PayPal short link — it is whitelisted in the Go
+            // API's isValidRedirectURL (domain allow-list), so the tracked redirect
+            // resolves it correctly. Don't replace the short link with a full URL.
             'donateUrl'      => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
         ]);
     }

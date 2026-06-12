@@ -209,6 +209,49 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * Pending messages from DELETED users must NOT count towards the badge.
+     *
+     * Regression for Discourse #9654/12: mods reported the ModTools badge stuck at
+     * +1 after clearing all visible tasks. Root cause: getBadgeCount() counted
+     * pending messages whose author had been deleted (fromuser set, but
+     * users.deleted IS NOT NULL), while the app menu (session.go) filters them via
+     * INNER JOIN users ... u.deleted IS NULL. The phantom message is in the badge
+     * but not the menu, so the mod can never clear it. Live data at diagnosis time:
+     * 32 such messages across 24 groups.
+     */
+    public function test_pending_message_from_deleted_user_does_not_count_towards_badge(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser(['deleted' => now()]);  // author deleted
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,  // not held — would count if author were live
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count, 'Pending messages from deleted users must not inflate badge count (Discourse #9654/12)');
+    }
+
+    /**
      * Pending messages in inactive groups must NOT count towards the badge.
      *
      * Session.go excludes inactive group work from `total` (it goes to pendingother/blue).
@@ -435,6 +478,213 @@ class PushNotificationServiceTest extends TestCase
         $this->assertSame('0', $payload['badge'], 'Badge must be 0 when no modtools work pending');
         $this->assertSame('0', $payload['count'], 'Count must be 0 when no modtools work pending');
         $this->assertSame('', $payload['title'], 'Title must be empty so no tray notification is raised');
+    }
+
+    /**
+     * Volunteering-only badge must route to /volunteering (V1 parity), not /messages/pending.
+     *
+     * Regression for Discourse #9692/10: when the badge total is driven by pending volunteering ops
+     * (no pending messages), the notification must route to /volunteering — not /messages/pending
+     * (empty page) and not /modtools (catch-all redirect with 2s delay).
+     */
+    public function test_buildModToolsPayload_volunteering_only_routes_to_volunteering(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Pending volunteering op — no pending messages
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge'], 'Badge must be 1 (the volunteering op)');
+        // Route must go directly to /volunteering — no /modtools/ prefix (would hit redirect page).
+        $this->assertSame('/volunteering', $payload['route'],
+            'Volunteering-only badge must route to /volunteering (V1 parity, Discourse #9692/10)');
+        // Title must mention "volunteer", not "message".
+        $this->assertStringContainsString('volunteer', $payload['title'],
+            'Title must describe the volunteering work, not say "messages pending"');
+        $this->assertStringNotContainsString('message', $payload['title'],
+            'Title must not say "messages" when only volunteering work is queued');
+    }
+
+    /**
+     * Pending-only badge must route to /messages/pending (no /modtools/ prefix).
+     *
+     * V1 parity: pending → route /messages/pending, title "N pending message(s)".
+     * The /modtools/ prefix hits the catch-all redirect page (Discourse #9692/10).
+     */
+    public function test_buildModToolsPayload_pending_only_routes_to_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge']);
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Pending-only badge must route to /messages/pending (no /modtools/ prefix)');
+        $this->assertStringContainsString('pending', $payload['title']);
+    }
+
+    /**
+     * Spam-only badge must route to /messages/pending (no /modtools/ prefix).
+     *
+     * V1 parity: spam → route /messages/pending, title "N message(s) to review".
+     */
+    public function test_buildModToolsPayload_spam_only_routes_to_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Spam (Location)',
+            'textbody' => 'Spam',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_SPAM,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge']);
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Spam-only badge must route to /messages/pending (no /modtools/ prefix)');
+        $this->assertStringContainsString('review', $payload['title']);
+    }
+
+    /**
+     * Mixed pending + volunteering: pending wins (last-wins, V1 parity).
+     *
+     * With both pending messages and volunteering ops, route must be /messages/pending
+     * and the title must mention both categories (multi-line, "\n"-joined).
+     */
+    public function test_buildModToolsPayload_mixed_pending_wins_over_volunteering(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Add a pending message
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        // Add a pending volunteering op
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('2', $payload['badge'], 'Badge must be total of all categories');
+        // Pending wins (last in last-wins order)
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Pending wins over volunteering in last-wins order (V1 parity)');
+        // Title must mention both categories
+        $this->assertStringContainsString('volunteer', $payload['title'],
+            'Multi-line title must mention volunteering');
+        $this->assertStringContainsString('pending', $payload['title'],
+            'Multi-line title must mention pending messages');
+    }
+
+    /**
+     * Zero-work payload must route to "/" not "/modtools" (V1 parity).
+     */
+    public function test_buildModToolsPayload_zero_routes_to_root(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertNotNull($payload, 'Zero-count payload must not be null (clears badge)');
+        $this->assertSame('0', $payload['badge']);
+        $this->assertSame('/', $payload['route'],
+            'Zero-work payload must route to "/" (V1 parity)');
     }
 
     /**

@@ -37,6 +37,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
     protected Collection $preparedPosts;
 
+    /** @var Collection lightweight "came and went" (Taken/Received) entries for the greyed daily section */
+    protected Collection $preparedCompletedPosts;
+
     /** @var array<int,object> primary group rows (id => {nameshort, namefull}) for post bylines + header list */
     protected array $groupLookup = [];
 
@@ -46,7 +49,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         public User $user,
         protected Collection $posts,
         public string $mode,
-        protected Collection $sponsors = new Collection()
+        protected Collection $sponsors = new Collection(),
+        protected Collection $completedPosts = new Collection()
     ) {
         parent::__construct();
 
@@ -91,6 +95,39 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
         // Prepare posts with tracking URLs and decoded text.
         $this->preparedPosts = $this->preparePosts();
+
+        // "Came and went" list (daily only) — lightweight, no reply CTA.
+        $this->preparedCompletedPosts = $this->prepareCompletedPosts();
+    }
+
+    /**
+     * Lightweight prep for the "came and went" (Taken/Received) section: just
+     * what the greyed list shows — title, location, thumbnail, date and a link
+     * to the (now-closed) post. No reply button or per-post reply tracking,
+     * since the item is gone.
+     */
+    protected function prepareCompletedPosts(): Collection
+    {
+        return $this->completedPosts->map(function ($message) {
+            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $arrival = $message->arrival instanceof Carbon
+                ? $message->arrival
+                : Carbon::parse($message->arrival ?? $message->date);
+
+            return [
+                'id' => $message->id,
+                'type' => $message->type,
+                'itemName' => $this->extractItemName($subject),
+                'locationName' => $this->extractLocationName($subject),
+                'imageUrl' => $this->getMessageImageUrl($message, 240, 240),
+                'messageUrl' => $this->trackedUrl(
+                    $this->userSite . '/message/' . $message->id,
+                    'completed_' . $message->id,
+                    'view_completed'
+                ),
+                'date' => $arrival->setTimezone('Europe/London')->format('D j M, g:ia'),
+            ];
+        })->values();
     }
 
     /**
@@ -229,7 +266,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $firstPost = $this->posts->first();
             $groupId = $firstPost['postedToGroups'][0] ?? null;
             if ($groupId) {
-                $row = DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
+                $row = $this->groupRow($groupId);
                 $primaryGroupName = $row ? ($row->namefull ?: $row->nameshort) : null;
             }
         }
@@ -247,9 +284,21 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->unique('name')
             ->values();
 
+        // Immediate-mode template uses $post (singular), $isOffer, and $accentColor
+        // directly — pass them here so the template doesn't see undefined variables.
+        $immediatePost = $this->mode === UnifiedDigestService::MODE_IMMEDIATE
+            ? $this->preparedPosts->first()
+            : null;
+        $immediateIsOffer = $immediatePost ? ($immediatePost['type'] === 'Offer') : false;
+        $immediateAccentColor = $immediateIsOffer ? '#3c763d' : '#4895DD';
+
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
+            'completedPosts' => $this->preparedCompletedPosts,
+            'post' => $immediatePost,
+            'isOffer' => $immediateIsOffer,
+            'accentColor' => $immediateAccentColor,
             'postCount' => $this->posts->count(),
             'mode' => $this->mode,
             'sponsors' => $this->sponsors,
@@ -333,6 +382,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $this->renderAmpTemplate('emails.amp.digest.unified', [
                 'user' => $this->user,
                 'posts' => $ampPosts,
+                'completedPosts' => $this->preparedCompletedPosts,
                 'postCount' => $this->posts->count(),
                 'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'amp_settings', 'settings'),
                 'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),
@@ -410,16 +460,39 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         );
     }
 
+    /**
+     * Resolve a group's {nameshort, namefull} row, reusing the batch groupLookup
+     * loaded by preparePosts() so we don't issue a redundant single-row SELECT
+     * per immediate-digest email. Falls back to a query only if the id wasn't
+     * among the digest's post groups.
+     */
+    protected function groupRow(?int $groupId): ?object
+    {
+        if (!$groupId) {
+            return null;
+        }
+        if (isset($this->groupLookup[$groupId])) {
+            return $this->groupLookup[$groupId];
+        }
+
+        return DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
+    }
+
     protected function getSubject(): string
     {
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
             $firstPost = $this->posts->first();
             $groupId = $firstPost['postedToGroups'][0] ?? null;
-            $groupRow = $groupId
-                ? DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull'])
-                : null;
+            $groupRow = $this->groupRow($groupId);
             $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
-            $postSubject = $firstPost['message']->subject;
+            // Decode HTML entities: the DB stores subjects HTML-encoded (e.g.
+            // "Coffee &amp; Cake"); the email subject line is plain text and
+            // must contain a literal "&" rather than the encoded form.
+            $postSubject = html_entity_decode(
+                $firstPost['message']->subject ?? '',
+                ENT_QUOTES | ENT_HTML5,
+                'UTF-8'
+            );
             return $groupName ? "[{$groupName}] {$postSubject}" : $postSubject;
         }
 
@@ -452,7 +525,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
         foreach ($this->posts as $post) {
             $message = $post['message'];
-            $itemName = $this->extractItemName($message->subject);
+            // Decode HTML entities before extracting the item name so the email
+            // subject teaser contains a literal "&" rather than "&amp;".
+            $decodedSubject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $itemName = $this->extractItemName($decodedSubject);
 
             // Truncate individual item names to 25 chars.
             if (strlen($itemName) > 25) {
@@ -505,16 +581,16 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         }
 
-        // Batch-load the primary group (first in postedToGroups) for every post
-        // so each card can show "on <group>" without an N+1 per post. namefull
-        // is the friendly name; nameshort drives the /explore link.
-        $primaryGroupIds = $this->posts
-            ->map(fn ($p) => $p['postedToGroups'][0] ?? null)
+        // Batch-load all groups referenced by any post so each card can show
+        // group name(s) without an N+1 per post. namefull is the friendly name;
+        // nameshort drives the /explore link.
+        $allGroupIds = $this->posts
+            ->flatMap(fn ($p) => $p['postedToGroups'])
             ->filter()
             ->unique()
             ->values();
-        $this->groupLookup = $primaryGroupIds->isNotEmpty()
-            ? DB::table('groups')->whereIn('id', $primaryGroupIds)
+        $this->groupLookup = $allGroupIds->isNotEmpty()
+            ? DB::table('groups')->whereIn('id', $allGroupIds)
                 ->get(['id', 'nameshort', 'namefull'])->keyBy('id')->all()
             : [];
 
@@ -549,11 +625,17 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 : config('freegle.images.wanted_placeholder');
 
             // Create tracked image URL with scroll depth.
+            // BUT: don't proxy the placeholder. The tracking proxy returns a
+            // 302 to the underlying URL, and Gmail's own image proxy doesn't
+            // always follow that redirect (Edward 2026-06-11 report — cards
+            // for no-photo posts rendered as broken). Open/click tracking on
+            // a placeholder is meaningless anyway (every no-photo card maps
+            // to the same URL), so serve the raw URL directly for those.
             $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
             $displayImageUrl = $imageUrl ?? $placeholderUrl;
-            $trackedImage = $displayImageUrl !== null
+            $trackedImage = $imageUrl !== null
                 ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
-                : null;
+                : $displayImageUrl;
 
             // Hero image for immediate (single-post) mode: a larger, height-
             // capped crop (600x400) so the photo is the hero — V1's immediate
@@ -619,6 +701,24 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
             }
 
+            // The DB stores message subjects HTML-encoded (e.g. "OFFER: Coffee &amp; Cake (London)").
+            // Decode before extracting itemName / locationName so that Blade's
+            // {{ }} auto-escaping produces correct HTML source ("&amp;") rather
+            // than the double-encoded "&amp;amp;" that email clients render as
+            // the literal string "&amp;" instead of the intended "&".
+            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+            // Build postedToText: show group names for cross-posted items
+            // (posted to more than one group). Single-group posts use null so
+            // the template suppresses the italic "also on" line entirely.
+            $groupNames = collect($postedToGroups)
+                ->map(fn ($gid) => isset($this->groupLookup[$gid])
+                    ? ($this->groupLookup[$gid]->namefull ?: $this->groupLookup[$gid]->nameshort)
+                    : null)
+                ->filter()
+                ->values();
+            $postedToText = $groupNames->count() > 1 ? $groupNames->implode(', ') : null;
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
@@ -631,10 +731,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'isPlaceholder' => $imageUrl === null,
                 'groupName' => $groupName,
                 'groupUrl' => $groupUrl,
+                'postedToText' => $postedToText,
                 'type' => $message->type,
-                'subject' => $message->subject,
-                'itemName' => $this->extractItemName($message->subject),
-                'locationName' => $this->extractLocationName($message->subject),
+                'subject' => $subject,
+                'itemName' => $this->extractItemName($subject),
+                'locationName' => $this->extractLocationName($subject),
                 'arrivalFormatted' => $arrivalFormatted,
                 'arrivalIso' => $arrivalIso,
                 'distanceText' => $distanceText,
