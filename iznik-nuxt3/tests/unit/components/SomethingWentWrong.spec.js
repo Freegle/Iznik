@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import SomethingWentWrong from '~/components/SomethingWentWrong.vue'
+import { HARD_RELOAD_COUNTDOWN_SECS } from '~/constants'
 
 // Use vi.hoisted for mock setup
 const { mockClearError } = vi.hoisted(() => ({
@@ -11,9 +12,11 @@ const { mockClearError } = vi.hoisted(() => ({
 // Create refs at module level
 const somethingWentWrongRef = ref(false)
 const needToReloadRef = ref(false)
+const needToReloadHardRef = ref(false)
 const offlineRef = ref(false)
 const unloadingRef = ref(false)
 const errorDetailsRef = ref(null)
+const lastTypingRef = ref(null)
 
 // Mock Pinia's storeToRefs to return our refs while preserving other exports
 vi.mock('pinia', async (importOriginal) => {
@@ -23,9 +26,11 @@ vi.mock('pinia', async (importOriginal) => {
     storeToRefs: () => ({
       somethingWentWrong: somethingWentWrongRef,
       needToReload: needToReloadRef,
+      needToReloadHard: needToReloadHardRef,
       offline: offlineRef,
       unloading: unloadingRef,
       errorDetails: errorDetailsRef,
+      lastTyping: lastTypingRef,
     }),
   }
 })
@@ -38,15 +43,26 @@ vi.mock('~/stores/misc', () => ({
 }))
 
 describe('SomethingWentWrong', () => {
+  let reloadSpy
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     // Reset ref values before each test
     somethingWentWrongRef.value = false
     needToReloadRef.value = false
+    needToReloadHardRef.value = false
     offlineRef.value = false
     unloadingRef.value = false
     errorDetailsRef.value = null
+    lastTypingRef.value = null
+    // jsdom's location.reload is not directly assignable; redefine it so we can
+    // observe forced reloads without navigating.
+    reloadSpy = vi.fn()
+    Object.defineProperty(window.location, 'reload', {
+      configurable: true,
+      value: reloadSpy,
+    })
   })
 
   afterEach(() => {
@@ -131,6 +147,50 @@ describe('SomethingWentWrong', () => {
       const wrapper = createWrapper()
       // Component should mount and connect to store without error
       expect(wrapper.exists()).toBe(true)
+    })
+  })
+
+  describe('hard reload (stale build)', () => {
+    it('shows a danger banner with a countdown when needToReloadHard is true', () => {
+      needToReloadHardRef.value = true
+      const wrapper = createWrapper()
+      const notice = wrapper.find('.notice-message')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('danger')
+      expect(wrapper.text()).toContain('more than a week out of date')
+      expect(wrapper.text()).toContain(`${HARD_RELOAD_COUNTDOWN_SECS}s`)
+      expect(wrapper.text()).toContain('Reload now')
+    })
+
+    it('reloads when the countdown expires and the user is not typing', () => {
+      needToReloadHardRef.value = true
+      lastTypingRef.value = null
+      createWrapper()
+      expect(reloadSpy).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(HARD_RELOAD_COUNTDOWN_SECS * 1000)
+      expect(reloadSpy).toHaveBeenCalled()
+    })
+
+    it('reloads immediately when "Reload now" is clicked', async () => {
+      needToReloadHardRef.value = true
+      const wrapper = createWrapper()
+      await wrapper.find('button').trigger('click')
+      expect(reloadSpy).toHaveBeenCalled()
+    })
+
+    it('defers the reload while the user is mid-message', () => {
+      const wrapper = createWrapper()
+      // Typed just now -> within the typing window -> defer.
+      lastTypingRef.value = Date.now()
+      expect(wrapper.vm.maybeReload()).toBe(false)
+      expect(reloadSpy).not.toHaveBeenCalled()
+    })
+
+    it('reloads via maybeReload when the user is not typing', () => {
+      const wrapper = createWrapper()
+      lastTypingRef.value = null
+      expect(wrapper.vm.maybeReload()).toBe(true)
+      expect(reloadSpy).toHaveBeenCalled()
     })
   })
 })
