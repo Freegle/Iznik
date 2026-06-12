@@ -1,11 +1,11 @@
 /**
  * Tests for the pending-messages auto-refresh behaviour.
  *
- * The Pending messages page must call getMessages() whenever authStore.work
- * changes (new pending messages arrived), even if a modal is open at the time.
- *
- * Discourse #9737: "A red alert appears in Pending messages but no message is
- * visible without a manual page refresh."
+ * When authStore.work increases (new pending messages arrived) the list must
+ * refresh so the message becomes visible without a manual reload (Discourse
+ * #9737) — EXCEPT while a modal is open (e.g. a moderator typing a rejection
+ * reason), where re-rendering would unmount the modal and lose the draft. In
+ * that case the refresh is deferred and applied as soon as the modal closes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
@@ -92,11 +92,13 @@ describe('useModMessages — pending list auto-refresh', () => {
     expect(mockFetchMessagesMT).toHaveBeenCalled()
   })
 
-  // Regression test for Discourse #9737: the pending list must re-fetch even
-  // when a modal is open (body.style.overflow === 'hidden').  Previously the
-  // overflow check blocked the fetch, leaving the badge count correct but the
-  // list stale until the next manual page refresh.
-  it('calls getMessages when pending count increases even while a modal is open', async () => {
+  // A new pending message arriving while a modal is open (Bootstrap sets <body>
+  // overflow:hidden) must NOT refresh the list immediately — that would unmount
+  // the modal and lose a moderator's part-typed rejection reason. The refresh
+  // is deferred and applied as soon as the modal closes, so the message still
+  // appears without a manual reload (reconciles Discourse #9737 with draft
+  // preservation).
+  it('defers the refresh while a modal is open and applies it on close', async () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
@@ -108,16 +110,23 @@ describe('useModMessages — pending list auto-refresh', () => {
     await flushPromises()
     vi.clearAllMocks()
 
-    // Simulate any open modal (Bootstrap sets overflow:hidden on <body>)
+    // A modal opens (Bootstrap sets overflow:hidden on <body>).
     document.body.style.overflow = 'hidden'
 
-    // A new pending message arrives while the modal is open
+    // A new pending message arrives while the modal is open.
     mockWork.value = { pending: 1, pendingother: 0, total: 1 }
-
     await nextTick()
     await flushPromises()
 
-    // The list must still be re-fetched regardless of body overflow state
+    // The list must NOT refresh yet — that would lose the open modal's draft.
+    expect(mockFetchMessagesMT).not.toHaveBeenCalled()
+
+    // The modal closes (Bootstrap clears the body overflow style).
+    document.body.style.overflow = ''
+    await nextTick()
+    await flushPromises()
+
+    // Now the deferred refresh is applied so the new message becomes visible.
     expect(mockFetchMessagesMT).toHaveBeenCalled()
   })
 
