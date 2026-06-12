@@ -140,7 +140,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
     /**
      * IDs needed to rebuild this digest for a durable retry. We store the
-     * recipient, the mode, and the (message id, group ids) of each post —
+     * recipient, the mode, the (message id, group ids) of each live post, and
+     * the message ids of the daily "came and went" (Taken/Received) section —
      * never the built Message/User objects — so the retry re-fetches current
      * data. Sponsors are recomputed from the user on rebuild, so they're not
      * stored.
@@ -156,14 +157,23 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'msgid' => $post['message']->id,
                 'groups' => array_values($post['postedToGroups'] ?? []),
             ])->all(),
+            // "Came and went" (Taken/Received) message ids for the daily greyed
+            // section. Ids only, so the retry re-fetches current data; empty for
+            // immediate digests, which have no completed section. Without this a
+            // rebuilt daily digest silently dropped the whole section.
+            'completed' => $this->completedPosts->map(fn ($message) => $message->id)->values()->all(),
         ];
     }
 
     /**
      * Rebuild a fresh digest from a descriptor, re-fetching from the DB.
      *
+     * Re-fetches the live posts, the recipient's sponsors, and the daily "came
+     * and went" (Taken/Received) section so the rebuilt email matches the live
+     * send path rather than silently dropping the completed section.
+     *
      * Returns null (cancel the retry — nothing to send) when the recipient or
-     * every referenced message has since been deleted, or the recipient no
+     * every referenced live post has since been deleted, or the recipient no
      * longer has a usable address.
      *
      * {@see RetryableMailable}
@@ -203,11 +213,20 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $sponsors = $service->getSponsorsForUser($user);
         }
 
+        // Re-fetch the daily "came and went" (Taken/Received) messages so the
+        // rebuilt daily digest still renders that greyed section. Ids that have
+        // since been deleted drop out; immediate digests carry none.
+        $completed = collect($descriptor['completed'] ?? [])
+            ->map(fn ($msgid) => Message::with(['attachments'])->find($msgid))
+            ->filter()
+            ->values();
+
         return new self(
             $user,
             $posts,
             $mode,
-            $sponsors
+            $sponsors,
+            $completed
         );
     }
 
