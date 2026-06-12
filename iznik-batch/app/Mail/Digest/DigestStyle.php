@@ -24,4 +24,15 @@ class DigestStyle
 
     /** Accent for WANTED pills / Reply buttons. */
     public const WANTED_BLUE = '#00A1CB';
+
+    /**
+     * Number of summary ("In this digest") lines shown before the rest are
+     * tucked behind the collapsible "Show N more" control. Three matches the
+     * V1 "What's New" index density and keeps the email short for clients
+     * that can't collapse (the overflow degrades to one line per post).
+     *
+     * Referenced by BOTH the MJML (<details>) and AMP4Email (<amp-accordion>)
+     * renderings so the cut-off can never drift between the two variants.
+     */
+    public const SUMMARY_VISIBLE_LINES = 3;
 }
