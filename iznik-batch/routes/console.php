@@ -335,13 +335,23 @@ Schedule::command('tn:sync')
 // pilot the new "What's New" format, set that env var to one or more
 // addresses: those users receive the new daily digest IN ADDITION to V1's,
 // for a tracked side-by-side comparison. Set it to '*' for the full cutover.
-// 07:00 UK local. The app runs in UTC, so pin the task to the configured
-// local zone (FREEGLE_TIMEZONE, default Europe/London) and let Laravel
-// resolve BST/GMT — without ->timezone() this would fire at 07:00 UTC (08:00
-// BST in summer) and drift with the clocks.
+// 07:00 UK local, with morning catch-up. The app runs in UTC, so pin to the
+// configured local zone (FREEGLE_TIMEZONE, default Europe/London) and let
+// Laravel resolve BST/GMT.
+//
+// Laravel's scheduler has no catch-up: a plain dailyAt('07:00') has one due
+// minute, so if schedule:run isn't ticking at exactly 07:00 (container
+// restart, deploy, crash, a long previous tick) the whole day's digest is
+// silently skipped. The once-per-London-day guard in UnifiedDigestService
+// makes repeat runs safe no-ops, so instead of firing once we tick every
+// 30 min across the morning: the first live tick at/after 07:00 sends, the
+// guard turns every later tick into a no-op, and withoutOverlapping stops a
+// second start while the multi-hour run is still going. A missed 07:00 thus
+// self-heals at 07:30/08:00/… instead of being lost for the day.
 Schedule::command('mail:digest:unified --mode=daily')
     ->timezone(config('freegle.timezone'))
-    ->dailyAt('07:00')
+    ->everyThirtyMinutes()
+    ->between('7:00', '12:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:digest:unified.daily'))
     ->runInBackground();
@@ -356,7 +366,8 @@ Schedule::command('mail:digest:unified --mode=daily')
 // foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 //     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
 //         ->timezone(config('freegle.timezone'))
-//         ->dailyAt('07:00')
+//         ->everyThirtyMinutes()
+//         ->between('7:00', '12:00')
 //         ->withoutOverlapping()
 //         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
 //         ->runInBackground();
