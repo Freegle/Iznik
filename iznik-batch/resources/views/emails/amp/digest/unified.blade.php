@@ -127,6 +127,12 @@
     /* AMP4Email disallows the object-fit attribute on <amp-img>; do it
        via CSS on the inner <img> the amp-img runtime renders. */
     .post-img-wrap amp-img img { object-fit: cover; }
+    /* The card photo anchor must fill the entire .post-img-wrap cell so the
+       click target covers the photo, not just a zero-height collapsed box.
+       .post-img-wrap is position:relative (required for amp-img layout="fill"),
+       so an absolutely-positioned <a> with all four edges at 0 fills it exactly
+       while still allowing the amp-img layout="fill" inside to do the same. */
+    .post-img-link { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: block; }
     /* Single-post (immediate) card keeps the flat .post-content wrapper. */
     .post-content {
       min-width: 0;
@@ -600,7 +606,12 @@
            to fill that cell — so the photo's bottom edge always lines
            up with the bottom of the content column. --}}
       <div class="post-img-wrap">
-        <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
+        {{-- The anchor uses class="post-img-link" (position:absolute, all edges
+             at 0) to fill the .post-img-wrap cell so the whole photo is
+             clickable, not just a zero-height inline box. --}}
+        <a href="{{ $post['fallbackReplyUrl'] }}" class="post-img-link">
+          <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
+        </a>
       </div>
       <div class="post-head">
     @endif
