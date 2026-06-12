@@ -483,7 +483,7 @@
             </mj-column>
             <mj-column width="82%" vertical-align="top">
                 <mj-text padding="0" font-size="14px" color="#777777">
-                    <span style="text-decoration: line-through; color: #777777; font-weight: 600;">{{ $cp['itemName'] }}</span>
+                    <span style="color: #777777; font-weight: 600;">{{ $cp['itemName'] }}</span>
                     @if($cp['locationName'])<span style="color: #999999;"> · {{ $cp['locationName'] }}</span>@endif
                     <br/><span style="color: #999999; font-size: 12px;">{{ $cp['type'] === 'Offer' ? 'Taken' : 'Received' }} · {{ $cp['date'] }}</span>
                 </mj-text>

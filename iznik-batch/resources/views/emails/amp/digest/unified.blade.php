@@ -422,7 +422,7 @@
     .cag-row .cag-img { flex: 0 0 auto; margin-right: 10px; }
     .cag-img amp-img img { object-fit: cover; border-radius: 4px; }
     .cag-text { min-width: 0; }
-    .cag-title { font-size: 14px; font-weight: 600; color: #777777; text-decoration: line-through; margin: 0; }
+    .cag-title { font-size: 14px; font-weight: 600; color: #777777; margin: 0; }
     .cag-meta { font-size: 12px; color: #999999; margin: 2px 0 0 0; }
 
     /* Job listings block (V1 single.html parity — mirrors the MJML jobs block) */
