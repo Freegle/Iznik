@@ -283,6 +283,22 @@ commands:
                 # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
                 agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
                 [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
+                # Reserve vCPU0 for the runner heartbeat by confining the WORKLOAD off
+                # it (not by boosting the agent — a boost is inherited by the load).
+                # Containers are already pinned to 1..N-1 by the Docker cgroup-parent
+                # slice set at VM provision time; this also pins the NATIVE test runners
+                # (vitest et al. run natively on Katapult and are top CPU consumers) and,
+                # as a backstop, any container pid that escaped the slice. The agent/
+                # daemon is deliberately left unconfined so its heartbeat always has
+                # vCPU0. taskset needs no daemon changes; re-applied every 2s to catch
+                # freshly-forked workers (Playwright/vitest fork continuously).
+                NPROC=$(nproc 2>/dev/null || echo 1)
+                if [ "$NPROC" -ge 4 ]; then
+                  WL="1-$((NPROC-1))"
+                  for wp in $docker_pids $test_pids; do
+                    sudo taskset -acp "$WL" "$wp" >/dev/null 2>&1 || true
+                  done
+                fi
                 sleep 2
               done
             ) &
@@ -305,6 +321,24 @@ commands:
               ps aux --sort=-%mem | head -6
               echo "--- Docker Stats ---"
               docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "No containers running"
+              # --- [cpuset-evidence] proof the real work and the heartbeat are on
+              # different vCPUs: vCPU0 keeps idle headroom while 1..N-1 saturate;
+              # every container + native test runner is on 1..N-1; the agent can use 0.
+              echo "--- [cpuset-evidence] per-vCPU utilisation (vCPU0 should keep %idle while 1..N-1 saturate) ---"
+              mpstat -P ALL 1 1 2>/dev/null | sed 's/^/  /' || { grep -E '^cpu[0-9]' /proc/stat | sed 's/^/  /'; }
+              echo "--- [cpuset-evidence] container effective cpuset (real work; want 1..N-1, MUST NOT contain 0) ---"
+              for f in $(find /sys/fs/cgroup -path '*docker-*' -name cpuset.cpus.effective 2>/dev/null); do
+                p=${f#/sys/fs/cgroup/}; p=${p%/cpuset.cpus.effective}
+                echo "  $p = $(cat "$f" 2>/dev/null)"
+              done | head -40
+              echo "--- [cpuset-evidence] native test-runner affinity (want 1..N-1) ---"
+              for tp in $(pgrep -f 'vitest|playwright|phpunit|go-build|artisan test' 2>/dev/null | head -20); do
+                echo "  pid $tp $(cat /proc/$tp/comm 2>/dev/null) -> $(taskset -cp $tp 2>/dev/null | sed 's/.*: //')"
+              done
+              echo "--- [cpuset-evidence] runner agent/heartbeat placement (allowed should include 0) ---"
+              for ap in $(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | head -10); do
+                echo "  agent pid $ap on vCPU $(ps -o psr= -p $ap 2>/dev/null | tr -d ' ') allowed $(taskset -cp $ap 2>/dev/null | sed 's/.*: //')"
+              done
               sleep 30
             done
 
