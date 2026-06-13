@@ -129,10 +129,10 @@ class TestMailCommandTest extends TestCase
         ])->assertExitCode(0);
 
         // Check spool file for the delivery address.
-        $spoolFiles = glob($this->spoolDir . '/sent/*.json');
+        $spoolFiles = glob($this->spoolDir . '/sent/*.json.gz');
         $this->assertNotEmpty($spoolFiles, 'Should have a spool file in sent directory');
 
-        $spoolData = json_decode(file_get_contents($spoolFiles[0]), true);
+        $spoolData = json_decode(gzdecode(file_get_contents($spoolFiles[0])), true);
         $toAddresses = array_column($spoolData['to'], 'address');
 
         // Verify the override address was used, not the original.
@@ -172,10 +172,10 @@ class TestMailCommandTest extends TestCase
         ])->assertExitCode(0);
 
         // Check spool file for the delivery address.
-        $spoolFiles = glob($this->spoolDir . '/sent/*.json');
+        $spoolFiles = glob($this->spoolDir . '/sent/*.json.gz');
         $this->assertNotEmpty($spoolFiles, 'Should have a spool file in sent directory');
 
-        $spoolData = json_decode(file_get_contents($spoolFiles[0]), true);
+        $spoolData = json_decode(gzdecode(file_get_contents($spoolFiles[0])), true);
         $toAddresses = array_column($spoolData['to'], 'address');
 
         // Verify the original address was used.
@@ -219,10 +219,10 @@ class TestMailCommandTest extends TestCase
         ])->assertExitCode(0);
 
         // Check spool file for the delivery address.
-        $spoolFiles = glob($this->spoolDir . '/sent/*.json');
+        $spoolFiles = glob($this->spoolDir . '/sent/*.json.gz');
         $this->assertNotEmpty($spoolFiles, 'Should have a spool file in sent directory');
 
-        $spoolData = json_decode(file_get_contents($spoolFiles[0]), true);
+        $spoolData = json_decode(gzdecode(file_get_contents($spoolFiles[0])), true);
         $toAddresses = array_column($spoolData['to'], 'address');
 
         // Verify the override address was used.

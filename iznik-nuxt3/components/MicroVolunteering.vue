@@ -99,7 +99,7 @@
                   AI Image Review
                 </span>
                 <span v-else-if="task.type === 'EEELabel'">
-                  Help train Freegle's electrical-item AI
+                  Help train Freegle's photo recognition
                 </span>
               </h1>
               <div class="fw-bold">

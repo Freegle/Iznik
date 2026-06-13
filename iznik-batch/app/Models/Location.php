@@ -73,6 +73,28 @@ class Location extends Model implements Auditable
 
     public static function groupsNear(float $lat, float $lng, int $radiusMiles = 50, int $limit = 10): array
     {
+        $srid     = config('freegle.srid', 3857);
+        $pointWkt = "POINT($lng $lat)";
+
+        // Polygon-containment check: if the point lies inside one or more group
+        // polyindex polygons, those groups are authoritative and beat the centroid-
+        // distance heuristic (V1 parity; fixes Discourse #9763 where a group with
+        // a close centroid but non-containing polyindex shadowed the correct group).
+        $containing = DB::select(
+            "SELECT id
+             FROM `groups`
+             WHERE publish = 1 AND listable = 1
+               AND ST_Contains(polyindex, ST_GeomFromText(?, ?))
+             ORDER BY haversine(lat, lng, ?, ?) ASC
+             LIMIT ?",
+            [$pointWkt, $srid, $lat, $lng, $limit]
+        );
+
+        if (!empty($containing)) {
+            return array_column($containing, 'id');
+        }
+
+        // No group polygon contains the point; fall back to centroid distance.
         $rows = DB::select(
             "SELECT id
              FROM `groups`

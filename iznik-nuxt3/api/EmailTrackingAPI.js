@@ -62,4 +62,15 @@ export default class EmailTrackingAPI extends BaseAPI {
   async fetchTopClickedLinks(params = {}) {
     return await this.$getv2('/modtools/email/stats/clicks', params)
   }
+
+  /**
+   * Fetch digest click-through rate by post position.
+   * @param {Object} params - Query parameters
+   * @param {string} [params.start] - Start date (YYYY-MM-DD)
+   * @param {string} [params.end] - End date (YYYY-MM-DD)
+   * @param {string} [params.type] - Email type filter (default: all UnifiedDigest* types)
+   */
+  async fetchDigestPositions(params = {}) {
+    return await this.$getv2('/modtools/email/stats/digestpositions', params)
+  }
 }

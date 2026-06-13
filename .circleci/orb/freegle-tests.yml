@@ -70,13 +70,14 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      # 11 = the historical max worker count. Restored after the 2026-06-01 OOM
-      # outage (9 workers OOM-killed the VM with only a 2G swapfile). The job now
-      # ensures a 20G swapfile at runtime (see "Install system dependencies"),
-      # so peak spikes (11 Chromium + Laravel + Go + the container stack) swap
-      # instead of OOM-killing the runner. If build-test-katapult goes back to
-      # infrastructure_fail in the parallel test phase, lower this first.
-      PW_WORKERS: 11
+      # PW_WORKERS reduced 11 -> 6 (orb 1.1.339) then 6 -> 4 (orb 1.1.340) to
+      # stop build-test-katapult CPU-heartbeat starvation in the parallel test
+      # phase. RAM/swap are fine (20G swapfile), but Chromium workers + Laravel +
+      # Go + Vitest saturated all 16 cores so the CircleCI agent couldn't
+      # heartbeat and the job was killed (infrastructure_fail). nice-demoting the
+      # test runners (orb 1.1.338) did NOT hold alone. 4 matches the stable
+      # machine-executor-large value.
+      PW_WORKERS: 4
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
@@ -244,30 +245,129 @@ commands:
           command: |
             echo "Resource monitor started - logging every 30 seconds"
 
-            # --- CPU priority watchdog (self-hosted/Katapult runner) ---
-            # Root cause of build-test-katapult infrastructure_fail: during the
-            # Playwright phase load runs to ~30 and the CircleCI runner agent can't
-            # get CPU to send its heartbeat, so the control plane declares the VM
-            # dead (memory is fine; swap stays unused — it is NOT an OOM). Fix by
-            # scheduling priority, NOT by dropping workers: raise the runner/agent
-            # (nice -15) and lower every Docker test-container process (nice +15),
-            # re-applied every few seconds because Playwright keeps forking new
-            # headless_shell workers. Batched into two renice calls to stay cheap.
-            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
-              (
-                while true; do
-                  agent_pids=$(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | tr '\n' ' ')
-                  [ -n "$agent_pids" ] && sudo renice -n -15 -p $agent_pids >/dev/null 2>&1 || true
-                  docker_pids=""
-                  for pp in /proc/[0-9]*; do
-                    grep -qa 'docker' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
-                  done
-                  [ -n "$docker_pids" ] && sudo renice -n 15 -p $docker_pids >/dev/null 2>&1 || true
-                  sleep 5
+            # --- CPU priority watchdog (all runner types including Katapult) ---
+            # Root cause of build-test-katapult infrastructure_fail ("This job
+            # appears to have stopped responding"): during the parallel test phase
+            # load runs to ~30 on the 16-CPU VM (the Playwright container alone
+            # peaks at ~700% CPU) and the CircleCI agent can't get CPU to send its
+            # heartbeat, so the control plane declares the VM dead. Memory is fine,
+            # swap stays unused, iowait ~0 — it is purely CPU scheduling, NOT an OOM
+            # or disk problem. Fix by scheduling priority, NOT by dropping workers.
+            #
+            # DEMOTE the load, do NOT boost the agent. An earlier version raised the
+            # agent to nice -15, but a negative nice is INHERITED by every process
+            # the agent spawns — in build 18723 the vitest/Go/Playwright drivers all
+            # ran at nice -15 too (ps STAT "S<l+") and competed with the heartbeat at
+            # the same top priority, so boosting the agent boosted the load with it
+            # and the heartbeat was still starved. Instead: push every Docker
+            # container process hard down (nice +19) and pin the agent at default
+            # priority (0, never negative so nothing inherits a boost). The heartbeat
+            # then reliably out-schedules the +19 test workload. Re-applied every few
+            # seconds because Playwright keeps forking new headless_shell workers.
+            # Must run on ALL runner types (self-hosted and Katapult cloud).
+            (
+              declare -A _pinned 2>/dev/null || true   # pids already cpuset-confined
+              while true; do
+                docker_pids=""
+                for pp in /proc/[0-9]*; do
+                  grep -qa 'docker\|containerd' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
                 done
-              ) &
-              echo "CPU priority watchdog running: agent nice -15, docker containers nice +15"
-            fi
+                [ -n "$docker_pids" ] && sudo renice -n 19 -p $docker_pids >/dev/null 2>&1 || true
+                # Also demote NATIVE (non-container) test-runner processes. Vitest
+                # runs natively on Katapult and, with the test drivers, are top CPU
+                # consumers at the agent's own priority — during the parallel-phase
+                # ramp (load spikes to ~40 on 16 cores) they starve the agent's
+                # heartbeat and the control plane declares the VM dead. Containerised
+                # runners are already +19; re-applying is harmless.
+                test_pids=$(pgrep -f 'vitest|playwright|phpunit|go-build|/test/|artisan test' 2>/dev/null | tr '\n' ' ')
+                [ -n "$test_pids" ] && sudo renice -n 19 -p $test_pids >/dev/null 2>&1 || true
+                # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
+                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
+                [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
+                # Reserve vCPU0 for the runner heartbeat by confining the WHOLE
+                # workload to vCPUs 1..N-1, leaving the circleci agent FAMILY (the
+                # daemon AND the task-agent — the heartbeat goroutine lives in the same
+                # process that drives the tests, so both must keep vCPU0) able to use
+                # vCPU0. This MUST be done from inside the job: a Katapult job can run
+                # on a VM provisioned by a DIFFERENT pipeline, so VM-provision-time
+                # config (cgroup-parent etc.) does not reliably reach the VM the job
+                # lands on — but this watchdog always does. cpuset = hard isolation.
+                NPROC=$(nproc 2>/dev/null || echo 1)
+                if [ "$NPROC" -ge 4 ]; then
+                  WL="1-$((NPROC-1))"
+                  # Containers: set the cpuset at the cgroup level so it covers every
+                  # current AND future process in each container (e.g. the Chromium
+                  # workers Playwright keeps forking). Driver/VM independent; no restart.
+                  for c in $(docker ps -q 2>/dev/null); do
+                    docker update --cpuset-cpus "$WL" "$c" >/dev/null 2>&1 || true
+                  done
+                  # Native: taskset every userspace pid to 1..N-1 EXCEPT the agent
+                  # family ($agent_pids, computed above). Forks inherit affinity, so
+                  # pinning a process pins its future children too; pin each pid once
+                  # (cached in $_pinned) to keep the steady-state exec cost near zero.
+                  # New work each appears as a fresh pid and is pinned on the next pass.
+                  agent_set=" $agent_pids "
+                  for pp in /proc/[0-9]*; do
+                    pid=${pp#/proc/}
+                    [ "$pid" = 1 ] && continue
+                    case "$agent_set" in *" $pid "*) continue ;; esac
+                    [ -n "${_pinned[$pid]:-}" ] && continue
+                    sudo taskset -acp "$WL" "$pid" >/dev/null 2>&1 || true
+                    _pinned[$pid]=1
+                  done
+                fi
+                sleep 2
+              done
+            ) &
+            echo "CPU priority watchdog running: workload nice +19, agent nice 0, and workload cpuset-confined to vCPUs 1..N-1 (vCPU0 reserved for the runner heartbeat)"
+
+            # --- Kernel-level forensics for infrastructure_fail (added 2026-06-13) ---
+            # The `when: on_fail` "Capture VM diagnostics" step CANNOT capture an
+            # infrastructure_fail: that outcome means the runner AGENT stopped
+            # responding (frozen / OOM'd / soft-locked / panicked VM), so no later
+            # step ever runs and its dmesg snapshot is taken too late or never. The
+            # ONLY diagnostics that survive are ones STREAMED into this background
+            # step's captured output BEFORE the freeze. Master #7639 (2026-06-13)
+            # infra_failed mid-Playwright: the 30s sample 4s earlier was fully
+            # healthy (vCPU0 idle, 34Gi free, swap ~0, Docker 27.5.1) then the whole
+            # VM went silent for 5 min — exactly the signature of a sudden OOM
+            # *between* 30s samples, a soft-lockup, or an I/O hung-task, all of which
+            # the coarse loop is blind to. Capture them at the source:
+            #
+            # (1) Stream the kernel ring buffer live. The instant the kernel prints
+            #     "Out of memory: Killed process" (OOM), "BUG: soft lockup" (CPU
+            #     stuck), "task ... blocked for more than" (hung-task / wedged I/O),
+            #     or an RCU stall, the line is flushed to this step's captured log and
+            #     survives the freeze that follows. --follow-new streams only NEW
+            #     messages (no startup dump of the pre-job buffer).
+            ( sudo dmesg --follow-new 2>/dev/null \
+                || sudo dmesg -wT 2>/dev/null \
+                || sudo dmesg -w 2>/dev/null ) | sed 's/^/[kmsg] /' &
+            # (2) Make the kernel maximally chatty about the suspects: dump every
+            #     task's RSS on OOM, and shorten the hung-task detector so a process
+            #     wedged in uninterruptible I/O for >20s prints its stack to dmesg
+            #     (which (1) then streams). Best-effort; ignore if sysctl is locked.
+            sudo sysctl -w vm.oom_dump_tasks=1 kernel.hung_task_timeout_secs=20 \
+                kernel.hung_task_warnings=9999 >/dev/null 2>&1 || true
+            # (3) Fast memory tripwire: the 30s loop below cannot see a spike that
+            #     exhausts RAM in a few seconds. Sample MemAvailable every 1s and, the
+            #     moment it falls below 4Gi OR drops >8Gi in a single second, dump the
+            #     top RSS consumers with a timestamp so the NEXT freeze names its
+            #     culprit (almost certainly a Chromium/node worker) instead of leaving
+            #     us guessing between OOM and a host event.
+            ( prev=0
+              while true; do
+                avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
+                swpu=$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{print int((t-f)/1024)}' /proc/meminfo 2>/dev/null)
+                [ -z "$avail" ] && { sleep 1; continue; }
+                if [ "$avail" -lt 4096 ] || { [ "$prev" -gt 0 ] && [ $((prev - avail)) -gt 8192 ]; }; then
+                  echo "[mem-tripwire $(date '+%H:%M:%S')] MemAvailable=${avail}MB swapUsed=${swpu}MB prev=${prev}MB — top RSS:"
+                  ps -eo pid,ppid,rss,comm --sort=-rss 2>/dev/null | head -8 | sed 's/^/[mem-tripwire]   /'
+                fi
+                prev=$avail
+                sleep 1
+              done ) &
+            echo "Kernel forensics armed: live kmsg stream + hung-task=20s + mem-tripwire (<4Gi or -8Gi/s)"
 
             while true; do
               echo ""
@@ -286,6 +386,24 @@ commands:
               ps aux --sort=-%mem | head -6
               echo "--- Docker Stats ---"
               docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "No containers running"
+              # --- [cpuset-evidence] proof the real work and the heartbeat are on
+              # different vCPUs: vCPU0 keeps idle headroom while 1..N-1 saturate;
+              # every container + native test runner is on 1..N-1; the agent can use 0.
+              echo "--- [cpuset-evidence] per-vCPU utilisation (vCPU0 should keep %idle while 1..N-1 saturate) ---"
+              mpstat -P ALL 1 1 2>/dev/null | sed 's/^/  /' || { grep -E '^cpu[0-9]' /proc/stat | sed 's/^/  /'; }
+              echo "--- [cpuset-evidence] container effective cpuset (real work; want 1..N-1, MUST NOT contain 0) ---"
+              for f in $(find /sys/fs/cgroup -path '*docker-*' -name cpuset.cpus.effective 2>/dev/null); do
+                p=${f#/sys/fs/cgroup/}; p=${p%/cpuset.cpus.effective}
+                echo "  $p = $(cat "$f" 2>/dev/null)"
+              done | head -40
+              echo "--- [cpuset-evidence] native test-runner affinity (want 1..N-1) ---"
+              for tp in $(pgrep -f 'vitest|playwright|phpunit|go-build|artisan test' 2>/dev/null | head -20); do
+                echo "  pid $tp $(cat /proc/$tp/comm 2>/dev/null) -> $(taskset -cp $tp 2>/dev/null | sed 's/.*: //')"
+              done
+              echo "--- [cpuset-evidence] runner agent/heartbeat placement (allowed should include 0) ---"
+              for ap in $(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | head -10); do
+                echo "  agent pid $ap on vCPU $(ps -o psr= -p $ap 2>/dev/null | tr -d ' ') allowed $(taskset -cp $ap 2>/dev/null | sed 's/.*: //')"
+              done
               sleep 30
             done
 
@@ -302,6 +420,16 @@ commands:
           auto_rerun_delay: 10s
           command: |
             echo "<< parameters.reason >>"
+
+            # Authenticate to Docker Hub to escape the shared-IP anonymous pull
+            # rate limit (toomanyrequests on redis/traefik/etc). Read-only PAT from
+            # the DOCKERHUB_* CircleCI env vars; safe no-op when they are not set.
+            if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Logging in to Docker Hub as ${DOCKERHUB_USERNAME:-freeglegeeks}..."
+              echo "$DOCKERHUB_TOKEN" | docker login -u "${DOCKERHUB_USERNAME:-freeglegeeks}" --password-stdin \
+                && echo "Docker Hub login OK" \
+                || echo "Docker Hub login failed - continuing unauthenticated"
+            fi
 
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
@@ -324,21 +452,40 @@ commands:
                 docker stop $old_containers 2>/dev/null || true
                 docker rm $old_containers 2>/dev/null || true
               fi
-
-              # Ensure local build-layer cache registry (185.44.254.6:5002) is in insecure-registries.
-              # The pull-through mirrors (5000/5001) are configured at VM provision time; 5002 may be
-              # missing on older VMs, so we add it here if absent and reload Docker config.
-              if ! grep -q "5002" /etc/docker/daemon.json 2>/dev/null; then
-                echo "Adding 185.44.254.6:5002 to Docker insecure-registries..."
-                DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
-                echo "$DAEMON_JSON" \
-                  | jq '."insecure-registries" = (."insecure-registries" // [] | . + ["185.44.254.6:5002"])' \
-                  | sudo tee /etc/docker/daemon.json > /dev/null \
-                  && sudo systemctl reload docker 2>/dev/null \
-                  && echo "Done — daemon config updated" \
-                  || echo "⚠️  Could not update daemon.json (non-critical)"
-              fi
             fi
+
+            # Ensure local Docker registry mirrors are in daemon.json.
+            # Must run for ALL runner types (Katapult cloud + self-hosted).
+            # 5002 = build-layer cache (insecure-registries only).
+            # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
+            # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
+            # through the local cache instead of hitting Docker Hub directly.
+            # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
+            # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
+            NEEDS_DAEMON_UPDATE=false
+            grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            grep -q '"http://185.44.254.6:5000"' /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            if [ "$NEEDS_DAEMON_UPDATE" = "true" ]; then
+              echo "Updating Docker daemon.json for local registry mirrors..."
+              DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+              echo "$DAEMON_JSON" \
+                | jq '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique)' \
+                | sudo tee /etc/docker/daemon.json > /dev/null \
+                && sudo systemctl reload docker 2>/dev/null \
+                && echo "Done — daemon config updated" \
+                || echo "⚠️  Could not update daemon.json (non-critical)"
+            fi
+            # The mirror may be in daemon.json (from VM provisioning) yet NOT loaded
+            # by the running dockerd (started before the config, or never reloaded),
+            # so pulls bypass the mirror and hit Docker Hub directly (toomanyrequests).
+            # Verify the RUNNING daemon has it; reload (then restart) if not.
+            if ! docker info 2>/dev/null | grep -q "185.44.254.6:5000"; then
+              echo "Mirror absent from running daemon — reloading docker to load registry-mirrors..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 3
+            fi
+            echo "Registry mirrors in running daemon:"
+            docker info 2>/dev/null | grep -A2 "Registry Mirrors" || echo "  (none reported)"
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
               docker system prune -f || true
@@ -2865,7 +3012,19 @@ jobs:
               echo "export SKIP_COVERAGE=true" >> $BASH_ENV
               exit 0
             fi
-            npm install -g coveralls 2>/dev/null || sudo npm install -g coveralls 2>/dev/null || true
+            # Install the coveralls CLI to a user-writable prefix and add it to
+            # PATH for the upload steps below. The runner's default global npm
+            # prefix isn't writable, so a plain `npm install -g` silently failed
+            # ("coveralls: command not found") and no coverage was uploaded.
+            export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+            mkdir -p "$NPM_CONFIG_PREFIX"
+            if npm install -g coveralls && [ -x "$HOME/.npm-global/bin/coveralls" ]; then
+              echo "export PATH=$HOME/.npm-global/bin:\$PATH" >> $BASH_ENV
+              echo "✅ coveralls CLI installed at $HOME/.npm-global/bin/coveralls"
+            else
+              echo "⚠️ coveralls CLI install failed - skipping coverage upload"
+              echo "export SKIP_COVERAGE=true" >> $BASH_ENV
+            fi
             if [ -d ./.git ]; then echo "export COV_ROOT=$(pwd)" >> $BASH_ENV
             elif [ -d ~/project/.git ]; then echo "export COV_ROOT=~/project" >> $BASH_ENV
             elif [ -d ~/FreegleDocker/.git ]; then echo "export COV_ROOT=~/FreegleDocker" >> $BASH_ENV

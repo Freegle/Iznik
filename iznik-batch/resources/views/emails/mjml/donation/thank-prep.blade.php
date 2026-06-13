@@ -33,11 +33,13 @@
           Donations needing thanks: {{ count($cards) }} — total £{{ number_format($total, 2) }}
         </mj-text>
         <mj-text padding="0 10px 6px" font-size="13px" color="#666">
-          Each card has the data you'd otherwise pull together by hand: donor identity,
-          donation history, Gift Aid status, group memberships, recent mod notes, member↔mod
-          chat snippets, and links into the relevant Modtools pages. Each donation appears
-          in exactly one digest — it won't be repeated tomorrow, so please action every card
-          before this email scrolls away.
+          Only donations that warrant a personal thank-you appear here: one-off gifts at or
+          above the manual-thanks threshold, and newly set-up recurring donations. Each card
+          states why a thank-you is due, plus the data you'd otherwise pull together by
+          hand: donor identity, donation history, Gift Aid status, group memberships, recent
+          mod notes, member↔mod chat snippets, and links into the relevant Modtools pages.
+          Each donation appears in exactly one digest — it won't be repeated tomorrow, so
+          please action every card before this email scrolls away.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -83,11 +85,16 @@
               <tr>
                 <td style="text-align:left;">
                   <div style="font-size:18px;font-weight:bold;color:#222;">
-                    {{ $amountFmt }} &nbsp;to&nbsp; {{ $name }}
+                    {{ $amountFmt }} &nbsp;from&nbsp; {{ $name }}
                   </div>
                   <div style="font-size:13px;color:#555;margin-top:2px;">
                     at {{ $d['time'] }} &nbsp;via&nbsp; {{ $d['source'] }}@if ($d['transaction']) &nbsp;&middot;&nbsp; ref <span style="font-family:monospace;font-size:12px;">{{ $d['transaction'] }}</span>@endif
                   </div>
+                  @if (!empty($card['thankReason']))
+                    <div style="font-size:13px;color:#155724;font-weight:bold;margin-top:4px;">
+                      Why thank: {{ $card['thankReason'] }}
+                    </div>
+                  @endif
                 </td>
                 <td style="text-align:right;font-size:12px;">
                   @foreach ($flags as $f)
@@ -136,6 +143,20 @@
                   <td class="card-label">Member</td>
                   <td><span class="flag-pill flag-pill-warn">Unmatched</span> — sleuthing required (PayPal/Stripe email may differ from Freegle email)</td>
                 </tr>
+                @if (!empty($card['candidates']))
+                  <tr>
+                    <td class="card-label">Possible matches</td>
+                    <td>
+                      @foreach ($card['candidates'] as $cand)
+                        <div style="margin-bottom:3px;">
+                          <a href="{{ $cand['link'] }}">{{ $cand['name'] !== 'Unknown' ? $cand['name'] : ('#' . $cand['userid']) }}</a>
+                          @if ($cand['email'])&nbsp;<span style="color:#555;word-break:break-all;">&lt;{{ $cand['email'] }}&gt;</span>@endif
+                          <span style="color:#888;font-size:12px;">— {{ $cand['reason'] }}</span>
+                        </div>
+                      @endforeach
+                    </td>
+                  </tr>
+                @endif
               @endif
             </table>
           </mj-raw>

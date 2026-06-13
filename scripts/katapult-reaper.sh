@@ -44,6 +44,17 @@ LOG="/var/log/katapult-reaper.log"
 # handles faster cleanup for normally-completing jobs.
 MIN_AGE_SECONDS=9000  # 2.5 hours
 
+# Belt-and-braces against the MIN_AGE-only safety being defeated by a stale/old
+# deployment (a copy of this script with MIN_AGE_SECONDS=1800 deleting reused VMs
+# mid-job was the root cause of ~31% build-test-katapult infrastructure_fails,
+# 2026-06-13). Independently of age, NEVER delete a VM whose CircleCI runner has
+# connected within this window: a runner actively running a task holds a
+# continuous connection (last_connected is always a few seconds old), so this
+# protects busy VMs even if MIN_AGE is misconfigured low. Generous so a brief
+# reconnect blip can't expose a running job.
+RUNNER_ACTIVE_GRACE_SECONDS=300
+RUNNER_RESOURCE_CLASS="freegle/katapult-runner"
+
 DRY_RUN="${1:-}"  # pass --dry-run to print actions without deleting
 
 NOW=$(date +%s)
@@ -79,6 +90,34 @@ declare -A PIPELINE_UUID
 while IFS=$'\t' read -r num uuid; do
     PIPELINE_UUID["$num"]="$uuid"
 done < <(echo "$PIPELINES_JSON" | jq -r '.items[] | select(.id != null) | [(.number | tostring), .id] | @tsv')
+
+# Runner inventory: name -> last_connected epoch. A VM's runner is named after
+# the VM (start.sh sets runner.name = VM name), so we can ask CircleCI when each
+# runner last had a live connection. Fetch once. If this call fails we treat ALL
+# runners as active (fail safe — never delete on incomplete data).
+declare -A RUNNER_LAST_CONNECTED
+RUNNERS_JSON=$(curl -sf --max-time 15 \
+    -H "Circle-Token: $CIRCLE_TOKEN" \
+    "https://runner.circleci.com/api/v3/runner?resource-class=${RUNNER_RESOURCE_CLASS}" 2>/dev/null) || RUNNERS_JSON=""
+if [ -n "$RUNNERS_JSON" ]; then
+    while IFS=$'\t' read -r rname rconn; do
+        [ -z "$rname" ] && continue
+        repoch=$(date -d "$rconn" +%s 2>/dev/null || echo 0)
+        RUNNER_LAST_CONNECTED["$rname"]="$repoch"
+    done < <(echo "$RUNNERS_JSON" | jq -r '(.items // .)[]? | select(type=="object") | [.name, (.last_connected // "")] | @tsv')
+fi
+
+# True if this VM's runner connected within RUNNER_ACTIVE_GRACE_SECONDS (i.e. it
+# is in active use — almost certainly running a task). Fail safe: if the runner
+# inventory could not be fetched, treat as active so we never delete blind.
+runner_recently_active() {
+    local name="$1"
+    [ -z "$RUNNERS_JSON" ] && return 0
+    local lc="${RUNNER_LAST_CONNECTED[$name]:-}"
+    [ -z "$lc" ] && return 1          # runner gone/deregistered — not active
+    [ "$lc" -eq 0 ] 2>/dev/null && return 1
+    [ $(( NOW - lc )) -lt "$RUNNER_ACTIVE_GRACE_SECONDS" ]
+}
 
 # Cache of pipeline_number -> "running"|"done"
 declare -A PIPELINE_STATUS
@@ -139,6 +178,16 @@ while IFS=$'\t' read -r vm_id vm_name created_at; do
 
     if pipeline_is_running "$pipeline_num"; then
         continue  # Active job — leave it alone.
+    fi
+
+    # The name-pipeline is done, but pooled VMs get REUSED: this VM may be running
+    # a DIFFERENT pipeline's job right now. Guard on the runner's live connection so
+    # we never reap a VM mid-job (the reused-VM bug). Logged because reaching here
+    # past MIN_AGE with a still-active runner is exactly the case the old logic got
+    # wrong.
+    if runner_recently_active "$vm_name"; then
+        log "Skip $vm_name (age=${age_min}m, pipeline=$pipeline_num done) — runner connected <${RUNNER_ACTIVE_GRACE_SECONDS}s ago, still in use"
+        continue
     fi
 
     if [ "$DRY_RUN" = "--dry-run" ]; then

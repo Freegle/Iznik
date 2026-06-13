@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -209,21 +210,14 @@ func TestStripeIPN_RecurringFirstDonation(t *testing.T) {
 	db.Raw("SELECT TransactionType FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&txType)
 	assert.Equal(t, "subscr_payment", txType)
 
-	// Verify thank-you task was queued.
+	// No per-donation thank-you email is queued any more: the daily
+	// mail:donations:thank-prep digest coordinates all thanking.
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
 		userID).Scan(&taskCount)
-	assert.Equal(t, int64(1), taskCount, "Thank-you email should be queued for first recurring donation")
-
-	// Source field must be 'stripe' so the email is worded correctly.
-	var source string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
-		userID).Scan(&source)
-	assert.Equal(t, "stripe", source, "Stripe IPN must tag thank-you task with source=stripe")
+	assert.Equal(t, int64(0), taskCount, "first recurring donation must not queue a per-donation thank-you email")
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
-	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
-		fmt.Sprintf("%%\"user_id\":%d%%", userID))
 }
 
 func TestStripeIPN_GiftAidNotification(t *testing.T) {
@@ -249,4 +243,67 @@ func TestStripeIPN_GiftAidNotification(t *testing.T) {
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
 	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
+}
+
+// TestStripeIPN_MatchByPriorDonation: a billing email not registered on any
+// account, but a prior donation from the same Payer is linked to a valid user.
+func TestStripeIPN_MatchByPriorDonation(t *testing.T) {
+	prefix := uniquePrefix("stripeprior")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	billingEmail := prefix + "_card@external.com" // not in users_emails
+	priorTxn := "ch_prior_" + prefix
+	chargeID := "ch_test_" + prefix
+
+	db.Exec("INSERT INTO users_donations (userid, Payer, GrossAmount, TransactionID, TransactionType, source, type, timestamp) "+
+		"VALUES (?, ?, 10.00, ?, 'subscr_payment', 'Stripe', 'Stripe', NOW() - INTERVAL 1 MONTH)",
+		userID, billingEmail, priorTxn)
+
+	body := makeChargeEvent(chargeID, 1000, map[string]string{}, billingEmail, "One-time donation")
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donorID)
+	assert.NotNil(t, donorID, "should match via prior donation from same Payer")
+	if donorID != nil {
+		assert.Equal(t, userID, *donorID)
+	}
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", priorTxn, chargeID)
+}
+
+// TestStripeIPN_MatchByCanon: billing email differs from the registered address
+// only by canonicalisation; must still match (V1 parity).
+func TestStripeIPN_MatchByCanon(t *testing.T) {
+	prefix := uniquePrefix("stripecanon")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	billingEmail := prefix + ".donor@test.com"
+	canon := user.CanonicalizeEmail(billingEmail)
+	storedEmail := canon
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)", userID, storedEmail, canon)
+
+	chargeID := "ch_test_" + prefix
+	body := makeChargeEvent(chargeID, 1000, map[string]string{}, billingEmail, "One-time donation")
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donorID)
+	assert.NotNil(t, donorID, "billing email should match registered account via canon")
+	if donorID != nil {
+		assert.Equal(t, userID, *donorID)
+	}
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ? AND email = ?", userID, storedEmail)
 }

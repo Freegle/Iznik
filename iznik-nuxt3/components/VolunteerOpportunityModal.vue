@@ -394,7 +394,7 @@
               v-if="canmodify"
               variant="danger"
               :disabled="uploadingPhoto"
-              @click="deleteIt"
+              @click="confirmDelete"
             >
               <v-icon icon="trash-alt" /> Delete
             </b-button>
@@ -417,6 +417,13 @@
       </div>
     </template>
   </b-modal>
+  <ConfirmModal
+    v-if="showDeleteConfirm"
+    title="Delete Volunteer Opportunity"
+    message="Are you sure you want to delete this volunteer opportunity?"
+    @confirm="doDelete"
+    @hidden="showDeleteConfirm = false"
+  />
 </template>
 <script setup>
 import { ref, computed, defineAsyncComponent, watch } from 'vue'
@@ -502,6 +509,7 @@ const form = ref(null)
 // Data properties
 const groupid = ref(null)
 const cacheBust = ref(Date.now())
+const showDeleteConfirm = ref(false)
 const showGroupError = ref(false)
 const description = ref(null)
 const currentAtts = ref([])
@@ -544,7 +552,7 @@ const volunteering = computed(() => {
 })
 
 const canmodify = computed(() => {
-  return volunteering.value?.userid === myid.value || supportOrAdmin
+  return volunteering.value?.userid === myid.value || supportOrAdmin.value
 })
 
 const groups = computed(() => {
@@ -644,6 +652,10 @@ watch(
   { deep: true }
 )
 
+function confirmDelete() {
+  showDeleteConfirm.value = true
+}
+
 // Methods
 function validateTitle(value) {
   if (!value) {
@@ -685,7 +697,7 @@ function validateContactName(value) {
   return true
 }
 
-async function deleteIt() {
+async function doDelete() {
   await volunteeringStore.delete(props.id)
   hide()
 }

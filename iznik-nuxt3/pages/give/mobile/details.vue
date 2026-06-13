@@ -58,6 +58,9 @@
           :state="itemState"
           @blur="onItemBlur"
         />
+        <div v-if="itemError" class="invalid-feedback d-block">
+          {{ itemError }}
+        </div>
       </div>
 
       <!-- Description -->
@@ -114,6 +117,11 @@ import { useMiscStore } from '~/stores/misc'
 import NumberIncrementDecrement from '~/components/NumberIncrementDecrement'
 import OurUploadedImage from '~/components/OurUploadedImage'
 import api from '~/api'
+import { fetchAiIllustration as fetchAiIllustrationImpl } from '~/composables/useAiIllustration'
+import {
+  isNumericOnlyItem,
+  INVALID_ITEM_MESSAGE,
+} from '~/composables/useItemValidation'
 
 const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
@@ -163,11 +171,20 @@ onMounted(() => {
 
 // Item validation state - null initially, false if error, true if valid
 const itemState = computed(() => {
+  if (isNumericOnlyItem(item.value)) {
+    return false
+  }
   if (showItemError.value && (!item.value || !item.value.trim())) {
     return false
   }
   return item.value ? true : null
 })
+
+// Error message shown under the item field. A purely-numeric item is never a
+// valid description, so we flag it as soon as it's typed.
+const itemError = computed(() =>
+  isNumericOnlyItem(item.value) ? INVALID_ITEM_MESSAGE : null
+)
 
 // Description validation state
 const descriptionState = computed(() => {
@@ -253,66 +270,19 @@ function editPhotos() {
 const fetchingIllustration = ref(false)
 const lastFetchedItem = ref(null)
 
-// Watch item changes to fetch AI illustration when field loses focus
-// We track the last item we fetched for to avoid refetching
+// Fetch AI illustration when the item name is available and no real photo exists.
+// Delegates to the testable useAiIllustration composable which immediately calls
+// POST /image to obtain a real numeric server-side id — never a synthetic string.
 async function fetchAiIllustration(itemName) {
-  if (!itemName || !itemName.trim()) return
-
-  const trimmedItem = itemName.trim()
-
-  // Only fetch if:
-  // 1. There are no real photos (excluding AI illustrations)
-  // 2. We haven't already fetched for this item name
-  // 3. We're not currently fetching
-  const realPhotos = attachments.value.filter(
-    (a) => !a.externalmods || a.externalmods.ai !== true
-  )
-
-  if (
-    realPhotos.length > 0 ||
-    fetchingIllustration.value ||
-    lastFetchedItem.value === trimmedItem
-  ) {
-    return
-  }
-
-  fetchingIllustration.value = true
-  lastFetchedItem.value = trimmedItem
-
-  try {
-    const illustration = await $api.message.getIllustration(trimmedItem)
-
-    if (illustration && illustration.externaluid) {
-      // Check again that no real photos were added while we were fetching
-      const currentRealPhotos = attachments.value.filter(
-        (a) => !a.externalmods || a.externalmods.ai !== true
-      )
-
-      if (currentRealPhotos.length === 0) {
-        // Remove any existing AI illustration first
-        const filteredAtts = attachments.value.filter(
-          (a) => !a.externalmods || a.externalmods.ai !== true
-        )
-
-        // Add the AI illustration
-        composeStore.setAttachmentsForMessage(messageId.value, [
-          ...filteredAtts,
-          {
-            id: 'ai-' + Date.now(),
-            path: illustration.url,
-            paththumb: illustration.url,
-            ouruid: illustration.externaluid,
-            externalmods: { ai: true },
-            isAiIllustration: true,
-          },
-        ])
-      }
-    }
-  } catch (e) {
-    console.log('Failed to fetch AI illustration:', e.message)
-  } finally {
-    fetchingIllustration.value = false
-  }
+  await fetchAiIllustrationImpl({
+    api: $api,
+    composeStore,
+    messageId: messageId.value,
+    itemName,
+    attachments: attachments.value,
+    fetchingIllustration,
+    lastFetchedItem,
+  })
 }
 
 // Watch for attachment removal to track AI declined
@@ -344,7 +314,7 @@ function onItemBlur() {
 }
 
 function validateAndNext() {
-  if (!item.value || !item.value.trim()) {
+  if (!item.value || !item.value.trim() || isNumericOnlyItem(item.value)) {
     showItemError.value = true
     nextTick(() => {
       const input = document.getElementById('item-name')

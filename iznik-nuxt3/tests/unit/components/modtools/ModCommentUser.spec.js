@@ -13,6 +13,7 @@ const defaultComment = {
   id: 100,
   user1: 'Test comment',
   userid: 123,
+  groupid: 456,
   user: {
     id: 123,
     displayname: 'Test User',
@@ -70,6 +71,10 @@ describe('ModCommentUser', () => {
             template: '<div class="mod-comment" />',
             props: ['commentid', 'userid'],
           },
+          'nuxt-link': {
+            template: '<a :href="to"><slot /></a>',
+            props: ['to'],
+          },
         },
         mocks: {
           datetimeshort: (date) => `formatted: ${date}`,
@@ -121,6 +126,22 @@ describe('ModCommentUser', () => {
     it('renders ModComment component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.mod-comment').exists()).toBe(true)
+    })
+
+    it('renders member name as a link to the member profile page', () => {
+      const wrapper = mountComponent()
+      // The nuxt-link stub renders as <a href="/members/approved/<groupid>/<userid>">
+      const link = wrapper.find(
+        'a[href="/members/approved/456/123"]'
+      )
+      expect(link.exists()).toBe(true)
+      expect(link.text()).toContain('Test User')
+    })
+
+    it('uses groupid 0 in link when comment has no groupid', () => {
+      const wrapper = mountComponent({}, { groupid: null })
+      const link = wrapper.find('a[href="/members/approved/0/123"]')
+      expect(link.exists()).toBe(true)
     })
   })
 

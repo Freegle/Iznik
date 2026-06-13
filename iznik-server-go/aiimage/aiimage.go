@@ -772,6 +772,50 @@ func KeepCurrent(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// Suppress marks an AI image as 'suppressed' — a TERMINAL state meaning this item name
+// should never have an AI image generated or shown again. It is the moderator equivalent
+// of the volunteer-quorum suppress path (microvolunteering.checkAIImageSuppressQuorum):
+// the Pollinations/illustrations cron skips the name, message serving masks the image
+// (see the ai_images status IN ('rejected','regenerating','suppressed') join), and the
+// regeneration queue ignores it. Clears any pending review state and review votes so the
+// image leaves the queue. Works regardless of the current status (admin override), so a
+// 'regenerating' image can also be suppressed.
+//
+// @Summary Suppress an AI image (never generate one for this item again)
+// @Tags ai-images
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "AI image ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/ai-images/{id}/suppress [post]
+func Suppress(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+	if !user.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Must be Support or Admin")
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || id == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid image ID")
+	}
+
+	db := database.DBConn
+
+	var existing uint64
+	db.Raw("SELECT id FROM ai_images WHERE id = ?", id).Scan(&existing)
+	if existing == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
+	}
+
+	db.Exec(`UPDATE ai_images SET status = 'suppressed', pending_externaluid = NULL, regeneration_notes = NULL WHERE id = ?`, id)
+	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
 // Count returns the number of AI images currently needing regeneration (rejected or regenerating).
 // Used by the ModTools nav badge.
 //

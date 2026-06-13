@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/queue"
 	"github.com/gofiber/fiber/v2"
 	stripe "github.com/stripe/stripe-go/v82"
 	"github.com/stripe/stripe-go/v82/paymentintent"
@@ -78,21 +77,15 @@ func PayPalIPN(c *fiber.Ctx) error {
 		}
 	}
 
-	// Fallback to email lookup.
+	// Fallback: registered address (exact or canonical) or a prior donation from
+	// the same Payer that's linked to a still-valid user. Mirrors V1 findByEmail
+	// and recovers recurring donors whose Freegle email later changed while
+	// PayPal keeps billing the original address.
 	if userID == 0 && payerEmail != "" {
-		gdb.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", payerEmail).Scan(&userID)
+		userID = MatchUserByEmailOrPriorDonation(payerEmail)
 		if userID > 0 {
-			log.Printf("[PayPalIPN] Matched user %d from payer email %s", userID, payerEmail)
+			log.Printf("[PayPalIPN] Matched user %d for payer email %s (email/canon/prior donation)", userID, payerEmail)
 		}
-	}
-
-	// Check if this is the user's first donation (for thank-you logic).
-	firstDonation := false
-	if userID > 0 {
-		var previousCount int64
-		gdb.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ?", userID).Scan(&previousCount)
-		firstDonation = previousCount == 0
-		log.Printf("[PayPalIPN] User %d previous donations: %d, first=%v", userID, previousCount, firstDonation)
 	}
 
 	// Parse payment_date — PayPal uses format like "12:34:56 Jan 01, 2026 PST".
@@ -133,35 +126,10 @@ func PayPalIPN(c *fiber.Ctx) error {
 		handleGiftAidNotification(userID)
 	}
 
-	// Determine if recurring.
-	recurring := txnType == "recurring_payment" || txnType == "subscr_payment"
-
-	// Queue thank-you email for first recurring or large one-off.
-	// Exclude PayPal Giving Fund addresses.
-	if userID > 0 && !IsExcludedPayer(payerEmail) {
-		// Parse amount for threshold check.
-		var amount float64
-		gdb.Raw("SELECT GrossAmount FROM users_donations WHERE TransactionID = ? ORDER BY id DESC LIMIT 1", txnID).Scan(&amount)
-
-		if (recurring && firstDonation) || (!recurring && amount >= MANUAL_THANKS) {
-			log.Printf("[PayPalIPN] Queuing thank-you for user %d, amount £%.2f, recurring=%v", userID, amount, recurring)
-
-			// Get user name and email for the thank-you.
-			var userName, userEmail string
-			gdb.Raw("SELECT fullname FROM users WHERE id = ?", userID).Scan(&userName)
-			gdb.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&userEmail)
-
-			if err := queue.QueueTask(queue.TaskEmailDonateExternal, map[string]interface{}{
-				"user_name":  userName,
-				"user_id":    userID,
-				"user_email": userEmail,
-				"amount":     amount,
-				"source":     "paypal",
-			}); err != nil {
-				log.Printf("[PayPalIPN] Failed to queue thank-you email: %v", err)
-			}
-		}
-	}
+	// Thank-you requests are no longer sent per donation: the daily
+	// mail:donations:thank-prep digest now coordinates all thanking (first
+	// recurring / one-off >= threshold / external), so a per-donation email
+	// here would just duplicate it. See DonationThankPrepService.
 
 	return c.SendStatus(fiber.StatusOK)
 }

@@ -196,4 +196,67 @@ class EmailTracking extends Model
 
         return $url;
     }
+
+    /**
+     * Compact, URL-safe encoding of a positive integer id: base64url
+     * (RFC 4648 §5, chars A-Z a-z 0-9 - _, no padding) of the minimal
+     * big-endian byte representation. A ~9-digit id (<2^30) becomes ~5
+     * chars instead of 9-10. Used to shrink the per-link payload in
+     * emails with many tracked URLs (e.g. the multi-post digest).
+     */
+    public static function encodeId(int $id): string
+    {
+        if ($id <= 0) {
+            return '0';
+        }
+        $bytes = '';
+        while ($id > 0) {
+            $bytes = chr($id & 0xFF) . $bytes;
+            $id >>= 8;
+        }
+
+        return rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    }
+
+    /**
+     * Short per-email reference for compact tracking links. The full
+     * tracking_id is a 32-char random string; repeated across the ~8
+     * links per post in a 70-post digest that alone is tens of KB. A
+     * 12-char slice still carries ~72 bits of the original randomness,
+     * enough to keep links unguessable.
+     */
+    public function compactRef(): string
+    {
+        return substr($this->tracking_id, 0, 12);
+    }
+
+    /**
+     * Compact tracked link for one of OUR OWN resources, encoded by type
+     * + id rather than a base64'd full URL:
+     *   /e/d/r/{ref}/{type}/{idEnc}/{pos}
+     * The Go handler reconstructs the destination from {type}+{id}
+     * (e.g. m -> /message/{id}?reply=1, g -> /explore/{id}). Arbitrary
+     * external URLs still use getTrackedLinkUrl()'s ?url=base64 form.
+     */
+    public function getCompactLinkUrl(string $type, string $idEnc, string $position): string
+    {
+        $baseUrl = config('freegle.api.base_url', 'https://api.ilovefreegle.org');
+
+        return "{$baseUrl}/e/d/r/{$this->compactRef()}/{$type}/{$idEnc}/{$position}";
+    }
+
+    /**
+     * Compact tracked image for one of our own resources:
+     *   /e/d/i/{ref}/{type}/{idEnc}/{preset}/{pos}
+     * {preset} indexes a shared dimension table (0=240x240 card thumb,
+     * 1=600x400 hero, 2=avatar) so width/height/fit aren't repeated in
+     * every URL — the handler reconstructs the delivery URL from the
+     * attachment/user id + preset.
+     */
+    public function getCompactImageUrl(string $type, string $idEnc, int $preset, string $position): string
+    {
+        $baseUrl = config('freegle.api.base_url', 'https://api.ilovefreegle.org');
+
+        return "{$baseUrl}/e/d/i/{$this->compactRef()}/{$type}/{$idEnc}/{$preset}/{$position}";
+    }
 }

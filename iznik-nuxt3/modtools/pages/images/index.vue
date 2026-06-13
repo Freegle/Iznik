@@ -29,7 +29,9 @@
         </li>
         <li>
           Some items genuinely can't have a good AI image — if every attempt is wrong, it is fine
-          to leave the current image and move on.
+          to leave the current image and move on with "Keep Current". If an item should never have
+          an AI image at all (e.g. cash, a lift, a voucher), use "Don't use AI for this item" and
+          we won't generate one for it again.
         </li>
       </ul>
     </b-alert>
@@ -149,6 +151,16 @@
 
               <div class="d-flex gap-2">
                 <b-button
+                  data-testid="suppress-btn"
+                  variant="outline-danger"
+                  :disabled="suppressing[img.id]"
+                  @click="handleSuppress(img)"
+                >
+                  <b-spinner v-if="suppressing[img.id]" small class="me-1" />
+                  Don't use AI for this item
+                </b-button>
+
+                <b-button
                   data-testid="keep-btn"
                   variant="secondary"
                   :disabled="keeping[img.id]"
@@ -183,7 +195,8 @@ import { useAIImages } from '~/modtools/composables/useAIImages'
 
 definePageMeta({ layout: 'default' })
 
-const { images, loading, fetchReview, regenerate, accept, keep } = useAIImages()
+const { images, loading, fetchReview, regenerate, accept, keep, suppress } =
+  useAIImages()
 
 const localImages = ref([])
 const notes = ref({})
@@ -191,6 +204,7 @@ const localPreviews = ref({}) // set after clicking Regenerate
 const regenerating = ref({})
 const accepting = ref({})
 const keeping = ref({})
+const suppressing = ref({})
 const errors = ref({})
 
 onMounted(async () => {
@@ -249,6 +263,23 @@ async function handleKeep(img) {
     errors.value[img.id] = 'Failed to keep current image. Please try again.'
   } finally {
     keeping.value[img.id] = false
+  }
+}
+
+// Suppress: terminally mark this item as one that should never have an AI image.
+// The Go API sets ai_images.status = 'suppressed', so the illustrations cron skips
+// the name and message serving masks any existing image for it.
+async function handleSuppress(img) {
+  suppressing.value[img.id] = true
+  errors.value[img.id] = null
+
+  try {
+    await suppress(img.id)
+    localImages.value = localImages.value.filter((i) => i.id !== img.id)
+  } catch (e) {
+    errors.value[img.id] = 'Failed to suppress this item. Please try again.'
+  } finally {
+    suppressing.value[img.id] = false
   }
 }
 </script>

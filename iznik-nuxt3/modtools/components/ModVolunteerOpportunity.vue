@@ -140,8 +140,8 @@ function confirmDelete() {
   showDeleteConfirm.value = true
 }
 
-function deleteme() {
-  volunteeringStore.delete(volunteering.value.id)
+async function deleteme() {
+  await volunteeringStore.delete(volunteering.value.id)
   showDeleteConfirm.value = false
 }
 

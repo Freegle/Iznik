@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ChatRoom;
+use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
@@ -27,20 +28,81 @@ class PushNotificationService
 
     private $messaging = null;
 
+    /** Whether we've already alerted that FCM is unavailable (avoids per-push spam). */
+    private bool $unavailableLogged = false;
+
     public function __construct()
     {
         $credentialsPath = config('freegle.firebase.credentials_path', '/etc/firebase.json');
 
-        if (file_exists($credentialsPath)) {
+        try {
+            // NB: file_exists() is TRUE for a /dev/null bind-mount, and an empty
+            // or unreadable credentials file makes the Firebase factory throw deep
+            // inside SplFileObject ("length must be > 0"). Check explicitly so the
+            // failure is unambiguous rather than a cryptic stream error — a broken
+            // creds mount previously disabled push for days with no visible alert.
+            if (! is_file($credentialsPath) || ! is_readable($credentialsPath) || filesize($credentialsPath) === 0) {
+                throw new \RuntimeException("Firebase credentials missing, unreadable or empty: {$credentialsPath}");
+            }
+
+            $factory = (new Factory)->withServiceAccount($credentialsPath);
+            $this->messaging = $factory->createMessaging();
+        } catch (\Throwable $e) {
+            $this->reportFirebaseUnavailable($e->getMessage());
+        }
+    }
+
+    /**
+     * Alert loudly — application log (ERROR), Sentry and Loki — that FCM could
+     * not be initialised, so a broken/empty credentials mount can never again
+     * silently swallow push notifications. Fires once per service construction.
+     */
+    private function reportFirebaseUnavailable(string $detail): void
+    {
+        $message = 'Push notifications DISABLED: Firebase Cloud Messaging failed to initialise';
+
+        Log::error($message, ['detail' => $detail]);
+
+        if (function_exists('\Sentry\captureMessage')) {
+            \Sentry\captureMessage($message.' — '.$detail);
+        }
+
+        try {
+            app(LokiService::class)->logEvent('push', 'firebase_init_failed', [
+                'detail' => $detail,
+            ]);
+        } catch (\Throwable $e) {
+            // Never let alerting break construction.
+        }
+    }
+
+    /**
+     * Record (once per instance) that a push had to be dropped because FCM is
+     * unavailable, then return 0. Makes the *impact* visible in Sentry/Loki
+     * without emitting a line per dropped message.
+     */
+    private function messagingUnavailable(string $context, array $extra = []): int
+    {
+        if (! $this->unavailableLogged) {
+            $this->unavailableLogged = true;
+
+            $message = 'Push notification DROPPED: Firebase Cloud Messaging not initialised';
+            Log::error($message, array_merge(['context' => $context], $extra));
+
+            if (function_exists('\Sentry\captureMessage')) {
+                \Sentry\captureMessage($message.' ('.$context.')');
+            }
+
             try {
-                $factory = (new Factory)->withServiceAccount($credentialsPath);
-                $this->messaging = $factory->createMessaging();
+                app(LokiService::class)->logEvent('push', 'dropped_no_firebase', array_merge([
+                    'context' => $context,
+                ], $extra));
             } catch (\Throwable $e) {
-                Log::warning('Failed to initialize Firebase', [
-                    'error' => $e->getMessage(),
-                ]);
+                // Swallow — alerting must not break the send path.
             }
         }
+
+        return 0;
     }
 
     /**
@@ -80,11 +142,7 @@ class PushNotificationService
     public function notify(int $userId, bool $modtools): int
     {
         if (! $this->messaging) {
-            Log::debug('Firebase not configured, skipping push notification', [
-                'user_id' => $userId,
-            ]);
-
-            return 0;
+            return $this->messagingUnavailable('notify', ['user_id' => $userId]);
         }
 
         $count = 0;
@@ -157,9 +215,7 @@ class PushNotificationService
     public function notifyUser(int $userId): int
     {
         if (! $this->messaging) {
-            Log::debug('Firebase not configured, skipping user push notification', ['user_id' => $userId]);
-
-            return 0;
+            return $this->messagingUnavailable('notify_user', ['user_id' => $userId]);
         }
 
         $notifs = DB::select(
@@ -307,10 +363,16 @@ class PushNotificationService
      * - Only ACTIVE groups (membership settings.active != 0 and settings.showmessages != 0)
      * - Only unheld pending messages (heldby IS NULL)
      * - Only spam collection messages (not spamtype in Pending)
-     * - Excludes deleted (mg.deleted = 0) and system messages (fromuser IS NOT NULL)
+     * - Excludes deleted messages (mg.deleted = 0)
+     * - INNER JOINs users with u.deleted IS NULL, so system messages (null fromuser)
+     *   AND messages whose author has been deleted are both excluded — matching the
+     *   app menu (session.go), which filters them too. Without this a pending message
+     *   from a deleted user is counted in the badge but hidden from the menu, leaving
+     *   a phantom +1 the mod can never clear (Discourse #9654/12).
      *
-     * This prevents phantom badges caused by held messages, deleted messages, or
-     * work from inactive groups inflating the count while the app shows nothing.
+     * This prevents phantom badges caused by held messages, deleted messages,
+     * deleted-user messages, or work from inactive groups inflating the count while
+     * the app shows nothing.
      *
      * Note: currently covers only pending + spam (2 of 14 session.go work categories).
      * Omitted categories: pendingmembers, spammembers, pendingevents, pendingadmins,
@@ -321,6 +383,23 @@ class PushNotificationService
      */
     public function getBadgeCount(int $userId): int
     {
+        return $this->getBadgeBreakdown($userId)['total'];
+    }
+
+    /**
+     * Return per-collection badge counts for a ModTools user.
+     *
+     * Returns ['pending' => N, 'spam' => N, 'volunteering' => N, 'total' => N].
+     * Callers that need per-collection data (e.g. to choose notification route/label)
+     * use this directly rather than duplicating the queries in a separate method.
+     *
+     * The queries here are the single authoritative source for badge counts — do not
+     * add a parallel count method; update this breakdown instead.
+     */
+    private function getBadgeBreakdown(int $userId): array
+    {
+        $zero = ['pending' => 0, 'spam' => 0, 'volunteering' => 0, 'total' => 0];
+
         // Get all approved mod/owner memberships with settings to determine active/inactive.
         $memberships = DB::select(
             "SELECT groupid, settings FROM memberships
@@ -329,7 +408,7 @@ class PushNotificationService
         );
 
         if (empty($memberships)) {
-            return 0;
+            return $zero;
         }
 
         // Mirror session.go: only count work from active groups in the badge total.
@@ -342,7 +421,7 @@ class PushNotificationService
         }
 
         if (empty($activeGroupIds)) {
-            return 0;
+            return $zero;
         }
 
         $placeholders = implode(',', array_fill(0, count($activeGroupIds), '?'));
@@ -352,13 +431,13 @@ class PushNotificationService
         $pending = DB::selectOne(
             "SELECT COUNT(*) as cnt FROM messages_groups mg
              INNER JOIN messages m ON m.id = mg.msgid
+             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
              INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
              WHERE mem.role IN ('Owner', 'Moderator')
              AND mem.collection = 'Approved'
              AND mg.collection = 'Pending'
              AND mg.groupid IN ({$placeholders})
              AND mg.deleted = 0
-             AND m.fromuser IS NOT NULL
              AND m.heldby IS NULL",
             $pendingParams
         );
@@ -368,13 +447,13 @@ class PushNotificationService
         $spam = DB::selectOne(
             "SELECT COUNT(*) as cnt FROM messages_groups mg
              INNER JOIN messages m ON m.id = mg.msgid
+             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
              INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
              WHERE mem.role IN ('Owner', 'Moderator')
              AND mem.collection = 'Approved'
              AND mg.collection = 'Spam'
              AND mg.groupid IN ({$placeholders})
-             AND mg.deleted = 0
-             AND m.fromuser IS NOT NULL",
+             AND mg.deleted = 0",
             $spamParams
         );
 
@@ -389,7 +468,16 @@ class PushNotificationService
             $activeGroupIds
         );
 
-        return ($pending->cnt ?? 0) + ($spam->cnt ?? 0) + ($volunteering->cnt ?? 0);
+        $pendingCnt = (int) ($pending->cnt ?? 0);
+        $spamCnt = (int) ($spam->cnt ?? 0);
+        $volunteeringCnt = (int) ($volunteering->cnt ?? 0);
+
+        return [
+            'pending' => $pendingCnt,
+            'spam' => $spamCnt,
+            'volunteering' => $volunteeringCnt,
+            'total' => $pendingCnt + $spamCnt + $volunteeringCnt,
+        ];
     }
 
     /**
@@ -423,12 +511,29 @@ class PushNotificationService
     /**
      * Build the ModTools notification payload.
      *
-     * For ModTools, we send a simple "pending messages" notification.
-     * Matches legacy User::getNotificationPayload(modtools=true).
+     * Mirrors V1 User::getNotificationPayload(TRUE) (iznik-server/include/user/User.php ~4547-4569):
+     * iterate categories in a fixed priority order (volunteering → spam → pending), last-wins,
+     * so pending — being last — always wins when present. This ensures the notification route and
+     * title reflect the highest-priority work type.
+     *
+     * Routes use direct Nuxt paths WITHOUT a /modtools/ prefix. The /modtools/ prefix hits the
+     * catch-all redirect page (iznik-nuxt3/modtools/pages/modtools/[...slug].vue) which delays
+     * navigation by 2 seconds. The correct direct pages are /messages/pending and /volunteering.
+     * (Discourse #9692/10).
+     *
+     * Category mapping (V1 parity):
+     *   volunteering → route /volunteering,        title "N volunteer op(s)"
+     *   spam         → route /messages/pending,    title "N message(s) to review"
+     *   pending      → route /messages/pending,    title "N pending message(s)"
+     *
+     * Title is multi-line ("\n"-joined) listing each non-zero category.
+     * If total == 0: empty title, route "/".
+     * Badge is always total across all categories.
      */
     private function buildModToolsPayload(int $userId): ?array
     {
-        $total = $this->getBadgeCount($userId);
+        $breakdown = $this->getBadgeBreakdown($userId);
+        $total = $breakdown['total'];
 
         if ($total === 0) {
             // Still send a zero-count to clear badge
@@ -444,14 +549,36 @@ class PushNotificationService
                 'image' => 'www/images/modtools_logo.png',
                 'modtools' => '1',
                 'sound' => 'default',
-                'route' => '/modtools',
+                'route' => '/',
                 'channel_id' => 'modtools',
                 'notId' => (string) $userId,
             ];
         }
 
-        $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
-        $message = "Open ModTools to review";
+        // Per-category label lines (for multi-line title) and per-category route.
+        // Last-wins order: volunteering first, pending last — so pending wins if present.
+        $titleLines = [];
+        $route = '/';
+
+        $volunteeringCount = $breakdown['volunteering'];
+        if ($volunteeringCount > 0) {
+            $titleLines[] = $volunteeringCount . ' volunteer op' . ($volunteeringCount > 1 ? 's' : '');
+            $route = '/volunteering';
+        }
+
+        $spamCount = $breakdown['spam'];
+        if ($spamCount > 0) {
+            $titleLines[] = $spamCount . ' message' . ($spamCount > 1 ? 's' : '') . ' to review';
+            $route = '/messages/pending';
+        }
+
+        $pendingCount = $breakdown['pending'];
+        if ($pendingCount > 0) {
+            $titleLines[] = $pendingCount . ' pending message' . ($pendingCount > 1 ? 's' : '');
+            $route = '/messages/pending';
+        }
+
+        $title = implode("\n", $titleLines);
 
         return [
             'badge' => (string) $total,
@@ -459,13 +586,13 @@ class PushNotificationService
             'chatcount' => '0',
             'notifcount' => (string) $total,
             'title' => $title,
-            'message' => $message,
+            'message' => 'Open ModTools to review',
             'chatids' => '',
             'content-available' => '1',
             'image' => 'www/images/modtools_logo.png',
             'modtools' => '1',
             'sound' => 'default',
-            'route' => '/modtools/messages/pending',
+            'route' => $route,
             'channel_id' => 'modtools',
             // Fixed notId per user so each new notification replaces the previous one
             // on Android instead of stacking multiple "N pending" badges.
@@ -707,7 +834,7 @@ class PushNotificationService
     private function sendChatMessagePush(int $userId, int $messageId, bool $modtools): int
     {
         if (! $this->messaging) {
-            return 0;
+            return $this->messagingUnavailable('chat_message', ['user_id' => $userId, 'message_id' => $messageId]);
         }
 
         $payload = $this->buildChatMessagePayload($messageId, $userId, $modtools);
@@ -897,7 +1024,7 @@ class PushNotificationService
             ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
             ->leftJoin('users as su', 'cm.userid', '=', 'su.id')
             ->where('cm.id', $messageId)
-            ->select('cm.id as msgid', 'cm.message', 'cm.date',
+            ->select('cm.id as msgid', 'cm.message', 'cm.type', 'cm.date',
                 'cm.userid as sender_id', 'su.fullname as sender_name',
                 'cr.id as chatid', 'cr.chattype', 'cr.user1', 'cr.groupid')
             ->first();
@@ -911,6 +1038,12 @@ class PushNotificationService
         $message = $row->message ?? '';
         if (mb_strlen($message) > 256) {
             $message = mb_substr($message, 0, 253) . '...';
+        }
+
+        // For messages with no text (image, address, system types), use a
+        // descriptive fallback so the push body is never a repeat of the title.
+        if ($message === '') {
+            $message = $this->chatMessageTypeFallback($row->type ?? '');
         }
 
         $chatId = (int) $row->chatid;
@@ -936,6 +1069,28 @@ class PushNotificationService
             'channel_id' => $modtools ? 'modtools' : 'chat_messages',
             'threadId' => 'chat_' . $chatId,
         ];
+    }
+
+    /**
+     * Return a human-readable description for a chat message type that has no
+     * text body (image, address, system messages, etc.).
+     *
+     * Mirrors the labels used in iznik-nuxt3 for chat message rendering and
+     * matches V1 PushNotifications wording where applicable.
+     */
+    private function chatMessageTypeFallback(string $type): string
+    {
+        return match ($type) {
+            'Image'        => 'Sent an image',
+            'Address'      => 'Sent an address',
+            'Interested'   => 'Interested',
+            'Promised'     => 'Promised',
+            'Reneged'      => 'Reneged',
+            'Completed'    => 'Marked as completed',
+            'Nudge'        => 'Sent a nudge',
+            'Reminder'     => 'Sent a reminder',
+            default        => 'Sent a message',
+        };
     }
 
     /**

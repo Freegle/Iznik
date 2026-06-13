@@ -36,10 +36,18 @@ return [
     ],
 
     'mjml' => [
-        // MJML server URL (adrianrudnik/mjml-server on port 80)
+        // Compile engine:
+        //   'mrml' (default) — in-process via the bundled mrml PHP extension
+        //                      (Rust). No HTTP, no sidecar. ~170x faster.
+        //   'node'           — legacy adrianrudnik/mjml-server sidecar over
+        //                      HTTP. Kept as a fallback and for differential
+        //                      rendering tests.
+        'engine' => env('MJML_ENGINE', 'mrml'),
+
+        // MJML server URL (adrianrudnik/mjml-server on port 80) — node engine only.
         'url' => env('MJML_URL', 'http://mjml/'),
 
-        // HTTP request timeout in seconds
+        // HTTP request timeout in seconds — node engine only.
         'http_timeout' => env('MJML_HTTP_TIMEOUT', 30),
     ],
 

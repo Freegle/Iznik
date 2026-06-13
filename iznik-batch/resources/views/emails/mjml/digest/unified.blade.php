@@ -1,73 +1,97 @@
 <mjml>
-    {{-- An immediate (-1) digest uses the full-width hero single-post layout
-         (V1 single.html parity). The multi-post daily digest uses the compact
-         multi-post layout below. --}}
-    @php $isSingle = $mode === 'immediate'; @endphp
-    @if($isSingle)
-    @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
-    @include('emails.mjml.partials.head', ['preview' => $post['subject']])
-    @else
-    @include('emails.mjml.partials.head', ['preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you'])
-    @endif
+    @php
+        $mediaStyles = '
+@media only screen and (max-width: 480px) {
+  /* Mobile only: clamp the body-text snippet to two lines so a long
+     post does not push the Reply button or meta row out of view. */
+  .fd-desc {
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+  /* Mobile: hide header thumbs beyond the 5th so the visible thumbs stay
+     large enough to read. Inline width from mj-group is overridden so the
+     visible cells (logo + 5 thumbs = 6) split the row evenly. */
+  .fd-header-thumb-5, .fd-header-thumb-6, .fd-header-thumb-7, .fd-header-thumb-8, .fd-header-thumb-9 {
+    display: none !important;
+  }
+  .fd-header-col { width: 16.66% !important; }
+}
+/* MOBILE-FIRST default. Most recipients are on mobile, and Gmail mobile web
+   strips embedded style blocks, so the DEFAULT (driven by inline styles) is
+   the mobile layout: the full-width .fd-narrow-only meta/byline/Reply row
+   shows, and the in-column .fd-wide-only copy is inline display:none. Only
+   clients that keep embedded styles and are on a wide screen swap to the
+   2-column desktop layout. */
+@media only screen and (min-width: 481px) {
+  .fd-wide-only { display: block !important; }
+  .fd-narrow-only { display: none !important; }
+}
+        ';
+    @endphp
+    @include('emails.mjml.partials.head', [
+        'preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you',
+        'mediaStyles' => $mediaStyles ?? '',
+    ])
 
-    <mj-body background-color="#f0f0f0">
+    <mj-body background-color="#f4f4f4">
         @php
-            $offerColor = '#3c763d';
-            $wantedColor = '#2196A6';
+            $offers = collect($posts)->where('type', 'Offer');
+            $wanteds = collect($posts)->where('type', 'Wanted');
+            $maxHeaderItems = 6;
+            // Shared tokens — keep in lockstep with the AMP variant via
+            // DigestStyle; never inline accent colours in either template.
+            $offerColor = \App\Mail\Digest\DigestStyle::OFFER_GREEN;
+            $wantedColor = \App\Mail\Digest\DigestStyle::WANTED_BLUE;
         @endphp
 
-        @if($isSingle)
+        @if($mode === 'immediate')
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- SINGLE-POST: full-width hero card (immediate, or group w/ 1 post) --}}
+        {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
-        {{-- Hero: the item photo IS the hero (V1 single.html parity — V1's
-             immediate single.mjml used a full-width image). heroImageUrl is a
-             600x400 cover-crop from the delivery proxy, so the crop bounds
-             the height (a tall portrait photo can't dominate). The whole
-             image is clickable through to the post via href.
-             Side padding (16px L/R) keeps the image off the email's left/right
-             edges; flush-edge bleed looked harsh in Gmail.
-             Uses the direct delivery URL (not the tracking-proxy wrapper):
-             Gmail's image proxy 404'd on the cross-domain 302 from
-             api→delivery. Click tracking still fires via the <a href>. --}}
-        <mj-section background-color="#ffffff" padding="16px 16px 0 16px">
-            <mj-column padding="0" vertical-align="top">
+        {{-- Card: image left + content right (matches browse page layout) --}}
+        <mj-section background-color="#ffffff" padding="0" border-radius="4px">
+            {{-- Image column --}}
+            {{-- Use displayImageUrl (direct delivery URL) rather than the
+                 trackedImageUrl tracking-proxy wrapper. Gmail's image proxy
+                 (ci3.googleusercontent.com/meips/...) was returning 404 for
+                 the tracking URL — most likely it dislikes the cross-domain
+                 302 from api.ilovefreegle.org to delivery.ilovefreegle.org,
+                 or it cached a transient failure. Direct delivery is what
+                 the AMP template already uses for the same reason. Click
+                 tracking on the message link still fires via the <a href>;
+                 only the image-view scroll-depth ping is lost on the hero. --}}
+            <mj-column width="38%" padding="0" vertical-align="top">
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['heroImageUrl'] }}"
+                    src="{{ $post['displayImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
-                    border-radius="4px"
                     fluid-on-mobile="true"
+                    container-background-color="#e8e8e8"
                 />
             </mj-column>
-        </mj-section>
-        {{-- Content sits below the hero --}}
-        <mj-section background-color="#ffffff" padding="16px 20px 4px 20px">
-            <mj-column padding="0" vertical-align="top">
+            {{-- Content column --}}
+            <mj-column width="62%" padding="16px 20px 12px 16px" vertical-align="top">
                 {{-- OFFER / WANTED pill --}}
                 <mj-text padding="0 0 8px 0" font-size="13px">
                     <span style="display: inline-block; background-color: {{ $accentColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 3px; letter-spacing: 0.3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </mj-text>
                 {{-- Title --}}
-                <mj-text padding="0 0 4px 0" font-size="22px" font-weight="700" color="#212529" line-height="1.25">
+                <mj-text padding="0 0 4px 0" font-size="18px" font-weight="700" color="#212529" line-height="1.25">
                     <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
-                {{-- Location --}}
-                @if($post['locationName'])
-                <mj-text padding="0 0 8px 0" font-size="13px" color="#666666">
-                    {{ $post['locationName'] }}
-                </mj-text>
-                @endif
                 {{-- The full description is rendered in its own section
                      below; no snippet here, since the immediate digest is
                      one post and a 120-char preview duplicates the body. --}}
-                {{-- Distance + time row --}}
+                {{-- Metadata row: location · distance · absolute time, all on
+                     one line like the web card (location was on its own line,
+                     which looked messy). Time is always absolute, not relative. --}}
                 <mj-text padding="0" font-size="12px" color="#888888">
-                    @if($post['distanceText'])
-                    <span style="margin-right: 12px;">&#x1F4CD; {{ $post['distanceText'] }}</span>
-                    @endif
+                    @if($post['locationName'])<span style="margin-right: 12px;">&#x1F4CD; {{ $post['locationName'] }}</span>@endif
+                    @if($post['distanceText'])<span style="margin-right: 12px;">{{ $post['distanceText'] }}</span>@endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
             </mj-column>
@@ -219,198 +243,218 @@
 
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- MULTI-POST: the daily "What's New" roll-up                     --}}
+        {{-- DAILY MODE: multi-post digest with thumbnail nav               --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
-        {{-- Header band: logo + a horizontal thumbnail strip preview.
-             Gmail's desktop view rendered this band wider than the body and
-             wrapped the thumbnail strip to a second line. Trim the strip to
-             6 items at 40px (was 8 at 44px) so the logo column + thumbs +
-             "+N more" reliably fits in Gmail's content width. --}}
-        <mj-section mj-class="bg-success" padding="12px 20px">
-            <mj-column width="16%" vertical-align="middle">
-                <mj-image
-                    width="44px"
-                    src="{{ config('freegle.branding.logo_url') }}"
-                    alt="Freegle"
-                    align="left"
-                    padding="0"
-                />
-            </mj-column>
-            <mj-column width="84%" vertical-align="middle">
-                <mj-text padding="0" line-height="1">
-                    @php $maxThumbItems = 6; @endphp
-                    <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse;">
-                        <tr>
-                            @foreach(collect($posts)->take($maxThumbItems) as $thumbPost)
-                            @php $thumbIsOffer = $thumbPost['type'] === 'Offer'; @endphp
-                            <td style="padding: 0 3px 0 0; vertical-align: middle;">
-                                {{-- Link to the post itself: in-email #fragment
-                                     anchors don't work (Gmail strips element ids),
-                                     so the thumbnail opens the post like its card. --}}
-                                <a href="{{ $thumbPost['messageUrl'] }}" style="display: block; line-height: 0;">
-                                    {{-- Direct delivery URL (not tracked) so Gmail's image proxy
-                                         doesn't 404 on the cross-domain 302 from the tracking endpoint. --}}
-                                    <img src="{{ $thumbPost['displayImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="40" height="40" style="display: block; width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
-                                </a>
-                            </td>
-                            @endforeach
-                            @if(count($posts) > $maxThumbItems)
-                            <td style="vertical-align: middle; padding-left: 4px;">
-                                <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: none; font-size: 12px; font-weight: bold; line-height: 1.3;">+{{ count($posts) - $maxThumbItems }}<br/>more</a>
-                            </td>
-                            @endif
-                        </tr>
-                    </table>
-                </mj-text>
-            </mj-column>
+        {{-- Header - Freegle brand green with logo + thumbnail nav --}}
+        {{-- Thumbnails use trackedImageUrl (proxy) when available, falling back
+             to displayImageUrl. Each thumbnail links to its card anchor. --}}
+        {{-- Skip posts with placeholder images — only show real photos in the
+             header strip so the thumbnail nav is a faithful preview of what
+             follows, not a wall of default Offer/Wanted icons. Cards still
+             show the placeholder for no-photo posts further down. --}}
+        {{-- Render up to 10 thumbs; @media in the head hides 5-9 on mobile so
+             the visible thumbs stay large enough to read on a 360px viewport.
+             Other clients (eM Client, Apple Mail, Gmail desktop via AMP) keep
+             the full row. --}}
+        @php
+            $headerThumbs = collect($posts)->filter(fn ($p) => empty($p['isPlaceholder']))->take(10)->values();
+        @endphp
+        @if($headerThumbs->isNotEmpty())
+        <mj-section mj-class="bg-success" padding="12px 16px">
+            {{-- One mj-column per item (logo + each thumb) inside an mj-group
+                 so they don't stack on mobile. Each column gets an equal share
+                 of the row, and each mj-image is width="100%" so it fills its
+                 column — the strip auto-sizes to whatever space is available,
+                 fewer thumbs = larger images, more thumbs = smaller. Sources
+                 are pre-cropped square (240×240) by the delivery proxy so the
+                 natural aspect ratio is 1:1; mj-image preserves it. --}}
+            <mj-group>
+                {{-- Every column gets the SAME left/right padding so each
+                     takes exactly the same share of the row (an unbalanced
+                     padding on the last column made it visibly wider in
+                     K-9 Mail). 4px each side = 8px between adjacent thumbs.
+                     css-class tags individual columns so @media can hide
+                     header-thumb-5..9 on mobile. --}}
+                <mj-column vertical-align="middle" padding-left="4px" padding-right="4px" padding-top="0" padding-bottom="0" css-class="fd-header-col">
+                    <mj-image
+                        src="{{ config('freegle.branding.logo_url') }}"
+                        alt="Freegle"
+                        width="100%"
+                        padding="0"
+                        align="center"
+                    />
+                </mj-column>
+                @foreach($headerThumbs as $post)
+                <mj-column vertical-align="middle" padding-left="4px" padding-right="4px" padding-top="0" padding-bottom="0" css-class="fd-header-col fd-header-thumb-{{ $loop->index }}">
+                    <mj-image
+                        src="{{ $post['thumbImageUrl'] }}"
+                        href="#msg-{{ $post['message']->id }}"
+                        alt="{{ $post['itemName'] }}"
+                        width="100%"
+                        padding="0"
+                        border="2px solid rgba(255,255,255,0.6)"
+                        border-radius="4px"
+                    />
+                </mj-column>
+                @endforeach
+            </mj-group>
         </mj-section>
+        @endif
 
-        {{-- The "What's New (N posts)" title is carried by the subject line,
-             so no in-body heading here. --}}
-        @foreach($posts as $index => $post)
-        @php $isOffer = $post['type'] === 'Offer'; @endphp
-
-        @if($index > 0)
-        <mj-section padding="0" background-color="#ffffff">
+        {{-- ════════════════════════════════════════════════════════════════
+             "In this digest" summary index. One line per post, each linking to
+             the post's page on the website (NOT an in-email #anchor — V1's
+             anchor approach rendered inconsistently across clients). The first
+             DigestStyle::SUMMARY_VISIBLE_LINES lines always show; any overflow
+             collapses into a <details>/<summary> "Show N more" disclosure.
+             Apple Mail and modern webmail render the toggle; clients that ignore
+             <details> show the overflow expanded — but it's one short line per
+             post, so the digest never balloons. AMP clients get the native
+             <amp-accordion> equivalent in the AMP MIME part. --}}
+        @php
+            $summaryPosts = collect($posts);
+            $summaryVisible = \App\Mail\Digest\DigestStyle::SUMMARY_VISIBLE_LINES;
+            $summaryHidden = $summaryPosts->slice($summaryVisible);
+            $summaryLink = 'color: ' . \App\Mail\Digest\DigestStyle::OFFER_GREEN . '; text-decoration: none; display: block; margin-bottom: 4px;';
+        @endphp
+        @if($summaryPosts->count() >= 2)
+        <mj-section background-color="#ffffff" padding="16px 20px 4px">
             <mj-column>
-                {{-- Generous vertical padding around the rule so consecutive
-                     posts have clear breathing room rather than butting up. --}}
-                <mj-divider border-color="#e9ecef" border-width="1px" padding="18px 20px" />
+                <mj-text font-size="13px" color="#212529" padding="0 0 8px 0">
+                    <strong style="text-transform: uppercase; letter-spacing: 0.3px;">In this digest</strong>
+                </mj-text>
+                <mj-text font-size="14px" color="#212529" line-height="1.6" padding="0">
+                    @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
+                    <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                    @endforeach
+                    @if($summaryHidden->isNotEmpty())
+                    <details style="margin-top: 2px;">
+                        <summary style="cursor: pointer; color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; font-weight: 600;">Show {{ $summaryHidden->count() }} more</summary>
+                        <div style="margin-top: 6px;">
+                            @foreach($summaryHidden as $summaryPost)
+                            <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                            @endforeach
+                        </div>
+                    </details>
+                    @endif
+                </mj-text>
             </mj-column>
         </mj-section>
         @endif
 
-        {{-- First card gets a top gap from the thumbnail band above; later
-             cards get their gap from the divider's padding.
-             Left/right padding (16px) on the section so the card image isn't
-             flush against the email's left edge. --}}
-        {{-- Image column gets vertical-align="bottom" so the photo hugs the
-             same baseline as the Reply button at the bottom of the content
-             column. The two columns share a table-row height (the taller of
-             the two), so anchoring image-bottom and content-bottom to that
-             row's bottom edge gives a visual baseline match without needing
-             to know the description's wrapped line count up front. --}}
-        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 16px 16px 16px">
-            <mj-column width="34%" padding="0" vertical-align="bottom">
-                {{-- Square thumbnail (240x240 server-side cover-crop, displayed
-                     at the column's width). Square matches the typical content
-                     column height closely. --}}
-                <mj-image
-                    href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['thumbImageUrl'] }}"
-                    alt="{{ $post['itemName'] }}"
-                    width="200px"
-                    height="200px"
-                    padding="0"
-                    border-radius="4px"
-                    fluid-on-mobile="true"
-                />
-            </mj-column>
-            <mj-column width="66%" padding="0 0 0 14px" vertical-align="top">
-                <mj-text padding="0 0 6px 0" font-size="13px">
-                    <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
-                </mj-text>
-                {{-- Title: bold, largest of the card text. --}}
-                <mj-text padding="0 0 3px 0" font-size="16px" font-weight="700" color="#212529" line-height="1.25">
-                    <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
-                </mj-text>
-                {{-- User-supplied description: 14px / #333 / regular so it
-                     reads as content but stays secondary to the title.
-                     The inline -webkit-line-clamp:2 wrapper clamps the
-                     description to two lines so every card has a uniform
-                     height even when the original text wraps to four or
-                     five — supported in Gmail / Apple Mail / most modern
-                     email clients (others just see the truncated PHP
-                     output, which still caps at ~100 chars). --}}
-                @if($post['messageText'])
-                <mj-text padding="0 0 8px 0" font-size="14px" color="#333333" line-height="1.5"><span style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ \Illuminate\Support\Str::limit($post['messageText'], 160, '…') }}</span></mj-text>
-                @endif
-                {{-- One-line metadata strip: location · distance · time. --}}
-                <mj-text padding="0" font-size="12px" color="#888888">
-                    @if($post['locationName'])<span>{{ $post['locationName'] }}</span>@endif
-                    @if($post['distanceText'])@if($post['locationName'])<span style="margin: 0 6px; color: #cccccc;">&middot;</span>@endif<span>&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-                    <span style="margin: 0 6px; color: #cccccc;">&middot;</span><span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
-                </mj-text>
-                {{-- Avatar byline (V1 MultipleDigest parity). --}}
-                <mj-text padding="6px 0 10px 0" font-size="12px" color="#888888">
-                    <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
-                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
-                </mj-text>
-                {{-- Reply button: stays INSIDE the content column at its
-                     bottom edge so it visually pairs with the image's
-                     bottom (which is bottom-aligned in the sibling column).
-                     align="left" + sized inner-padding hugs the text. --}}
-                <mj-button
-                    href="{{ $post['messageUrl'] }}"
-                    background-color="{{ $isOffer ? $offerColor : $wantedColor }}"
-                    color="#ffffff"
-                    font-size="13px"
-                    font-weight="600"
-                    inner-padding="10px 28px"
-                    border-radius="4px"
-                    align="left"
-                    padding="0"
-                >
-                    Reply
-                </mj-button>
+        {{-- Post cards --}}
+        @foreach($posts as $index => $post)
+        {{-- Card separator --}}
+        @if($index > 0)
+        <mj-section padding="0" background-color="#ffffff">
+            <mj-column>
+                <mj-divider border-color="#e9ecef" border-width="1px" padding="0 20px" />
             </mj-column>
         </mj-section>
+        @endif
+
+        {{-- Daily card — shared partial (live variant: Reply shown, not muted).
+             The 2-column mj-group block STAYS 2-column on mobile and a
+             full-width reflow section follows it; see _card.blade.php. --}}
+        @include('emails.mjml.digest._card', [
+            'post' => $post,
+            'offerColor' => $offerColor,
+            'wantedColor' => $wantedColor,
+            'showReply' => true,
+            'muted' => false,
+        ])
         @endforeach
 
+        {{-- "Came and went" — Taken/Received posts since the last digest, shown
+             greyed out with a nudge to increase digest frequency (V1 parity,
+             Digest.php $unavailable). Daily only; suppressed when empty. --}}
+        @if(count($completedPosts ?? []) > 0)
+        <mj-section background-color="#e9e9e9" padding="16px 20px 8px">
+            <mj-column>
+                <mj-text font-size="14px" font-weight="700" color="#444444" padding="0 0 4px 0">
+                    Came and went
+                </mj-text>
+                <mj-text font-size="12px" color="#666666" padding="0 0 12px 0" line-height="1.5">
+                    These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in <a href="{{ $settingsUrl }}" style="color: #3c763d; text-decoration: none; font-weight: bold;">Settings</a>.
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        {{-- Same card partial as the live posts above — same geometry, just
+             greyed ($muted) and without the Reply button ($showReply=false).
+             The meta line reads "Taken/Received · <date>" via $cp['metaText']
+             rather than the live distance · arrival pairing. --}}
+        @foreach($completedPosts as $cp)
+        @include('emails.mjml.digest._card', [
+            'post' => $cp,
+            'offerColor' => $offerColor,
+            'wantedColor' => $wantedColor,
+            'showReply' => false,
+            'muted' => true,
+        ])
+        @endforeach
+        @endif
+
+        {{-- Browse all CTA --}}
         <mj-section background-color="#ffffff" padding="16px 20px 20px 20px">
             <mj-column>
                 <mj-divider border-color="#e9ecef" border-width="1px" padding="0 0 16px 0" />
-                <mj-button href="{{ $browseUrl }}" mj-class="btn-success" font-size="16px" inner-padding="12px 40px" border-radius="4px">
+                <mj-button
+                    href="{{ $browseUrl }}"
+                    mj-class="btn-success"
+                    font-size="16px"
+                    inner-padding="12px 40px"
+                    border-radius="4px"
+                >
                     Browse All Posts
                 </mj-button>
             </mj-column>
         </mj-section>
 
-        @endif
-
-        {{-- Sponsors (both modes) --}}
         @if(isset($sponsors) && $sponsors->isNotEmpty())
         <mj-section background-color="#ffffff" padding="10px 20px">
             <mj-column>
                 <mj-divider border-color="#eeeeee" padding-bottom="5px" />
-                <mj-text font-size="12px" color="#888888" font-style="italic" padding-bottom="5px">Sponsored by:</mj-text>
+                <mj-text font-size="12px" color="#888888" font-style="italic" padding-bottom="5px">
+                    Sponsored by:
+                </mj-text>
             </mj-column>
         </mj-section>
         @foreach($sponsors as $sponsor)
         <mj-section background-color="#ffffff" padding="0 20px 10px">
             <mj-column width="80px" vertical-align="middle">
                 @if($sponsor->imageurl)
-                <mj-image width="60px" src="{{ $sponsor->imageurl }}" alt="{{ $sponsor->name }}" href="{{ $sponsor->linkurl }}" border-radius="5px" />
+                <mj-image
+                    width="60px"
+                    src="{{ $sponsor->imageurl }}"
+                    alt="{{ $sponsor->name }}"
+                    href="{{ $sponsor->linkurl }}"
+                    border-radius="5px"
+                />
                 @endif
             </mj-column>
             <mj-column vertical-align="middle">
                 <mj-text font-size="13px">
-                    @if($sponsor->linkurl)<a href="{{ $sponsor->linkurl }}" style="color: #338808; text-decoration: none; font-weight: bold;">{{ $sponsor->name }}</a>@else<strong>{{ $sponsor->name }}</strong>@endif
-                    @if($sponsor->tagline)<br /><span style="font-size: 11px; color: #666;">{{ $sponsor->tagline }}</span>@endif
+                    @if($sponsor->linkurl)
+                    <a href="{{ $sponsor->linkurl }}" style="color: #338808; text-decoration: none; font-weight: bold;">{{ $sponsor->name }}</a>
+                    @else
+                    <strong>{{ $sponsor->name }}</strong>
+                    @endif
+                    @if($sponsor->tagline)
+                    <br /><span style="font-size: 11px; color: #666;">{{ $sponsor->tagline }}</span>
+                    @endif
                 </mj-text>
             </mj-column>
         </mj-section>
         @endforeach
         @endif
 
-        {{-- Per-group / per-frequency line (V1 single.html parity).
-             Only useful in immediate mode where the email is about one
-             specific group's post — daily digests cover all groups. --}}
-        @if(($primaryGroupName ?? null) && ($frequencyText ?? null))
-        <mj-section background-color="#f5f5f5" padding="10px 20px 0 20px">
-            <mj-column>
-                <mj-text font-size="11px" color="#666666" align="center" line-height="1.5">
-                    You're a member of <strong>{{ $primaryGroupName }}</strong> and asked to receive updates <strong>{{ $frequencyText }}</strong>.
-                </mj-text>
-            </mj-column>
-        </mj-section>
-        @endif
-
-        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl, 'unsubscribeUrl' => $unsubscribeUrl])
+        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl])
 
         @if(isset($trackingPixelMjml))
         {!! $trackingPixelMjml !!}
+        @endif
+
         @endif
     </mj-body>
 </mjml>

@@ -218,6 +218,79 @@ func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
 	}
 }
 
+// A returned/rejected post is aged against the same expiry as any other post
+// (maxagetoshow / EXPIRE_TIME, 90 days for the default group — matching V1's
+// own-posts age cap), but by its ORIGINAL date rather than arrival. A rejected
+// post's arrival can be recent while the post itself is years old, which would
+// otherwise keep a long-dead rejected message in the member's active posts.
+// Reporter: Discourse topic 9481/561.
+func TestOldRejectedMessageClassifiedAsOld(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("oldrej")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	// createRejected inserts a Rejected post (no spatial row, as rejected posts
+	// aren't public) with a given original date and a RECENT arrival.
+	createRejected := func(subject string, dateDaysAgo int) uint64 {
+		db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_SUB(NOW(), INTERVAL ? DAY))",
+			userID, subject, locationID, dateDaysAgo)
+		var id uint64
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+			userID, subject).Scan(&id)
+		require.NotZero(t, id)
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+			"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 1 DAY), 'Rejected', 0)", id, groupID)
+		t.Cleanup(func() {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		})
+		return id
+	}
+
+	oldRejID := createRejected("OFFER: Ancient Rejected Lamp", 400) // years-old → Old
+	// 60 days: past the reporter's "month" suggestion but within the 90-day
+	// expiry — under V1 parity this is still active (not a separate shorter rule).
+	midRejID := createRejected("OFFER: Two-Month Rejected Chair", 60)
+
+	// active=true: old rejected excluded, mid-age (within expiry) still present.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	foundOld, foundMid := false, false
+	for _, m := range msgs {
+		if m.ID == oldRejID {
+			foundOld = true
+		}
+		if m.ID == midRejID {
+			foundMid = true
+		}
+	}
+	assert.False(t, foundOld, "Years-old rejected post should NOT appear in active")
+	assert.True(t, foundMid, "Rejected post within the 90-day expiry should still appear in active (V1 parity)")
+
+	// active=false: old rejected marked hasoutcome=true (Old); mid one not.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=false&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &msgs)
+	for _, m := range msgs {
+		if m.ID == oldRejID {
+			assert.True(t, m.Hasoutcome, "Years-old rejected post should be hasoutcome=true (Old) in non-active query")
+		}
+		if m.ID == midRejID {
+			assert.False(t, m.Hasoutcome, "Rejected post within expiry should not be marked Old")
+		}
+	}
+}
+
 func TestExpiredPromisedMessageExcludedFromActive(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("exprms")
@@ -8601,10 +8674,113 @@ func TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent(t *t
 	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 }
 
-// TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit verifies that when a
-// TN user edits only the text of their post (no photo links in textbody) and there is no
-// AI attachment, any existing real attachment is left untouched.
-func TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit(t *testing.T) {
+// TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped verifies the fix for the
+// TN multi-photo race.  TN polls /api/changes, which reports a message as "Edited" based
+// on the existence of a messages_edits row.  TN then fetches the full message to read its
+// attachments.  If the messages_edits row (the change signal) is written BEFORE the TN
+// photos have been scraped into messages_attachments, TN can fetch in the gap and get a
+// partial photo set — the reported "only 1 photo back, all of them on a forced re-fetch" bug.
+//
+// The fix scrapes TN photos SYNCHRONOUSLY and BEFORE applyPatchMessageCore (which writes
+// messages_edits), matching V1 (http/api/message.php scrapes + saves attachments before
+// calling Message::edit()).  So the change signal only becomes visible once every photo is in.
+//
+// This test deliberately does NOT swap TNPhotoScrapeRunner: it exercises the real production
+// runner, so an asynchronous or wrong-order implementation fails it.
+func TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped(t *testing.T) {
+	prefix := uniquePrefix("patchtn_signalorder")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77804, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-signalorder-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Set up a clean slate for the change signal and attachments we assert on.
+	db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Fake the TN fetch chain so no real HTTP happens.
+	fakeImageURL := "https://img.trashnothing.com/fake/signalorder.jpg"
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string { return []string{fakeImageURL} }
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	// The uploader runs at the moment a photo is about to be stored.  Capture how many
+	// messages_edits rows (the /api/changes signal) exist AT THAT MOMENT.  With the fix
+	// this must be 0: the signal is only written after every photo is in.
+	fakeExternalUID := fmt.Sprintf("freegletusd-tn-signalorder-%d", msgID)
+	editsAtUploadTime := int64(-1)
+	uploaded := make(chan struct{}, 1)
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ?", msgID).Scan(&editsAtUploadTime)
+		select {
+		case uploaded <- struct{}{}:
+		default:
+		}
+		return fakeExternalUID, nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	textbody := "Sofa for collection.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/sigorder1\n"
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": textbody})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77804&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Wait for the upload to have happened (covers a still-asynchronous implementation).
+	// The channel receive synchronises with the uploader goroutine, so the subsequent read
+	// of editsAtUploadTime is race-free.
+	select {
+	case <-uploaded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("TN photo was never uploaded/scraped")
+	}
+
+	// Core assertion: the change signal must NOT have existed while the photo was being stored.
+	assert.Equal(t, int64(0), editsAtUploadTime,
+		"messages_edits (the /api/changes signal) must not be written until all TN photos are scraped — otherwise TN can fetch a partial photo set")
+
+	// After the handler completes, both the photo and the change signal must exist.
+	var tnCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, fakeExternalUID).Scan(&tnCount)
+	assert.Equal(t, int64(1), tnCount, "scraped TN photo should be stored as attachment")
+
+	var editsCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ?", msgID).Scan(&editsCount)
+	assert.True(t, editsCount >= 1, "an edit (change signal) should be recorded after the photos are in")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+}
+
+// TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit verifies that when a
+// TN user edits a post by sending a textbody (even with no pic links), ALL existing
+// attachments — including non-AI ones — are deleted.  TN's textbody is the authoritative
+// photo set: if TN sends no pic links, the correct state is zero attachments.
+//
+// This test was formerly named TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit
+// and asserted the opposite (preservation).  That was the bug: fix #2 corrects it.
+func TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit(t *testing.T) {
 	prefix := uniquePrefix("patchtn_noai")
 	db := database.DBConn
 
@@ -8617,34 +8793,305 @@ func TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit(t *testin
 	tnpostid := fmt.Sprintf("tn-noai-%d", msgID)
 	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
 
-	// Insert a regular (non-AI) attachment.
+	// Insert a regular (non-AI) attachment — the one that must be removed.
 	realAttachID := CreateTestAttachment(t, msgID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	// PATCH with a textbody containing no TN photo links — pure text edit.
+	// PATCH with textbody containing no TN pic links.
 	body := map[string]interface{}{
 		"textbody": "Updated description with no photos.",
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
-	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Real attachment must still exist.
+	// BUG #2 FIX: the non-AI attachment must be gone — textbody with no pic links
+	// means TN is asserting "no photos", so we clear all existing attachments.
 	var attachCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", realAttachID).Scan(&attachCount)
-	assert.Equal(t, int64(1), attachCount, "non-AI attachment must not be deleted on a text-only TN edit")
-
-	// No AI declined flag should be set (no AI attachment was present).
-	var declinedCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
-	assert.Equal(t, int64(0), declinedCount, "messages_ai_declined must not be set when no AI attachment existed")
+	assert.Equal(t, int64(0), attachCount, "non-AI attachment must be deleted when TN sends textbody with no pic links (fix #2)")
 
 	// Cleanup.
-	db.Exec("DELETE FROM messages_attachments WHERE id = ?", realAttachID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// --- BUG FIX REGRESSION TESTS (must FAIL on master, PASS with fix) ---
+
+// TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype verifies that when a caller sends
+// both an explicit subject AND a msgtype, the explicit subject is persisted and NOT
+// overwritten by the "reconstruct from type+item+location" block.
+// Bug #1: passing msgtype set req.Type, which triggered reconstruction that clobbered
+// the caller's subject.
+func TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype(t *testing.T) {
+	prefix := uniquePrefix("patchtn_subjfix")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77901, ownerID)
+
+	// Create a message that already has an item and location so reconstruction is possible.
+	msgID := CreateTestMessage(t, ownerID, groupID, "OFFER: old item (old location)", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-subjfix-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ?, type = 'Offer' WHERE id = ?", tnpostid, msgID)
+
+	// Wire up an item and a location so that subject reconstruction would produce a
+	// different string if it fires.
+	db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE name=name", prefix+"_widget")
+	var itemID uint64
+	db.Raw("SELECT id FROM items WHERE name = ?", prefix+"_widget").Scan(&itemID)
+	if itemID > 0 {
+		db.Exec("DELETE FROM messages_items WHERE msgid = ?", msgID)
+		db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
+	}
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// PATCH with explicit subject AND msgtype — the explicit subject must win.
+	wantSubject := "WANTED: new title 3 (location 3)"
+	body := map[string]interface{}{
+		"subject": wantSubject,
+		"msgtype": "Wanted",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77901&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	httpReq := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(httpReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var gotSubject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&gotSubject)
+	assert.Equal(t, wantSubject, gotSubject,
+		"explicit subject must not be overwritten by reconstruct-from-type block (bug #1)")
+}
+
+// TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments verifies that PATCH with
+// textbody="" (empty string, i.e. a non-nil *string pointer to "") deletes all
+// existing attachments (including non-AI ones) because TN is asserting "no photos".
+// Bug #2: only AI attachments were deleted; non-AI TN-scraped photos survived.
+func TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments(t *testing.T) {
+	prefix := uniquePrefix("patchtn_emptytb")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77902, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-emptytb-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert a regular (non-AI) attachment to simulate a previously-scraped TN photo.
+	attach1ID := CreateTestAttachment(t, msgID)
+	attach2ID := CreateTestAttachment(t, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// PATCH with textbody="" — no pic links, TN is asserting "no photos".
+	emptyBody := ""
+	body := map[string]interface{}{
+		"textbody": emptyBody,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77902&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	httpReq := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(httpReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Both non-AI attachments must be gone (fix #2).
+	var count1, count2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", attach1ID).Scan(&count1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", attach2ID).Scan(&count2)
+	assert.Equal(t, int64(0), count1, "first non-AI attachment must be deleted when textbody='' (fix #2)")
+	assert.Equal(t, int64(0), count2, "second non-AI attachment must be deleted when textbody='' (fix #2)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// TestPatchMessageByTN_NewPicLinkReplacesOldAttachments verifies that PATCH with a
+// textbody containing new trashnothing.com/pics/ links removes OLD non-AI attachments
+// before adding the newly-scraped ones.
+// Bug #3: old non-AI photos survived alongside newly-scraped ones.
+func TestPatchMessageByTN_NewPicLinkReplacesOldAttachments(t *testing.T) {
+	prefix := uniquePrefix("patchtn_replace")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77903, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-replace-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert two old non-AI attachments (simulating previously-scraped TN photos).
+	oldAttach1 := CreateTestAttachment(t, msgID)
+	oldAttach2 := CreateTestAttachment(t, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Inject fake fetchers so we don't do real HTTP.
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string {
+		return []string{"https://img.trashnothing.com/fake/new-photo.jpg"}
+	}
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	fakeExternalUID := fmt.Sprintf("freegletusd-tn-replace-%d", msgID)
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		return fakeExternalUID, nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	origScrapeRunner := message.TNPhotoScrapeRunner
+	message.TNPhotoScrapeRunner = message.ScrapeTNPhotosSync
+	defer func() { message.TNPhotoScrapeRunner = origScrapeRunner }()
+
+	// PATCH with textbody containing one new TN pic link.
+	textbody := "Nice sofa.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/newxyz\n"
+	body := map[string]interface{}{
+		"textbody": textbody,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77903&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	httpReq := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(httpReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Both OLD non-AI attachments must be gone (fix #3).
+	var old1, old2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", oldAttach1).Scan(&old1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", oldAttach2).Scan(&old2)
+	assert.Equal(t, int64(0), old1, "first old non-AI attachment must be deleted when new pic links are present (fix #3)")
+	assert.Equal(t, int64(0), old2, "second old non-AI attachment must be deleted when new pic links are present (fix #3)")
+
+	// The new scraped attachment must be present.
+	var newCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, fakeExternalUID).Scan(&newCount)
+	assert.Equal(t, int64(1), newCount, "newly-scraped TN photo must be stored as attachment (fix #3)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// TestListMessagesMT_SpamInPendingList verifies that Spam-collection messages
+// are returned by the /modtools/messages?collection=Pending endpoint.
+//
+// Root cause (Discourse #9654): the badge work-count includes spam messages
+// but the ModTools Pending review list filtered only mg.collection = 'Pending',
+// so the spam message was counted in the badge but had no visible home in the
+// UI — a spurious "+1 over visible".  V1 parity: V1 included Spam messages in
+// the review queue alongside Pending.
+func TestListMessagesMT_SpamInPendingList(t *testing.T) {
+	prefix := uniquePrefix("lstmt_spam")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message in the Spam collection (as the spam handler would do).
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" spam item", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	// The Pending review endpoint should return the Spam-collection message.
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+
+	found := false
+	for _, id := range msgs {
+		if id == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "Spam-collection message should appear in modtools Pending review list (Discourse #9654)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+}
+
+// TestListMessagesMT_OldSpamExcludedFromPendingList verifies that Spam-collection
+// messages older than 30 days are NOT returned by the Pending review endpoint.
+// Spam shown in the Pending queue should age out rather than accumulate forever;
+// Pending-collection messages are never aged out this way.
+func TestListMessagesMT_OldSpamExcludedFromPendingList(t *testing.T) {
+	prefix := uniquePrefix("lstmt_oldspam")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Recent spam (within 30 days) — should appear in the queue.
+	recentID := CreateTestMessage(t, posterID, groupID, prefix+" recent spam", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam', arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ? AND groupid = ?", recentID, groupID)
+
+	// Old spam (older than 30 days) — should be excluded.
+	oldID := CreateTestMessage(t, posterID, groupID, prefix+" old spam", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam', arrival = NOW() - INTERVAL 40 DAY WHERE msgid = ? AND groupid = ?", oldID, groupID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+
+	foundRecent, foundOld := false, false
+	for _, id := range msgs {
+		if id == float64(recentID) {
+			foundRecent = true
+		}
+		if id == float64(oldID) {
+			foundOld = true
+		}
+	}
+	assert.True(t, foundRecent, "Recent (<30d) Spam-collection message should appear in the Pending review list")
+	assert.False(t, foundOld, "Old (>30d) Spam-collection message should be excluded from the Pending review list")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", recentID, oldID)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", recentID, oldID)
 }

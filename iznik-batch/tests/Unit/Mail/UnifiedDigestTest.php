@@ -3,7 +3,9 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
+use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Illuminate\Mail\Mailable;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
@@ -24,16 +26,19 @@ class UnifiedDigestTest extends TestCase
     }
 
     /**
-     * Spool the mailable and return the decoded spool-file array. This is
-     * how the real mail path captures everything (subject, body, all custom
-     * headers, reply-to) — so assertions here exercise the actual
-     * production capture pipeline rather than poking at Symfony internals.
+     * Spool the mailable and return the decoded spool file data.
+     *
+     * @return array{from: array, reply_to: array, headers: array, html: string, ...}
      */
-    private function spoolAndLoad(UnifiedDigest $mail, string $recipient): array
+    private function spoolAndLoad(Mailable $mailable, string $recipient): array
     {
-        $id = $this->spooler->spool($mail, $recipient);
-        return json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $id = $this->spooler->spool($mailable, $recipient);
+        $path = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $data = json_decode(file_get_contents($path), true);
+
+        return $data ?? [];
     }
+
 
     public function test_can_be_constructed(): void
     {
@@ -151,6 +156,134 @@ class UnifiedDigestTest extends TestCase
         $tracking = $mail->getTracking();
         $this->assertNotNull($tracking);
         $this->assertEquals('UnifiedDigestDaily', $tracking->email_type);
+    }
+
+    /**
+     * Fabricate the minimal data the digest templates need so they can be
+     * rendered standalone (empty posts skips the per-post loop; jobs/sponsors
+     * blocks are gated only on $jobAds / $sponsors).
+     */
+    private function digestTemplateData(array $jobAds, array $sponsors): array
+    {
+        $user = (object) ['email_preferred' => 'r@example.com', 'displayname' => 'Sam'];
+        return [
+            'user' => $user,
+            'posts' => collect(),
+            'postCount' => 0,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'isSingle' => false,
+            'sponsors' => collect($sponsors),
+            'jobAds' => collect($jobAds),
+            'jobsUrl' => 'https://example.com/jobs?t=1',
+            'donateUrl' => 'https://example.com/donate?t=1',
+            'browseUrl' => 'https://example.com/browse?t=1',
+            'settingsUrl' => 'https://example.com/settings?t=1',
+            'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
+            'userSite' => 'https://example.com',
+            'siteName' => 'Freegle',
+            // AMP-only state the unified blade references (production builds
+            // these in UnifiedDigest when assembling the AMP variant).
+            'ampPostMeta' => [],
+            'ampApiUrl' => 'https://api.example.com/amp',
+            'ampUserId' => 42,
+        ];
+    }
+
+    public function test_amp_template_renders_jobs_and_sponsors(): void
+    {
+        $job = (object) [
+            'title' => 'Warehouse Operative',
+            'location' => 'Edinburgh',
+            'tracked_url' => 'https://example.com/job/1?t=1',
+            'image_url' => 'https://example.com/job1.png',
+        ];
+        $sponsor = (object) [
+            'name' => 'Edinburgh Council',
+            'tagline' => 'Backs reuse',
+            'linkurl' => 'https://council.example.com',
+            'imageurl' => 'https://council.example.com/logo.png',
+        ];
+
+        $html = view('emails.amp.digest.unified', $this->digestTemplateData([$job], [$sponsor]))->render();
+
+        // Jobs block (previously absent from AMP entirely).
+        $this->assertStringContainsString('Jobs near you', $html);
+        $this->assertStringContainsString('Warehouse Operative', $html);
+        $this->assertStringContainsString('https://example.com/job/1?t=1', $html);
+        $this->assertStringContainsString('View more jobs', $html);
+        // Sponsors block (previously absent from AMP entirely).
+        $this->assertStringContainsString('Sponsored by', $html);
+        $this->assertStringContainsString('Edinburgh Council', $html);
+    }
+
+    public function test_amp_template_omits_jobs_and_sponsors_when_empty(): void
+    {
+        $html = view('emails.amp.digest.unified', $this->digestTemplateData([], []))->render();
+
+        // Assert on markup-only strings (CSS comments/classes must not contain
+        // these, or the present/omit pair becomes meaningless).
+        $this->assertStringNotContainsString('Jobs near you', $html);
+        $this->assertStringNotContainsString('View more jobs', $html);
+        $this->assertStringNotContainsString('Sponsored by', $html);
+    }
+
+    public function test_text_template_renders_jobs(): void
+    {
+        $job = (object) [
+            'title' => 'Delivery Driver',
+            'location' => 'Leith',
+            'tracked_url' => 'https://example.com/job/2?t=1',
+            'image_url' => null,
+        ];
+
+        $text = view('emails.text.digest.unified', $this->digestTemplateData([$job], []))->render();
+
+        $this->assertStringContainsString('Jobs near you', $text);
+        $this->assertStringContainsString('Delivery Driver', $text);
+        $this->assertStringContainsString('https://example.com/job/2?t=1', $text);
+    }
+
+    public function test_prepared_posts_carry_group_name_and_explore_url(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $prepared = $ref->getValue($mail);
+        $card = $prepared->first();
+
+        // Friendly full name (not the short name) is the displayed group label.
+        $this->assertSame($group->namefull, $card['groupName']);
+        // The link points at the group's /explore page. It's wrapped by the
+        // compact click-tracker (…/e/d/r/{ref}/g/{idEnc}/{pos}); the Go handler
+        // reconstructs /explore/{groupId} from it (see emailtracking/compact.go,
+        // which keys explore on the numeric group id). Decode the encoded id
+        // and assert the link targets this group's explore page.
+        $this->assertNotNull($card['groupUrl']);
+        $target = $card['groupUrl'];
+        if (preg_match('#/e/d/r/[^/]+/g/([^/]+)/#', $card['groupUrl'], $mm)) {
+            $b64 = strtr($mm[1], '-_', '+/');
+            $b64 = str_pad($b64, (int) (ceil(strlen($b64) / 4) * 4), '=', STR_PAD_RIGHT);
+            $gid = 0;
+            foreach (str_split(base64_decode($b64)) as $ch) {
+                $gid = ($gid << 8) | ord($ch);
+            }
+            $target = '/explore/'.$gid;
+        } elseif (preg_match('/[?&]url=([^&]+)/', $card['groupUrl'], $mm)) {
+            $target = base64_decode(urldecode($mm[1])) ?: $target;
+        }
+        $this->assertStringContainsString('/explore/', $target);
+        $this->assertStringContainsString('/explore/'.$group->id, $target);
     }
 
     public function test_cross_post_text_shown_for_multiple_groups(): void
@@ -547,6 +680,57 @@ class UnifiedDigestTest extends TestCase
         // mangle it). Look for the distinct first-line tail.
         $this->assertStringContainsString('First line of description', $html);
         $this->assertStringContainsString('New paragraph after blank', $html);
+    }
+
+    public function test_daily_no_photo_post_shows_type_specific_placeholder(): void
+    {
+        // A daily-digest post with no photo renders a TYPE-SPECIFIC placeholder
+        // (green OFFER / blue WANTED, matching the in-app MessagePhotoPlaceholder)
+        // rather than a real photo. An OFFER post must use the OFFER placeholder
+        // and a WANTED post the WANTED placeholder — never each other's.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        // No attachment → no photo → isPlaceholder → type placeholder.
+        $offerMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Coloplast supplies (Craigmount EH12)',
+            'type' => 'Offer',
+        ]);
+        $wantedMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'WANTED: Child\'s bike (Craigmount EH12)',
+            'type' => 'Wanted',
+        ]);
+
+        $posts = collect([
+            ['message' => $offerMsg, 'postedToGroups' => [$group->id]],
+            ['message' => $wantedMsg, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled HTML body should not be empty');
+
+        $offerPlaceholder = config('freegle.images.offer_placeholder');
+        $wantedPlaceholder = config('freegle.images.wanted_placeholder');
+        $this->assertNotEmpty($offerPlaceholder, 'offer_placeholder config should be set');
+        $this->assertNotEmpty($wantedPlaceholder, 'wanted_placeholder config should be set');
+
+        $this->assertStringContainsString(
+            $offerPlaceholder,
+            $html,
+            'A photo-less OFFER post should render the OFFER placeholder image'
+        );
+        $this->assertStringContainsString(
+            $wantedPlaceholder,
+            $html,
+            'A photo-less WANTED post should render the WANTED placeholder image'
+        );
     }
 
     public function test_amp_content_excluded_when_disabled(): void

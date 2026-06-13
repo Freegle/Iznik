@@ -1121,7 +1121,7 @@ func PutMemberships(c *fiber.Ctx) error {
 		}
 	}
 
-	return addMemberToGroup(c, db, userid, req.Groupid, myid)
+	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual)
 }
 
 // putMembershipsPartner handles the partner auth path for PUT /memberships.
@@ -1198,7 +1198,8 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 }
 
 // addMemberToGroup is the shared logic for adding a user to a group (JWT auth paths).
-func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64) error {
+// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"".
+func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
 	// Check the group exists.
 	var groupExists int64
 	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
@@ -1234,7 +1235,18 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
 			userid, groupid, utils.COLLECTION_APPROVED)
 
-		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, "")
+		// V1 parity (User.php:944-957): log text records how the user joined.
+		// manual=true→"Manual" (clicked Join button), false→"Auto" (auto-joined
+		// to reply/post), nil→"" (method not specified).
+		joinText := ""
+		if manual != nil {
+			if *manual {
+				joinText = "Manual"
+			} else {
+				joinText = "Auto"
+			}
+		}
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, joinText)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
@@ -1527,6 +1539,36 @@ func PatchMemberships(c *fiber.Ctx) error {
 		db.Exec("UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ? AND collection = ?",
 			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
+
+		// V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808):
+		// changes to memberships.role must propagate to users.systemrole so the
+		// global Moderator flag stays in sync. The frontend reads users.systemrole
+		// to render the crown next to a user (ModLogUser.vue, byline avatars,
+		// Discourse SSO). Without this, a per-group Moderator shows the crown on
+		// the members page but the plain User icon in the group logs — the
+		// Discourse #9481 post 545 "Trainee not showing as a Mod in the group
+		// logs" report, root cause confirmed against prod (e.g. uid 41231435
+		// DixieKay promoted 2026-05-27, memberships.role='Moderator' but
+		// users.systemrole still 'User').
+		if targetRole == utils.ROLE_MODERATOR || targetRole == utils.ROLE_OWNER {
+			// Promote: only flip 'User' to 'Moderator'. V1 used the same
+			// guard (UPDATE … WHERE systemrole = 'User') so Support / Admin
+			// users are never silently demoted to Moderator.
+			db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
+				utils.SYSTEMROLE_MODERATOR, userid, utils.SYSTEMROLE_USER)
+		} else {
+			// Demote: V1 only reverts systemrole to 'User' if the user no
+			// longer holds Moderator / Owner on ANY other approved group.
+			// Otherwise they're still a mod elsewhere and stay Moderator.
+			var remaining int64
+			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+				Scan(&remaining)
+			if remaining == 0 {
+				db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
+					utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

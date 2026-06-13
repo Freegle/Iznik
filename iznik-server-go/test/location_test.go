@@ -182,6 +182,45 @@ func TestCreateLocationNotLoggedIn(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 }
 
+// TestUpdateLocationPreservesNearbyVertex verifies that a vertex placed within 0.001
+// degrees of the line between its neighbours is NOT silently dropped on save.
+// Reproduces Discourse #9770: dragging a polygon midpoint creates a new vertex that
+// ST_Simplify(polygon, 0.001) removes because it lies within ~111 m of the original edge.
+func TestUpdateLocationPreservesNearbyVertex(t *testing.T) {
+	prefix := uniquePrefix("locwr_nearvert")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+
+	// Seed an initial 4-vertex polygon (Edinburgh area).
+	db.Exec("INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Polygon', ?, 0)",
+		"NearVertTest "+prefix, "nearverttest "+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "NearVertTest "+prefix).Scan(&locID)
+	assert.Greater(t, locID, uint64(0))
+
+	// Polygon with 5 distinct vertices: the 5th is the midpoint-drag result.
+	// It sits 0.0005 degrees (≈55 m) above the bottom edge — well within the
+	// previous ST_Simplify(polygon, 0.001) tolerance, so the bug dropped it.
+	withMidpoint := "POLYGON((-3.21 55.94, -3.21 55.97, -3.18 55.97, -3.18 55.94, -3.195 55.9405, -3.21 55.94))"
+	body := fmt.Sprintf(`{"id":%d,"polygon":"%s"}`, locID, withMidpoint)
+	req := httptest.NewRequest("PATCH", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The midpoint vertex must be persisted — ST_NumPoints should be 6 (5 distinct + closing).
+	var numPoints int
+	db.Raw("SELECT ST_NumPoints(ST_ExteriorRing(ourgeometry)) FROM locations WHERE id = ?", locID).Scan(&numPoints)
+	assert.Equal(t, 6, numPoints, "midpoint-drag vertex must be preserved (not simplified away)")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
 func TestUpdateLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_upd")
 	adminID := CreateTestUser(t, prefix+"_admin", "Admin")

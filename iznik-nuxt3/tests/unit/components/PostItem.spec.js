@@ -109,6 +109,34 @@ describe('PostItem', () => {
     })
   })
 
+  describe('numeric-only item rejection', () => {
+    it.each([
+      ['123', true],
+      ['  42 ', true],
+      ['0', true],
+      ['3 chairs', false],
+      ['Sofa', false],
+      ['', false],
+    ])('item "%s" is invalidNumeric=%s', (item, expected) => {
+      mockMessage.mockReturnValue({ item })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.invalidNumeric).toBe(expected)
+    })
+
+    it('shows a danger message for a purely-numeric item', () => {
+      mockMessage.mockReturnValue({ item: '123' })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notice-message.danger').exists()).toBe(true)
+      expect(wrapper.text()).toContain('not a valid item')
+    })
+
+    it('shows no danger message for a normal item', () => {
+      mockMessage.mockReturnValue({ item: 'Sofa' })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notice-message.danger').exists()).toBe(false)
+    })
+  })
+
   describe('item warnings', () => {
     it.each([
       ['sofa', 'Upholstered household items'],

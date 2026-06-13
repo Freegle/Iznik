@@ -13,6 +13,11 @@
       />
     </div>
     <div>
+      <NoticeMessage v-if="invalidNumeric" variant="danger" class="mt-1 mb-1">
+        <p class="mb-0">
+          {{ INVALID_ITEM_MESSAGE }}
+        </p>
+      </NoticeMessage>
       <NoticeMessage v-if="vague" variant="warning" class="mt-1 mb-1">
         <p>
           Please avoid very general terms. Be precise - you'll get a better
@@ -54,6 +59,10 @@ import { useComposeStore } from '~/stores/compose'
 import { useMessageStore } from '~/stores/message'
 import { computed } from '#imports'
 import { useMe } from '~/composables/useMe'
+import {
+  isNumericOnlyItem,
+  INVALID_ITEM_MESSAGE,
+} from '~/composables/useItemValidation'
 
 const emit = defineEmits(['update:edititem', 'blur'])
 
@@ -239,6 +248,9 @@ const item = computed({
     }
   },
 })
+
+// A purely-numeric item (e.g. "123") is never a valid description; reject it.
+const invalidNumeric = computed(() => isNumericOnlyItem(item.value))
 
 const vague = computed(() => {
   let ret = false

@@ -1,0 +1,110 @@
+{
+  "_about": "How to drive the LIVE bulk-offer app to each screen worth filming. Run against a preexisting running worktree: node src/capture.mjs --pr-dir prs/pr-618 --base-url <url>. Selectors use the PR's own data-testid hooks. Shots needing a seeded message / login take values from the environment (e.g. BULK_MSG_ID, MOD_MSG_URL). Authored from the live clearance.vue / BulkItemEditor.vue / BulkItemsInterest.vue + the PR's test flows; verify on first live capture (the bulk-offer branch is still WIP).",
+  "baseUrl": "",
+  "defaultViewport": { "width": 1385, "height": 1400 },
+  "shots": [
+    {
+      "name": "clearance-composer.png",
+      "route": "/give/clearance",
+      "viewport": { "width": 1385, "height": 1400 },
+      "fullPage": true,
+      "_note": "Manual mode is deterministic and shows the per-item qty/condition fields + the new collection-time slots + access instructions. (mode-upload is the spreadsheet path.)",
+      "_note2": "addItem() unshifts (prepends) a row, so always fill the TOP row (index 0) and add items in REVERSE display order — the row meant for the bottom first.",
+      "steps": [
+        { "fill": "testid=clearance-title", "value": "Office Clearance" },
+        { "fill": "textarea[placeholder^=\"e.g. Charity office clearance\"]", "value": "Charity office clearance — everything must go by Friday. Collection from central Brighton." },
+        { "click": "testid=mode-manual" },
+        { "waitFor": "testid=item-name-0" },
+        { "fill": "testid=item-name-0", "value": "Filing cabinet" },
+        { "fill": "testid=item-qty-0", "value": "3" },
+        { "select": "testid=item-condition-0", "value": "LikeNew" },
+        { "click": "testid=add-item" },
+        { "waitMs": 250 },
+        { "fill": "testid=item-name-0", "value": "Swivel chair" },
+        { "fill": "testid=item-qty-0", "value": "14" },
+        { "select": "testid=item-condition-0", "value": "Used" },
+        { "click": "testid=add-item" },
+        { "waitMs": 250 },
+        { "fill": "testid=item-name-0", "value": "Office desk" },
+        { "fill": "testid=item-qty-0", "value": "4" },
+        { "select": "testid=item-condition-0", "value": "Good" },
+        { "fill": "testid=slot-0", "value": "Wed 8 Apr, 10am–4pm" },
+        { "click": "testid=add-slot" },
+        { "waitMs": 300 },
+        { "fill": "testid=slot-0", "value": "Tue 7 Apr, 10am–4pm" },
+        { "fill": "testid=clearance-access", "value": "Side gate by the loading bay; ask for reception." },
+        { "waitMs": 400 }
+      ],
+      "annotate": [
+        { "selector": "input[placeholder*=\"postcode\" i]", "label": "Pick your area first", "arrow": "down" },
+        { "selector": "testid=clearance-title", "label": "Name the whole clearance", "arrow": "down" },
+        { "selector": "testid=mode-manual", "label": "Type them in — or paste a spreadsheet", "arrow": "up" },
+        { "selector": "testid=item-qty-0", "label": "How many", "arrow": "up" },
+        { "selector": "testid=item-condition-0", "label": "Condition", "arrow": "up" },
+        { "selector": "text=things in total", "label": "3 items, 21 things", "arrow": "right" },
+        { "selector": "testid=slot-0", "label": "Offer set collection times", "arrow": "right" },
+        { "selector": "testid=clearance-access", "label": "Private access instructions", "arrow": "up" }
+      ]
+    },
+    {
+      "name": "recipient-interest.png",
+      "route": "/message/${BULK_MSG_ID}",
+      "viewport": { "width": 1385, "height": 1400 },
+      "fullPage": true,
+      "_note": "Needs a seeded bulk-offer message (BULK_MSG_ID) and a logged-in user to show the Want toggle + stepper. Login steps are env-driven and optional; if the worktree exposes a dev session they can be dropped. Verify pick/stepper selectors on live capture.",
+      "steps": [
+        { "click": "[data-testid^=\"pick-\"]" },
+        { "waitFor": "[data-testid^=\"qty-\"]" },
+        { "waitMs": 400 }
+      ],
+      "annotate": [
+        { "selector": "text=items in this offer", "label": "A browsable catalogue in one offer", "arrow": "up" },
+        { "selector": "[data-testid^=\"pick-\"]", "label": "A clear toggle: “I'd like this”", "arrow": "left" },
+        { "selector": "[data-testid^=\"qty-\"]", "label": "Choose how many", "arrow": "left" },
+        { "selector": "testid=slot-picker", "label": "Pick a collection time", "arrow": "up" },
+        { "selector": "testid=register-interest", "label": "Send the giver your picks", "arrow": "right" }
+      ]
+    },
+    {
+      "name": "giver-chat.png",
+      "route": "/chats/${GIVER_CHAT_ID}",
+      "viewport": { "width": 700, "height": 1200 },
+      "fullPage": true,
+      "auth": ".auth-giver.json",
+      "_note": "The OTHER side of the conversation: the giver receives ONE consolidated interest message. Auth as the poster (giver); GIVER_CHAT_ID is a seeded chat carrying a bulk-interest message.",
+      "steps": [
+        { "waitFor": "text=can collect" },
+        { "waitMs": 500 }
+      ],
+      "annotate": [
+        { "selector": "text=can collect: Tue 7 Apr", "label": "One consolidated message — everything they chose", "arrow": "up" }
+      ]
+    },
+    {
+      "name": "mod-bulk-preview.png",
+      "route": "/modtools/messages/approved",
+      "baseUrl": "${MODTOOLS_URL}",
+      "viewport": { "width": 1385, "height": 1200 },
+      "auth": ".auth-mod.json",
+      "clip": "#modBulkPreviewModal .modal-content",
+      "_note": "Mod side (ModBulkPreviewModal — 'See how members will see this offer'). On MODTOOLS_URL as a mod of the bulk message's group. The approved list lazy-loads, so scroll to render the button before clicking; the modal id is #modBulkPreviewModal.",
+      "steps": [
+        { "waitMs": 4000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1200 },
+        { "waitFor": "testid=bulk-preview-btn" },
+        { "click": "testid=bulk-preview-btn" },
+        { "waitFor": "#modBulkPreviewModal .modal-content" },
+        { "waitMs": 800 }
+      ]
+    }
+  ]
+}

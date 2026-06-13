@@ -39,29 +39,93 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
 
-// Import the component only on client-side, before any rendering
-if (process.client) {
-  await import('add-to-calendar-button')
-}
-
-const eventData = ref({
-  name: '',
-  description: '',
-  startDate: '',
-  startTime: '',
-  endTime: '',
-  timeZone: 'Europe/London',
-  location: '',
+// Load the web component non-blockingly so setup never awaits on it.
+// The button is only rendered when eventData has a name (v-if="eventData.name"),
+// so it will be available by the time it needs to render.
+onMounted(() => {
+  import('add-to-calendar-button').catch(() => {})
 })
 
-const error = ref(null)
+/**
+ * Decode a base64 or base64url string.
+ * base64url uses '-' instead of '+' and '_' instead of '/'.
+ * A '+' in a query string is decoded to a space by URL parsers, so we
+ * must handle both alphabets.  Standard base64 strings contain no '-' or '_'
+ * so the replace is harmless for them.
+ */
+function b64decode(s) {
+  const t = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = t.length % 4 ? '='.repeat(4 - (t.length % 4)) : ''
+  return atob(t + pad)
+}
+
+/**
+ * Reactively derive the raw base64 string from the route query.
+ * Falls back to window.location.search for the transient instant when
+ * Nuxt's router has not yet propagated the query (e.g. immediately after
+ * Netlify's trailing-slash 301 redirect).
+ */
+const rawData = computed(() => {
+  const q = route?.query?.data
+  if (q) return Array.isArray(q) ? q[0] : q
+  if (process.client && typeof window !== 'undefined') {
+    return new URLSearchParams(window.location.search).get('data')
+  }
+  return null
+})
+
+/**
+ * Single reactive derivation that returns { error, event }.
+ * Because this is a computed, it re-evaluates whenever rawData changes —
+ * so a stale "no data" error is automatically cleared when the query arrives.
+ */
+const parsed = computed(() => {
+  if (!rawData.value) {
+    return { error: 'No calendar event data provided', event: null }
+  }
+  try {
+    const eventObj = JSON.parse(b64decode(rawData.value))
+    if (!eventObj.name || !eventObj.startDate || !eventObj.startTime) {
+      return { error: 'Missing required event information', event: null }
+    }
+    return { error: null, event: eventObj }
+  } catch (e) {
+    return { error: 'Unable to load calendar event: ' + e.message, event: null }
+  }
+})
+
+const error = computed(() => parsed.value.error)
+
+const eventData = computed(() => {
+  const ev = parsed.value.event
+  if (ev) {
+    return {
+      name: ev.name || '',
+      description: ev.description || '',
+      startDate: ev.startDate || '',
+      startTime: ev.startTime || '',
+      endTime: ev.endTime || '',
+      timeZone: ev.timeZone || 'Europe/London',
+      location: ev.location || '',
+    }
+  }
+  return {
+    name: '',
+    description: '',
+    startDate: '',
+    startTime: '',
+    endTime: '',
+    timeZone: 'Europe/London',
+    location: '',
+  }
+})
 
 const descriptionWithLinks = computed(() => {
   if (!eventData.value.description) return ''
@@ -70,34 +134,6 @@ const descriptionWithLinks = computed(() => {
     '<a href="$1" target="_blank">$1</a>'
   )
 })
-
-try {
-  const data = route.query.data
-
-  if (!data) {
-    throw new Error('No calendar event data provided')
-  }
-
-  const decoded = atob(data)
-  const parsed = JSON.parse(decoded)
-
-  if (!parsed.name || !parsed.startDate || !parsed.startTime) {
-    throw new Error('Missing required event information')
-  }
-
-  eventData.value = {
-    name: parsed.name || '',
-    description: parsed.description || '',
-    startDate: parsed.startDate || '',
-    startTime: parsed.startTime || '',
-    endTime: parsed.endTime || '',
-    timeZone: parsed.timeZone || 'Europe/London',
-    location: parsed.location || '',
-  }
-} catch (e) {
-  console.error('Error in calendar page setup:', e)
-  error.value = 'Unable to load calendar event: ' + e.message
-}
 
 useHead({
   ...buildHead(

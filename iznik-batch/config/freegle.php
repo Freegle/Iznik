@@ -16,9 +16,28 @@ return [
         'mod' => env('FREEGLE_MOD_SITE', 'https://modtools.org'),
     ],
 
+    // Local timezone for member-facing scheduling (e.g. the daily digest's
+    // 07:00 send). The app itself runs in UTC; scheduled tasks that should
+    // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
+    'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
+
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
+    ],
+
+    'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
+
+    'donations' => [
+        // One-off donations below this amount (£) don't warrant a manual
+        // thank-you (V1 Donations::MANUAL_THANKS). Recurring donations are
+        // thanked once, on the first payment, regardless of amount.
+        'manual_thanks' => (float) env('FREEGLE_MANUAL_THANKS', 20),
+
+        // Payer emails that must never trigger a thank-you (PayPal Giving Fund,
+        // Tipalti). Comma-separated; mirrors the Go DONATIONS_EXCLUDE so both
+        // sides share one source of truth.
+        'excluded_payers' => env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
     ],
 
     'branding' => [
@@ -75,6 +94,9 @@ return [
         'thanks_addr' => env('FREEGLE_THANKS_ADDR', env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org')),
         // Mentors address — volunteer support team who handle escalations.
         'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
+        // Central mods / Volunteer Support address — receives the Discourse
+        // checkuser / not-signed-up reports (V1 CENTRALMODS_ADDR).
+        'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteersupport@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
         // Modbot email — the automated moderator account; excluded from mod-welfare checks.
@@ -89,6 +111,31 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+    ],
+
+    // Discourse forum REST API (V1 discourse_not_signed_up.php).
+    // When api_key is empty the Discourse cron commands skip with a warning.
+    'discourse' => [
+        'url' => env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
+        'api_key' => env('DISCOURSE_APIKEY', ''),
+        'api_username' => env('DISCOURSE_API_USERNAME', 'system'),
+    ],
+
+    // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
+    // When username is empty the donations:paypal-download command skips with a warning.
+    'paypal' => [
+        'username' => env('PAYPAL_USERNAME', ''),
+        'password' => env('PAYPAL_PASSWORD', ''),
+        'signature' => env('PAYPAL_SIGNATURE', ''),
+        // Live NVP endpoint; sandbox is https://api-3t.sandbox.paypal.com/nvp
+        'nvp_endpoint' => env('PAYPAL_NVP_ENDPOINT', 'https://api-3t.paypal.com/nvp'),
+        // How many days back to scan for missed transactions.
+        'download_days' => (int) env('PAYPAL_DOWNLOAD_DAYS', 30),
+    ],
+
+    // Doogal UK postcode dataset (V1 cli/doogal.php + cron/doogal wrapper).
+    'doogal' => [
+        'zip_url' => env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
     ],
 
     'digest' => [
@@ -139,10 +186,12 @@ return [
         'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
         'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
 
-        // Placeholder images for posts without photos (digest emails)
-        // These default to the generic placeholder until type-specific SVGs are deployed.
-        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
-        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
+        // Placeholder images for posts without photos (digest emails).
+        // Type-specific: green OFFER / blue WANTED, matching the in-app
+        // MessagePhotoPlaceholder gradients. Served from the user site
+        // (iznik-nuxt3/public/placeholder-offer.png / placeholder-wanted.png).
+        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-offer.png'),
+        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
     // GeoIP database for IP country lookups
@@ -349,6 +398,60 @@ return [
         // hour, so it catches night-time outages the daytime-only volume floor
         // would miss.
         'outgoing_stall_window_hours' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Scheduled-task Outcome Monitoring
+    |--------------------------------------------------------------------------
+    |
+    | Thresholds for the monitor:scheduled-outcomes cron job, which asserts that
+    | scheduled tasks actually did their work (not just that the scheduler is
+    | alive). Breaches escalate to Sentry. See docs/scheduled-outcome-monitoring.md.
+    |
+    */
+
+    'monitoring' => [
+        // Master kill-switch. When false, monitor:scheduled-outcomes no-ops.
+        'enabled' => env('FREEGLE_MONITORING_ENABLED', true),
+
+        // stats:generate-daily — minimum per-group stats rows expected for
+        // yesterday once the day's 02:30 run has had time to complete.
+        'stats_daily_min_expected' => (int) env('FREEGLE_MONITORING_STATS_DAILY_MIN', 1),
+
+        // mail:digest:unified --mode=daily — minimum daily-digest sends expected
+        // once the daily pilot is enabled (FREEGLE_DIGEST_DAILY_ALLOWLIST set).
+        'digest_daily_min_expected' => (int) env('FREEGLE_MONITORING_DIGEST_DAILY_MIN', 1),
+
+        // queue:background-tasks — a pending task (unprocessed, unfailed, under
+        // the retry cap) older than this many minutes signals a stuck worker.
+        'background_tasks_max_age_minutes' => (int) env('FREEGLE_MONITORING_BG_TASKS_MAX_AGE_MIN', 10),
+        // Number of such stale-pending tasks tolerated before breaching.
+        'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
+
+        // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
+        // refresh hasn't written a row within this many days.
+        'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
+
+        // Shared backlog window for the per-minute processing queues
+        // (messages:contentcheck, chats:process-incoming, memberships:process):
+        // a row left unprocessed longer than this signals a stuck worker.
+        'processing_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_PROCESSING_BACKLOG_MAX_AGE_MIN', 15),
+
+        // users:process-exports — exports are heavier, so a larger window.
+        'exports_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_EXPORTS_BACKLOG_MAX_AGE_MIN', 30),
+
+        // integrations:sync-whatjobs — alert if jobs.seenat hasn't advanced
+        // within this many hours (tolerates the overnight gap + slow cold runs).
+        'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
+
+        // data:git-summary (weekly) — alert if its config timestamp is older
+        // than this many days.
+        'git_summary_max_age_days' => (int) env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
+
+        // data:update-cpi (monthly) — alert if its config timestamp is older
+        // than this many days.
+        'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
     ],
 
     'dedup' => [

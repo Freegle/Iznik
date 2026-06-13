@@ -159,6 +159,7 @@ import { uid } from '~/composables/useId'
 import PostCode from '~/components/PostCode'
 import { useOurModal } from '~/composables/useOurModal'
 import { MESSAGE_EXPIRE_TIME } from '~/constants'
+import { isNumericOnlyItem } from '~/composables/useItemValidation'
 
 const OurUploader = defineAsyncComponent(() =>
   import('~/components/OurUploader')
@@ -259,6 +260,10 @@ const typeOptions = computed(() => {
 })
 
 const isSaveButtonDisabled = computed(() => {
+  // Block saving a purely-numeric item (PostItem shows the reason inline).
+  if (isNumericOnlyItem(edititem.value)) {
+    return true
+  }
   return !edittextbody.value && !attachments.value?.length
 })
 

@@ -27,7 +27,7 @@
       <!-- Profile header for desktop (md+) - mobile uses ChatMobileNavbar -->
       <VisibleWhen :at="['md', 'lg', 'xl', 'xxl']">
         <div
-          v-if="chat && otheruser && otheruser.info && !otheruser?.deleted"
+          v-if="chat"
           class="desktop-profile-header"
         >
           <div class="profile-header-main">
@@ -43,11 +43,11 @@
               <div class="profile-header-name">
                 <span class="clickme" @click="showInfo">{{ chat.name }}</span>
                 <SupporterInfo
-                  v-if="otheruser.supporter"
+                  v-if="otheruser?.supporter"
                   class="supporter-badge"
                 />
               </div>
-              <div class="profile-header-stats">
+              <div v-if="otheruser && otheruser.info" class="profile-header-stats">
                 <UserRatings
                   :id="chat.otheruid"
                   :key="'otheruser-' + chat.otheruid"
@@ -77,11 +77,16 @@
                 Mark read
                 <b-badge variant="danger" class="ms-1">{{ unseen }}</b-badge>
               </b-button>
-              <b-button variant="white" class="action-btn" @click="showInfo">
+              <b-button
+                v-if="otheruser && !otheruser?.deleted"
+                variant="white"
+                class="action-btn"
+                @click="showInfo"
+              >
                 Profile
               </b-button>
               <b-button
-                v-if="chat.chattype === 'User2User'"
+                v-if="chat.chattype === 'User2User' && otheruser"
                 variant="white"
                 class="action-btn"
                 @click="chat.status === 'Blocked' ? unhide() : showblock()"
@@ -89,6 +94,7 @@
                 {{ chat.status === 'Blocked' ? 'Unblock' : 'Block' }}
               </b-button>
               <b-button
+                v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'"
                 variant="white"
                 class="action-btn"
                 @click="chat.status === 'Closed' ? unhide() : showhide()"
@@ -96,7 +102,7 @@
                 {{ chat.status === 'Closed' ? 'Unhide' : 'Hide' }}
               </b-button>
               <b-button
-                v-if="chat.chattype === 'User2User'"
+                v-if="chat.chattype === 'User2User' && !otheruser?.deleted"
                 variant="white"
                 class="action-btn"
                 @click="showreport()"
@@ -288,7 +294,9 @@ const showChatReport = ref(false)
 const router = useRouter()
 
 function showInfo() {
-  showProfileModal.value = true
+  if (otheruser.value?.id && !otheruser.value?.deleted) {
+    showProfileModal.value = true
+  }
 }
 
 function showblock() {

@@ -395,6 +395,47 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
       expect(wrapper.vm.bump).toBeGreaterThan(0)
     })
 
+    it('searchedMessage resets listing state so a prior member lookup does not leak into the search', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      // Simulate a previous "messages from member" lookup having populated the
+      // listing with that member's old approved posts (which are not in any
+      // search index).  They live in listingIds and the store.
+      mockMemberTerm.value = 'theyou@example.com'
+      mockListingIds.value = new Set([25710703, 54673557])
+      mockListingIdOrder.value = [25710703, 54673557]
+      mockMessageStore.clear.mockClear()
+      // Now run a message search.  The member's posts must not survive into it.
+      await wrapper.vm.searchedMessage('sofa')
+      expect(mockListingIds.value.size).toBe(0)
+      expect(mockListingIdOrder.value).toEqual([])
+      expect(mockMemberTerm.value).toBe(null)
+      expect(mockMessageStore.clear).toHaveBeenCalled()
+      expect(wrapper.vm.bump).toBeGreaterThan(0)
+    })
+
+    it('initialises the semantic search toggle from the misc store (sticky across remounts)', async () => {
+      mockMiscStore.get.mockReturnValue(true)
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(mockMiscStore.get).toHaveBeenCalledWith('modtoolsSemanticSearch')
+      expect(wrapper.vm.vectorSearchEnabled).toBe(true)
+    })
+
+    it('persists the semantic search toggle to the misc store when changed', async () => {
+      mockMiscStore.get.mockReturnValue(false)
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockMiscStore.set.mockClear()
+      wrapper.vm.vectorSearchEnabled = true
+      await wrapper.vm.$nextTick()
+      expect(mockMiscStore.set).toHaveBeenCalledWith({
+        key: 'modtoolsSemanticSearch',
+        value: true,
+      })
+    })
+
     describe('loadMore', () => {
       it('calls loaded (not complete) when no user', async () => {
         const wrapper = mountComponent()
@@ -452,6 +493,28 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         expect(mockListingIds.value.has(101)).toBe(true)
         expect(mockListingIds.value.has(102)).toBe(true)
         expect(mockListingIdOrder.value).toEqual([101, 102])
+      })
+
+      it('clears the loading state after a vector search so "Please wait..." disappears', async () => {
+        // Regression (#9: semantic search completes but banner stays): the
+        // vector branch of loadMore() returned early, before the
+        // `busy=false; loaded=true` at the end, so `loaded` never became true
+        // and the "Please wait..." NoticeMessage stayed up forever.
+        mockRouteParams.value = { id: '123', term: 'furniture' }
+        mockMessages.value = []
+        mockShow.value = 0
+        mockListingIds.value = new Set()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        wrapper.vm.vectorSearchEnabled = true
+        await wrapper.vm.$nextTick()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        expect(wrapper.vm.loaded).toBe(false)
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(wrapper.vm.loaded).toBe(true)
+        expect(mockBusy.value).toBe(false)
       })
 
       it('uses keyword search by default when searching by message', async () => {

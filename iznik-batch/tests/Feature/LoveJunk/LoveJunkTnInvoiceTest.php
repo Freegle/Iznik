@@ -44,6 +44,24 @@ class LoveJunkTnInvoiceTest extends TestCase
             ->assertExitCode(0);
     }
 
+    public function test_invoice_email_uses_current_registered_name(): void
+    {
+        // Our registered name is "Freegle" (formerly "Freegle Limited"/"Freegle Ltd").
+        // The invoice template must use the current name.
+        $html = view('emails.mjml.lovejunk.tn-invoice', [
+            'tnAmount'      => '250.00',
+            'start'         => '2020-01-01',
+            'end'           => '2020-02-01',
+            'tnPercent'     => 50,
+            'treasurerAddr' => 'treasurer@example.com',
+            'email'         => 'partner@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('raise an invoice on Freegle for', $html);
+        $this->assertStringNotContainsString('Freegle Ltd', $html);
+        $this->assertStringNotContainsString('Freegle Limited', $html);
+    }
+
     public function test_dry_run_does_not_send_email(): void
     {
         $msgId = $this->insertMessage('TN-abc123', '2020-01-15 12:00:00');

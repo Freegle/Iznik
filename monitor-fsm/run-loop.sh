@@ -101,6 +101,20 @@ red_pr_numbers() {
       END { print n+0 }
     ')
     if [ "${red:-0}" -gt 0 ] 2>/dev/null; then
+      # Skip PRs the FSM has already EXHAUSTED (>= 3 fix attempts): more
+      # iterations cannot fix them, so a red exhausted PR must NOT keep the loop
+      # churning every couple of minutes — it's surfaced for human review via the
+      # dashboard instead. Without this the loop never sleeps while such a PR
+      # stays red. cwd is the script dir (set above), so monitor.db is relative.
+      local attempts=0
+      if command -v sqlite3 >/dev/null 2>&1 && [ -f monitor.db ]; then
+        attempts=$(sqlite3 monitor.db \
+          "SELECT COALESCE(MAX(CAST(value AS INTEGER)),0) FROM kv WHERE key='pr_fix_attempts_${pr}'" \
+          2>/dev/null || echo 0)
+      fi
+      if [ "${attempts:-0}" -ge 3 ] 2>/dev/null; then
+        continue
+      fi
       printf '%s ' "$pr"
     fi
   done
