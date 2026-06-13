@@ -995,6 +995,22 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Volunteering opportunity maintenance — daily. Asks owners of dateless
+// opportunities approaching expiry whether they are still active (renewal
+// reminder), then expires opportunities whose dates have all passed or which
+// were never renewed within EXPIRE_AGE (31) days. Runs before the weekly
+// digest below so freshly-expired opportunities drop out of that run.
+// V1: cron/volunteering.php ran askRenew()+expire() weekly before emailing;
+// that cron was disabled 2026-05-12 when Laravel took over the digest, but the
+// renewal+expiry maintenance was never migrated — nothing renewed or expired
+// dateless opportunities since. Daily (vs V1 weekly) is safe because askRenew()
+// now stamps askedtorenew and won't re-ask within a renewal cycle.
+Schedule::command('volunteering:maintain')
+    ->dailyAt('22:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('volunteering:maintain'))
+    ->runInBackground();
+
 // Volunteering opportunity roundup — weekly, ONE combined email per user
 // covering every volunteering-enabled group they belong to (plus global
 // opportunities), deduplicated. A per-user cadence guard (users_digests
