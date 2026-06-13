@@ -1522,11 +1522,6 @@ services:
       - DB_DATABASE=iznik
       - DB_USERNAME=root
       - DB_PASSWORD=iznik
-      - PGSQL_HOST=postgres
-      - PGSQL_PORT=5432
-      - PGSQL_DATABASE=iznik
-      - PGSQL_USERNAME=root
-      - PGSQL_PASSWORD=iznik
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CACHE_STORE=redis
@@ -1675,12 +1670,6 @@ services:
       - AMP_API_URL=https://api.ilovefreegle.org/amp
       - AMP_READ_TOKEN_EXPIRY=168
       - AMP_WRITE_TOKEN_EXPIRY=168
-      # PostgreSQL / PostGIS (for postcode remapping KNN queries)
-      - PGSQL_HOST=${PGSQL_HOST:-postgres}
-      - PGSQL_PORT=${PGSQL_PORT:-5432}
-      - PGSQL_DATABASE=iznik
-      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
-      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
       # Geospatial
       - FREEGLE_SRID=3857
       # SENTRY_LARAVEL_DSN comes from env_file
