@@ -2109,7 +2109,6 @@ const testWithFixtures = test.extend({
         const text = msg.text()
         if (
           text.includes('ReplyStateMachine') ||
-          text.includes('MessageReplySection') ||
           text.includes('openChat') ||
           text.includes('fallback') ||
           text.includes('timeout') ||
