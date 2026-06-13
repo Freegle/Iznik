@@ -164,6 +164,9 @@ export default defineNuxtConfig({
         }
       : {}),
 
+    // Redirects.
+    '/councils': { redirect: '/partnerships' },
+
     // These pages are for logged-in users, or aren't performance-critical enough to render on the server.
     '/birthday/**': { ssr: false },
     '/browse/**': { ssr: false },
