@@ -708,4 +708,33 @@ class Utils {
         // Fall back to REMOTE_ADDR.
         return Utils::presdef('REMOTE_ADDR', $_SERVER, '');
     }
+
+    /**
+     * Kill-switch comparison: is a client's webversion (the BUILD_DATE it sends on
+     * GET /session) older than the configured minimum web build ($minVersion =
+     * app_min_webversion)?
+     *
+     * Fails open (returns FALSE) on empty/unset/non-ISO values: the threshold is
+     * unset until an operator arms it, and legacy clients send non-ISO webversions
+     * which must never be blocked. Only the ISO-8601 form (e.g. 2026-06-10T12:00:00Z)
+     * is acted on. Mirror of webversionOlderThan() in the Go API.
+     */
+    public static function webversionTooOld($webversion, $minVersion) {
+        if (!$webversion || !$minVersion) {
+            return FALSE;
+        }
+
+        $iso = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/';
+        if (!preg_match($iso, $webversion) || !preg_match($iso, $minVersion)) {
+            return FALSE;
+        }
+
+        $wt = strtotime($webversion);
+        $mt = strtotime($minVersion);
+        if ($wt === FALSE || $mt === FALSE) {
+            return FALSE;
+        }
+
+        return $wt < $mt;
+    }
 }

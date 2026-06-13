@@ -34,6 +34,19 @@ class UtilsTest extends IznikTestCase {
         $this->assertEquals(2, Utils::calculate_median([1, 2, 2, 3]));
     }
 
+    public function testWebversionTooOld() {
+        # Older ISO build than the threshold -> out of date.
+        $this->assertTrue(Utils::webversionTooOld('2026-06-01T00:00:00Z', '2026-06-10T00:00:00Z'));
+        # Newer or equal -> fine.
+        $this->assertFalse(Utils::webversionTooOld('2026-06-15T00:00:00Z', '2026-06-10T00:00:00Z'));
+        $this->assertFalse(Utils::webversionTooOld('2026-06-10T00:00:00Z', '2026-06-10T00:00:00Z'));
+        # Fail open: unset threshold, missing webversion, legacy non-ISO values.
+        $this->assertFalse(Utils::webversionTooOld('2026-06-01T00:00:00Z', NULL));
+        $this->assertFalse(Utils::webversionTooOld(NULL, '2026-06-10T00:00:00Z'));
+        $this->assertFalse(Utils::webversionTooOld('3.2.5', '2026-06-10T00:00:00Z'));
+        $this->assertFalse(Utils::webversionTooOld('2026-06-01', '2026-06-10T00:00:00Z'));
+    }
+
     public function testlockScript() {
         $lockh = Utils::lockScript('ut');
         $this->assertNotNull($lockh);

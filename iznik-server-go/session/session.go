@@ -779,6 +779,21 @@ func GetSession(c *fiber.Ctx) error {
 		})
 	}
 
+	// Kill switch: reject any build older than the configured minimum web build.
+	// webversion (BUILD_DATE) is sent on every GET /session and needs no client
+	// cooperation, so failing the session makes an out-of-date client non-functional
+	// until updated. Gated purely on build age (no app/web distinction): website
+	// bundles are always fresh and self-heal on reload. Fails open — blocks nobody
+	// unless an operator sets app_min_webversion to an ISO date (see PR notes).
+	var minWebversion string
+	database.DBConn.Raw("SELECT value FROM config WHERE `key` = 'app_min_webversion'").Scan(&minWebversion)
+	if webversionOlderThan(c.Query("webversion"), minWebversion) {
+		return c.JSON(fiber.Map{
+			"ret":    123,
+			"status": "App is out of date",
+		})
+	}
+
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{

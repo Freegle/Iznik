@@ -42,8 +42,20 @@ function session() {
 
             # Mobile app can send its version number, which we can use to determine if it is out of date.
             $appversion = Utils::presdef('appversion', $_REQUEST, NULL);
+            $webversion = Utils::presdef('webversion', $_REQUEST, NULL);
 
-            if ($appversion && substr($appversion, 0, 1) == '2') {
+            # Kill switch: reject any build older than the configured minimum web build
+            # (app_min_webversion). webversion (BUILD_DATE) is sent on every GET, so
+            # failing the session makes an out-of-date client non-functional until it
+            # updates. Fails open - blocks nobody unless the config key is set (see PR).
+            $minWebversion = NULL;
+            $cfg = $dbhr->preQuery("SELECT value FROM config WHERE `key` = 'app_min_webversion'");
+            if (count($cfg) > 0) {
+                $minWebversion = $cfg[0]['value'];
+            }
+
+            if (($appversion && substr($appversion, 0, 1) == '2') ||
+                Utils::webversionTooOld($webversion, $minWebversion)) {
                 $ret = array('ret' => 123, 'status' => 'App is out of date');
             } else {
                 if (Utils::pres('id', $_SESSION) && $me) {
