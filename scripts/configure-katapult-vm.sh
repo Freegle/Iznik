@@ -228,6 +228,22 @@ if [ "\$UPTIME_SECONDS" -lt 1200 ]; then
     exit 0
 fi
 
+# A CI job is executing whenever the task agent (circleci-agent) is alive. Unlike
+# the freegle-ci containers below — absent during checkout/install/build — the task
+# agent spans the WHOLE job, so this stops a short or mis-applied idle threshold from
+# destroying a VM that has just been handed work. That dispatch->container-up race
+# (a stale-template VM idle-aged past a 300/600s threshold self-DELETEs ~30 min after
+# boot, before the job's "Reset idle-check" step can run) caused the residual
+# ~30-min-uptime infrastructure_fails (root-caused 2026-06-13). The always-on launch
+# daemon is 'circleci-runner', so -x matches ONLY the per-task agent (never the
+# daemon, which would wrongly keep idle VMs alive). If the agent is named differently
+# on some runner version this is a harmless no-op, and the 9000s absolute-age cap
+# above bounds VM lifetime regardless.
+if pgrep -x circleci-agent >/dev/null 2>&1; then
+    rm -f "\$IDLE_MARKER"
+    exit 0
+fi
+
 # A running CI job uses COMPOSE_PROJECT_NAME=freegle-ci
 if docker ps -q --filter "label=com.docker.compose.project=freegle-ci" 2>/dev/null | grep -q .; then
     rm -f "\$IDLE_MARKER"
