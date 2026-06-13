@@ -181,6 +181,11 @@ class UnifiedDigestTest extends TestCase
             'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
             'userSite' => 'https://example.com',
             'siteName' => 'Freegle',
+            // AMP-only state the unified blade references (production builds
+            // these in UnifiedDigest when assembling the AMP variant).
+            'ampPostMeta' => [],
+            'ampApiUrl' => 'https://api.example.com/amp',
+            'ampUserId' => 42,
         ];
     }
 
@@ -259,16 +264,26 @@ class UnifiedDigestTest extends TestCase
 
         // Friendly full name (not the short name) is the displayed group label.
         $this->assertSame($group->namefull, $card['groupName']);
-        // The link points at the group's /explore page (keyed on nameshort).
-        // groupUrl is wrapped by the click-tracker (…/e/d/r/TOKEN?url=BASE64),
-        // so decode the inner target before asserting.
+        // The link points at the group's /explore page. It's wrapped by the
+        // compact click-tracker (…/e/d/r/{ref}/g/{idEnc}/{pos}); the Go handler
+        // reconstructs /explore/{groupId} from it (see emailtracking/compact.go,
+        // which keys explore on the numeric group id). Decode the encoded id
+        // and assert the link targets this group's explore page.
         $this->assertNotNull($card['groupUrl']);
         $target = $card['groupUrl'];
-        if (preg_match('/[?&]url=([^&]+)/', $card['groupUrl'], $mm)) {
+        if (preg_match('#/e/d/r/[^/]+/g/([^/]+)/#', $card['groupUrl'], $mm)) {
+            $b64 = strtr($mm[1], '-_', '+/');
+            $b64 = str_pad($b64, (int) (ceil(strlen($b64) / 4) * 4), '=', STR_PAD_RIGHT);
+            $gid = 0;
+            foreach (str_split(base64_decode($b64)) as $ch) {
+                $gid = ($gid << 8) | ord($ch);
+            }
+            $target = '/explore/'.$gid;
+        } elseif (preg_match('/[?&]url=([^&]+)/', $card['groupUrl'], $mm)) {
             $target = base64_decode(urldecode($mm[1])) ?: $target;
         }
         $this->assertStringContainsString('/explore/', $target);
-        $this->assertStringContainsString($group->nameshort, $target);
+        $this->assertStringContainsString('/explore/'.$group->id, $target);
     }
 
     public function test_cross_post_text_shown_for_multiple_groups(): void
