@@ -1399,11 +1399,14 @@ func DigestClickPositions(c *fiber.Ctx) error {
 	startDate := c.Query("start", "")
 	endDate := c.Query("end", "")
 
-	// Default to the last 30 days when no range is supplied.
+	// Default to the last 7 days when no range is supplied. email_tracking is
+	// large (millions of rows/month), and these queries aggregate JSON metadata
+	// per row, so a wide default window makes the chart hang. Callers can still
+	// pass an explicit start/end for a longer range.
 	if startDate == "" || endDate == "" {
 		now := time.Now()
 		endDate = now.Format("2006-01-02")
-		startDate = now.AddDate(0, 0, -30).Format("2006-01-02")
+		startDate = now.AddDate(0, 0, -7).Format("2006-01-02")
 	}
 
 	// If endDate doesn't include a time component, extend it to end of day.
@@ -1432,7 +1435,10 @@ func DigestClickPositions(c *fiber.Ctx) error {
 	//    posts displayed positions 0..num_posts-1.
 	denomQuery := `
 		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
-		FROM email_tracking e
+		-- Force the sent_at index: otherwise the optimiser full-scans the whole
+		-- table (millions of rows + per-row JSON) instead of range-scanning the
+		-- date window, which made the chart hang.
+		FROM email_tracking e FORCE INDEX (sent_at)
 		LEFT JOIN users u ON e.userid = u.id
 		WHERE ` + cohort + `
 		GROUP BY num_posts`
