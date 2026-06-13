@@ -11,8 +11,8 @@
     ><span v-if="collection && collection != 'Approved'"
       ><span class="text-muted"> in</span>
       <span class="text-danger">{{ collection }}</span></span
-    ><span v-else-if="latestOutcome">, now {{ latestOutcome }}</span
-    ><span v-else class="text-normal">, still open</span>
+    ><span v-else-if="latestOutcome" class="text-black">, now {{ latestOutcome }}</span
+    ><span v-else class="text-black">, still open</span>
   </div>
 </template>
 <script setup>
