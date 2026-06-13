@@ -102,8 +102,21 @@ app.get('/health', (req, res) => {
  * Returns: { analysis: string, costUsd: number, usage: object, claudeSessionId: string, isNewSession: boolean }
  */
 const { runLogAnalysis } = require('./log-analysis')
+const { verifyModerator } = require('./auth')
 
 app.post('/api/log-analysis', async (req, res) => {
+  // Authenticate the caller as a Freegle moderator/support/admin. This endpoint
+  // analyses production logs and incurs Anthropic API cost, so it must not be
+  // open to unauthenticated callers — having ANTHROPIC_API_KEY set on the
+  // server is not authorisation. Identity + role are resolved by the Go API.
+  const role = await verifyModerator(req)
+  if (!role) {
+    return res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Moderator authentication required.',
+    })
+  }
+
   checkAuth()
 
   if (!authStatus.valid) {
