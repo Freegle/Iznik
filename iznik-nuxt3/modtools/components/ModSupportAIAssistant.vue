@@ -400,6 +400,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { marked } from 'marked'
 import { useUserStore } from '~/stores/user'
+import { useAuthStore } from '~/stores/auth'
 
 // Query sanitizer service - frontend talks to this for PII handling
 const SANITIZER_URL = 'http://mcp-sanitizer.localhost'
@@ -802,12 +803,18 @@ async function queryLogsForUser(userQuery) {
 
     addDebugEntry('request', 'Claude Code Request', requestBody)
 
+    // Forward the moderator's JWT so the helper can verify they are an
+    // authenticated mod/support before running any log analysis.
+    const authStore = useAuthStore()
+    const jwt = authStore.auth?.jwt
+
     // Use SSE for streaming progress updates
     const response = await fetch(`${AI_SUPPORT_URL}/api/log-analysis`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
+        ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
       },
       body: JSON.stringify(requestBody),
     })

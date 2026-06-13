@@ -113,6 +113,19 @@ Suggested queries include:
 
 ## Authentication
 
+### Caller authentication (who may use it)
+
+`POST /api/log-analysis` requires the caller to be an authenticated Freegle
+**moderator, support or admin**. ModTools forwards the logged-in user's JWT as
+`Authorization: Bearer <jwt>`; the container validates it against the Go API
+(`GET ${FREEGLE_API_URL}/api/session?jwt=…`) and rejects (403) anyone whose
+`systemrole` is not Moderator/Support/Admin. Having `ANTHROPIC_API_KEY` set on
+the server is **not** authorisation — the endpoint analyses production logs and
+incurs Anthropic API cost, so it must not be open to unauthenticated callers.
+Set `FREEGLE_API_URL` (default `http://apiv2.localhost:8192`) per environment.
+
+### Claude/Anthropic authentication (how it calls Claude)
+
 The container uses Claude Code CLI authentication:
 
 1. **On host machine**: Run `claude` command once to authenticate.

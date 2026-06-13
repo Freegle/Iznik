@@ -417,6 +417,8 @@ services:
     environment:
       # Anthropic API key for Claude API calls
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Go API base URL used to verify the caller is an authenticated moderator
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
