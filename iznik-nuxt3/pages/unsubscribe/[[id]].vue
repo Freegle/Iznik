@@ -37,19 +37,32 @@
               />
             </div>
 
-            <NoticeMessage v-if="left" class="mb-3" variant="info">
+            <NoticeMessage
+              v-if="left"
+              class="mb-3 fs-4 fw-bold"
+              variant="success"
+            >
               We've removed you from {{ left }}.
             </NoticeMessage>
 
             <div v-if="!groupid" class="mobile-section">
               <p class="mobile-section__label">Or choose an option:</p>
               <div class="mobile-actions">
-                <NuxtLink to="/settings" class="mobile-btn mobile-btn--primary">
+                <NuxtLink
+                  to="/settings"
+                  :class="[
+                    'mobile-btn',
+                    left ? 'mobile-btn--white' : 'mobile-btn--primary',
+                  ]"
+                >
                   <v-icon icon="cog" class="me-2" />
                   Get fewer emails
                 </NuxtLink>
                 <button
-                  class="mobile-btn mobile-btn--danger"
+                  :class="[
+                    'mobile-btn',
+                    left ? 'mobile-btn--white' : 'mobile-btn--danger',
+                  ]"
                   @click="unsubscribe"
                 >
                   <v-icon icon="trash-alt" class="me-2" />
@@ -150,7 +163,11 @@
                   />
                 </div>
               </div>
-              <NoticeMessage v-if="left" class="mt-2 mb-2" variant="info">
+              <NoticeMessage
+                v-if="left"
+                class="mt-2 mb-3 fs-4 fw-bold"
+                variant="success"
+              >
                 We've removed you from {{ left }}.
               </NoticeMessage>
               <template v-if="!groupid">
@@ -160,14 +177,18 @@
                 </p>
                 <div class="d-flex justify-content-between flex-wrap">
                   <nuxt-link to="/settings" no-prefetch>
-                    <b-button size="lg" variant="primary" class="mb-2 me-2">
+                    <b-button
+                      size="lg"
+                      :variant="left ? 'light' : 'primary'"
+                      class="mb-2 me-2"
+                    >
                       <v-icon icon="cog" />
                       <span class="ms-1"> Get fewer emails </span>
                     </b-button>
                   </nuxt-link>
                   <b-button
                     size="lg"
-                    variant="danger"
+                    :variant="left ? 'light' : 'danger'"
                     class="mb-2"
                     @click="unsubscribe"
                   >

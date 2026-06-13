@@ -20,6 +20,15 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
 }))
 
+// Mock the auth store - provides the moderator's JWT forwarded to the helper
+const mockAuthStore = {
+  auth: { jwt: 'test-jwt-123' },
+}
+
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => mockAuthStore,
+}))
+
 // Mock fetch globally
 const mockFetch = vi.fn()
 global.fetch = mockFetch
@@ -34,6 +43,7 @@ describe('ModSupportAIAssistant', () => {
     mockUserStore.fetchMT.mockClear()
     mockUserStore.searchUsers.mockClear()
     mockUserStore.searchUsers.mockResolvedValue([])
+    mockAuthStore.auth.jwt = 'test-jwt-123'
 
     // Default fetch mock - sanitizer available
     mockFetch.mockResolvedValue({
@@ -663,6 +673,62 @@ describe('ModSupportAIAssistant', () => {
       const input = wrapper.find('.chat-input-area input')
       expect(input.exists()).toBe(true)
       expect(input.attributes('placeholder')).toContain('follow-up')
+    })
+  })
+
+  describe('moderator authentication', () => {
+    // A minimal SSE response so queryLogsForUser() completes.
+    function sseResultResponse() {
+      let sent = false
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: () => {
+              if (!sent) {
+                sent = true
+                return Promise.resolve({
+                  done: false,
+                  value: new TextEncoder().encode(
+                    'data: {"type":"result","analysis":"done","costUsd":0}\n\n'
+                  ),
+                })
+              }
+              return Promise.resolve({ done: true, value: undefined })
+            },
+          }),
+        },
+      }
+    }
+
+    it('forwards the moderator JWT as a Bearer token to the log-analysis endpoint', async () => {
+      const wrapper = mountComponent()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue(sseResultResponse())
+
+      await wrapper.vm.queryLogsForUser('why is this user blocked?')
+
+      const call = mockFetch.mock.calls.find(([url]) =>
+        String(url).includes('/api/log-analysis')
+      )
+      expect(call).toBeTruthy()
+      expect(call[1].headers.Authorization).toBe('Bearer test-jwt-123')
+    })
+
+    it('omits the Authorization header when there is no JWT', async () => {
+      mockAuthStore.auth.jwt = null
+      const wrapper = mountComponent()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue(sseResultResponse())
+
+      await wrapper.vm.queryLogsForUser('test')
+
+      const call = mockFetch.mock.calls.find(([url]) =>
+        String(url).includes('/api/log-analysis')
+      )
+      expect(call).toBeTruthy()
+      expect(call[1].headers.Authorization).toBeUndefined()
     })
   })
 })

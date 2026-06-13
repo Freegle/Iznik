@@ -3461,6 +3461,8 @@ func PostMessage(c *fiber.Ctx) error {
 	// Partner auth: if partner query param is present, authenticate via partner key
 	// instead of JWT. The partner acts on behalf of the identified user.
 	partnerKey := c.Query("partner")
+	var partnerDomain string
+	partnerOwnerMode := false
 	if partnerKey != "" {
 		db := database.DBConn
 		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
@@ -3484,13 +3486,23 @@ func PostMessage(c *fiber.Ctx) error {
 			}
 		}
 
-		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
-		if myid == 0 {
-			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+		if email == "" && tnuseridStr == "" {
+			// Partner-key-only auth (e.g. Trash Nothing): the partner acts as the
+			// message's owner, provided the message fromaddr is in the partner
+			// domain. Resolved per message id below. This mirrors V1
+			// getRolesForMessages, where a partner with a valid key acquires owner
+			// rights on a message from its domain and then acts as its fromuser.
+			partnerDomain = domain
+			partnerOwnerMode = true
+		} else {
+			myid = user.FindByTNIdOrEmail(db, tnuserid, email)
+			if myid == 0 {
+				return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+			}
 		}
 	}
 
-	if myid == 0 {
+	if myid == 0 && !partnerOwnerMode {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
@@ -3509,7 +3521,19 @@ func PostMessage(c *fiber.Ctx) error {
 		}
 		for i, msgID := range msgIDs {
 			req.ID = msgID
-			if err := dispatchPostMessageAction(c, myid, req); err != nil {
+			actingid := myid
+			if partnerOwnerMode {
+				// Act as each message's owner, but only for messages whose
+				// fromaddr is in the partner domain.
+				actingid = user.FindPartnerOwnerForMessage(db, partnerDomain, msgID)
+				if actingid == 0 {
+					if i == 0 {
+						return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
+					}
+					continue
+				}
+			}
+			if err := dispatchPostMessageAction(c, actingid, req); err != nil {
 				if i == 0 {
 					return err
 				}
@@ -3521,6 +3545,15 @@ func PostMessage(c *fiber.Ctx) error {
 
 	if req.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	// In partner-key-only mode, act as the message owner if its fromaddr is in the
+	// partner domain; otherwise the partner has no rights to this message.
+	if partnerOwnerMode {
+		myid = user.FindPartnerOwnerForMessage(database.DBConn, partnerDomain, req.ID)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
+		}
 	}
 
 	return dispatchPostMessageAction(c, myid, req)

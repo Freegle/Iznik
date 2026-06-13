@@ -9095,3 +9095,148 @@ func TestListMessagesMT_OldSpamExcludedFromPendingList(t *testing.T) {
 	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", recentID, oldID)
 	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", recentID, oldID)
 }
+
+func TestPostMessagePromisePartner(t *testing.T) {
+	// Partner Promise should work with only a partner key (no email/tnuserid),
+	// acting as the message's fromuser when fromaddr is in the partner domain.
+	prefix := uniquePrefix("msgp_prm_ptnr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Promise",
+		"userid": otherID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s", key)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Partner Promise should succeed without email/tnuserid")
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestPostMessageRenegePartner(t *testing.T) {
+	// Partner Renege should work with only a partner key (no email/tnuserid).
+	prefix := uniquePrefix("msgp_rng_ptnr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Renege",
+		"userid": otherID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s", key)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Partner Renege should succeed without email/tnuserid")
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&count)
+	assert.Equal(t, int64(0), count, "Promise should be deleted after Renege")
+}
+
+func TestPostMessagePromiseRenegePromisePartner(t *testing.T) {
+	// Reproduces the TN bug: Promise -> Renege -> Promise should all succeed.
+	// The 2nd Promise was previously failing with 403 when using only a partner key.
+	prefix := uniquePrefix("msgp_prp_ptnr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	postAction := func(action string) int {
+		body := map[string]interface{}{
+			"id":     msgID,
+			"action": action,
+			"userid": otherID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+		postURL := fmt.Sprintf("/api/message?partner=%s", key)
+		postReq := httptest.NewRequest("POST", postURL, bytes.NewBuffer(bodyBytes))
+		postReq.Header.Set("Content-Type", "application/json")
+		postResp, postErr := getApp().Test(postReq, -1)
+		assert.NoError(t, postErr)
+		return postResp.StatusCode
+	}
+
+	assert.Equal(t, 200, postAction("Promise"), "1st Promise should succeed")
+	assert.Equal(t, 200, postAction("Renege"), "Renege should succeed")
+	assert.Equal(t, 200, postAction("Promise"), "2nd Promise after Renege should succeed")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&count)
+	assert.Equal(t, int64(1), count, "Promise should be recorded after 2nd Promise")
+}
+
+func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
+	// Partner Promise should fail if message fromaddr is not in the partner domain.
+	prefix := uniquePrefix("msgp_prm_wdom")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@other-domain.com", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Promise",
+		"userid": otherID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s", key)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Partner Promise should fail if fromaddr not in partner domain")
+}
