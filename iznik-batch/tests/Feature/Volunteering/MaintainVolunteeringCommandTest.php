@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Volunteering;
 
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -60,11 +61,19 @@ class MaintainVolunteeringCommandTest extends TestCase
             'end' => now()->subDays(2)->format('Y-m-d H:i:s'),
         ]);
 
-        $this->artisan('volunteering:maintain')
-            ->expectsOutputToContain('Asked 1')
-            ->expectsOutputToContain('expired 1')
-            ->assertExitCode(0);
+        // Capture the command output directly rather than chaining two
+        // ->expectsOutputToContain() calls. The command prints ONE summary line
+        // containing both counts; Laravel registers a Mockery doWrite matcher per
+        // expected substring, and a single output line that matches both only
+        // satisfies one matcher — leaving the other reported as "not contained"
+        // (PendingCommand::createABufferedOutputMock). assertStringContainsString
+        // on the captured output has no such limitation.
+        $code = Artisan::call('volunteering:maintain');
+        $output = Artisan::output();
 
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('Asked 1', $output);
+        $this->assertStringContainsString('expired 1', $output);
         Mail::assertSentCount(1);
         $this->assertNotNull(DB::table('volunteering')->where('id', $askId)->value('askedtorenew'));
         $this->assertSame(1, (int) DB::table('volunteering')->where('id', $expireId)->value('expired'));
