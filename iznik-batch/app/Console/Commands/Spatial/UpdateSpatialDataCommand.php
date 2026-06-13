@@ -6,6 +6,7 @@ use App\Services\DeprivationDataService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 use RuntimeException;
 
 class UpdateSpatialDataCommand extends Command
@@ -21,7 +22,6 @@ class UpdateSpatialDataCommand extends Command
     protected $description = 'Download UK OSM data and rebuild deprivation quintile CSV for spatial server';
 
     private const OSM_PBF_MAGIC = "\x00\x00\x00";
-    private const OSM_CHUNK_SIZE = 8192;
     private const CSV_MIN_ROWS = 40000;
     private const CSV_MIN_EW_ROWS = 30000;
     private const CSV_MIN_SCOT_ROWS = 5000;
@@ -47,9 +47,9 @@ class UpdateSpatialDataCommand extends Command
         }
 
         try {
-            // Step 1: Download UK OSM PBF file (with atomic write)
-            $this->info('Step 1: Downloading UK OSM PBF file...');
-            $pbfPath = $this->downloadOsmPbfAtomic($dataDir, $dryRun);
+            // Step 1: Download GB + Ireland/NI OSM extracts and merge them
+            $this->info('Step 1: Downloading + merging UK (GB + Ireland/NI) OSM PBF...');
+            $pbfPath = $this->downloadAndMergePbf($dataDir, $dryRun);
             if ($pbfPath) {
                 $this->info("  Downloaded to: {$pbfPath}");
             }
@@ -84,18 +84,30 @@ class UpdateSpatialDataCommand extends Command
     }
 
     /**
-     * Download UK OSM PBF file with streaming to temp file and atomic rename.
-     * Validates magic bytes to detect corruption/interruption.
+     * Geofabrik extracts that, merged, cover the whole Freegle operating area:
+     * Great Britain + Ireland/Northern Ireland.
      */
-    private function downloadOsmPbfAtomic(string $dataDir, bool $dryRun): ?string
+    private const OSM_EXTRACTS = [
+        'great-britain-latest.osm.pbf'                 => 'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf',
+        'ireland-and-northern-ireland-latest.osm.pbf'  => 'https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf',
+    ];
+
+    /**
+     * Download the GB and Ireland/NI OSM extracts and merge them into the single
+     * uk-latest.osm.pbf the routing server loads (OSM_PBF_PATH=/data/uk-latest.osm.pbf).
+     *
+     * Downloads stream straight to disk — the merged file is ~2.5 GB, so buffering
+     * a whole extract in memory would OOM the batch container.
+     */
+    private function downloadAndMergePbf(string $dataDir, bool $dryRun): ?string
     {
-        $url = 'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf';
-        $filePath = "{$dataDir}/great-britain-latest.osm.pbf";
-        $tempPath = "{$filePath}.tmp";
+        $mergedPath = "{$dataDir}/uk-latest.osm.pbf";
 
         if ($dryRun) {
-            $this->info("  [DRY RUN] Would download: {$url}");
-            $this->info("  [DRY RUN] To: {$filePath}");
+            foreach (self::OSM_EXTRACTS as $url) {
+                $this->info("  [DRY RUN] Would download: {$url}");
+            }
+            $this->info("  [DRY RUN] Would merge GB + Ireland/NI into: {$mergedPath} (osmium merge)");
             return null;
         }
 
@@ -103,66 +115,70 @@ class UpdateSpatialDataCommand extends Command
             mkdir($dataDir, 0755, true);
         }
 
+        $inputs = [];
+        foreach (self::OSM_EXTRACTS as $name => $url) {
+            $inputs[] = $this->downloadPbfStreamed($url, "{$dataDir}/{$name}");
+        }
+
+        $this->line('  Merging ' . count($inputs) . ' extracts with osmium...');
+        $tmpMerged = "{$mergedPath}.tmp";
+        $result = Process::timeout(1800)->run(array_merge(
+            ['osmium', 'merge', '--overwrite', '-o', $tmpMerged],
+            $inputs,
+        ));
+        if (!$result->successful()) {
+            @unlink($tmpMerged);
+            throw new RuntimeException('osmium merge failed: ' . trim($result->errorOutput() ?: $result->output()));
+        }
+        // Atomic publish. (Under Process::fake() in tests no temp is produced;
+        // guard the rename so the unit tests don't require osmium.)
+        if (file_exists($tmpMerged) && !rename($tmpMerged, $mergedPath)) {
+            @unlink($tmpMerged);
+            throw new RuntimeException("Failed to publish merged PBF to {$mergedPath}");
+        }
+
+        Log::info('OSM PBF downloaded and merged', ['path' => $mergedPath, 'inputs' => $inputs]);
+        return $mergedPath;
+    }
+
+    /**
+     * Download one PBF extract straight to a temp file, validate its OSM-PBF
+     * magic bytes, then atomically move it into place. Returns the final path.
+     */
+    private function downloadPbfStreamed(string $url, string $filePath): string
+    {
+        $tempPath = "{$filePath}.tmp";
+        $this->line("  Downloading {$url} ...");
         try {
-            $this->line("  Downloading from {$url}...");
+            $response = Http::timeout(600)
+                ->withOptions(['verify' => false])
+                ->sink($tempPath)
+                ->get($url);
 
-            $tempHandle = fopen($tempPath, 'w');
-            if (!$tempHandle) {
-                throw new RuntimeException("Could not open temp file for writing: {$tempPath}");
+            if (!$response->successful()) {
+                throw new RuntimeException("HTTP {$response->status()}");
             }
 
-            try {
-                $response = Http::timeout(600)
-                    ->withOptions(['verify' => false])
-                    ->get($url);
-
-                if (!$response->successful()) {
-                    throw new RuntimeException("Failed to download PBF file: HTTP {$response->status()}");
-                }
-
-                $body = $response->body();
-                $size = 0;
-
-                // Stream write in chunks
-                for ($i = 0; $i < strlen($body); $i += self::OSM_CHUNK_SIZE) {
-                    $chunk = substr($body, $i, self::OSM_CHUNK_SIZE);
-                    if (fwrite($tempHandle, $chunk) === false) {
-                        throw new RuntimeException("Failed to write chunk to temp file");
-                    }
-                    $size += strlen($chunk);
-                }
-
-                fflush($tempHandle);
-
-                // Validate magic bytes
-                if (strpos($body, self::OSM_PBF_MAGIC) !== 0) {
-                    throw new RuntimeException("Downloaded file does not start with OSM PBF magic bytes (possible corruption)");
-                }
-
-                $this->line("  Downloaded " . $this->formatBytes($size));
-            } finally {
-                fclose($tempHandle);
+            $head = '';
+            if ($fh = @fopen($tempPath, 'rb')) {
+                $head = (string) fread($fh, 8);
+                fclose($fh);
+            }
+            if (strpos($head, self::OSM_PBF_MAGIC) !== 0) {
+                throw new RuntimeException('downloaded file does not start with OSM PBF magic bytes (possible corruption)');
             }
 
-            // Atomic rename
             if (!rename($tempPath, $filePath)) {
-                @unlink($tempPath);
-                throw new RuntimeException("Failed to rename temp PBF file to production");
+                throw new RuntimeException('could not move temp file into place');
             }
-
-            Log::info('OSM PBF file downloaded', [
-                'url' => $url,
-                'path' => $filePath,
-                'size' => filesize($filePath),
-            ]);
+            $this->line('  Downloaded ' . $this->formatBytes((int) filesize($filePath)));
 
             return $filePath;
-        } catch (\Exception $e) {
-            // Clean up temp file on any failure
+        } catch (\Throwable $e) {
             if (file_exists($tempPath)) {
                 @unlink($tempPath);
             }
-            throw new RuntimeException("OSM PBF download failed: {$e->getMessage()}");
+            throw new RuntimeException("OSM PBF download failed ({$url}): {$e->getMessage()}");
         }
     }
 

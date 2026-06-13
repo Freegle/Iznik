@@ -3,6 +3,7 @@
 namespace Tests\Unit\Commands\Spatial;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class UpdateSpatialDataCommandTest extends TestCase
@@ -12,6 +13,8 @@ class UpdateSpatialDataCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Don't actually shell out to osmium for the merge in unit tests.
+        Process::fake();
         $this->dataDir = storage_path('tests/spatial');
         if (!is_dir($this->dataDir)) {
             mkdir($this->dataDir, 0755, true);
@@ -241,11 +244,11 @@ class UpdateSpatialDataCommandTest extends TestCase
 
         app()->bind(\App\Services\DeprivationDataService::class, fn() => $mockService);
 
+        $pbf = "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA";
+
         return [
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
+            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response($pbf, 200),
+            'https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf' => Http::response($pbf, 200),
             'http://localhost:8195/v1/reload' => Http::response(['status' => 'ok'], 200),
         ];
     }
