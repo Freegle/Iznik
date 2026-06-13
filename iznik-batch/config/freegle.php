@@ -168,6 +168,14 @@ return [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
     ],
 
+    // Safety gate for the daily new-posts push notification (push:daily-posts).
+    //   ''   → send to NOBODY (the default). Safe to deploy — no pushes are
+    //          sent until an operator explicitly enables via env.
+    //   '*'  → all eligible users (FD-app token + opted-in).
+    //   'a@x.com,b@y' → comma-separated email list for pilot testing.
+    // An explicit --user= on the command bypasses this gate for manual sampling.
+    'posts_push_allowlist' => env('FREEGLE_POSTS_PUSH_ALLOWLIST', ''),
+
     'images' => [
         // Image domain for user profile images
         'domain' => env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),

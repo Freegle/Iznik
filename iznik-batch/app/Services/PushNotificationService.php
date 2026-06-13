@@ -26,6 +26,15 @@ class PushNotificationService
     // V1 PushNotifications::CATEGORY_EXHORT — Android "tips" channel, passive iOS.
     private const CATEGORY_EXHORT = 'EXHORT';
 
+    // Daily new-posts push — matches V1 PostNotifications::CATEGORY_NEW_POSTS.
+    // The constant is public so tests and the command can reference it without
+    // duplicating the string literal.
+    public const CATEGORY_NEW_POSTS = 'NEW_POSTS';
+
+    // Constant notId for the daily digest push so Android replaces the
+    // previous day's tray entry rather than stacking a new one.
+    private const NEW_POSTS_NOT_ID = '200000001';
+
     private $messaging = null;
 
     /** Whether we've already alerted that FCM is unavailable (avoids per-push spam). */
@@ -748,6 +757,13 @@ class PushNotificationService
      *
      * When $forceVisible is true, includes a notification block so the push appears in the
      * system tray even if the app is killed (used by the test command).
+     *
+     * For the NEW_POSTS category on iOS we set mutable-content=1 in the APNS
+     * aps dictionary so the Notification Service Extension (NSE) fires and can
+     * attach the post image. The alert body is required for the NSE to wake;
+     * without an alert block the system drops the notification before the NSE
+     * runs. Existing callers (chat, ModTools, exhort) are unaffected because
+     * they don't carry category=NEW_POSTS in their payload.
      */
     private function sendFcm(int $userId, string $type, string $token, array $payload, bool $forceVisible = false): void
     {
@@ -772,15 +788,26 @@ class PushNotificationService
             $message = CloudMessage::fromArray($ios);
 
             $badge = (int) ($payload['count'] ?? 0);
+            $isNewPosts = ($payload['category'] ?? '') === self::CATEGORY_NEW_POSTS;
+
+            $aps = [
+                'badge' => $badge,
+                'sound' => 'default',
+            ];
+
+            // mutable-content=1 wakes the NSE so it can attach the post image
+            // and expand lines[] into a rich notification. Only set for NEW_POSTS
+            // — other categories (chat, modtools) don't use the NSE.
+            if ($isNewPosts) {
+                $aps['mutable-content'] = 1;
+            }
+
             $message = $message->withApnsConfig([
                 'headers' => [
                     'apns-priority' => '10',
                 ],
                 'payload' => [
-                    'aps' => [
-                        'badge' => $badge,
-                        'sound' => 'default',
-                    ],
+                    'aps' => $aps,
                 ],
             ]);
         }
@@ -1114,5 +1141,259 @@ class PushNotificationService
         }
 
         return $senderName;
+    }
+
+    // -------------------------------------------------------------------------
+    // Daily new-posts push
+    // -------------------------------------------------------------------------
+
+    /**
+     * Send a daily new-posts push to all of a user's registered FD-app devices.
+     *
+     * $posts is the deduped post list as returned by
+     * UnifiedDigestService::deduplicatePosts() — each element is
+     * ['message' => Message, 'postedToGroups' => [groupid, ...]].
+     *
+     * Returns the number of FCM tokens successfully delivered.
+     */
+    public function notifyDailyNewPosts(int $userId, array $posts): int
+    {
+        if (! $this->messaging) {
+            return $this->messagingUnavailable('daily_new_posts', ['user_id' => $userId]);
+        }
+
+        // Exclude the user's own posts (V1 PostNotifications::sendToUser parity).
+        $posts = array_values(array_filter($posts, function (array $item) use ($userId) {
+            return (int) ($item['message']->fromuser ?? 0) !== $userId;
+        }));
+
+        if (empty($posts)) {
+            return 0;
+        }
+
+        $payload = $this->buildDailyNewPostsPayload($userId, $posts);
+        if (empty($payload)) {
+            return 0;
+        }
+
+        $notifs = DB::select(
+            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
+            [$userId, self::APPTYPE_USER]
+        );
+
+        $count = 0;
+        foreach ($notifs as $notif) {
+            if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
+                continue;
+            }
+
+            try {
+                // forceVisible=FALSE — Android must stay DATA-ONLY so the app's
+                // own notification builder (InboxStyle / BigPictureStyle) runs.
+                // The notification block on Android would bypass the JS handler
+                // that reads channel_id and lines[]. iOS needs its alert block
+                // for the NSE to fire (set unconditionally when title is present
+                // in sendFcm's iOS path above).
+                $this->sendFcm($userId, $notif->type, $notif->subscription, $payload, FALSE);
+
+                DB::table('users_push_notifications')
+                    ->where('userid', $userId)
+                    ->where('subscription', $notif->subscription)
+                    ->update(['lastsent' => now()]);
+
+                $count++;
+            } catch (\Throwable $e) {
+                $errorMsg = $e->getMessage();
+                Log::warning('Daily new-posts push failed', [
+                    'user_id' => $userId,
+                    'type' => $notif->type,
+                    'error' => $errorMsg,
+                ]);
+
+                if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'NOT_FOUND') ||
+                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
+                    str_contains($errorMsg, 'Requested entity was not found') ||
+                    str_contains($errorMsg, 'Invalid registration token') ||
+                    str_contains($errorMsg, 'not a valid FCM registration token')) {
+                    DB::table('users_push_notifications')
+                        ->where('userid', $userId)
+                        ->where('subscription', $notif->subscription)
+                        ->delete();
+
+                    Log::info('Removed invalid push subscription', [
+                        'user_id' => $userId,
+                        'subscription' => substr($notif->subscription, 0, 20) . '...',
+                    ]);
+                }
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Build the FCM data payload for the daily new-posts push.
+     *
+     * ALL data values are strings (FCM requirement). The payload shape
+     * is defined in full in the project spec and matches the contract
+     * read by iznik-nuxt3's handleNotification / NSE.
+     *
+     * Adaptive rendering:
+     *   count == 1  → BigPictureStyle (item photo); title = item name.
+     *   count >= 2  → InboxStyle: lines[] rows + "+N more" row; largeIcon = first photo.
+     *   Both paths carry a single-line fallback (title + message) for old app versions.
+     *
+     * @param int   $userId  Recipient user ID (used for token lookup by the caller).
+     * @param array $posts   Deduped post list (already own-post-filtered by the caller).
+     *                       Each element: ['message' => Message, 'postedToGroups' => [...]].
+     */
+    public function buildDailyNewPostsPayload(int $userId, array $posts): array
+    {
+        $count = count($posts);
+
+        if ($count === 0) {
+            return [];
+        }
+
+        $maxLines = 5; // V1 PostNotifications::MAX_POSTS_IN_NOTIFICATION
+
+        // ---- Item names and type labels (for lines[] and message fallback) ----
+        $lines = [];
+        foreach (array_slice($posts, 0, $maxLines) as $item) {
+            $msg = $item['message'];
+            $lines[] = $this->formatPostLine($msg);
+        }
+
+        $moreCount = max(0, $count - count($lines));
+
+        // ---- Single-line fallback message ----
+        $allNames = array_map(fn ($item) => $this->extractItemName($item['message']), $posts);
+        $previewNames = array_slice($allNames, 0, $maxLines);
+        $message = implode(', ', $previewNames);
+        if ($moreCount > 0) {
+            $message .= ' +' . $moreCount . ' more';
+        }
+
+        // ---- Title ----
+        if ($count === 1) {
+            // Single post: title is the item name itself (BigPictureStyle).
+            $title = $this->extractItemName($posts[0]['message']);
+        } else {
+            $title = $count . ' new things near you';
+        }
+
+        // ---- Best photo URL ----
+        $imageUrl = $this->extractPostImageUrl($posts[0]['message']);
+
+        return [
+            'channel_id'        => 'new_posts',
+            'category'          => self::CATEGORY_NEW_POSTS,
+            'notId'             => self::NEW_POSTS_NOT_ID,
+            'count'             => (string) $count,
+            'title'             => $title,
+            'message'           => $message,
+            'route'             => '/browse',
+            'image'             => (string) ($imageUrl ?? ''),
+            'lines'             => json_encode($lines),
+            'summary'           => 'Freegle • ' . $count . ' new post' . ($count === 1 ? '' : 's'),
+            'moreCount'         => (string) $moreCount,
+            'timestamp'         => (string) time(),
+            'badge'             => (string) $count,
+            'content-available' => '1',
+            'modtools'          => 'false',
+        ];
+    }
+
+    /**
+     * Format a single post into a short line for the InboxStyle lines[] array.
+     *
+     * Pattern: "Offer: {ItemName} ({LocationName})"
+     * Mirrors V1's notification content and the app's chat-list preview style.
+     */
+    private function formatPostLine(\App\Models\Message $msg): string
+    {
+        $type = ucfirst(strtolower((string) ($msg->type ?? 'Offer')));
+        $name = $this->extractItemName($msg);
+        $location = $this->extractLocationName($msg);
+
+        if ($location !== '') {
+            return "{$type}: {$name} ({$location})";
+        }
+
+        return "{$type}: {$name}";
+    }
+
+    /**
+     * Extract the bare item name from a message subject.
+     *
+     * V1 PostNotifications regex (sendToUser): strips "OFFER:" / "WANTED:" prefix
+     * and any trailing "(Location)" suffix, returning the item name only.
+     *
+     * Subject format: "OFFER: Sofa (Kingston)" → "Sofa"
+     */
+    private function extractItemName(\App\Models\Message $msg): string
+    {
+        $subject = trim((string) ($msg->subject ?? ''));
+
+        // Remove "OFFER:" / "WANTED:" prefix.
+        $name = preg_replace('/^(?:OFFER|WANTED)\s*:\s*/i', '', $subject);
+
+        // Remove trailing "(Location)" suffix.
+        $name = preg_replace('/\s*\([^)]+\)\s*$/', '', (string) $name);
+
+        return trim((string) $name) ?: $subject;
+    }
+
+    /**
+     * Extract the location name from a message subject's trailing parenthetical.
+     *
+     * Subject format: "OFFER: Sofa (Kingston)" → "Kingston"
+     */
+    private function extractLocationName(\App\Models\Message $msg): string
+    {
+        $subject = trim((string) ($msg->subject ?? ''));
+
+        if (preg_match('/\(([^)]+)\)\s*$/', $subject, $m)) {
+            return trim($m[1]);
+        }
+
+        return '';
+    }
+
+    /**
+     * Return a public image URL for the first usable attachment on a post,
+     * or null if the post has no photo.
+     *
+     * Mirrors UnifiedDigest::getMessageImageUrl() but returns the raw source
+     * URL (no delivery-service resizing) so that FCM stores it on its CDN and
+     * the NSE / Android BigPicture can fetch it directly. Push images are small
+     * (Android BigPicture ≤ 2 MB, iOS NSE ≤ 10 MB); the delivery service's
+     * resizing step is unnecessary and adds a round-trip that can time out in
+     * the NSE's short execution window.
+     */
+    private function extractPostImageUrl(\App\Models\Message $msg): ?string
+    {
+        if (! $msg->attachments || $msg->attachments->isEmpty()) {
+            return null;
+        }
+
+        // Prefer primary=1; skip attachments that haven't finished uploading
+        // (no externaluid/externalurl/archived yet — same filter as prepareCard).
+        $attachment = $msg->attachments
+            ->filter(fn ($a) => ! empty($a->externaluid) || ! empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
+            ->sortByDesc('primary')
+            ->first();
+
+        if (! $attachment) {
+            return null;
+        }
+
+        if (! empty($attachment->externalurl)) {
+            return $attachment->externalurl;
+        }
+
+        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+        return "{$imagesDomain}/img_{$attachment->id}.jpg";
     }
 }

@@ -566,7 +566,12 @@ export const useMobileStore = defineStore({
         // When a push notification is received while the app is in the foreground,
         // immediately refresh chats to update unread counts and trigger message fetching.
         // This ensures new messages appear without waiting for the 30-second poll.
-        if (foreground) {
+        //
+        // NEW_POSTS (daily digest) pushes don't carry chat data, so refreshing the
+        // chat store would be pointless noise.  We just let the badge update (done
+        // above) take effect and let the user tap to browse — no further action needed
+        // in the foreground.
+        if (foreground && data.channel_id !== 'new_posts') {
           console.log('Foreground push received - refreshing chats')
           dbg()?.info('Foreground push - triggering chat refresh')
           const chatStore = useChatStore()
