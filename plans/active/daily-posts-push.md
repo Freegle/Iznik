@@ -122,7 +122,7 @@ native picks BigPicture.
 | 2 | Worktree + branch + plan + contract | — | mono | ✅ | this file |
 | 3 | Android native rich rendering (Inbox/BigPicture) | A1 | plugin | ✅ | NotificationHelper.applyNewPostsStyle + CATEGORY_NEW_POSTS |
 | 4 | iOS NSE + NEW_POSTS category | A1 | plugin+mono | ✅ (code) | NSE source + passive category; Xcode target wiring is a manual step (SETUP.md) |
-| 5 | Plugin: build dist, commit, (PR) | A1 | plugin | ⬜ | dist NOT regenerated (native-only, no TS API change); commit+PR pending |
+| 5 | Plugin: build dist, commit, (PR) | A1 | plugin | ✅ | dist unchanged (native-only); PR capacitor-push-notifications-cap7#1, v7.0.3 |
 | 6 | Android emulator visual inspection | A1 | — | ✅ | InboxStyle + BigPicture verified on emulator-5554 (API 34); screenshots sent |
 | 7 | mobile.js new_posts handling + foreground | A2 | mono | ✅ | vitest mobile.spec 56✓ (5 new) |
 | 8 | App settings toggle (dailypostspush) | A2 | mono | ✅ | AppNotificationsSection.vue; vitest 18✓ |
@@ -133,5 +133,13 @@ native picks BigPicture.
 | 13 | push:daily-posts command (allowlist-gated) | B1 | mono | ✅ | FREEGLE_POSTS_PUSH_ALLOWLIST default '' |
 | 14 | Scheduler entry 07:30 UK | B1 | mono | ✅ | gated, once-per-day guard, self-healing |
 | 15 | Laravel tests | B1 | mono | ✅ | DailyPostsPushTest 18/18 ✓ |
-| 16 | Run all suites + emulator validation | — | — | 🔄 | Laravel 18✓, vitest 18+56✓, Android emu✓, Go re-running after fixture fix |
-| 17 | PR(s) + session log | — | — | ⬜ | plugin PR + monorepo PR |
+| 16 | Run all suites + emulator validation | — | — | ✅ | Laravel 18✓, vitest 18+56✓, Go 3171✓, Android emulator✓ |
+| 17 | PR(s) + session log | — | — | ✅ | monorepo Iznik#741, plugin cap7#1 |
+
+## Result (2026-06-13)
+- **Monorepo PR:** https://github.com/Freegle/Iznik/pull/741 (gated server + Go default + client).
+- **Plugin PR:** https://github.com/Freegle/capacitor-push-notifications-cap7/pull/1 (Android+iOS rich rendering, v7.0.3).
+- All testable suites green; Android rendering verified on emulator (API 34).
+- **Remaining (humans / follow-up):** merge plugin PR + tag → bump iznik-nuxt3 package.json to 7.0.3;
+  add the iOS NSE Xcode target per plugin `ios/NotificationServiceExtension/SETUP.md`; once apps adopted,
+  set `FREEGLE_POSTS_PUSH_ALLOWLIST` (pilot emails → `*`). iOS not buildable here (no macOS).
