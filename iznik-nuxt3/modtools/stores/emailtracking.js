@@ -68,6 +68,11 @@ export const useEmailTrackingStore = defineStore({
     bounceEntries: [],
     bounceLoading: false,
     bounceError: null,
+
+    // Digest click-through rate by post position.
+    digestPositions: [],
+    digestPositionsLoading: false,
+    digestPositionsError: null,
   }),
   actions: {
     init(config) {
@@ -87,6 +92,8 @@ export const useEmailTrackingStore = defineStore({
       this.clickedLinksError = null
       this.showAllClickedLinks = false
       this.aggregateClickedLinks = true
+      this.digestPositions = []
+      this.digestPositionsError = null
       this.userEmails = []
       this.userEmailsTotal = 0
       this.userEmailsError = null
@@ -192,6 +199,35 @@ export const useEmailTrackingStore = defineStore({
         console.error('Stats by type fetch error:', e)
       } finally {
         this.statsByTypeLoading = false
+      }
+    },
+
+    async fetchDigestPositions() {
+      this.digestPositionsLoading = true
+      this.digestPositionsError = null
+
+      try {
+        const params = {}
+        if (this.filters.type) {
+          params.type = this.filters.type
+        }
+        if (this.filters.start) {
+          params.start = this.filters.start
+        }
+        if (this.filters.end) {
+          params.end = this.filters.end
+        }
+
+        const response = await api(
+          this.config
+        ).emailtracking.fetchDigestPositions(params)
+        this.digestPositions = response.data || []
+      } catch (e) {
+        this.digestPositionsError =
+          e.message || 'Failed to fetch digest position stats'
+        console.error('Digest positions fetch error:', e)
+      } finally {
+        this.digestPositionsLoading = false
       }
     },
 
@@ -685,6 +721,26 @@ export const useEmailTrackingStore = defineStore({
       state.timeSeries.forEach((day) => {
         const date = new Date(day.date)
         data.push([date, day.sent])
+      })
+
+      return data
+    },
+
+    hasDigestPositions: (state) => state.digestPositions.length > 0,
+
+    // Digest position data formatted for Google Charts (ComboChart). Bars show
+    // the click-through rate at each position; the line shows the sample size
+    // (how many digests displayed a post at that position) for context.
+    digestPositionsChartData: (state) => {
+      if (!state.digestPositions.length) return null
+
+      const data = [['Position', 'Click-through rate (%)', 'Emails shown']]
+
+      state.digestPositions.forEach((p) => {
+        // Positions are zero-based internally; show a 1-based label to humans.
+        const label = String((p.position ?? 0) + 1)
+        const ctr = Math.round((p.ctr || 0) * 10) / 10
+        data.push([label, ctr, p.shown || 0])
       })
 
       return data

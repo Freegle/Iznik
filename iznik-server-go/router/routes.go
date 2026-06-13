@@ -1264,6 +1264,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/clicks", emailtracking.TopClickedLinks)
 
+		// Digest Click Positions (authenticated, admin only)
+		// @Router /email/stats/digestpositions [get]
+		// @Summary Get digest click-through rate by post position
+		// @Description Returns click-through rate per post position within unified digests, for analysing how position affects engagement
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Param type query string false "Email type filter (default: all UnifiedDigest* types)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
+
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
 		// @Summary Get email tracking for a user
