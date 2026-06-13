@@ -101,33 +101,80 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
-     * Lightweight prep for the "came and went" (Taken/Received) section: just
-     * what the greyed list shows — title, location, thumbnail, date and a link
-     * to the (now-closed) post. No reply button or per-post reply tracking,
-     * since the item is gone.
+     * Prepare the "came and went" (Taken/Received) section.
+     *
+     * Reuses the SAME card field set as the live posts ({@see prepareCard()})
+     * so the greyed cards render from the identical card markup — just without
+     * the Reply button and with a muted palette (template-side $showReply /
+     * $muted flags). The only data difference is the meta line, which reads
+     * "Taken/Received · <date>" via the `metaText` key rather than the live
+     * distance · arrival pairing.
+     *
+     * Completed posts arrive as raw Message objects with ->groups loaded, so we
+     * derive postedToGroups from those (matching the live path's array) and
+     * fold any groups not already in $this->groupLookup into it.
      */
     protected function prepareCompletedPosts(): Collection
     {
-        return $this->completedPosts->map(function ($message) {
-            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
-            $arrival = $message->arrival instanceof Carbon
-                ? $message->arrival
-                : Carbon::parse($message->arrival ?? $message->date);
+        if ($this->completedPosts->isEmpty()) {
+            return collect();
+        }
 
-            return [
-                'id' => $message->id,
-                'type' => $message->type,
-                'itemName' => $this->extractItemName($subject),
-                'locationName' => $this->extractLocationName($subject),
-                'imageUrl' => $this->getMessageImageUrl($message, 240, 240),
-                'messageUrl' => $this->trackedUrl(
-                    $this->userSite . '/message/' . $message->id,
-                    'completed_' . $message->id,
-                    'view_completed'
-                ),
-                'date' => $arrival->setTimezone('Europe/London')->format('D j M, g:ia'),
-            ];
-        })->values();
+        // Derive each completed message's group ids from its loaded ->groups
+        // (falling back to the single join groupid), then make sure the byline
+        // lookup carries any group not already loaded by preparePosts().
+        $completedGroups = $this->completedPosts->map(function ($message) {
+            $ids = $message->relationLoaded('groups')
+                ? $message->groups->pluck('id')->filter()->values()->all()
+                : [];
+            if (empty($ids) && !empty($message->groupid)) {
+                $ids = [(int) $message->groupid];
+            }
+            return $ids;
+        });
+
+        $missingGroupIds = $completedGroups->flatten()
+            ->filter(fn ($gid) => !isset($this->groupLookup[$gid]))
+            ->unique()
+            ->values();
+        if ($missingGroupIds->isNotEmpty()) {
+            $extra = DB::table('groups')->whereIn('id', $missingGroupIds)
+                ->get(['id', 'nameshort', 'namefull'])->keyBy('id')->all();
+            $this->groupLookup = $this->groupLookup + $extra;
+        }
+
+        $total = $this->completedPosts->count();
+
+        // No distance shown for came-and-went (the item is gone), so pass null
+        // lat/lng — prepareCard() then leaves distanceText null. metaText below
+        // carries the "Taken/Received · <date>" line the muted card renders.
+        return $this->completedPosts->values()->map(function ($message, $index) use ($completedGroups, $total) {
+            $card = $this->prepareCard(
+                $message,
+                $completedGroups[$index] ?? [],
+                $index,
+                $total,
+                null,
+                null
+            );
+
+            // Offer→Taken, Wanted→Received. Same "D j M, g:ia" arrival format
+            // the live cards use, so the muted card's meta line matches shape.
+            $verb = $message->type === 'Offer' ? 'Taken' : 'Received';
+            $card['metaText'] = $verb . ' · ' . $card['arrivalFormatted'];
+
+            // The item is gone, so the card links to the (closed) post page for
+            // a look rather than the reply-compose flow — drop ?reply=1.
+            $viewUrl = $this->trackedUrl(
+                $this->userSite . '/message/' . $message->id,
+                'completed_' . $message->id,
+                'view_completed'
+            );
+            $card['messageUrl'] = $viewUrl;
+            $card['fallbackReplyUrl'] = $viewUrl;
+
+            return $card;
+        });
     }
 
     /**
@@ -590,169 +637,232 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 ->get(['id', 'nameshort', 'namefull'])->keyBy('id')->all()
             : [];
 
-        return $this->posts->map(function ($post, $index) use ($totalPosts, $userLat, $userLng) {
-            $message = $post['message'];
-            $postedToGroups = $post['postedToGroups'];
-            $isOffer = $message->type === 'Offer';
+        return $this->posts->map(fn ($post, $index) => $this->prepareCard(
+            $post['message'],
+            $post['postedToGroups'],
+            $index,
+            $totalPosts,
+            $userLat,
+            $userLng
+        ));
+    }
 
-            // Primary group name (friendly full name) + /explore link for the
-            // "Posted by … on <group>" byline.
-            $groupName = null;
-            $groupUrl = null;
-            $primaryGroupId = $postedToGroups[0] ?? null;
-            if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
-                $g = $this->groupLookup[$primaryGroupId];
-                $groupName = $g->namefull ?: $g->nameshort;
-                if ($g->nameshort) {
-                    $groupUrl = $this->trackedUrl(
-                        $this->userSite . '/explore/' . urlencode($g->nameshort),
-                        "group_{$index}",
-                        'group'
-                    );
-                }
-            }
+    /**
+     * Build the full card field set for a single message.
+     *
+     * Shared by both the live post loop ({@see preparePosts()}) and the greyed
+     * "came and went" list ({@see prepareCompletedPosts()}) so the two render
+     * from the EXACT same card markup and can never drift. Relies on
+     * $this->groupLookup already holding the rows for $postedToGroups.
+     *
+     * @param  array<int,int>  $postedToGroups  group ids this message went to
+     * @param  int             $index           position in the digest (tracking)
+     * @param  int             $total           total posts (scroll-depth tracking)
+     */
+    protected function prepareCard(
+        Message $message,
+        array $postedToGroups,
+        int $index,
+        int $total,
+        ?float $userLat,
+        ?float $userLng
+    ): array {
+        $isOffer = $message->type === 'Offer';
 
-            // Get image URL via delivery service.
-            $imageUrl = $this->getMessageImageUrl($message);
-
-            // Use type-specific placeholder if no photo.
-            $placeholderUrl = $isOffer
-                ? config('freegle.images.offer_placeholder')
-                : config('freegle.images.wanted_placeholder');
-
-            // Create tracked image URL with scroll depth.
-            // BUT: don't proxy the placeholder. The tracking proxy returns a
-            // 302 to the underlying URL, and Gmail's own image proxy doesn't
-            // always follow that redirect (Edward 2026-06-11 report — cards
-            // for no-photo posts rendered as broken). Open/click tracking on
-            // a placeholder is meaningless anyway (every no-photo card maps
-            // to the same URL), so serve the raw URL directly for those.
-            $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
-            $displayImageUrl = $imageUrl ?? $placeholderUrl;
-            $trackedImage = $imageUrl !== null
-                ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
-                : $displayImageUrl;
-
-            // Hero image for immediate (single-post) mode: a larger, height-
-            // capped crop (600x400) so the photo is the hero — V1's immediate
-            // single.mjml used a full-width image. Cropping to a 3:2 box bounds
-            // the height so portrait photos don't dominate. Falls back to the
-            // type placeholder when the post has no usable photo.
-            $heroImageUrl = $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl;
-
-            // Thumbnail image for multi-post (daily) cards: a fixed 4:3
-            // cover-crop (240x180) so every card has the same image height
-            // regardless of the original photo's aspect ratio. Without this
-            // the email rendered with the post's natural aspect — a portrait
-            // photo made a card three times taller than a landscape one.
-            // Square thumbnail (240x240) — used by the daily multi-post cards.
-            // Square crop makes the photo height match a typical content
-            // column height closely, so the Reply button at the bottom of
-            // the card sits flush with the photo rather than dangling below.
-            $thumbImageUrl = $this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl;
-
-            // Decode emoji sequences in message text.
-            $messageText = $message->textbody
-                ? EmojiUtils::decodeEmojis($message->textbody)
-                : null;
-
-            // Create tracked URL for this message (with position tracking).
-            // ?reply=1 tells the message page to auto-open the reply compose
-            // form on mount — saves the recipient an extra click since the
-            // CTA is literally labelled "Reply".
-            $messageUrl = $this->trackedUrl(
-                $this->userSite . '/message/' . $message->id . '?reply=1',
-                "post_{$index}",
-                'view_message'
+        // Primary group name (friendly full name) + /explore link for the
+        // "Posted by … on <group>" byline.
+        $groupName = null;
+        $groupUrl = null;
+        $primaryGroupId = $postedToGroups[0] ?? null;
+        if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
+            $g = $this->groupLookup[$primaryGroupId];
+            $groupName = $g->namefull ?: $g->nameshort;
+            // Link by group id — /explore/{id} resolves the same as
+            // /explore/{nameshort} (group store does isNaN() -> fetch by id),
+            // so the compact form needs no nameshort in the URL and no
+            // server-side lookup.
+            $groupUrl = $this->trackedResourceUrl(
+                'g',
+                (int) $primaryGroupId,
+                "g{$index}",
+                $this->userSite . '/explore/' . $primaryGroupId
             );
+        }
 
-            // Summary-index link: the top-of-digest "In this digest" list is a
-            // jump-to-post index, so it points at the message's web page WITHOUT
-            // ?reply=1 (we're not asking the reader to reply, just to look) and
-            // carries its own tracking tag so summary clicks are distinguishable
-            // from card clicks. V1's summary used an in-email #anchor that
-            // rendered inconsistently across clients; a real web URL is reliable.
-            $summaryUrl = $this->trackedUrl(
-                $this->userSite . '/message/' . $message->id,
-                "summary_{$index}",
-                'summary_click'
-            );
+        // Primary displayable attachment — drives both "has a photo?" and the
+        // compact image URL (keyed by attachment id). External-URL attachments
+        // have no timg_ id we can reconstruct server-side, so they keep the
+        // direct delivery URL.
+        $attachment = $this->getPrimaryAttachment($message);
+        $hasInternalImage = $attachment && empty($attachment->externalurl);
 
-            // Format arrival time for display in UK local time (BST in summer, GMT in winter).
-            // Always include minutes (e.g. "Sun 1 Mar, 11:00am") so the time
-            // shape is consistent — V1 single.html-style "Mon, 25th May 9:00am".
-            $arrival = $message->arrival instanceof Carbon ? $message->arrival : Carbon::parse($message->arrival);
-            $arrivalFormatted = $arrival->setTimezone('Europe/London')->format('D j M, g:ia');
-            $arrivalIso = $arrival->toIso8601String();
+        // Get image URL via delivery service.
+        $imageUrl = $this->getMessageImageUrl($message);
 
-            // Calculate distance from user.
-            $distanceText = null;
-            if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
-                $miles = $this->haversineDistance($userLat, $userLng, (float) $message->lat, (float) $message->lng);
-                $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
-            }
+        // Use type-specific placeholder if no photo.
+        $placeholderUrl = $isOffer
+            ? config('freegle.images.offer_placeholder')
+            : config('freegle.images.wanted_placeholder');
 
-            $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
-            $posterAvatarUrl = $this->resolveAvatarUrl($posterUser, 36);
-            $posterName = $posterUser?->displayname ?? $message->fromname ?? 'Freegler';
+        // Create tracked image URL with scroll depth.
+        // BUT: don't proxy the placeholder. The tracking proxy returns a
+        // 302 to the underlying URL, and Gmail's own image proxy doesn't
+        // always follow that redirect (Edward 2026-06-11 report — cards
+        // for no-photo posts rendered as broken). Open/click tracking on
+        // a placeholder is meaningless anyway (every no-photo card maps
+        // to the same URL), so serve the raw URL directly for those.
+        $scrollPercent = $total > 0 ? round(($index / $total) * 100) : 0;
+        $displayImageUrl = $imageUrl ?? $placeholderUrl;
+        $trackedImage = $imageUrl !== null
+            ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
+            : $displayImageUrl;
 
-            // firstPosted: show "First posted ..." line only when the message has
-            // actually been reposted to this group — i.e. the pivot arrival is
-            // materially after the original messages.date. Matches V1
-            // Digest.php's `count($atts['postings']) > 1` rule and uses the same
-            // "Mon, 25th May 9:00am" format the V1 template renders.
-            $firstPostedFormatted = null;
-            $originalDate = $message->date instanceof Carbon
-                ? $message->date
-                : ($message->date ? Carbon::parse($message->date) : null);
-            if ($originalDate && $arrival->diffInMinutes($originalDate) > 60) {
-                $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
-            }
+        // Hero image for immediate (single-post) mode: a larger, height-
+        // capped crop (600x400) so the photo is the hero — V1's immediate
+        // single.mjml used a full-width image. Cropping to a 3:2 box bounds
+        // the height so portrait photos don't dominate. Falls back to the
+        // type placeholder when the post has no usable photo. Our own (timg_)
+        // photos use the compact /e/d/i/{ref}/t/{attachId}/{preset}/{pos} form
+        // (preset 1 = 600x400 hero); external/placeholder keep the direct URL.
+        $heroImageUrl = $hasInternalImage
+            ? $this->trackedResourceImageUrl('t', (int) $attachment->id, 1, "h{$index}", $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl)
+            : ($this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl);
 
-            // The DB stores message subjects HTML-encoded (e.g. "OFFER: Coffee &amp; Cake (London)").
-            // Decode before extracting itemName / locationName so that Blade's
-            // {{ }} auto-escaping produces correct HTML source ("&amp;") rather
-            // than the double-encoded "&amp;amp;" that email clients render as
-            // the literal string "&amp;" instead of the intended "&".
-            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        // Thumbnail image for multi-post (daily) cards: a fixed 4:3
+        // cover-crop (240x180) so every card has the same image height
+        // regardless of the original photo's aspect ratio. Without this
+        // the email rendered with the post's natural aspect — a portrait
+        // photo made a card three times taller than a landscape one.
+        // Square thumbnail (240x240) — used by the daily multi-post cards.
+        // Square crop makes the photo height match a typical content
+        // column height closely, so the Reply button at the bottom of
+        // the card sits flush with the photo rather than dangling below.
+        // Compact form for our own photos (preset 0 = 240x240 card thumb).
+        $thumbImageUrl = $hasInternalImage
+            ? $this->trackedResourceImageUrl('t', (int) $attachment->id, 0, "i{$index}", $this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl)
+            : ($this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl);
 
-            // Build postedToText: show group names for cross-posted items
-            // (posted to more than one group). Single-group posts use null so
-            // the template suppresses the italic "also on" line entirely.
-            $groupNames = collect($postedToGroups)
-                ->map(fn ($gid) => isset($this->groupLookup[$gid])
-                    ? ($this->groupLookup[$gid]->namefull ?: $this->groupLookup[$gid]->nameshort)
-                    : null)
-                ->filter()
-                ->values();
-            $postedToText = $groupNames->count() > 1 ? $groupNames->implode(', ') : null;
+        // Decode emoji sequences in message text.
+        $messageText = $message->textbody
+            ? EmojiUtils::decodeEmojis($message->textbody)
+            : null;
 
-            return [
-                'message' => $message,
-                'messageText' => $messageText,
-                'messageUrl' => $messageUrl,
-                'summaryUrl' => $summaryUrl,
-                'imageUrl' => $imageUrl,
-                'displayImageUrl' => $displayImageUrl,
-                'heroImageUrl' => $heroImageUrl,
-                'thumbImageUrl' => $thumbImageUrl,
-                'trackedImageUrl' => $trackedImage,
-                'isPlaceholder' => $imageUrl === null,
-                'groupName' => $groupName,
-                'groupUrl' => $groupUrl,
-                'postedToText' => $postedToText,
-                'type' => $message->type,
-                'subject' => $subject,
-                'itemName' => $this->extractItemName($subject),
-                'locationName' => $this->extractLocationName($subject),
-                'arrivalFormatted' => $arrivalFormatted,
-                'arrivalIso' => $arrivalIso,
-                'distanceText' => $distanceText,
-                'posterName' => $posterName,
-                'posterAvatarUrl' => $posterAvatarUrl,
-                'firstPostedFormatted' => $firstPostedFormatted,
-            ];
-        });
+        // Create tracked URL for this message (with position tracking).
+        // ?reply=1 tells the message page to auto-open the reply compose
+        // form on mount — saves the recipient an extra click since the
+        // CTA is literally labelled "Reply".
+        // Compact form: type 'm' -> handler reconstructs /message/{id}?reply=1.
+        $messageUrl = $this->trackedResourceUrl(
+            'm',
+            (int) $message->id,
+            "p{$index}",
+            $this->userSite . '/message/' . $message->id . '?reply=1'
+        );
+
+        // Summary-index link: the top-of-digest "In this digest" list is a
+        // jump-to-post index, so it points at the message's web page WITHOUT
+        // ?reply=1 (we're not asking the reader to reply, just to look) and
+        // carries its own tracking tag so summary clicks are distinguishable
+        // from card clicks. V1's summary used an in-email #anchor that
+        // rendered inconsistently across clients; a real web URL is reliable.
+        // Compact form: type 's' -> handler reconstructs /message/{id}
+        // (no ?reply=1 — the summary index just jumps to the post).
+        $summaryUrl = $this->trackedResourceUrl(
+            's',
+            (int) $message->id,
+            "y{$index}",
+            $this->userSite . '/message/' . $message->id
+        );
+
+        // Format arrival time for display in UK local time (BST in summer, GMT in winter).
+        // Always include minutes (e.g. "Sun 1 Mar, 11:00am") so the time
+        // shape is consistent — V1 single.html-style "Mon, 25th May 9:00am".
+        $arrival = $message->arrival instanceof Carbon ? $message->arrival : Carbon::parse($message->arrival);
+        $arrivalFormatted = $arrival->setTimezone('Europe/London')->format('D j M, g:ia');
+        $arrivalIso = $arrival->toIso8601String();
+
+        // Calculate distance from user.
+        $distanceText = null;
+        if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
+            $miles = $this->haversineDistance($userLat, $userLng, (float) $message->lat, (float) $message->lng);
+            $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
+        }
+
+        $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
+        // Compact form: type 'u' preset 2 (avatar) -> handler reconstructs the
+        // poster's avatar at 36px. Falls back to the direct avatar URL.
+        $posterAvatarUrl = ($posterUser && $posterUser->id)
+            ? $this->trackedResourceImageUrl('u', (int) $posterUser->id, 2, "a{$index}", $this->resolveAvatarUrl($posterUser, 36))
+            : $this->resolveAvatarUrl($posterUser, 36);
+        $posterName = $posterUser?->displayname ?? $message->fromname ?? 'Freegler';
+
+        // firstPosted: show "First posted ..." line only when the message has
+        // actually been reposted to this group — i.e. the pivot arrival is
+        // materially after the original messages.date. Matches V1
+        // Digest.php's `count($atts['postings']) > 1` rule and uses the same
+        // "Mon, 25th May 9:00am" format the V1 template renders.
+        $firstPostedFormatted = null;
+        $originalDate = $message->date instanceof Carbon
+            ? $message->date
+            : ($message->date ? Carbon::parse($message->date) : null);
+        if ($originalDate && $arrival->diffInMinutes($originalDate) > 60) {
+            $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
+        }
+
+        // The DB stores message subjects HTML-encoded (e.g. "OFFER: Coffee &amp; Cake (London)").
+        // Decode before extracting itemName / locationName so that Blade's
+        // {{ }} auto-escaping produces correct HTML source ("&amp;") rather
+        // than the double-encoded "&amp;amp;" that email clients render as
+        // the literal string "&amp;" instead of the intended "&".
+        $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Build postedToText: show group names for cross-posted items
+        // (posted to more than one group). Single-group posts use null so
+        // the template suppresses the italic "also on" line entirely.
+        $groupNames = collect($postedToGroups)
+            ->map(fn ($gid) => isset($this->groupLookup[$gid])
+                ? ($this->groupLookup[$gid]->namefull ?: $this->groupLookup[$gid]->nameshort)
+                : null)
+            ->filter()
+            ->values();
+        $postedToText = $groupNames->count() > 1 ? $groupNames->implode(', ') : null;
+
+        return [
+            'message' => $message,
+            // True when this post is the recipient's own — used by both the
+            // AMP and MJML cards to suppress the Reply control (you can't
+            // reply to yourself; the Go reply handler rejects self-replies).
+            'isOwnPost' => (int) ($message->fromuser ?? 0) === (int) $this->user->id,
+            'messageText' => $messageText,
+            'messageUrl' => $messageUrl,
+            'summaryUrl' => $summaryUrl,
+            // Both templates' card links (image href, title, Reply fallback)
+            // use these keys; the live path's messageUrl IS the reply URL.
+            'fallbackReplyUrl' => $messageUrl,
+            'imageUrl' => $imageUrl,
+            'displayImageUrl' => $displayImageUrl,
+            'heroImageUrl' => $heroImageUrl,
+            'thumbImageUrl' => $thumbImageUrl,
+            'trackedImageUrl' => $trackedImage,
+            'isPlaceholder' => $imageUrl === null,
+            'groupName' => $groupName,
+            'groupUrl' => $groupUrl,
+            'postedToText' => $postedToText,
+            'type' => $message->type,
+            'subject' => $subject,
+            'itemName' => $this->extractItemName($subject),
+            'locationName' => $this->extractLocationName($subject),
+            'arrivalFormatted' => $arrivalFormatted,
+            'arrivalIso' => $arrivalIso,
+            'distanceText' => $distanceText,
+            'posterName' => $posterName,
+            'posterAvatarUrl' => $posterAvatarUrl,
+            'firstPostedFormatted' => $firstPostedFormatted,
+            // Card meta line. Live cards show distance · arrival; the came-and-
+            // went cards override this to "Taken/Received · <date>" (see
+            // prepareCompletedPosts()). Defaulted here so every card carries it.
+            'metaText' => null,
+        ];
     }
 
     /**
@@ -861,16 +971,26 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      * with no data/externaluid/externalurl/archived flag set. Without this
      * filter, we'd pick a half-written attachment and 404.
      */
-    protected function getMessageImageUrl($message, int $width = 300, ?int $height = null): ?string
+    /**
+     * The primary displayable attachment for a message, or null. A photo is
+     * "displayable" if it has an external uid/url or has been archived to the
+     * image store; the primary flag wins when there are several.
+     */
+    protected function getPrimaryAttachment($message)
     {
         if (!$message->attachments || $message->attachments->isEmpty()) {
             return null;
         }
 
-        $attachment = $message->attachments
+        return $message->attachments
             ->filter(fn($a) => !empty($a->externaluid) || !empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
             ->sortByDesc('primary')
             ->first();
+    }
+
+    protected function getMessageImageUrl($message, int $width = 300, ?int $height = null): ?string
+    {
+        $attachment = $this->getPrimaryAttachment($message);
 
         if (!$attachment) {
             return null;

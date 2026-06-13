@@ -5,6 +5,13 @@
   <script async src="https://cdn.ampproject.org/v0.js"></script>
   <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
   <script async custom-element="amp-accordion" src="https://cdn.ampproject.org/v0/amp-accordion-0.1.js"></script>
+  {{-- amp-bind drives the shared reply panel: per-post tap buttons write the
+       selected msgid into <amp-state id="r">, and the sidebar's hidden inputs
+       read title/token/expiry for that msgid out of <amp-state id="d"> via
+       [value] binding. amp-sidebar is the AMP4EMAIL-supported modal/drawer
+       (amp-lightbox + position:fixed are both forbidden in AMP4EMAIL). --}}
+  <script async custom-element="amp-bind" src="https://cdn.ampproject.org/v0/amp-bind-0.1.js"></script>
+  <script async custom-element="amp-sidebar" src="https://cdn.ampproject.org/v0/amp-sidebar-0.1.js"></script>
   <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
   <style amp4email-boilerplate>body{visibility:hidden}</style>
   <style amp-custom>
@@ -295,6 +302,25 @@
       background-color: #00A1CB;
     }
 
+    /* Shared reply panel (the one <amp-sidebar>). AMP4Email forbids
+       position:fixed; amp-sidebar handles the off-canvas drawer positioning
+       itself, so we only style its inner padding/width here. side="right"
+       slides it in from the right edge. */
+    .reply-panel {
+      width: 320px;
+      max-width: 90vw;
+      padding: 20px;
+      background-color: #ffffff;
+    }
+    .reply-panel-head {
+      font-size: 15px;
+      color: #333333;
+      margin: 0 0 12px 0;
+    }
+    .reply-panel-head strong {
+      color: #212529;
+    }
+
     /* Per-post Reply accordion. Lives inside the right grid cell, anchored
        to the bottom of the content column via margin-top:auto on a flex
        column — so the Reply trigger sits flush with the photo's bottom
@@ -469,12 +495,17 @@
     .cag-head { font-size: 14px; font-weight: 700; color: #444444; margin: 0 0 4px 0; }
     .cag-nudge { font-size: 12px; color: #666666; line-height: 1.5; margin: 0 0 10px 0; }
     .cag-nudge a { color: #338808; text-decoration: none; font-weight: bold; }
-    .cag-row { display: flex; align-items: center; padding: 6px 20px; background-color: #e9e9e9; }
-    .cag-row .cag-img { flex: 0 0 auto; margin-right: 10px; }
-    .cag-img amp-img img { object-fit: cover; border-radius: 4px; }
-    .cag-text { min-width: 0; }
-    .cag-title { font-size: 14px; font-weight: 600; color: #777777; margin: 0; }
-    .cag-meta { font-size: 12px; color: #999999; margin: 2px 0 0 0; }
+    /* Muted modifier for the "came and went" cards: reuses the .post-card
+       grid (same geometry as the live cards) but greys the band background
+       and recolours title/location/meta to the #777/#999 palette the old
+       came-and-went section used, signalling the item is gone. */
+    .post-card.cag-muted { background-color: #e9e9e9; border-bottom-color: #dddddd; }
+    .post-card.cag-muted .post-type-offer,
+    .post-card.cag-muted .post-type-wanted { background-color: #999999; }
+    .post-card.cag-muted .post-title a,
+    .post-card.cag-muted .post-location { color: #777777; }
+    .post-card.cag-muted .post-preview { color: #999999; }
+    .post-card.cag-muted .post-meta { color: #999999; }
 
     /* Job listings block (V1 single.html parity — mirrors the MJML jobs block) */
     .jobs-section {
@@ -570,6 +601,50 @@
   </style>
 </head>
 <body>
+  {{-- Shared reply-panel state. <amp-state id="d"> is the per-message map
+       { msgid: {t:title, k:token, e:expiry} } emitted once at the top of the
+       body — each post's tiny tap button only writes the selected msgid into
+       <amp-state id="r"> ({m:0} = nothing selected yet), and the single shared
+       <amp-sidebar> reply form reads d[r.m] for the title/token/expiry. This
+       is what keeps a 70-post AMP digest under Gmail's ~102 KB cap: ONE form
+       with a constant action-xhr + per-post ~80-byte buttons, instead of one
+       <amp-form> per post (which previously overflowed the cap and forced the
+       HTML fallback). [action-xhr]/[href] binding and amp-lightbox are all
+       forbidden in AMP4EMAIL, so the msgid/token ride in hidden inputs whose
+       [value] is amp-bound (input [value] binding IS allowlisted). --}}
+  <amp-state id="d">
+    <script type="application/json">{!! json_encode($ampPostMeta, JSON_UNESCAPED_SLASHES) !!}</script>
+  </amp-state>
+  <amp-state id="r">
+    <script type="application/json">{"m":0}</script>
+  </amp-state>
+
+  {{-- The one shared reply "lightbox". AMP4EMAIL has no amp-lightbox and
+       forbids position:fixed, so amp-sidebar (the supported modal/drawer) is
+       the reply panel. It shows what you're replying to by binding the item
+       title with [text]="d[r.m].t". The form's action-xhr is CONSTANT (no
+       per-post URL) — the msgid/token/expiry are carried in hidden inputs
+       bound with [value], which the validator allows. --}}
+  <amp-sidebar id="replyPanel" class="reply-panel" layout="nodisplay" side="right">
+    <p class="reply-panel-head">Reply to <strong [text]="d[r.m].t"></strong></p>
+    {{-- on submit-success, close the drawer so the reader is returned to the
+         post list (AMP4Email has no JS/back; amp-sidebar.close is the
+         supported "return to list" action). The inline "Reply sent!" confirm
+         folds away with it, so returning-to-the-list IS the success signal. --}}
+    <form method="post" action-xhr="{{ $ampApiUrl }}/digest/reply"
+          on="submit-success:replyPanel.close">
+      <input type="hidden" name="mid" [value]="r.m">
+      <input type="hidden" name="rt" [value]="d[r.m].k">
+      <input type="hidden" name="exp" [value]="d[r.m].e">
+      <input type="hidden" name="uid" value="{{ $ampUserId }}">
+      <textarea class="reply-textarea" name="message" placeholder="Reply..." required></textarea>
+      <button type="submit" class="reply-submit">Send</button>
+      <div submitting><div class="form-status"><div class="submitting-msg">Sending…</div></div></div>
+      <div submit-success template="rsuccess"></div>
+      <div submit-error template="rerror"></div>
+    </form>
+  </amp-sidebar>
+
   <div class="container">
     {{-- Header: logo + thumbnail nav. Mirrors the MJML version. AMP4Email
          disallows fragment-only hrefs (and tightens CSS to a small
@@ -645,13 +720,11 @@
     @endif
 
 
-    {{-- Shared amp-mustache templates referenced by id from every post's
-         amp-form. AMP4Email disallows the shared-form / amp-bind approach
-         (the validator rejects [action-xhr] on form), so every post has
-         its OWN amp-form — sharing the success/error message templates is
-         the trick that keeps 200-post digests under Gmail's size cap
-         (saves ~300 bytes per post vs inlining the same template in each
-         form's submit-success / submit-error wrappers). --}}
+    {{-- Shared amp-mustache success/error templates, referenced by id from
+         the single shared reply form (the <amp-sidebar> above) and from the
+         immediate single-post hero form below. Defining them once — rather
+         than inlining the same markup in each form's submit-success /
+         submit-error wrappers — keeps the AMP body small. --}}
     {{-- @{{message}} is Blade's escape for amp-mustache: Blade preserves the
          literal {{message}} so the amp runtime can interpolate the success/
          error response body at form-submit time. Without the @, Blade tries
@@ -668,7 +741,9 @@
     @php $isSingle = $postCount === 1; @endphp
     @if($isSingle)
     {{-- Single-post (immediate): item photo as hero — 600x400 cover-crop
-         responsive on mobile. 16px side padding mirrors the MJML hero. --}}
+         responsive on mobile. 16px side padding mirrors the MJML hero. The
+         immediate hero keeps its bespoke flat layout (full body, secondary
+         actions); the multi-post card is the shared _card partial. --}}
     <div style="padding: 16px 16px 0 16px;">
       <a href="{{ $post['fallbackReplyUrl'] }}" style="display: block; line-height: 0;">
         <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
@@ -676,23 +751,6 @@
     </div>
     <div id="msg-{{ $post['message']->id }}" class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
       <div class="post-content" style="padding-left: 0;">
-    @else
-    <div id="msg-{{ $post['message']->id }}" class="post-card">
-      {{-- Multi-post thumbnail. The grid above gives the image cell a
-           non-relative computed height (matches the content cell), and
-           amp-img layout="fill" + object-fit:cover stretches the photo
-           to fill that cell — so the photo's bottom edge always lines
-           up with the bottom of the content column. --}}
-      <div class="post-img-wrap">
-        {{-- The anchor uses class="post-img-link" (position:absolute, all edges
-             at 0) to fill the .post-img-wrap cell so the whole photo is
-             clickable, not just a zero-height inline box. --}}
-        <a href="{{ $post['fallbackReplyUrl'] }}" class="post-img-link">
-          <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
-        </a>
-      </div>
-      <div class="post-head">
-    @endif
         {{-- OFFER / WANTED pill. Wrapped in a <p> so it gets its own
              line + bottom margin, but the visible chip is a <span> —
              p with `display: inline-block` stretched full-width in the
@@ -709,19 +767,10 @@
           <br><span class="post-location">{{ $post['locationName'] }}</span>
           @endif
         </p>
-        @if(!$isSingle)
-        {{-- Multi-post: close the head cell (pill/title/location) and open
-             the rest cell (desc/meta/byline/Reply). On mobile the rest cell
-             spans the full card width; on desktop it stays in column 2.
-             The single-post branch keeps one flat .post-content wrapper, so
-             the two shared closers at the bottom of the card match both. --}}
-      </div>
-      <div class="post-rest">
-        @endif
         @if($post['messageText'])
         {{-- User-supplied description. Immediate renders the full body
-             (it's the only post); multi-post truncates for AMP size. --}}
-        <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
+             (it's the only post). --}}
+        <p class="post-preview">{!! nl2br(e($post['messageText'])) !!}</p>
         @endif
         {{-- Meta row: 📍 distance · 🕒 time. Location moved up into the
              title block so this row is just the bits that vary per
@@ -741,13 +790,11 @@
              been reposted to this group. --}}
         <p class="post-first-posted">First posted {{ $post['firstPostedFormatted'] }}</p>
         @endif
-        @if($isSingle)
         {{-- Secondary actions on the immediate hero (V1 single.html parity). --}}
         <p class="post-actions" style="margin-top: 12px;">
           <a href="{{ $browseUrl }}">Browse other posts</a>
           <a href="{{ $userSite }}/offer">Post something</a>
         </p>
-        @endif
         {{-- Per-post reply form lives INSIDE .post-content (the right
              grid cell) so the card's overall height = image + content +
              accordion stack. The grid then auto-stretches the image cell
@@ -770,6 +817,14 @@
         </amp-accordion>
       </div>
     </div>
+    @else
+    {{-- Multi-post daily card — shared partial (live variant). --}}
+    @include('emails.amp.digest._card', [
+        'post' => $post,
+        'showReply' => true,
+        'muted' => false,
+    ])
+    @endif
     @endforeach
 
     {{-- "Came and went": Taken/Received posts since the last digest, greyed
@@ -779,16 +834,15 @@
       <p class="cag-head">Came and went</p>
       <p class="cag-nudge">These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in <a href="{{ $settingsUrl }}">Settings</a>.</p>
     </div>
+    {{-- Same .post-card grid partial as the live posts above — same geometry,
+         just greyed ($muted) and without the Reply accordion ($showReply=false).
+         The meta line reads "Taken/Received · <date>" via $cp['metaText']. --}}
     @foreach($completedPosts as $cp)
-    <div class="cag-row">
-      @if(!empty($cp['imageUrl']))
-      <a href="{{ $cp['messageUrl'] }}" class="cag-img"><amp-img src="{{ $cp['imageUrl'] }}" width="44" height="44" layout="fixed" alt="{{ $cp['itemName'] }}"></amp-img></a>
-      @endif
-      <div class="cag-text">
-        <p class="cag-title">{{ $cp['itemName'] }}@if($cp['locationName']) · {{ $cp['locationName'] }}@endif</p>
-        <p class="cag-meta">{{ $cp['type'] === 'Offer' ? 'Taken' : 'Received' }} · {{ $cp['date'] }}</p>
-      </div>
-    </div>
+    @include('emails.amp.digest._card', [
+        'post' => $cp,
+        'showReply' => false,
+        'muted' => true,
+    ])
     @endforeach
     @endif
 

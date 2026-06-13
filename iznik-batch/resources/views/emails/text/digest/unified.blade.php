@@ -35,7 +35,7 @@ Location: {!! $post['locationName'] !!}
 {!! $isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 200) !!}
 @endif
 
-Posted by {!! $post['posterName'] !!}@if($post['groupName'] ?? null) on {!! $post['groupName'] !!}@endif
+Posted by {!! $post['posterName'] !!}{!! ($post['groupName'] ?? null) ? ' on ' . $post['groupName'] : '' !!}
 @if(!empty($post['firstPostedFormatted']))
 First posted {!! $post['firstPostedFormatted'] !!}
 @endif
@@ -48,7 +48,7 @@ Reply: {{ $post['messageUrl'] }}
 CAME AND WENT
 These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in Settings: {{ $settingsUrl }}
 @foreach($completedPosts as $cp)
-- {{ $cp['itemName'] }}@if($cp['locationName']) ({{ $cp['locationName'] }})@endif — {{ $cp['type'] === 'Offer' ? 'Taken' : 'Received' }} {{ $cp['date'] }}: {{ $cp['messageUrl'] }}
+- {{ $cp['itemName'] }}@if($cp['locationName']) ({{ $cp['locationName'] }})@endif — {{ $cp['metaText'] }}: {{ $cp['messageUrl'] }}
 @endforeach
 ------------------------------------
 @endif
