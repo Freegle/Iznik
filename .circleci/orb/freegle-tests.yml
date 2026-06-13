@@ -321,6 +321,54 @@ commands:
             ) &
             echo "CPU priority watchdog running: workload nice +19, agent nice 0, and workload cpuset-confined to vCPUs 1..N-1 (vCPU0 reserved for the runner heartbeat)"
 
+            # --- Kernel-level forensics for infrastructure_fail (added 2026-06-13) ---
+            # The `when: on_fail` "Capture VM diagnostics" step CANNOT capture an
+            # infrastructure_fail: that outcome means the runner AGENT stopped
+            # responding (frozen / OOM'd / soft-locked / panicked VM), so no later
+            # step ever runs and its dmesg snapshot is taken too late or never. The
+            # ONLY diagnostics that survive are ones STREAMED into this background
+            # step's captured output BEFORE the freeze. Master #7639 (2026-06-13)
+            # infra_failed mid-Playwright: the 30s sample 4s earlier was fully
+            # healthy (vCPU0 idle, 34Gi free, swap ~0, Docker 27.5.1) then the whole
+            # VM went silent for 5 min — exactly the signature of a sudden OOM
+            # *between* 30s samples, a soft-lockup, or an I/O hung-task, all of which
+            # the coarse loop is blind to. Capture them at the source:
+            #
+            # (1) Stream the kernel ring buffer live. The instant the kernel prints
+            #     "Out of memory: Killed process" (OOM), "BUG: soft lockup" (CPU
+            #     stuck), "task ... blocked for more than" (hung-task / wedged I/O),
+            #     or an RCU stall, the line is flushed to this step's captured log and
+            #     survives the freeze that follows. --follow-new streams only NEW
+            #     messages (no startup dump of the pre-job buffer).
+            ( sudo dmesg --follow-new 2>/dev/null \
+                || sudo dmesg -wT 2>/dev/null \
+                || sudo dmesg -w 2>/dev/null ) | sed 's/^/[kmsg] /' &
+            # (2) Make the kernel maximally chatty about the suspects: dump every
+            #     task's RSS on OOM, and shorten the hung-task detector so a process
+            #     wedged in uninterruptible I/O for >20s prints its stack to dmesg
+            #     (which (1) then streams). Best-effort; ignore if sysctl is locked.
+            sudo sysctl -w vm.oom_dump_tasks=1 kernel.hung_task_timeout_secs=20 \
+                kernel.hung_task_warnings=9999 >/dev/null 2>&1 || true
+            # (3) Fast memory tripwire: the 30s loop below cannot see a spike that
+            #     exhausts RAM in a few seconds. Sample MemAvailable every 1s and, the
+            #     moment it falls below 4Gi OR drops >8Gi in a single second, dump the
+            #     top RSS consumers with a timestamp so the NEXT freeze names its
+            #     culprit (almost certainly a Chromium/node worker) instead of leaving
+            #     us guessing between OOM and a host event.
+            ( prev=0
+              while true; do
+                avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
+                swpu=$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{print int((t-f)/1024)}' /proc/meminfo 2>/dev/null)
+                [ -z "$avail" ] && { sleep 1; continue; }
+                if [ "$avail" -lt 4096 ] || { [ "$prev" -gt 0 ] && [ $((prev - avail)) -gt 8192 ]; }; then
+                  echo "[mem-tripwire $(date '+%H:%M:%S')] MemAvailable=${avail}MB swapUsed=${swpu}MB prev=${prev}MB — top RSS:"
+                  ps -eo pid,ppid,rss,comm --sort=-rss 2>/dev/null | head -8 | sed 's/^/[mem-tripwire]   /'
+                fi
+                prev=$avail
+                sleep 1
+              done ) &
+            echo "Kernel forensics armed: live kmsg stream + hung-task=20s + mem-tripwire (<4Gi or -8Gi/s)"
+
             while true; do
               echo ""
               echo "========================================"
