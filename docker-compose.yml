@@ -82,6 +82,25 @@ services:
       retries: 10
       start_period: 60s
 
+  postgres:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-postgres
+    profiles:
+      - database
+    networks:
+      - default
+    image: postgis/postgis:13-3.1
+    restart: "no"
+    environment:
+      POSTGRES_DB: iznik
+      POSTGRES_PASSWORD: iznik
+      POSTGRES_USER: root
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -U root -d iznik -c 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
   phpmyadmin:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin
     profiles:
@@ -120,6 +139,9 @@ services:
       - "0.0.0.0:${PORT_MAILPIT_SMTP:-1025}:1025"
     depends_on:
       percona:
+        condition: service_healthy
+        required: false
+      postgres:
         condition: service_healthy
         required: false
       redis:
@@ -657,6 +679,9 @@ services:
         condition: service_healthy
         required: false
       batch:
+        condition: service_healthy
+        required: false
+      postgres:
         condition: service_healthy
         required: false
       redis:
@@ -1496,6 +1521,9 @@ services:
       percona:
         condition: service_healthy
         required: false
+      postgres:
+        condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
         required: false
@@ -1522,6 +1550,11 @@ services:
       - DB_DATABASE=iznik
       - DB_USERNAME=root
       - DB_PASSWORD=iznik
+      - PGSQL_HOST=postgres
+      - PGSQL_PORT=5432
+      - PGSQL_DATABASE=iznik
+      - PGSQL_USERNAME=root
+      - PGSQL_PASSWORD=iznik
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CACHE_STORE=redis
@@ -1670,6 +1703,12 @@ services:
       - AMP_API_URL=https://api.ilovefreegle.org/amp
       - AMP_READ_TOKEN_EXPIRY=168
       - AMP_WRITE_TOKEN_EXPIRY=168
+      # PostgreSQL / PostGIS (for postcode remapping KNN queries)
+      - PGSQL_HOST=${PGSQL_HOST:-postgres}
+      - PGSQL_PORT=${PGSQL_PORT:-5432}
+      - PGSQL_DATABASE=iznik
+      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
+      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
       # Geospatial
       - FREEGLE_SRID=3857
       # SENTRY_LARAVEL_DSN comes from env_file

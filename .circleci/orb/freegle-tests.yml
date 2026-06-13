@@ -743,7 +743,7 @@ commands:
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
             docker-compose up -d \
-              percona redis beanstalkd mailpit \
+              percona postgres redis beanstalkd mailpit \
               spamassassin-app reverse-proxy tusd delivery loki mjml \
               batch status host-scripts
 
@@ -812,7 +812,7 @@ commands:
             echo ""
             echo "=== Verifying container names ==="
             # Containers needed for CI tests (dev containers excluded as they're not used in tests)
-            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
+            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-postgres ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
             MISSING=""
             for container in $ALL_CONTAINERS; do
               if docker inspect "$container" >/dev/null 2>&1; then
@@ -881,7 +881,7 @@ commands:
 
             echo "=== Phase 1: Infrastructure + migrations ==="
             docker-compose up -d \
-              percona redis beanstalkd mailpit \
+              percona postgres redis beanstalkd mailpit \
               spamassassin-app reverse-proxy tusd delivery loki mjml \
               batch status host-scripts
 
