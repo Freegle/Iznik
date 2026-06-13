@@ -433,6 +433,10 @@ commands:
 
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
+            # Boot the routing (spatial) container on the small committed Bristol
+            # extract — no 2.5GB UK graph in CI — so routing-go tests can run.
+            export OSM_PBF_PATH="${OSM_PBF_PATH:-/app/testdata/bristol.osm.pbf}"
+            export DEPRIVATION_CSV="${DEPRIVATION_CSV:-/app/testdata/bristol_lsoa.csv}"
 
             # Clean up any existing containers first.
             # Do NOT pass --volumes: wiping named volumes forces MySQL to re-initialise
@@ -872,6 +876,10 @@ commands:
 
             # Ensure COMPOSE_PROFILES is set (may not be in .env if profiles branch not merged yet)
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
+            # Boot the routing (spatial) container on the small committed Bristol
+            # extract — no 2.5GB UK graph in CI — so routing-go tests can run.
+            export OSM_PBF_PATH="${OSM_PBF_PATH:-/app/testdata/bristol.osm.pbf}"
+            export DEPRIVATION_CSV="${DEPRIVATION_CSV:-/app/testdata/bristol_lsoa.csv}"
 
             # Two-phase startup: all databases must exist before application containers start.
             #
@@ -2956,6 +2964,37 @@ jobs:
               echo "✅ All tests passed!"
             fi
           no_output_timeout: 50m
+
+      - run:
+          name: Run routing-go tests
+          command: |
+            # iznik-routing-go tests run via the status container, which docker-execs
+            # `go test ./...` in the spatial container (booted on the committed Bristol
+            # extract). Self-contained gate: a failure here fails the job.
+            echo "🧪 Routing-go tests (iznik-routing-go)..."
+            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/routing")
+            http_code="${response: -3}"
+            if [ "$http_code" != "200" ] && [ "$http_code" != "409" ]; then
+              echo "❌ Failed to trigger routing tests (HTTP $http_code)"
+              exit 1
+            fi
+            while true; do
+              sleep 5
+              status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status" || echo '{"status":"error"}')
+              status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              if [ "$status" = "completed" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "✅ Routing tests passed"; break
+                else
+                  echo "❌ Routing tests failed"; exit 1
+                fi
+              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                echo "❌ Routing tests failed"; exit 1
+              fi
+            done
+          no_output_timeout: 10m
 
       - store_artifacts:
           path: ~/test-output

@@ -803,8 +803,10 @@ services:
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn:8194
-      - OSM_PBF_PATH=/data/uk-latest.osm.pbf
-      - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      # Override (e.g. in CI) to boot on the small committed Bristol extract so
+      # the container stays up for routing-go tests without the 2.5GB UK graph.
+      - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
+      - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
       - MYSQL_USER=root

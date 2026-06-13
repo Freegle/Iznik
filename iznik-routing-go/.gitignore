@@ -1,5 +1,8 @@
 testdata/*.pbf
 testdata/*.osm
+# Commit the small Bristol extract — it's the fixture the routing tests build
+# their road graph from (and the PBF CI's spatial container boots on).
+!testdata/bristol.osm.pbf
 spatial-server
 iznik-routing-go
 data/
