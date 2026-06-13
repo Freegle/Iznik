@@ -2942,7 +2942,19 @@ jobs:
               echo "export SKIP_COVERAGE=true" >> $BASH_ENV
               exit 0
             fi
-            npm install -g coveralls 2>/dev/null || sudo npm install -g coveralls 2>/dev/null || true
+            # Install the coveralls CLI to a user-writable prefix and add it to
+            # PATH for the upload steps below. The runner's default global npm
+            # prefix isn't writable, so a plain `npm install -g` silently failed
+            # ("coveralls: command not found") and no coverage was uploaded.
+            export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+            mkdir -p "$NPM_CONFIG_PREFIX"
+            if npm install -g coveralls && [ -x "$HOME/.npm-global/bin/coveralls" ]; then
+              echo "export PATH=$HOME/.npm-global/bin:\$PATH" >> $BASH_ENV
+              echo "✅ coveralls CLI installed at $HOME/.npm-global/bin/coveralls"
+            else
+              echo "⚠️ coveralls CLI install failed - skipping coverage upload"
+              echo "export SKIP_COVERAGE=true" >> $BASH_ENV
+            fi
             if [ -d ./.git ]; then echo "export COV_ROOT=$(pwd)" >> $BASH_ENV
             elif [ -d ~/project/.git ]; then echo "export COV_ROOT=~/project" >> $BASH_ENV
             elif [ -d ~/FreegleDocker/.git ]; then echo "export COV_ROOT=~/FreegleDocker" >> $BASH_ENV
