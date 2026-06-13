@@ -6,9 +6,11 @@ Replace the inline reply section (`MessageReplySection`) with a chat-styled
 reply pane (`ChatReplyPane`) that opens as a **full-screen overlay on every
 breakpoint** (mobile, tablet and desktop alike). Clicking "Reply" opens the
 overlay in place — the underlying page is not navigated away from — so closing
-it returns you to exactly where you were. After sending, the state machine
-creates the chat and you land in the real conversation. The pane is styled to
-match the real Freegle chat, so the transition into the chat is seamless.
+it returns you to exactly where you were. After sending: from a single-message
+page you land in the real conversation; from a list page (browse/explore) you
+stay on the list so you can scroll on and reply to more items. The pane is
+styled to match the real Freegle chat, so the transition into the chat is
+seamless.
 
 ## Old Flow
 
@@ -31,7 +33,12 @@ match the real Freegle chat, so the transition into the chat is seamless.
 4. For logged-out users: an email field appears in the composer; they type their
    reply before the forced login.
 5. Clicks "Send" → same state machine flow (auth / group-join / chat-creation)
-6. After send: navigated to `/chats/:id` (the real chat, message sent)
+6. After send:
+   - From the standalone message page (`/message/:id`): navigated to `/chats/:id`.
+   - From a list page (the message was opened in a modal/overlay on browse or
+     explore): the reply is sent **without** navigating; the message closes after
+     a brief "Message sent" confirmation, leaving the user on the list to reply
+     to more items.
 7. Closing the overlay (back chevron, backdrop, or browser back) returns the user
    to exactly where they were — no navigation, no lost scroll position.
 
@@ -65,11 +72,19 @@ match the real Freegle chat, so the transition into the chat is seamless.
    the sticky ad/jobs banner (z-index 10000) while the overlay is open so it
    doesn't overlap the composer.
 
+5. **Stay-on-list after send** — a `noNavigate` flag threads from
+   `MessageExpanded` (set to `inModal || fullscreenOverlay`, i.e. the message was
+   opened from a list) → `ChatReplyPane` (`stayOnSend` prop) →
+   `useReplyStateMachine` (`stayOnPage` option) → `useReplyToPost.replyToPost` →
+   `ChatButton.openChat`. When set, `openChat` creates and sends the chat but
+   skips `router.push`, and `MessageExpanded.sent()` closes the message after the
+   confirmation instead. The standalone message page leaves `noNavigate` off, so
+   it still navigates to the chat.
+
 ### Unchanged
 
-- **useReplyStateMachine.js** — same state machine, same flow
-- **useReplyToPost.js** — same chat-creation logic
-- **ChatButton.vue** — still used internally by the state machine
+- **useReplyStateMachine / useReplyToPost / ChatButton** — same flow; each just
+  gained an additive, default-off `noNavigate`/`stayOnPage` parameter (above).
 - **stores/reply.js** — same persistence
 - **LayoutCommon** still completes a pending reply globally after an OAuth
   redirect, so the overlay being torn down by a full-page reload is safe.

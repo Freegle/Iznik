@@ -1212,6 +1212,32 @@ describe('MessageExpanded', () => {
       expect(comp.vm.showReplyOverlay).toBe(false)
       expect(comp.vm.replied).toBe(true)
     })
+
+    it('sent closes the message after a delay when replying from a list (inModal)', async () => {
+      const wrapper = await createWrapper({ inModal: true })
+      const comp = wrapper.findComponent(MessageExpanded)
+      vi.useFakeTimers()
+      comp.vm.showReplyOverlay = true
+      comp.vm.sent()
+      // Confirmation shows first; not closed immediately.
+      expect(comp.emitted('close')).toBeFalsy()
+      vi.advanceTimersByTime(1500)
+      vi.useRealTimers()
+      expect(comp.emitted('close')).toBeTruthy()
+    })
+
+    it('sent does NOT auto-close on the standalone message page (navigates to chat instead)', async () => {
+      const wrapper = await createWrapper({
+        inModal: false,
+        fullscreenOverlay: false,
+      })
+      const comp = wrapper.findComponent(MessageExpanded)
+      vi.useFakeTimers()
+      comp.vm.sent()
+      vi.advanceTimersByTime(3000)
+      vi.useRealTimers()
+      expect(comp.emitted('close')).toBeFalsy()
+    })
   })
 
   describe('OurUploadedImage rendering', () => {

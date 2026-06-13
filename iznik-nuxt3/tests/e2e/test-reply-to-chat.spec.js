@@ -4,7 +4,9 @@
  * Clicking Reply on a message opens a chat-style reply pane as a full-screen
  * overlay on every breakpoint (mobile, tablet and desktop alike). The overlay
  * sits on top of wherever you are, so closing it returns you to exactly where
- * you were, and sending the reply lands you in the real chat.
+ * you were. From a single-message page, sending the reply lands you in the real
+ * chat; from a list page (browse/explore) it stays on the list so you can reply
+ * to more items (covered by unit tests, since browse indexing is flaky in e2e).
  */
 
 const { test, expect } = require('./fixtures')

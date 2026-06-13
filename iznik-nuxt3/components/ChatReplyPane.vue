@@ -271,6 +271,13 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  // When the reply was started from a list page (browse / explore), send the
+  // reply without navigating to the chat, so the opener can keep the user on
+  // that list to reply to more items.
+  stayOnSend: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['close', 'sent'])
@@ -285,7 +292,9 @@ const forceLogin = computed(() => authStore.forceLogin)
 const { me, myGroups } = useMe()
 
 // Initialize state machine
-const stateMachine = useReplyStateMachine(props.messageId)
+const stateMachine = useReplyStateMachine(props.messageId, {
+  stayOnPage: props.stayOnSend,
+})
 
 // References
 const form = ref(null)

@@ -223,7 +223,11 @@ function logError(message, err, state, messageId = null) {
   })
 }
 
-export function useReplyStateMachine(messageId) {
+export function useReplyStateMachine(messageId, options = {}) {
+  // When stayOnPage is set, completing the reply creates and sends the chat but
+  // does NOT navigate to it — used when replying from a list page (browse /
+  // explore) so the user stays where they were and can reply to more items.
+  const { stayOnPage = false } = options
   const instance = getCurrentInstance()
   const authStore = useAuthStore()
   const messageStore = useMessageStore()
@@ -882,7 +886,10 @@ export function useReplyStateMachine(messageId) {
       const { replyToPost: composableReplyToPost } = useReplyToPost()
       log('Calling replyToPost composable')
 
-      const replySent = await composableReplyToPost(chatButtonRef.value)
+      const replySent = await composableReplyToPost(
+        chatButtonRef.value,
+        stayOnPage
+      )
       log('replyToPost result:', replySent)
 
       if (replySent) {

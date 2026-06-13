@@ -506,6 +506,7 @@
       <Suspense v-if="showReplyOverlay">
         <ChatReplyPane
           :message-id="id"
+          :stay-on-send="inModal || fullscreenOverlay"
           @close="showReplyOverlay = false"
           @sent="sent"
         />
@@ -843,10 +844,19 @@ function expandReply() {
 }
 
 function sent() {
-  // The reply pane's state machine has already created the chat and navigated
-  // there, so just tidy up our own state.
   showReplyOverlay.value = false
   replied.value = true
+
+  // When we're a message inside a list (browse / explore), the reply was sent
+  // WITHOUT navigating to the chat. Show the "Message sent" confirmation
+  // briefly, then close this message so the user is back on the list and can
+  // reply to more items. On the standalone message page the state machine has
+  // already navigated to the chat, so we leave navigation alone.
+  if (props.inModal || props.fullscreenOverlay) {
+    setTimeout(() => {
+      emit('close')
+    }, 1500)
+  }
 }
 
 // Handle browser back button/swipe
