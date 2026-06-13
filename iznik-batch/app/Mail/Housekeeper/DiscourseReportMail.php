@@ -8,9 +8,9 @@ use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
 /**
- * Plain-text report email for the Discourse housekeeping crons
- * (discourse:check-users, discourse:not-signed-up). V1 sent these as plain
- * text via Swift_Message; we wrap the body in a <pre> so the layout survives.
+ * Plain-text report email for the Discourse housekeeping cron
+ * (discourse:not-signed-up). V1 sent this as plain text via Swift_Message;
+ * we wrap the body in a <pre> so the layout survives.
  */
 class DiscourseReportMail extends Mailable
 {

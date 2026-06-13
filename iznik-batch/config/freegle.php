@@ -113,14 +113,12 @@ return [
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
     ],
 
-    // Discourse forum REST API (V1 discourse_checkusers.php / discourse_not_signed_up.php).
+    // Discourse forum REST API (V1 discourse_not_signed_up.php).
     // When api_key is empty the Discourse cron commands skip with a warning.
     'discourse' => [
         'url' => env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
         'api_key' => env('DISCOURSE_APIKEY', ''),
         'api_username' => env('DISCOURSE_API_USERNAME', 'system'),
-        // Discourse category id members are auto-watched onto (V1 ANNOUNCEMENTS_ID).
-        'announcements_category_id' => (int) env('DISCOURSE_ANNOUNCEMENTS_ID', 7),
     ],
 
     // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
