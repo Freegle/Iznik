@@ -144,6 +144,9 @@ native picks BigPicture.
 - **Monorepo PR:** https://github.com/Freegle/Iznik/pull/741 (gated server + Go default + client).
 - **Plugin PR:** https://github.com/Freegle/capacitor-push-notifications-cap7/pull/1 (Android+iOS rich rendering, v7.0.3).
 - All testable suites green; Android rendering verified on emulator (API 34).
-- **Remaining (humans / follow-up):** merge plugin PR + tag → bump iznik-nuxt3 package.json to 7.0.3;
-  add the iOS NSE Xcode target per plugin `ios/NotificationServiceExtension/SETUP.md`; once apps adopted,
-  set `FREEGLE_POSTS_PUSH_ALLOWLIST` (pilot emails → `*`). iOS not buildable here (no macOS).
+- **Remaining (humans / follow-up):** merge plugin PR + tag → bump iznik-nuxt3 package.json to 7.0.3
+  (this also activates the iOS NSE, which is now **CI-automated** via `fastlane/add_nse_target.rb` + the
+  `ios beta` lane — no manual Xcode); validate the iOS build on a CircleCI run (can't build iOS here);
+  once apps adopted, set `FREEGLE_POSTS_PUSH_ALLOWLIST` (pilot emails → `*`).
+- iOS NSE bundle id: `org.ilovefreegle.iphone.NotificationServiceExtension` (real app id is
+  `org.ilovefreegle.iphone`). SETUP.md manual steps retained as fallback only.
