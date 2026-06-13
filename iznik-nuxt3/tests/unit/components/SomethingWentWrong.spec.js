@@ -79,7 +79,12 @@ describe('SomethingWentWrong', () => {
           NoticeMessage: {
             template:
               '<div v-if="show" class="notice-message" :class="variant"><slot /></div>',
-            props: ['variant', 'show'],
+            // show must be typed Boolean so the component's bare `show` attribute
+            // resolves to true (an untyped prop would receive "" and hide the banner).
+            props: {
+              variant: { type: String, default: '' },
+              show: { type: Boolean, default: false },
+            },
           },
           'b-button': {
             template:
