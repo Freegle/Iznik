@@ -82,25 +82,6 @@ services:
       retries: 10
       start_period: 60s
 
-  postgres:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-postgres
-    profiles:
-      - database
-    networks:
-      - default
-    image: postgis/postgis:13-3.1
-    restart: "no"
-    environment:
-      POSTGRES_DB: iznik
-      POSTGRES_PASSWORD: iznik
-      POSTGRES_USER: root
-    healthcheck:
-      test: ["CMD-SHELL", "psql -h localhost -U root -d iznik -c 'SELECT 1' || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 30s
-
   phpmyadmin:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin
     profiles:
@@ -139,9 +120,6 @@ services:
       - "0.0.0.0:${PORT_MAILPIT_SMTP:-1025}:1025"
     depends_on:
       percona:
-        condition: service_healthy
-        required: false
-      postgres:
         condition: service_healthy
         required: false
       redis:
@@ -679,9 +657,6 @@ services:
         condition: service_healthy
         required: false
       batch:
-        condition: service_healthy
-        required: false
-      postgres:
         condition: service_healthy
         required: false
       redis:
@@ -1519,9 +1494,6 @@ services:
       - apiv2_logs:/var/log/freegle
     depends_on:
       percona:
-        condition: service_healthy
-        required: false
-      postgres:
         condition: service_healthy
         required: false
       redis:

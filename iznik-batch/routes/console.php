@@ -859,12 +859,13 @@ Schedule::command('locations:fix-skewed')
     ->sendOutputTo(cronLog('locations:fix-skewed'))
     ->runInBackground();
 
-// V1: cron/locations_pgsql (locations_pgsql_update.php + locations_pgsql_map.php)
-// Full sync of MySQL locations to PostgreSQL/PostGIS, then remap postcodes to areas.
-Schedule::command('locations:sync-pgsql')
+// Nightly full postcode -> nearest-area remap, via the spatial server (MySQL
+// locations_spatial + iznik-spatial-go KNN). No PostgreSQL. DoogalService-imported
+// postcodes rely on this pass to be mapped onto group areas.
+Schedule::command('locations:remap-postcodes')
     ->dailyAt('01:00')
     ->withoutOverlapping()
-    ->sendOutputTo(cronLog('locations:sync-pgsql'))
+    ->sendOutputTo(cronLog('locations:remap-postcodes'))
     ->runInBackground();
 
 // V1: cron/user_ratings.php

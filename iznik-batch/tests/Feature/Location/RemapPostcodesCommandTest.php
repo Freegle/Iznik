@@ -5,7 +5,7 @@ namespace Tests\Feature\Location;
 use App\Services\PostcodeRemapService;
 use Tests\TestCase;
 
-class SyncPgsqlCommandTest extends TestCase
+class RemapPostcodesCommandTest extends TestCase
 {
     // ── Command tests ─────────────────────────────────────────────────────────
 
@@ -15,7 +15,7 @@ class SyncPgsqlCommandTest extends TestCase
         $mock->method('remapPostcodes')->with(null, null)->willReturn(42);
         $this->app->instance(PostcodeRemapService::class, $mock);
 
-        $this->artisan('locations:sync-pgsql')
+        $this->artisan('locations:remap-postcodes')
             ->expectsOutputToContain('Remapped 42 postcodes.')
             ->assertExitCode(0);
     }
@@ -29,16 +29,16 @@ class SyncPgsqlCommandTest extends TestCase
             ->willReturn(0);
         $this->app->instance(PostcodeRemapService::class, $mock);
 
-        $this->artisan('locations:sync-pgsql')->assertExitCode(0);
+        $this->artisan('locations:remap-postcodes')->assertExitCode(0);
     }
 
-    public function test_handles_postgres_unavailable_by_outputting_zero(): void
+    public function test_outputs_zero_when_nothing_remapped(): void
     {
         $mock = $this->createMock(PostcodeRemapService::class);
         $mock->method('remapPostcodes')->willReturn(0);
         $this->app->instance(PostcodeRemapService::class, $mock);
 
-        $this->artisan('locations:sync-pgsql')
+        $this->artisan('locations:remap-postcodes')
             ->expectsOutputToContain('Remapped 0 postcodes.')
             ->assertExitCode(0);
     }

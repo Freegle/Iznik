@@ -84,20 +84,6 @@ return [
             ]) : [],
         ],
 
-        'pgsql' => [
-            'driver' => 'pgsql',
-            'host' => env('PGSQL_HOST', 'postgres'),
-            'port' => env('PGSQL_PORT', '5432'),
-            'database' => env('PGSQL_DATABASE', 'iznik'),
-            'username' => env('PGSQL_USERNAME', 'root'),
-            'password' => env('PGSQL_PASSWORD', 'iznik'),
-            'charset' => 'utf8',
-            'prefix' => '',
-            'prefix_indexes' => true,
-            'search_path' => 'public',
-            'sslmode' => 'prefer',
-        ],
-
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
