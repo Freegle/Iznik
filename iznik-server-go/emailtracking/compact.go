@@ -86,6 +86,11 @@ func findTrackingByRef(ref string) (*EmailTracking, bool) {
 		return nil, false
 	}
 	db := database.DBConn
+	if db == nil {
+		// No DB available (e.g. unit tests that exercise the redirect path):
+		// treat as not found so the caller still redirects, just untracked.
+		return nil, false
+	}
 	var tracking EmailTracking
 	// LIKE 'ref%' is index-usable (no leading wildcard). Escape any LIKE
 	// metacharacters that could appear — tracking_id is [A-Za-z0-9] from
