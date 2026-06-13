@@ -93,10 +93,11 @@ test.describe('Reply Flow - New User Registration', () => {
       replyText: 'Interested in this item as a new user from browse!',
       collectText: 'Can collect anytime',
     })
-    await clickSendAndWait(page, { expectWelcomeModal: true })
+    await clickSendAndWait(page, { expectWelcomeModal: true, stayOnPage: true })
 
-    expect(page.url()).toContain('/chats/')
-    console.log('[Test] New user registration from browse page successful')
+    // Replying from the browse list sends the reply but stays on the list.
+    expect(page.url()).not.toContain('/chats/')
+    console.log('[Test] New user reply from browse page stayed on the list')
 
     // Cleanup
     await logoutIfLoggedIn(page)
@@ -137,10 +138,11 @@ test.describe('Reply Flow - New User Registration', () => {
       replyText: 'Interested in this item as a new user from explore!',
       collectText: 'Can collect anytime',
     })
-    await clickSendAndWait(page, { expectWelcomeModal: true })
+    await clickSendAndWait(page, { expectWelcomeModal: true, stayOnPage: true })
 
-    expect(page.url()).toContain('/chats/')
-    console.log('[Test] New user registration from explore page successful')
+    // Replying from the explore list sends the reply but stays on the list.
+    expect(page.url()).not.toContain('/chats/')
+    console.log('[Test] New user reply from explore page stayed on the list')
 
     // Cleanup
     await logoutIfLoggedIn(page)

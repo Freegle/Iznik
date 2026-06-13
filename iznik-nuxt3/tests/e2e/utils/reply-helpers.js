@@ -368,7 +368,10 @@ async function clickReplyButton(page) {
 /**
  * Helper: Click Send and wait for result
  */
-async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
+async function clickSendAndWait(
+  page,
+  { expectWelcomeModal = false, stayOnPage = false } = {}
+) {
   // Ensure Vue has hydrated so @click handlers are attached to SSR-rendered buttons
   await waitForNuxtHydration(page)
 
@@ -405,6 +408,23 @@ async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
     } catch {
       console.log('[Reply] Welcome modal did not appear, continuing...')
     }
+  }
+
+  if (stayOnPage) {
+    // Replying from a list page (browse/explore) sends WITHOUT navigating: once
+    // the reply completes the pane is removed (detached, not merely hidden as it
+    // is while the login/welcome modal is up) and we stay on the list.
+    await page.locator('.reply-overlay').waitFor({
+      state: 'detached',
+      timeout: timeouts.navigation.default,
+    })
+    if (page.url().includes('/chats/')) {
+      throw new Error(
+        `Expected to stay on the list after sending, but navigated to ${page.url()}`
+      )
+    }
+    console.log('[Reply] Stayed on the list after sending (no chat navigation)')
+    return
   }
 
   // Wait for navigation to chats (the successful reply destination)

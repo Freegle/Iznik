@@ -255,30 +255,14 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     console.log('[Test] Login modal closed')
 
-    // After forced login, the state machine should resume automatically.
-    // Wait for navigation to /chats/ — only fall back to clicking Send again
-    // if the state machine genuinely didn't resume (e.g. page refreshed).
-    try {
-      await page.waitForURL(/\/chats\//, {
-        timeout: timeouts.navigation.default,
-      })
-    } catch {
-      console.log(
-        '[Test] State machine did not auto-resume, clicking Send again'
-      )
-      const sendButtonAgain = page
-        .locator('.composer-send-btn')
-        .filter({ visible: true })
-      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await sendButtonAgain.click()
-        await page.waitForURL(/\/chats\//, {
-          timeout: timeouts.navigation.default,
-        })
-      }
-    }
-
-    expect(page.url()).toContain('/chats/')
-    console.log('[Test] Existing user forced login from browse page successful')
+    // We replied from a list (browse), so after the forced login the reply is
+    // sent WITHOUT navigating — the pane is removed and we stay on the list.
+    await page.locator('.reply-overlay').waitFor({
+      state: 'detached',
+      timeout: timeouts.navigation.default,
+    })
+    expect(page.url()).not.toContain('/chats/')
+    console.log('[Test] Existing user reply from browse page stayed on the list')
 
     // Cleanup
     await logoutIfLoggedIn(page)
@@ -384,31 +368,15 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     console.log('[Test] Login modal closed')
 
-    // After forced login, the state machine should resume automatically.
-    // Wait for navigation to /chats/ — only fall back to clicking Send again
-    // if the state machine genuinely didn't resume (e.g. page refreshed).
-    try {
-      await page.waitForURL(/\/chats\//, {
-        timeout: timeouts.navigation.default,
-      })
-    } catch {
-      console.log(
-        '[Test] State machine did not auto-resume, clicking Send again'
-      )
-      const sendButtonAgain = page
-        .locator('.composer-send-btn')
-        .filter({ visible: true })
-      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await sendButtonAgain.click()
-        await page.waitForURL(/\/chats\//, {
-          timeout: timeouts.navigation.default,
-        })
-      }
-    }
-
-    expect(page.url()).toContain('/chats/')
+    // We replied from a list (explore), so after the forced login the reply is
+    // sent WITHOUT navigating — the pane is removed and we stay on the list.
+    await page.locator('.reply-overlay').waitFor({
+      state: 'detached',
+      timeout: timeouts.navigation.default,
+    })
+    expect(page.url()).not.toContain('/chats/')
     console.log(
-      '[Test] Existing user forced login from explore page successful'
+      '[Test] Existing user reply from explore page stayed on the list'
     )
 
     // Cleanup

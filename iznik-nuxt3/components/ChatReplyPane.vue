@@ -1,9 +1,10 @@
 <template>
-  <!-- Hidden while the forced-login modal is up so the overlay can't sit over
-       (and intercept clicks on) it; the pane stays mounted so reply state is
-       preserved, and it reappears once login completes. -->
+  <!-- Hidden while the forced-login or new-user welcome modal is up so the
+       overlay can't sit over (and intercept clicks on) those teleported modals;
+       the pane stays mounted so reply state is preserved, and it reappears once
+       they're dismissed. -->
   <div
-    v-show="!forceLogin"
+    v-show="!forceLogin && !stateMachine.showWelcomeModal.value"
     class="reply-overlay"
     role="dialog"
     aria-modal="true"
