@@ -743,7 +743,7 @@ commands:
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
             docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
+              percona redis beanstalkd mailpit \
               spamassassin-app reverse-proxy tusd delivery loki mjml \
               batch status host-scripts
 
@@ -812,7 +812,7 @@ commands:
             echo ""
             echo "=== Verifying container names ==="
             # Containers needed for CI tests (dev containers excluded as they're not used in tests)
-            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-postgres ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
+            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
             MISSING=""
             for container in $ALL_CONTAINERS; do
               if docker inspect "$container" >/dev/null 2>&1; then
@@ -881,7 +881,7 @@ commands:
 
             echo "=== Phase 1: Infrastructure + migrations ==="
             docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
+              percona redis beanstalkd mailpit \
               spamassassin-app reverse-proxy tusd delivery loki mjml \
               batch status host-scripts
 
@@ -2478,7 +2478,7 @@ jobs:
             # === INITIALIZE RESULT FILES ===
             # On self-hosted runner (cleanup_working_directory: false), stale /tmp files
             # from previous runs persist. Initialize all result files to prevent false results.
-            for f in laravel go spatial playwright vitest; do
+            for f in laravel go playwright vitest; do
               echo "pending" > /tmp/${f}-result
             done
             rm -f /tmp/watchdog-triggered /tmp/watchdog-pid
@@ -2629,110 +2629,6 @@ jobs:
             ) > ~/test-output/go.out 2>&1 &
             GO_PID=$!
 
-            # Start spatial server tests in background
-            echo "🧪 Starting spatial server tests in background..."
-            (
-              # Trigger spatial tests via status API
-              response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial?coverage=true")
-              http_code="${response: -3}"
-
-              if [ "$http_code" = "409" ]; then
-                echo "⚠️ Spatial tests already running (HTTP 409) - joining existing run"
-              elif [ "$http_code" -ne "200" ]; then
-                echo "❌ Failed to trigger spatial tests. HTTP code: $http_code"
-                echo "fail" > /tmp/spatial-result
-                echo "0" > /tmp/spatial-completed
-                echo "0" > /tmp/spatial-total
-                exit 1
-              else
-                echo "✅ Spatial tests triggered successfully"
-              fi
-
-              echo "running" > /tmp/spatial-result
-
-              while true; do
-                sleep 10
-                status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/spatial/status || echo '{"status":"error"}')
-                status=$(echo "$status_response" | jq -r '.status // "unknown"')
-
-                completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
-                total=$(echo "$status_response" | jq -r '.progress.total // 0')
-                echo "$completed" > /tmp/spatial-completed
-                echo "$total" > /tmp/spatial-total
-
-                if [ "$status" = "completed" ]; then
-                  success=$(echo "$status_response" | jq -r '.success // false')
-                  if [ "$success" = "true" ]; then
-                    echo "pass" > /tmp/spatial-result
-                    echo "✅ Spatial tests passed!"
-                  else
-                    echo "fail" > /tmp/spatial-result
-                    echo "❌ Spatial tests failed!"
-                  fi
-                  echo "$status_response" | jq -r '.logs // "No logs"'
-                  break
-                elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                  echo "fail" > /tmp/spatial-result
-                  echo "❌ Spatial tests failed!"
-                  echo "$status_response" | jq -r '.logs // "No logs"'
-                  break
-                fi
-              done
-            ) > ~/test-output/spatial.out 2>&1 &
-            SPATIAL_PID=$!
-
-            # Start routing server (iznik-routing-go) tests in background
-            echo "🧪 Starting routing server tests in background..."
-            (
-              # Trigger routing tests via status API
-              response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/routing?coverage=true")
-              http_code="${response: -3}"
-
-              if [ "$http_code" = "409" ]; then
-                echo "⚠️ Routing tests already running (HTTP 409) - joining existing run"
-              elif [ "$http_code" -ne "200" ]; then
-                echo "❌ Failed to trigger routing tests. HTTP code: $http_code"
-                echo "fail" > /tmp/routing-result
-                echo "0" > /tmp/routing-completed
-                echo "0" > /tmp/routing-total
-                exit 1
-              else
-                echo "✅ Routing tests triggered successfully"
-              fi
-
-              echo "running" > /tmp/routing-result
-
-              while true; do
-                sleep 10
-                status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status || echo '{"status":"error"}')
-                status=$(echo "$status_response" | jq -r '.status // "unknown"')
-
-                completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
-                total=$(echo "$status_response" | jq -r '.progress.total // 0')
-                echo "$completed" > /tmp/routing-completed
-                echo "$total" > /tmp/routing-total
-
-                if [ "$status" = "completed" ]; then
-                  success=$(echo "$status_response" | jq -r '.success // false')
-                  if [ "$success" = "true" ]; then
-                    echo "pass" > /tmp/routing-result
-                    echo "✅ Routing tests passed!"
-                  else
-                    echo "fail" > /tmp/routing-result
-                    echo "❌ Routing tests failed!"
-                  fi
-                  echo "$status_response" | jq -r '.logs // "No logs"'
-                  break
-                elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                  echo "fail" > /tmp/routing-result
-                  echo "❌ Routing tests failed!"
-                  echo "$status_response" | jq -r '.logs // "No logs"'
-                  break
-                fi
-              done
-            ) > ~/test-output/routing.out 2>&1 &
-            ROUTING_PID=$!
-
             # Start Vitest in background — on any self-hosted runner (cloud ran it as a pre-step above)
             VITEST_PID=""
             echo "pending" > /tmp/vitest-result
@@ -2850,7 +2746,7 @@ jobs:
 
               if [ $elapsed -gt $timeout_duration ]; then
                 echo "⏰ Tests timed out after 40 minutes"
-                kill $LARAVEL_PID $GO_PID $SPATIAL_PID $ROUTING_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
+                kill $LARAVEL_PID $GO_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
@@ -2861,8 +2757,6 @@ jobs:
                 echo "timeout" > /tmp/playwright-result
                 kill $LARAVEL_PID 2>/dev/null || true
                 kill $GO_PID 2>/dev/null || true
-                kill $SPATIAL_PID 2>/dev/null || true
-                kill $ROUTING_PID 2>/dev/null || true
                 kill ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
@@ -2908,24 +2802,10 @@ jobs:
                 PLAYWRIGHT_DISPLAY="$PLAYWRIGHT_STATUS"
               fi
 
-              SPATIAL_STATUS=$([ -f /tmp/spatial-result ] && cat /tmp/spatial-result || echo 'running')
-              SPATIAL_COMPLETED=$([ -f /tmp/spatial-completed ] && cat /tmp/spatial-completed || echo '0')
-              SPATIAL_COMPLETED=${SPATIAL_COMPLETED:-0}
-              SPATIAL_TOTAL=$([ -f /tmp/spatial-total ] && cat /tmp/spatial-total || echo '0')
-              SPATIAL_TOTAL=${SPATIAL_TOTAL:-0}
-              SPATIAL_DISPLAY=$([ "$SPATIAL_STATUS" = "running" ] && echo "running ($SPATIAL_COMPLETED/$SPATIAL_TOTAL)" || echo "$SPATIAL_STATUS")
-
-              ROUTING_STATUS=$([ -f /tmp/routing-result ] && cat /tmp/routing-result || echo 'running')
-              ROUTING_COMPLETED=$([ -f /tmp/routing-completed ] && cat /tmp/routing-completed || echo '0')
-              ROUTING_COMPLETED=${ROUTING_COMPLETED:-0}
-              ROUTING_TOTAL=$([ -f /tmp/routing-total ] && cat /tmp/routing-total || echo '0')
-              ROUTING_TOTAL=${ROUTING_TOTAL:-0}
-              ROUTING_DISPLAY=$([ "$ROUTING_STATUS" = "running" ] && echo "running ($ROUTING_COMPLETED/$ROUTING_TOTAL)" || echo "$ROUTING_STATUS")
-
               VITEST_STATUS=$([ -f /tmp/vitest-result ] && cat /tmp/vitest-result || echo 'pass')
               VITEST_DISPLAY="$VITEST_STATUS"
 
-              echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | Spatial: $SPATIAL_DISPLAY | Routing: $ROUTING_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY | Vitest: $VITEST_DISPLAY"
+              echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY | Vitest: $VITEST_DISPLAY"
 
               # Every 2 minutes, emit a one-line VM resource snapshot to step
               # stdout. CircleCI streams stdout in real time and keeps the
@@ -2951,37 +2831,25 @@ jobs:
               # Check for any failures (fail-fast)
               if [ "$LARAVEL_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: iznik-batch tests failed - stopping all tests"
-                kill $GO_PID $SPATIAL_PID $ROUTING_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
+                kill $GO_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
               if [ "$GO_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: Go tests failed - stopping all tests"
-                kill $LARAVEL_PID $SPATIAL_PID $ROUTING_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
-                TESTS_KILLED_EARLY=true
-                break
-              fi
-              if [ "$SPATIAL_STATUS" = "fail" ]; then
-                echo "❌ FAIL-FAST: Spatial tests failed - stopping all tests"
-                kill $LARAVEL_PID $GO_PID $ROUTING_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
-                TESTS_KILLED_EARLY=true
-                break
-              fi
-              if [ "$ROUTING_STATUS" = "fail" ]; then
-                echo "❌ FAIL-FAST: Routing tests failed - stopping all tests"
-                kill $LARAVEL_PID $GO_PID $SPATIAL_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
+                kill $LARAVEL_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
               if [ "$VITEST_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: Vitest tests failed - stopping all tests"
-                kill $LARAVEL_PID $GO_PID $SPATIAL_PID $ROUTING_PID $PLAYWRIGHT_PID 2>/dev/null || true
+                kill $LARAVEL_PID $GO_PID $PLAYWRIGHT_PID 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
               if [ "$PLAYWRIGHT_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: Playwright tests failed - stopping all tests"
-                kill $LARAVEL_PID $GO_PID $SPATIAL_PID $ROUTING_PID ${VITEST_PID:-} 2>/dev/null || true
+                kill $LARAVEL_PID $GO_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
@@ -2989,7 +2857,6 @@ jobs:
               # Check if all tests completed
               VITEST_DONE=$([ -f /tmp/vitest-result ] && cat /tmp/vitest-result || echo 'pass')
               if [ "$LARAVEL_STATUS" != "running" ] && [ "$GO_STATUS" != "running" ] && \
-                 [ "$SPATIAL_STATUS" != "running" ] && [ "$ROUTING_STATUS" != "running" ] && \
                  [ "$PLAYWRIGHT_STATUS" != "running" ] && [ "$VITEST_DONE" != "running" ]; then
                 echo "✅ All tests completed"
                 break
@@ -3001,15 +2868,13 @@ jobs:
             # Wait for all background processes to finish
             wait $LARAVEL_PID 2>/dev/null || true
             wait $GO_PID 2>/dev/null || true
-            wait $SPATIAL_PID 2>/dev/null || true
-            wait $ROUTING_PID 2>/dev/null || true
             wait $PLAYWRIGHT_PID 2>/dev/null || true
             [ -n "${VITEST_PID:-}" ] && wait $VITEST_PID 2>/dev/null || true
 
             # For killed tests, fetch final logs from the status API
             if [ "$TESTS_KILLED_EARLY" = "true" ]; then
               echo "📋 Capturing final logs for killed tests..."
-              for test_type in laravel go spatial routing playwright; do
+              for test_type in laravel go playwright; do
                 outfile=~/test-output/${test_type}.out
                 result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
                 if [ "$result" = "running" ] || [ "$result" = "unknown" ]; then
@@ -3025,13 +2890,11 @@ jobs:
             # Check results from files
             LARAVEL_RESULT=$(cat /tmp/laravel-result 2>/dev/null || echo "fail")
             GO_RESULT=$(cat /tmp/go-result 2>/dev/null || echo "fail")
-            SPATIAL_RESULT=$(cat /tmp/spatial-result 2>/dev/null || echo "fail")
-            ROUTING_RESULT=$(cat /tmp/routing-result 2>/dev/null || echo "fail")
             PLAYWRIGHT_RESULT=$(cat /tmp/playwright-result 2>/dev/null || echo "fail")
             VITEST_RESULT=$(cat /tmp/vitest-result 2>/dev/null || echo "pass")
 
             # Handle killed or never-started tests
-            for varname in LARAVEL_RESULT GO_RESULT SPATIAL_RESULT ROUTING_RESULT PLAYWRIGHT_RESULT VITEST_RESULT; do
+            for varname in LARAVEL_RESULT GO_RESULT PLAYWRIGHT_RESULT VITEST_RESULT; do
               val="${!varname}"
               if [ "$TESTS_KILLED_EARLY" = "true" ] && [ "$val" = "running" ]; then
                 eval "$varname=killed"
@@ -3045,16 +2908,12 @@ jobs:
             echo "=== Parallel Test Results ==="
             echo "iznik-batch: $LARAVEL_RESULT"
             echo "Go:          $GO_RESULT"
-            echo "Spatial:     $SPATIAL_RESULT"
-            echo "Routing:     $ROUTING_RESULT"
             echo "Playwright:  $PLAYWRIGHT_RESULT"
             echo "Vitest:      $VITEST_RESULT"
 
             # Set environment variables for later steps
             [ "$LARAVEL_RESULT"    = "pass" ] && echo "LARAVEL_TESTS_PASSED=true"    >> $BASH_ENV || echo "LARAVEL_TESTS_PASSED=false"    >> $BASH_ENV
             [ "$GO_RESULT"         = "pass" ] && echo "GO_TESTS_PASSED=true"         >> $BASH_ENV || echo "GO_TESTS_PASSED=false"         >> $BASH_ENV
-            [ "$SPATIAL_RESULT"    = "pass" ] && echo "SPATIAL_TESTS_PASSED=true"    >> $BASH_ENV || echo "SPATIAL_TESTS_PASSED=false"    >> $BASH_ENV
-            [ "$ROUTING_RESULT"    = "pass" ] && echo "ROUTING_TESTS_PASSED=true"    >> $BASH_ENV || echo "ROUTING_TESTS_PASSED=false"    >> $BASH_ENV
             [ "$PLAYWRIGHT_RESULT" = "pass" ] && echo "PLAYWRIGHT_TESTS_PASSED=true" >> $BASH_ENV || echo "PLAYWRIGHT_TESTS_PASSED=false" >> $BASH_ENV
             [ "$VITEST_RESULT"     = "pass" ] && echo "VITEST_TESTS_PASSED=true"     >> $BASH_ENV || echo "VITEST_TESTS_PASSED=false"     >> $BASH_ENV
 
@@ -3331,13 +3190,12 @@ jobs:
             echo "=== Overall Test Results ==="
 
             if [ "$LARAVEL_TESTS_PASSED" = "true" ] && [ "$GO_TESTS_PASSED" = "true" ] && \
-               [ "${SPATIAL_TESTS_PASSED:-true}" = "true" ] && [ "${ROUTING_TESTS_PASSED:-true}" = "true" ] && \
                [ "$PLAYWRIGHT_TESTS_PASSED" = "true" ] && [ "${VITEST_TESTS_PASSED:-true}" = "true" ]; then
               echo "✅ All tests passed successfully!"
               echo "ALL_TESTS_PASSED=true" >> $BASH_ENV
             else
               echo "❌ Tests failed"
-              echo "Laravel: $LARAVEL_TESTS_PASSED, Go: $GO_TESTS_PASSED, Spatial: ${SPATIAL_TESTS_PASSED:-pass}, Routing: ${ROUTING_TESTS_PASSED:-pass}, Playwright: $PLAYWRIGHT_TESTS_PASSED, Vitest: ${VITEST_TESTS_PASSED:-pass}"
+              echo "Laravel: $LARAVEL_TESTS_PASSED, Go: $GO_TESTS_PASSED, Playwright: $PLAYWRIGHT_TESTS_PASSED, Vitest: ${VITEST_TESTS_PASSED:-pass}"
               echo ""
 
               # Extract and display failure details from test output files
@@ -3364,28 +3222,6 @@ jobs:
                 else
                   echo "(Showing last 50 lines of output)"
                   tail -50 ~/test-output/go.out
-                fi
-                echo ""
-              fi
-
-              if [ "${SPATIAL_TESTS_PASSED:-true}" != "true" ] && [ -f ~/test-output/spatial.out ]; then
-                echo "=== Spatial Server Test Failure Details ==="
-                if grep -q "FAIL\|Error\|panic" ~/test-output/spatial.out; then
-                  grep -B 2 -A 5 "FAIL\|Error\|panic" ~/test-output/spatial.out | head -60
-                else
-                  echo "(Showing last 50 lines of output)"
-                  tail -50 ~/test-output/spatial.out
-                fi
-                echo ""
-              fi
-
-              if [ "${ROUTING_TESTS_PASSED:-true}" != "true" ] && [ -f ~/test-output/routing.out ]; then
-                echo "=== Routing Server Test Failure Details ==="
-                if grep -q "FAIL\|Error\|panic" ~/test-output/routing.out; then
-                  grep -B 2 -A 5 "FAIL\|Error\|panic" ~/test-output/routing.out | head -60
-                else
-                  echo "(Showing last 50 lines of output)"
-                  tail -50 ~/test-output/routing.out
                 fi
                 echo ""
               fi
