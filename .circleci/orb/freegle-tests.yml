@@ -15,6 +15,11 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle
+      # Boot the routing (spatial) container on the small committed Bristol extract —
+      # no 2.5GB UK graph in CI. Must be executor-level (not a per-step export) so it
+      # reaches the `docker-compose up` step, which runs in a different shell.
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       PW_WORKERS: 4
 
   machine-executor-local:
@@ -32,6 +37,9 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
+      # Boot spatial on the committed Bristol extract (see machine-executor note).
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       PW_WORKERS: 11
       # Port offsets (+9000) to avoid conflicts with any local dev stack
       PORT_TRAEFIK_HTTP: 9080
@@ -70,6 +78,9 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
+      # Boot spatial on the committed Bristol extract (see machine-executor note).
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       # PW_WORKERS reduced 11 -> 6 (orb 1.1.339) then 6 -> 4 (orb 1.1.340) to
       # stop build-test-katapult CPU-heartbeat starvation in the parallel test
       # phase. RAM/swap are fine (20G swapfile), but Chromium workers + Laravel +
