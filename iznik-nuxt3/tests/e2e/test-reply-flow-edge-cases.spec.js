@@ -309,7 +309,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Click send multiple times rapidly
       const sendButton = page
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       await sendButton.waitFor({
         state: 'visible',

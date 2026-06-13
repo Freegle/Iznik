@@ -2177,7 +2177,7 @@ const testWithFixtures = test.extend({
 
       // Click the Reply button with retry — Vue SSR hydration can swallow
       // the first click if event handlers aren't fully attached yet.
-      const replySection = freshPage.locator('.reply-expanded-section')
+      const replyOverlay = freshPage.locator('.reply-overlay')
       const maxReplyRetries = 3
 
       for (let attempt = 1; attempt <= maxReplyRetries; attempt++) {
@@ -2187,20 +2187,20 @@ const testWithFixtures = test.extend({
         )
 
         try {
-          await replySection.waitFor({
+          await replyOverlay.waitFor({
             state: 'visible',
             timeout: attempt < maxReplyRetries ? 5000 : timeouts.ui.appearance,
           })
-          console.log('Reply section expanded')
+          console.log('Reply overlay opened')
           break
         } catch (e) {
           if (attempt === maxReplyRetries) {
             throw new Error(
-              `Reply section did not expand after ${maxReplyRetries} attempts`
+              `Reply overlay did not open after ${maxReplyRetries} attempts`
             )
           }
           console.log(
-            `Reply section not visible after attempt ${attempt}, retrying...`
+            `Reply overlay not visible after attempt ${attempt}, retrying...`
           )
         }
       }
@@ -2245,16 +2245,16 @@ const testWithFixtures = test.extend({
       await collectTextarea.fill(collectDetails)
       console.log('Filled collection details')
 
-      // Click the "Send your reply" button
+      // Click the Send button in the reply composer
       const sendReplyButton = freshPage
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       await sendReplyButton.waitFor({
         state: 'visible',
         timeout: timeouts.ui.appearance,
       })
       await sendReplyButton.click()
-      console.log('Clicked Send your reply button')
+      console.log('Clicked Send reply button')
 
       // The reply state machine handles authentication for new users automatically:
       // 1. Calls user.add(email) to register the user

@@ -7,7 +7,8 @@ import ChatReplyPage from '~/pages/chats/reply.vue'
 vi.mock('~/components/ChatReplyPane.vue', () => ({
   default: {
     name: 'ChatReplyPane',
-    template: '<div class="chat-reply-pane-stub" :data-message-id="messageId" />',
+    template:
+      '<div class="chat-reply-pane-stub" :data-message-id="messageId" />',
     props: ['messageId'],
   },
 }))
@@ -35,6 +36,11 @@ vi.mock('#imports', async () => {
       matched: [],
       redirectedFrom: undefined,
       meta: {},
+    }),
+    useRouter: () => ({
+      push: vi.fn(),
+      back: vi.fn(),
+      replace: vi.fn(),
     }),
   }
 })

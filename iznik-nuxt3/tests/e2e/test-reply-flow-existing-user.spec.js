@@ -66,14 +66,14 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     await waitForNuxtHydration(page)
 
     const sendButton = page
-      .locator('.btn:has-text("Send your reply")')
+      .locator('.composer-send-btn')
       .filter({ visible: true })
     await sendButton.waitFor({
       state: 'visible',
       timeout: timeouts.ui.appearance,
     })
     await sendButton.click()
-    console.log('[Test] Clicked Send your reply')
+    console.log('[Test] Clicked Send')
 
     const loginModal = page.locator('.modal-content').filter({
       hasText: 'Log in',
@@ -130,7 +130,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
         '[Test] State machine did not auto-resume, clicking Send again'
       )
       const sendButtonAgain = page
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
@@ -203,14 +203,14 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     await waitForNuxtHydration(page)
 
     const sendButton = page
-      .locator('.btn:has-text("Send your reply")')
+      .locator('.composer-send-btn')
       .filter({ visible: true })
     await sendButton.waitFor({
       state: 'visible',
       timeout: timeouts.ui.appearance,
     })
     await sendButton.click()
-    console.log('[Test] Clicked Send your reply')
+    console.log('[Test] Clicked Send')
 
     const loginModal = page.locator('.modal-content').filter({
       hasText: 'Log in',
@@ -267,7 +267,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
         '[Test] State machine did not auto-resume, clicking Send again'
       )
       const sendButtonAgain = page
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
@@ -332,14 +332,14 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     await waitForNuxtHydration(page)
 
     const sendButton = page
-      .locator('.btn:has-text("Send your reply")')
+      .locator('.composer-send-btn')
       .filter({ visible: true })
     await sendButton.waitFor({
       state: 'visible',
       timeout: timeouts.ui.appearance,
     })
     await sendButton.click()
-    console.log('[Test] Clicked Send your reply')
+    console.log('[Test] Clicked Send')
 
     const loginModal = page.locator('.modal-content').filter({
       hasText: 'Log in',
@@ -396,7 +396,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
         '[Test] State machine did not auto-resume, clicking Send again'
       )
       const sendButtonAgain = page
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()

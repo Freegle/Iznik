@@ -1,11 +1,22 @@
 <template>
-  <div class="chat-reply-pane">
-    <!-- Header showing what we're replying to -->
-    <div class="reply-header">
-      <button class="back-btn" @click="goBack">
-        <v-icon icon="arrow-left" />
-      </button>
-      <div v-if="message" class="reply-header-info">
+  <div
+    class="reply-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Reply"
+    @click.self="close"
+  >
+    <div class="reply-card">
+      <!-- Header: matches the real chat header so the transition is seamless -->
+      <header class="reply-card__header">
+        <button
+          type="button"
+          class="reply-card__back"
+          aria-label="Go back"
+          @click="close"
+        >
+          <v-icon icon="arrow-left" />
+        </button>
         <ProfileImage
           v-if="poster"
           :image="poster.profile?.paththumb"
@@ -13,189 +24,183 @@
           :ouruid="poster.profile?.ouruid"
           :externalmods="poster.profile?.externalmods"
           :name="poster.displayname"
-          class="reply-header-avatar"
+          class="reply-card__avatar"
           is-thumbnail
           size="md"
         />
-        <div class="reply-header-text">
-          <span class="reply-header-name">
-            {{ poster?.displayname || 'Freegler' }}
-          </span>
-          <span class="reply-header-item">
-            {{ message.type === 'Offer' ? 'OFFER' : 'WANTED' }}:
+        <div class="reply-card__heading">
+          <span class="reply-card__name">{{
+            poster?.displayname || 'Freegler'
+          }}</span>
+          <span v-if="message" class="reply-card__context">
+            <span class="reply-card__tag" :class="tagClass">{{
+              typeLabel
+            }}</span>
             {{ subjectItemName }}
           </span>
         </div>
-      </div>
-    </div>
+      </header>
 
-    <!-- Message context - shows the item as a chat-style message bubble -->
-    <div class="reply-body">
-      <div v-if="message" class="message-context">
-        <div class="context-bubble">
-          <div v-if="message.attachments?.length" class="context-photo">
-            <img
-              :src="message.attachments[0].paththumb"
-              :alt="subjectItemName"
-              class="context-photo-img"
+      <!-- Body: chat-style background with the post shown as a received message -->
+      <div class="reply-card__body">
+        <p v-if="message" class="reply-card__intro">
+          Send {{ poster?.displayname || 'this freegler' }} a message about
+          {{ message.type === 'Offer' ? 'their offer' : 'what they want' }}.
+        </p>
+
+        <!-- The post being replied to, shown as a chat message from the poster -->
+        <div
+          v-if="message"
+          class="reply-card__incoming"
+          @click.capture.stop.prevent
+        >
+          <ChatMessageCard :id="messageId" class="reply-card__post" />
+        </div>
+
+        <!-- Delivery notice -->
+        <NoticeMessage
+          v-if="message?.deliverypossible"
+          variant="info"
+          class="reply-card__notice"
+        >
+          <v-icon icon="info-circle" /> Delivery may be possible
+        </NoticeMessage>
+
+        <!-- Distance warning -->
+        <NoticeMessage
+          v-if="milesaway > faraway && message?.type === 'Offer'"
+          variant="warning"
+          class="reply-card__notice"
+        >
+          This item is {{ milesaway }} miles away. Before replying, are you sure
+          you can collect from there?
+        </NoticeMessage>
+
+        <!-- Promised warning -->
+        <NoticeMessage
+          v-if="message?.promised && !message?.promisedtome"
+          variant="warning"
+          class="reply-card__notice"
+        >
+          Already promised — you might not get it.
+        </NoticeMessage>
+
+        <!-- Account deleted notice -->
+        <NoticeMessage
+          v-if="me?.deleted"
+          variant="danger"
+          class="reply-card__notice"
+        >
+          You can't reply until you've decided whether to restore your account.
+        </NoticeMessage>
+      </div>
+
+      <!-- Composer: matches the real chat footer -->
+      <div v-if="!me?.deleted" class="reply-card__composer">
+        <!-- Email for logged-out users -->
+        <div v-if="!me" class="composer-field">
+          <EmailValidator
+            ref="emailValidatorRef"
+            v-model:email="stateMachine.email.value"
+            v-model:valid="stateMachine.emailValid.value"
+            size="lg"
+            label="Your email address"
+            class="test-email-reply-validator"
+          />
+        </div>
+
+        <VeeForm ref="form" class="composer-form">
+          <!-- Reply text -->
+          <div class="composer-field">
+            <label :for="'replytomessage-' + messageId" class="composer-label">
+              Your message
+            </label>
+            <Field
+              :id="'replytomessage-' + messageId"
+              v-model="stateMachine.replyText.value"
+              name="reply"
+              :rules="validateReply"
+              :validate-on-mount="false"
+              :validate-on-model-update="false"
+              as="textarea"
+              rows="3"
+              class="composer-input"
+              :placeholder="
+                message?.type === 'Offer'
+                  ? 'Explain why you\'d like it…'
+                  : 'Can you help? Let them know…'
+              "
+              @input="stateMachine.startTyping"
             />
+            <ErrorMessage name="reply" class="composer-error" />
           </div>
-          <div class="context-text">
-            <strong>{{ subjectItemName }}</strong>
-            <p v-if="message.textbody" class="context-description">
-              {{ truncatedDescription }}
-            </p>
+
+          <!-- Collection time (Offers only) -->
+          <div
+            v-if="message?.type === 'Offer'"
+            class="composer-field composer-field--collect"
+          >
+            <label :for="'replytomessage2-' + messageId" class="composer-label">
+              <v-icon icon="calendar-alt" class="composer-label-icon" />
+              When could you collect?
+            </label>
+            <Field
+              :id="'replytomessage2-' + messageId"
+              v-model="stateMachine.collectText.value"
+              name="collect"
+              :rules="validateCollect"
+              :validate-on-mount="false"
+              :validate-on-model-update="false"
+              as="textarea"
+              rows="2"
+              class="composer-input"
+              placeholder="e.g. weekday evenings or this weekend"
+            />
+            <ErrorMessage name="collect" class="composer-error" />
           </div>
-        </div>
-      </div>
+        </VeeForm>
 
-      <!-- Delivery notice -->
-      <div v-if="message?.deliverypossible" class="delivery-notice">
-        <v-icon icon="info-circle" />
-        Delivery may be possible
-      </div>
+        <p v-if="me && !alreadyAMember" class="composer-hint">
+          You're not yet a member of this community; we'll join you. Change
+          emails or leave communities from <em>Settings</em>.
+        </p>
 
-      <!-- Distance warning -->
-      <NoticeMessage
-        v-if="milesaway > faraway && message?.type === 'Offer'"
-        variant="danger"
-        class="mx-3 mb-2"
-      >
-        This item is {{ milesaway }} miles away. Before replying, are you sure
-        you can collect from there?
-      </NoticeMessage>
+        <NewFreegler v-if="!me" class="composer-hint" />
 
-      <!-- Promised warning -->
-      <NoticeMessage
-        v-if="message?.promised && !message?.promisedtome"
-        variant="warning"
-        class="mx-3 mb-2"
-      >
-        Already promised - you might not get it.
-      </NoticeMessage>
+        <!-- Error message -->
+        <NoticeMessage
+          v-if="stateMachine.error.value"
+          variant="danger"
+          class="reply-card__notice mb-0"
+        >
+          {{ stateMachine.error.value }}
+          <b-button
+            variant="link"
+            size="sm"
+            class="p-0 ms-2"
+            @click="stateMachine.retry"
+          >
+            Try again
+          </b-button>
+        </NoticeMessage>
 
-      <!-- Account deleted notice -->
-      <NoticeMessage v-if="me?.deleted" variant="danger" class="mx-3 mb-2">
-        You can't reply until you've decided whether to restore your account.
-      </NoticeMessage>
-    </div>
-
-    <!-- Reply form area - styled like chat footer -->
-    <div v-if="!me?.deleted" class="reply-form-area">
-      <!-- Email for logged-out users -->
-      <div v-if="!me" class="reply-form-field">
-        <EmailValidator
-          ref="emailValidatorRef"
-          v-model:email="stateMachine.email.value"
-          v-model:valid="stateMachine.emailValid.value"
-          size="lg"
-          label="Your email address:"
-          class="test-email-reply-validator"
-        />
-      </div>
-
-      <VeeForm ref="form">
-        <!-- Reply text -->
-        <div class="reply-form-field">
-          <label :for="'replytomessage-' + messageId" class="reply-form-label">
-            Your reply:
-          </label>
-          <Field
-            :id="'replytomessage-' + messageId"
-            v-model="stateMachine.replyText.value"
-            name="reply"
-            :rules="validateReply"
-            :validate-on-mount="false"
-            :validate-on-model-update="false"
-            as="textarea"
-            rows="3"
-            max-rows="8"
-            class="reply-textarea"
-            :placeholder="
-              message?.type === 'Offer'
-                ? 'Explain why you\'d like it...'
-                : 'Can you help? Let them know...'
+        <!-- Send -->
+        <div class="composer-send">
+          <SpinButton
+            variant="primary"
+            size="lg"
+            done-icon=""
+            icon-name="angle-double-right"
+            :disabled="
+              !stateMachine.canSend.value || stateMachine.isProcessing.value
             "
-            @input="stateMachine.startTyping"
-          />
-          <p class="reply-form-hint">
-            {{
-              message?.type === 'Offer'
-                ? "Explain why you'd like it. It's not always first come first served. If appropriate, ask if it's working. Always be polite."
-                : "Can you help? If you have what they're looking for, let them know."
-            }}
-          </p>
-          <ErrorMessage name="reply" class="text-danger fw-bold" />
+            iconlast
+            class="composer-send-btn"
+            @handle="handleSend"
+          >
+            Send
+          </SpinButton>
         </div>
-
-        <!-- Collection time (Offers only) -->
-        <div v-if="message?.type === 'Offer'" class="reply-form-field">
-          <label :for="'replytomessage2-' + messageId" class="reply-form-label">
-            When could you collect?
-          </label>
-          <Field
-            :id="'replytomessage2-' + messageId"
-            v-model="stateMachine.collectText.value"
-            name="collect"
-            :rules="validateCollect"
-            :validate-on-mount="false"
-            :validate-on-model-update="false"
-            class="reply-textarea"
-            as="textarea"
-            rows="2"
-            max-rows="2"
-            placeholder="Suggest days and times..."
-          />
-          <p class="reply-form-hint">
-            Suggest days and times you could collect if you're chosen. Your
-            plans might change but this speeds up making arrangements.
-          </p>
-          <ErrorMessage name="collect" class="text-danger fw-bold" />
-        </div>
-      </VeeForm>
-
-      <p v-if="me && !alreadyAMember" class="reply-form-hint mx-3">
-        You're not yet a member of this community; we'll join you. Change emails
-        or leave communities from <em>Settings</em>.
-      </p>
-
-      <div v-if="!me">
-        <NewFreegler class="mt-2 mx-3" />
-      </div>
-
-      <!-- Error message -->
-      <NoticeMessage
-        v-if="stateMachine.error.value"
-        variant="danger"
-        class="mx-3 mt-2"
-      >
-        {{ stateMachine.error.value }}
-        <b-button
-          variant="link"
-          size="sm"
-          class="p-0 ms-2"
-          @click="stateMachine.retry"
-        >
-          Try again
-        </b-button>
-      </NoticeMessage>
-
-      <!-- Send button -->
-      <div class="reply-send-area">
-        <SpinButton
-          variant="primary"
-          size="lg"
-          done-icon=""
-          icon-name="angle-double-right"
-          :disabled="
-            !stateMachine.canSend.value || stateMachine.isProcessing.value
-          "
-          iconlast
-          class="reply-send-btn"
-          @handle="handleSend"
-        >
-          Send <span class="d-none d-md-inline">your</span> reply
-        </SpinButton>
       </div>
     </div>
 
@@ -231,10 +236,11 @@ import {
   watch,
   nextTick,
   onMounted,
+  onUnmounted,
 } from 'vue'
-import { useRouter } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
+import { useMiscStore } from '~/stores/misc'
 import { milesAway } from '~/composables/useDistance'
 import { useMe } from '~/composables/useMe'
 import {
@@ -245,6 +251,7 @@ import { action } from '~/composables/useClientLog'
 import EmailValidator from '~/components/EmailValidator'
 import NewUserInfo from '~/components/NewUserInfo'
 import ChatButton from '~/components/ChatButton'
+import ChatMessageCard from '~/components/ChatMessageCard'
 import SpinButton from '~/components/SpinButton.vue'
 import NoticeMessage from '~/components/NoticeMessage'
 import ProfileImage from '~/components/ProfileImage'
@@ -261,12 +268,13 @@ const props = defineProps({
   },
 })
 
-const router = useRouter()
+const emit = defineEmits(['close', 'sent'])
 
 const faraway = FAR_AWAY
 
 const messageStore = useMessageStore()
 const userStore = useUserStore()
+const miscStore = useMiscStore()
 const { me, myGroups } = useMe()
 
 // Initialize state machine
@@ -302,6 +310,16 @@ const poster = computed(() => {
     : null
 })
 
+const typeLabel = computed(() => {
+  return message.value?.type === 'Offer' ? 'OFFER' : 'WANTED'
+})
+
+const tagClass = computed(() => {
+  return message.value?.type === 'Offer'
+    ? 'reply-card__tag--offer'
+    : 'reply-card__tag--wanted'
+})
+
 const subjectItemName = computed(() => {
   if (!message.value?.subject) return ''
   // Strip OFFER/WANTED prefix and location suffix
@@ -310,12 +328,6 @@ const subjectItemName = computed(() => {
   // Remove location in parentheses at end
   subject = subject.replace(/\s*\([^)]*\)\s*$/, '')
   return subject
-})
-
-const truncatedDescription = computed(() => {
-  if (!message.value?.textbody) return ''
-  const text = message.value.textbody
-  return text.length > 150 ? text.substring(0, 150) + '...' : text
 })
 
 const milesaway = computed(() => {
@@ -383,6 +395,9 @@ watch(form, (newVal) => {
 
 // Set refs on mount
 onMounted(() => {
+  // Hide the sticky ad/jobs banner while the overlay is open.
+  miscStore.setReplyOverlayOpen(true)
+
   stateMachine.setRefs({
     form: form.value,
     chatButton: replyToPostChatButton.value,
@@ -397,13 +412,17 @@ onMounted(() => {
   })
 })
 
-// Watch for state machine completion - navigate to the chat
+onUnmounted(() => {
+  miscStore.setReplyOverlayOpen(false)
+})
+
+// Watch for state machine completion - the ChatButton's openChat already
+// navigates to /chats/:id, so we just let the opener know the reply was sent.
 watch(
   () => stateMachine.isComplete.value,
   (isComplete) => {
     if (isComplete) {
-      // The ChatButton's openChat already navigates to /chats/:id
-      // so we don't need to do anything here
+      emit('sent')
     }
   }
 )
@@ -462,191 +481,268 @@ function handleNewUserModalOk() {
   stateMachine.closeWelcomeModal()
 }
 
-function goBack() {
-  // Navigate back to the message page
-  if (props.messageId) {
-    router.push(`/message/${props.messageId}`)
-  } else {
-    router.back()
-  }
+function close() {
+  emit('close')
 }
 </script>
 
 <style scoped lang="scss">
-.chat-reply-pane {
+$reply-header-green: #61ae24;
+$reply-body-bg: #f5f5f5;
+$reply-input-bg: #faf9f7;
+$reply-border: #cdcdcd;
+
+.reply-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above the sticky ad banner and bottom nav (z 10000 / 1030) but below the
+     forced-login modal (.verytop, z 10000 teleported after us). */
+  z-index: 9999;
   display: flex;
-  flex-direction: column;
-  height: 100%;
   background: $color-white;
-}
 
-.reply-header {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  background: $color-green--darker;
-  color: white;
-  gap: 12px;
-  min-height: 56px;
-}
-
-.back-btn {
-  background: none;
-  border: none;
-  color: white;
-  padding: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  width: 36px;
-  height: 36px;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.15);
+  /* On larger screens, present as a focused card on a dimmed backdrop. */
+  @media (min-width: 992px) {
+    background: rgba(0, 0, 0, 0.45);
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
   }
 }
 
-.reply-header-info {
+.reply-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: $color-white;
+  overflow: hidden;
+
+  @media (min-width: 992px) {
+    width: 100%;
+    max-width: 640px;
+    height: 100%;
+    max-height: 780px;
+    border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  }
+}
+
+/* ---- Header ---- */
+.reply-card__header {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1;
-  min-width: 0;
+  flex-shrink: 0;
+  padding: 10px 14px;
+  background: $reply-header-green;
+  color: $color-white;
+  min-height: 60px;
 }
 
-.reply-header-avatar {
+.reply-card__back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: $color-white;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(255, 255, 255, 0.3);
+    outline: none;
+  }
+}
+
+.reply-card__avatar {
   flex-shrink: 0;
 }
 
-.reply-header-text {
+.reply-card__heading {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  line-height: 1.25;
 }
 
-.reply-header-name {
-  font-weight: 600;
-  font-size: 1rem;
+.reply-card__name {
+  font-weight: 700;
+  font-size: 1.05rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.reply-header-item {
+.reply-card__context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.85rem;
-  opacity: 0.9;
+  opacity: 0.95;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.reply-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  background: #e5ddd5; /* WhatsApp-style chat background */
+.reply-card__tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: rgba(255, 255, 255, 0.9);
+
+  &--offer {
+    color: #338808;
+  }
+
+  &--wanted {
+    color: #c2410c;
+  }
 }
 
-.message-context {
+/* ---- Body (chat conversation area) ---- */
+.reply-card__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px;
+  background-color: $reply-body-bg;
+  background-image: url('/chat-pattern.svg');
+  background-repeat: repeat;
+}
+
+.reply-card__intro {
+  margin: 0 auto 14px;
+  max-width: 90%;
+  text-align: center;
+  font-size: 0.8rem;
+  color: $color-gray--dark;
+}
+
+.reply-card__incoming {
   display: flex;
   justify-content: flex-start;
   margin-bottom: 12px;
 }
 
-.context-bubble {
-  background: white;
-  border-radius: 8px;
-  padding: 8px;
-  max-width: 85%;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.13);
-}
-
-.context-photo {
-  margin-bottom: 8px;
-}
-
-.context-photo-img {
+.reply-card__post {
   width: 100%;
-  max-width: 250px;
-  border-radius: 4px;
-  display: block;
+  max-width: 280px;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  cursor: default;
 }
 
-.context-text {
-  strong {
-    display: block;
-    margin-bottom: 4px;
+.reply-card__notice {
+  margin-bottom: 10px;
+}
+
+/* ---- Composer (chat footer) ---- */
+.reply-card__composer {
+  flex-shrink: 0;
+  max-height: 62%;
+  overflow-y: auto;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: $color-white;
+  border-top: 1px solid $reply-border;
+}
+
+.composer-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-field {
+  margin-bottom: 10px;
+
+  &:last-child {
+    margin-bottom: 0;
   }
 }
 
-.context-description {
-  margin: 0;
-  font-size: 0.9rem;
-  color: $color-gray--dark;
-}
-
-.delivery-notice {
-  display: inline-flex;
+.composer-label {
+  display: flex;
   align-items: center;
   gap: 6px;
-  background: $color-info-bg;
-  color: $color-blue--bright;
-  padding: 6px 12px;
-  border-radius: 16px;
-  font-size: 0.85rem;
-  margin-bottom: 12px;
-}
-
-.reply-form-area {
-  border-top: 1px solid $color-gray--light;
-  background: white;
-  padding: 12px 16px 16px;
-}
-
-.reply-form-field {
-  margin-bottom: 12px;
-}
-
-.reply-form-label {
-  display: block;
-  font-weight: 600;
-  font-size: 0.9rem;
   margin-bottom: 4px;
+  font-weight: 600;
+  font-size: 0.85rem;
   color: $color-gray--dark;
 }
 
-.reply-textarea {
+.composer-label-icon {
+  color: $reply-header-green;
+}
+
+.composer-input {
   width: 100%;
-  border: 1px solid $color-gray--normal;
+  border: 1px solid $reply-border;
   border-radius: 8px;
   padding: 10px 12px;
-  font-size: 1rem;
-  resize: vertical;
-  transition: border-color 0.15s;
+  font-size: 0.95rem;
+  background: $reply-input-bg;
+  resize: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease,
+    background 0.15s ease;
+
+  &::placeholder {
+    color: $color-gray--normal;
+  }
 
   &:focus {
     outline: none;
-    border-color: $color-green--darker;
-    box-shadow: 0 0 0 2px rgba($color-green--darker, 0.15);
+    background: $color-white;
+    border-color: $reply-header-green;
+    box-shadow: 0 0 0 3px rgba(97, 174, 36, 0.16);
   }
 }
 
-.reply-form-hint {
-  font-size: 0.8rem;
-  color: $color-gray--dark;
+.composer-error {
+  display: block;
   margin-top: 4px;
-  margin-bottom: 0;
+  color: $color-red;
+  font-weight: 700;
+  font-size: 0.85rem;
 }
 
-.reply-send-area {
+.composer-hint {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: $color-gray--dark;
+
+  :deep(p) {
+    margin: 0;
+    font-size: 0.78rem;
+    color: $color-gray--dark;
+  }
+}
+
+.composer-send {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
 }
 
-.reply-send-btn {
-  min-width: 160px;
+.composer-send-btn {
+  min-width: 140px;
+}
+
+@media (max-width: 575px) {
+  .composer-send-btn {
+    width: 100%;
+  }
 }
 </style>

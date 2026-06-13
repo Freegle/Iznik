@@ -1,11 +1,10 @@
 /**
  * Reply-to-Chat Flow Tests
  *
- * Tests for the new UX where clicking Reply on mobile/tablet navigates
- * to a dedicated chat reply page (/chats/reply?replyto=MSG_ID) instead
- * of showing an inline reply section.
- *
- * Desktop (lg+) keeps the existing inline reply behavior.
+ * Clicking Reply on a message opens a chat-style reply pane as a full-screen
+ * overlay on every breakpoint (mobile, tablet and desktop alike). The overlay
+ * sits on top of wherever you are, so closing it returns you to exactly where
+ * you were, and sending the reply lands you in the real chat.
  */
 
 const { test, expect } = require('./fixtures')
@@ -21,9 +20,10 @@ const { timeouts } = require('./config')
 // Mobile viewport dimensions (below lg breakpoint = 992px)
 const MOBILE_VIEWPORT = { width: 375, height: 812 }
 const TABLET_VIEWPORT = { width: 768, height: 1024 }
+const DESKTOP_VIEWPORT = { width: 1280, height: 800 }
 
 test.describe('Reply-to-Chat - Mobile', () => {
-  test('navigates to chat reply page when Reply clicked on mobile', async ({
+  test('opens the reply overlay and sends a reply on mobile', async ({
     page,
     postMessage,
     testEnv,
@@ -61,26 +61,23 @@ test.describe('Reply-to-Chat - Mobile', () => {
     await replyButton.click()
     console.log('[Test] Clicked Reply button on mobile')
 
-    // Should navigate to /chats/reply?replyto=MSG_ID
-    await page.waitForURL(/\/chats\/reply\?replyto=/, {
-      timeout: 30000,
-    })
-    console.log('[Test] Navigated to chat reply page')
-    expect(page.url()).toContain(`replyto=${result.id}`)
+    // The reply overlay opens in place - we stay on the message page.
+    await expect(page.locator('.reply-overlay')).toBeVisible({ timeout: 30000 })
+    expect(page.url()).toContain(`/message/${result.id}`)
+    console.log('[Test] Reply overlay opened on mobile')
 
-    // Verify the reply pane is visible with correct elements
+    // Verify the reply pane has the correct elements
     const replyTextarea = page.locator('textarea[name="reply"]')
     await replyTextarea.waitFor({ state: 'visible', timeout: 30000 })
-    console.log('[Test] Reply textarea visible in chat reply pane')
 
     // Verify collection time field is present (OFFER message)
     const collectTextarea = page.locator('textarea[name="collect"]')
     await collectTextarea.waitFor({ state: 'visible', timeout: 10000 })
-    console.log('[Test] Collection time field visible')
 
     // Verify the back button exists
-    const backBtn = page.locator('.back-btn')
-    await backBtn.waitFor({ state: 'visible', timeout: 5000 })
+    await expect(page.locator('.reply-card__back')).toBeVisible({
+      timeout: 5000,
+    })
 
     // Fill in reply and collection time
     await replyTextarea.fill('I would love this item, please!')
@@ -88,9 +85,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
     console.log('[Test] Filled reply form')
 
     // Click send
-    const sendButton = page
-      .locator('.reply-send-btn, .btn:has-text("Send")')
-      .first()
+    const sendButton = page.locator('.composer-send-btn').first()
     await sendButton.waitFor({ state: 'visible', timeout: 10000 })
     await sendButton.click()
     console.log('[Test] Clicked Send')
@@ -104,14 +99,14 @@ test.describe('Reply-to-Chat - Mobile', () => {
 
     // Cleanup
     await logoutIfLoggedIn(page)
-    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     const loggedIn1 = await loginViaHomepage(page, posterEmail)
     if (loggedIn1) {
       await withdrawPost({ item: result.item })
     }
   })
 
-  test('back button returns to message page', async ({
+  test('back button closes the overlay and stays on the message page', async ({
     page,
     postMessage,
     testEnv,
@@ -144,22 +139,22 @@ test.describe('Reply-to-Chat - Mobile', () => {
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
     await replyButton.click()
 
-    await page.waitForURL(/\/chats\/reply\?replyto=/, { timeout: 30000 })
+    await expect(page.locator('.reply-overlay')).toBeVisible({ timeout: 30000 })
 
-    // Click back button
-    const backBtn = page.locator('.back-btn')
+    // Click back button - this closes the overlay without navigating.
+    const backBtn = page.locator('.reply-card__back')
     await backBtn.waitFor({ state: 'visible', timeout: 10000 })
     await backBtn.click()
     console.log('[Test] Clicked back button')
 
-    // Should navigate back to message page
-    await page.waitForURL(/\/message\/\d+/, { timeout: 30000 })
-    console.log('[Test] Back at message page')
+    // Overlay closes and we are still exactly where we were.
+    await expect(page.locator('.reply-overlay')).toBeHidden({ timeout: 30000 })
     expect(page.url()).toContain(`/message/${result.id}`)
+    console.log('[Test] Back at message page with overlay closed')
 
     // Cleanup
     await logoutIfLoggedIn(page)
-    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     const loggedIn2 = await loginViaHomepage(page, posterEmail)
     if (loggedIn2) {
       await withdrawPost({ item: result.item })
@@ -168,7 +163,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
 })
 
 test.describe('Reply-to-Chat - Tablet', () => {
-  test('navigates to chat reply page on tablet viewport', async ({
+  test('opens the reply overlay on tablet viewport', async ({
     page,
     postMessage,
     testEnv,
@@ -200,14 +195,14 @@ test.describe('Reply-to-Chat - Tablet', () => {
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
     await replyButton.click()
 
-    // Should navigate to chat reply page (tablet is md breakpoint = below lg)
-    await page.waitForURL(/\/chats\/reply\?replyto=/, { timeout: 30000 })
-    expect(page.url()).toContain(`replyto=${result.id}`)
-    console.log('[Test] Tablet correctly navigated to chat reply page')
+    // The reply overlay opens in place on tablet too.
+    await expect(page.locator('.reply-overlay')).toBeVisible({ timeout: 30000 })
+    expect(page.url()).toContain(`/message/${result.id}`)
+    console.log('[Test] Tablet correctly opened the reply overlay')
 
     // Cleanup
     await logoutIfLoggedIn(page)
-    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     const loggedIn3 = await loginViaHomepage(page, posterEmail)
     if (loggedIn3) {
       await withdrawPost({ item: result.item })
@@ -215,8 +210,8 @@ test.describe('Reply-to-Chat - Tablet', () => {
   })
 })
 
-test.describe('Reply-to-Chat - Desktop keeps inline', () => {
-  test('desktop shows inline reply section (not chat page)', async ({
+test.describe('Reply-to-Chat - Desktop', () => {
+  test('opens the reply overlay on desktop (consistent with mobile)', async ({
     page,
     postMessage,
     testEnv,
@@ -228,34 +223,37 @@ test.describe('Reply-to-Chat - Desktop keeps inline', () => {
     const result = await postMessage({
       type: 'OFFER',
       item: uniqueItem,
-      description: 'Test item for desktop inline reply',
+      description: 'Test item for desktop reply overlay',
       email: posterEmail,
     })
     expect(result.id).toBeTruthy()
 
     await logoutIfLoggedIn(page)
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
 
     await page.gotoAndVerify(`/message/${result.id}`)
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     await waitForAuthHydration(page)
     await waitForNuxtHydration(page)
+    await waitForBreakpoint(page, 'xl')
 
     const replyButton = page.locator('.reply-button:has-text("Reply")').first()
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
     await replyButton.click()
     console.log('[Test] Clicked Reply on desktop')
 
-    // On desktop, should NOT navigate to /chats/reply - should show inline form
-    // Wait a moment to ensure no navigation happens
-    await page.waitForTimeout(2000)
-    expect(page.url()).not.toContain('/chats/reply')
+    // Desktop now opens the same chat-style overlay - we stay on the message page.
+    await expect(page.locator('.reply-overlay')).toBeVisible({ timeout: 30000 })
     expect(page.url()).toContain(`/message/${result.id}`)
+    expect(page.url()).not.toContain('/chats/reply')
 
-    // The inline reply textarea should be visible
-    const replyTextarea = page.locator('textarea[name="reply"]')
-    await replyTextarea.waitFor({ state: 'visible', timeout: 10000 })
-    console.log('[Test] Desktop correctly shows inline reply section')
+    // The reply textarea should be visible in the overlay.
+    await expect(page.locator('textarea[name="reply"]')).toBeVisible({
+      timeout: 10000,
+    })
+    console.log('[Test] Desktop correctly opened the reply overlay')
 
     // Cleanup
     await logoutIfLoggedIn(page)
@@ -299,7 +297,7 @@ test.describe('Reply-to-Chat - WANTED message', () => {
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
     await replyButton.click()
 
-    await page.waitForURL(/\/chats\/reply\?replyto=/, { timeout: 30000 })
+    await expect(page.locator('.reply-overlay')).toBeVisible({ timeout: 30000 })
 
     // Reply textarea should be visible
     const replyTextarea = page.locator('textarea[name="reply"]')
@@ -313,7 +311,7 @@ test.describe('Reply-to-Chat - WANTED message', () => {
 
     // Cleanup
     await logoutIfLoggedIn(page)
-    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     const loggedIn5 = await loginViaHomepage(page, posterEmail)
     if (loggedIn5) {
       await withdrawPost({ item: result.item })
@@ -333,7 +331,9 @@ test.describe('Reply-to-Chat - Empty State', () => {
     })
     await expect(page.locator('text=No message to reply to.')).toBeVisible()
     await expect(emptyState.locator('a[href="/browse"]')).toBeVisible()
-    console.log('[Test] Empty state shown for /chats/reply without replyto param')
+    console.log(
+      '[Test] Empty state shown for /chats/reply without replyto param'
+    )
   })
 
   test('shows empty state when replyto=0', async ({ page }) => {
@@ -350,7 +350,7 @@ test.describe('Reply-to-Chat - Empty State', () => {
 })
 
 test.describe('Reply-to-Chat - Logged Out', () => {
-  test('shows email field on chat reply page when not logged in', async ({
+  test('shows email field on the reply pane when not logged in', async ({
     page,
     postMessage,
     getTestEmail,
@@ -367,18 +367,20 @@ test.describe('Reply-to-Chat - Logged Out', () => {
     expect(result.id).toBeTruthy()
     console.log(`[Test] Posted message ${result.id}`)
 
-    // Ensure logged out, then navigate directly to /chats/reply?replyto=N
+    // Ensure logged out, then deep-link straight to the reply pane.
     await logoutIfLoggedIn(page)
     await page.setViewportSize(MOBILE_VIEWPORT)
     await page.gotoAndVerify(`/chats/reply?replyto=${result.id}`)
     await waitForNuxtHydration(page)
 
     // Email validator should be visible for logged-out users
-    const emailField = page.locator('.test-email-reply-validator, input[type="email"]')
+    const emailField = page.locator(
+      '.test-email-reply-validator, input[type="email"]'
+    )
     await expect(emailField.first()).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
-    console.log('[Test] Email field visible for logged-out user on chat reply page')
+    console.log('[Test] Email field visible for logged-out user on reply pane')
 
     // Reply textarea should also be visible
     const replyTextarea = page.locator('textarea[name="reply"]')
@@ -387,7 +389,7 @@ test.describe('Reply-to-Chat - Logged Out', () => {
     })
 
     // Cleanup
-    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.setViewportSize(DESKTOP_VIEWPORT)
     const loggedIn6 = await loginViaHomepage(page, posterEmail)
     if (loggedIn6) {
       await withdrawPost({ item: result.item })

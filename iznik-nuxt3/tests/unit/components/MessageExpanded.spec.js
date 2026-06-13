@@ -348,10 +348,10 @@ describe('MessageExpanded', () => {
             template: '<span class="message-tag" :data-id="id" />',
             props: ['id', 'inline'],
           },
-          MessageReplySection: {
+          ChatReplyPane: {
             template:
-              '<div class="message-reply-section" :data-id="id" @close="$emit(\'close\')" @sent="$emit(\'sent\')" />',
-            props: ['id'],
+              '<div class="chat-reply-pane-stub" :data-id="messageId" @close="$emit(\'close\')" @sent="$emit(\'sent\')" />',
+            props: ['messageId'],
             emits: ['close', 'sent'],
           },
           NoticeMessage: {
@@ -715,16 +715,14 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.reply-button').exists()).toBe(false)
     })
 
-    it('expands reply section when reply button clicked (desktop)', async () => {
-      mockBreakpoint.value = 'lg'
+    it('opens the chat reply pane when reply button clicked', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.message-reply-section').exists()).toBe(false)
+      expect(wrapper.find('.chat-reply-pane-stub').exists()).toBe(false)
 
       await wrapper.find('.reply-button').trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('.message-reply-section').exists()).toBe(true)
-      mockBreakpoint.value = 'md'
+      expect(wrapper.find('.chat-reply-pane-stub').exists()).toBe(true)
     })
 
     it('shows cancel button in modal/fullscreen mode', async () => {
@@ -774,22 +772,19 @@ describe('MessageExpanded', () => {
   })
 
   describe('replied state', () => {
-    it('shows confirmation alert after sending reply (desktop)', async () => {
-      mockBreakpoint.value = 'lg'
+    it('shows confirmation alert after a reply is sent', async () => {
       const wrapper = await createWrapper()
 
-      // Expand reply section (only works on desktop lg+)
+      // Open the reply pane.
       await wrapper.find('.reply-button').trigger('click')
       await flushPromises()
 
-      // Trigger sent event
-      const replySection = wrapper.find('.message-reply-section')
-      await replySection.trigger('sent')
+      // The reply pane reports the reply was sent.
+      await wrapper.find('.chat-reply-pane-stub').trigger('sent')
       await flushPromises()
 
       expect(wrapper.find('.b-alert').exists()).toBe(true)
       expect(wrapper.text()).toContain('Message sent')
-      mockBreakpoint.value = 'md'
     })
   })
 
@@ -1041,10 +1036,10 @@ describe('MessageExpanded', () => {
       expect(comp.vm.replied).toBe(false)
     })
 
-    it('initializes replyExpanded as false', async () => {
+    it('initializes showReplyOverlay as false', async () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(MessageExpanded)
-      expect(comp.vm.replyExpanded).toBe(false)
+      expect(comp.vm.showReplyOverlay).toBe(false)
     })
 
     it('initializes showMapModal as false', async () => {
@@ -1195,75 +1190,26 @@ describe('MessageExpanded', () => {
       expect(comp.vm.showMessagePhotosModal).toBe(true)
     })
 
-    it('expandReply sets replyExpanded to true on desktop (lg+)', async () => {
-      mockBreakpoint.value = 'lg'
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.expandReply()
-      expect(comp.vm.replyExpanded).toBe(true)
+    it('expandReply opens the reply overlay on every breakpoint', async () => {
+      // The chat-style reply pane is now used consistently everywhere, rather
+      // than expanding inline on desktop and navigating on mobile.
+      for (const bp of ['sm', 'md', 'lg', '']) {
+        mockBreakpoint.value = bp
+        const wrapper = await createWrapper()
+        const comp = wrapper.findComponent(MessageExpanded)
+        expect(comp.vm.showReplyOverlay).toBe(false)
+        comp.vm.expandReply()
+        expect(comp.vm.showReplyOverlay).toBe(true)
+      }
       mockBreakpoint.value = 'md' // restore default
     })
 
-    it('expandReply navigates to chat reply page on mobile (sm)', async () => {
-      const mockPush = vi.fn()
-      globalThis.__testUseRouter = () => ({
-        push: mockPush,
-        replace: vi.fn(),
-        currentRoute: { value: { path: '/' } },
-      })
-
-      mockBreakpoint.value = 'sm'
+    it('sent sets replied to true and closes the reply overlay', async () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.expandReply()
-      expect(comp.vm.replyExpanded).toBe(false)
-      expect(mockPush).toHaveBeenCalledWith({
-        path: '/chats/reply',
-        query: { replyto: mockMessage.value.id },
-      })
-
-      delete globalThis.__testUseRouter
-    })
-
-    it('expandReply navigates to chat reply page on tablet (md)', async () => {
-      const mockPush = vi.fn()
-      globalThis.__testUseRouter = () => ({
-        push: mockPush,
-        replace: vi.fn(),
-        currentRoute: { value: { path: '/' } },
-      })
-
-      mockBreakpoint.value = 'md'
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.expandReply()
-      expect(comp.vm.replyExpanded).toBe(false)
-      expect(mockPush).toHaveBeenCalledWith({
-        path: '/chats/reply',
-        query: { replyto: mockMessage.value.id },
-      })
-
-      delete globalThis.__testUseRouter
-    })
-
-    it('expandReply defaults to inline reply when breakpoint unknown', async () => {
-      // When breakpoint is null/empty (not yet set by BreakpointFettler), we
-      // default to inline reply to avoid spurious navigation on desktop fast loads.
-      mockBreakpoint.value = ''
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.expandReply()
-      expect(comp.vm.replyExpanded).toBe(true)
-
-      mockBreakpoint.value = 'md' // restore default
-    })
-
-    it('sent sets replied to true and replyExpanded to false', async () => {
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.replyExpanded = true
+      comp.vm.showReplyOverlay = true
       comp.vm.sent()
-      expect(comp.vm.replyExpanded).toBe(false)
+      expect(comp.vm.showReplyOverlay).toBe(false)
       expect(comp.vm.replied).toBe(true)
     })
   })

@@ -396,7 +396,7 @@
 
           <!-- Inline reply section for two-column layout -->
           <div v-if="isTwoColumnLayout" class="inline-reply-section">
-            <div v-if="!replyExpanded">
+            <div>
               <!-- Promised notice -->
               <div
                 v-if="
@@ -445,24 +445,6 @@
                 <nuxt-link to="/chats">Chats</nuxt-link>.
               </b-alert>
             </div>
-
-            <!-- Expanded reply section -->
-            <div v-else class="reply-expanded-section">
-              <NoticeMessage
-                v-if="message.promised && !message.promisedtome"
-                variant="warning"
-                class="mb-2"
-              >
-                Already promised - you might not get it.
-              </NoticeMessage>
-              <client-only>
-                <MessageReplySection
-                  :id="id"
-                  @close="replyExpanded = false"
-                  @sent="sent"
-                />
-              </client-only>
-            </div>
           </div>
         </div>
       </div>
@@ -472,9 +454,9 @@
     <div
       v-if="!isTwoColumnLayout"
       class="app-footer"
-      :class="{ expanded: replyExpanded, stickyAdRendered }"
+      :class="{ stickyAdRendered }"
     >
-      <div v-if="!replyExpanded" class="w-100">
+      <div class="w-100">
         <!-- Promised notice -->
         <div
           v-if="message.promised && !message.successful && replyable && !fromme"
@@ -515,25 +497,20 @@
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
         </b-alert>
       </div>
-
-      <!-- Expanded reply section -->
-      <div v-else class="reply-expanded-section">
-        <NoticeMessage
-          v-if="message.promised && !message.promisedtome"
-          variant="warning"
-          class="mb-2"
-        >
-          Already promised - you might not get it.
-        </NoticeMessage>
-        <client-only>
-          <MessageReplySection
-            :id="id"
-            @close="replyExpanded = false"
-            @sent="sent"
-          />
-        </client-only>
-      </div>
     </div>
+
+    <!-- Chat-style reply pane, shown as a full-screen overlay on every
+         breakpoint. Wrapped in its own Suspense so its async setup doesn't
+         suspend the whole page when it opens. -->
+    <Teleport to="body">
+      <Suspense v-if="showReplyOverlay">
+        <ChatReplyPane
+          :message-id="id"
+          @close="showReplyOverlay = false"
+          @sent="sent"
+        />
+      </Suspense>
+    </Teleport>
 
     <!-- Map Modal - Full Screen -->
     <Teleport v-if="showMapModal" to="body">
@@ -594,7 +571,7 @@ import {
   onMounted,
   onUnmounted,
 } from 'vue'
-import { useRoute, useRouter } from '#imports'
+import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useMe } from '~/composables/useMe'
@@ -602,8 +579,7 @@ import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
-import NoticeMessage from '~/components/NoticeMessage'
-import MessageReplySection from '~/components/MessageReplySection'
+import ChatReplyPane from '~/components/ChatReplyPane'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -648,7 +624,6 @@ const props = defineProps({
 
 const emit = defineEmits(['zoom', 'close'])
 
-const router = useRouter()
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const { me, loggedIn } = useMe()
@@ -679,7 +654,7 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
 // State
 const replied = ref(false)
-const replyExpanded = ref(false)
+const showReplyOverlay = ref(false)
 const mountTime = ref(null)
 const showMapModal = ref(false)
 const showShareModal = ref(false)
@@ -861,30 +836,17 @@ function stopThumbnailAutoScroll() {
 }
 
 function expandReply() {
-  // On mobile/tablet (xs/sm/md breakpoints), navigate to the dedicated chat
-  // reply pane for a simpler UX. Desktop (lg+) keeps the inline reply section
-  // so users can see the post alongside. When breakpoint is null (not yet
-  // determined by BreakpointFettler), default to inline to avoid spurious
-  // navigation on fast desktop loads before the ResizeObserver fires.
-  const mobileBreakpoints = ['xs', 'sm', 'md']
-  if (mobileBreakpoints.includes(miscStore.breakpoint)) {
-    router.push({
-      path: '/chats/reply',
-      query: { replyto: props.id },
-    })
-    return
-  }
-
-  replyExpanded.value = true
+  // Open the chat-style reply pane as a full-screen overlay on every
+  // breakpoint. It sits on top of wherever you are, so closing it returns you
+  // to exactly where you were, and after sending you land in the real chat.
+  showReplyOverlay.value = true
 }
 
 function sent() {
-  replyExpanded.value = false
+  // The reply pane's state machine has already created the chat and navigated
+  // there, so just tidy up our own state.
+  showReplyOverlay.value = false
   replied.value = true
-  // Close after a brief delay so user sees confirmation
-  setTimeout(() => {
-    emit('close')
-  }, 1500)
 }
 
 // Handle browser back button/swipe
@@ -931,10 +893,9 @@ onMounted(() => {
   // Start auto-scroll hint for thumbnail carousel
   startThumbnailAutoScroll()
 
-  // If the user arrived via a "Reply" CTA in an email (?reply=1), open
-  // the compose form straight away so they don't need to click Reply
-  // again. expandReply() only sets the ref — the template still gates
-  // the actual MessageReplySection render on replyable/replied/etc.,
+  // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
+  // chat-style reply pane straight away so they don't need to click Reply
+  // again. The pane fetches its own message data and gates its own render,
   // so this is safe to call unconditionally.
   if (useRoute().query.reply) {
     expandReply()
@@ -2179,11 +2140,6 @@ onUnmounted(() => {
 .footer-buttons:has(.cancel-button:only-child) .cancel-button {
   flex: 1;
   width: 100% !important;
-}
-
-.reply-expanded-section {
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .promised-notice {

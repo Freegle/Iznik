@@ -53,12 +53,20 @@ const mockReplyStateMachine = {
   closeWelcomeModal: vi.fn(),
 }
 
+const mockSetReplyOverlayOpen = vi.fn()
+
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
+}))
+
+vi.mock('~/stores/misc', () => ({
+  useMiscStore: () => ({
+    setReplyOverlayOpen: mockSetReplyOverlayOpen,
+  }),
 }))
 
 vi.mock('~/composables/useMe', () => ({
@@ -88,24 +96,8 @@ vi.mock('~/constants', () => ({
   FAR_AWAY: 20,
 }))
 
-const mockRouterPush = vi.fn()
-const mockRouterBack = vi.fn()
-
 vi.hoisted(() => {
   vi.resetModules()
-})
-
-vi.mock('#imports', async () => {
-  const actual = await vi.importActual('#imports')
-  return {
-    ...actual,
-    useRouter: () => ({
-      push: mockRouterPush,
-      back: mockRouterBack,
-      replace: vi.fn(),
-      currentRoute: { value: { path: '/' } },
-    }),
-  }
 })
 
 describe('ChatReplyPane', () => {
@@ -160,6 +152,10 @@ describe('ChatReplyPane', () => {
             template: '<div class="email-validator" />',
             props: ['email', 'valid', 'size', 'label'],
             emits: ['update:email', 'update:valid'],
+          },
+          ChatMessageCard: {
+            template: '<div class="chat-message-card-stub" :data-id="id" />',
+            props: ['id', 'showLocation'],
           },
           NoticeMessage: {
             template:
@@ -242,35 +238,41 @@ describe('ChatReplyPane', () => {
   }
 
   describe('rendering', () => {
-    it('renders the chat-reply-pane container', async () => {
+    it('renders the reply overlay container', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.chat-reply-pane').exists()).toBe(true)
+      expect(wrapper.find('.reply-overlay').exists()).toBe(true)
+      expect(wrapper.find('.reply-card').exists()).toBe(true)
     })
 
     it('renders the reply header', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.reply-header').exists()).toBe(true)
+      expect(wrapper.find('.reply-card__header').exists()).toBe(true)
     })
 
     it('renders the back button', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.back-btn').exists()).toBe(true)
+      expect(wrapper.find('.reply-card__back').exists()).toBe(true)
     })
 
     it('renders the reply body', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.reply-body').exists()).toBe(true)
+      expect(wrapper.find('.reply-card__body').exists()).toBe(true)
     })
 
-    it('renders reply form area when user not deleted', async () => {
+    it('renders the composer when user not deleted', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.reply-form-area').exists()).toBe(true)
+      expect(wrapper.find('.reply-card__composer').exists()).toBe(true)
     })
 
     it('shows send button', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.spin-button').exists()).toBe(true)
       expect(wrapper.text()).toContain('Send')
+    })
+
+    it('shows the poster name in the header', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.reply-card__name').text()).toContain('Jane Doe')
     })
   })
 
@@ -302,7 +304,7 @@ describe('ChatReplyPane', () => {
 
     it('hides delivery notice when no delivery', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.delivery-notice').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Delivery may be possible')
     })
   })
 
@@ -311,7 +313,7 @@ describe('ChatReplyPane', () => {
       const { milesAway } = await import('~/composables/useDistance')
       milesAway.mockReturnValue(30)
       const wrapper = await createWrapper()
-      expect(wrapper.find('.notice-message.danger').exists()).toBe(true)
+      expect(wrapper.find('.notice-message.warning').exists()).toBe(true)
       expect(wrapper.text()).toContain('miles away')
     })
 
@@ -319,10 +321,10 @@ describe('ChatReplyPane', () => {
       const { milesAway } = await import('~/composables/useDistance')
       milesAway.mockReturnValue(5)
       const wrapper = await createWrapper()
-      const dangerNotices = wrapper
-        .findAll('.notice-message.danger')
+      const warnings = wrapper
+        .findAll('.notice-message.warning')
         .filter((n) => n.text().includes('miles away'))
-      expect(dangerNotices.length).toBe(0)
+      expect(warnings.length).toBe(0)
     })
   })
 
@@ -386,55 +388,41 @@ describe('ChatReplyPane', () => {
       await createWrapper()
       expect(mockReplyStateMachine.setRefs).toHaveBeenCalled()
     })
+
+    it('hides the sticky ad banner while open', async () => {
+      await createWrapper()
+      expect(mockSetReplyOverlayOpen).toHaveBeenCalledWith(true)
+    })
   })
 
-  describe('navigation', () => {
-    it('goBack navigates to /message/:id when messageId set', async () => {
+  describe('closing', () => {
+    it('emits close when the back button is clicked', async () => {
       const wrapper = await createWrapper()
+      await wrapper.find('.reply-card__back').trigger('click')
       const inner = wrapper.findComponent(ChatReplyPane)
-      inner.vm.goBack()
-      expect(mockRouterPush).toHaveBeenCalledWith('/message/1')
+      expect(inner.emitted('close')).toBeTruthy()
     })
 
-    it('back button click triggers navigation', async () => {
+    it('emits close when the backdrop is clicked', async () => {
       const wrapper = await createWrapper()
-      await wrapper.find('.back-btn').trigger('click')
-      expect(mockRouterPush).toHaveBeenCalledWith('/message/1')
+      await wrapper.find('.reply-overlay').trigger('click')
+      const inner = wrapper.findComponent(ChatReplyPane)
+      expect(inner.emitted('close')).toBeTruthy()
     })
   })
 
-  describe('message context bubble', () => {
-    it('shows context bubble when message present', async () => {
+  describe('post card', () => {
+    it('shows the post as a chat message card', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.context-bubble').exists()).toBe(true)
+      expect(wrapper.find('.chat-message-card-stub').exists()).toBe(true)
+      expect(
+        wrapper.find('.chat-message-card-stub').attributes('data-id')
+      ).toBe('1')
     })
 
-    it('shows attachment image when message has attachments', async () => {
-      mockMessageStore.byId.mockReturnValue({
-        ...mockMessage,
-        attachments: [{ paththumb: '/img/sofa_thumb.jpg' }],
-      })
+    it('shows an intro line about replying to the poster', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.context-photo-img').exists()).toBe(true)
-    })
-
-    it('shows truncated description', async () => {
-      mockMessageStore.byId.mockReturnValue({
-        ...mockMessage,
-        textbody: 'A lovely sofa.',
-      })
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('A lovely sofa.')
-    })
-
-    it('truncates long description at 150 chars', async () => {
-      const longText = 'a'.repeat(200)
-      mockMessageStore.byId.mockReturnValue({
-        ...mockMessage,
-        textbody: longText,
-      })
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('...')
+      expect(wrapper.find('.reply-card__intro').text()).toContain('Jane Doe')
     })
   })
 

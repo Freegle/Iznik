@@ -373,14 +373,14 @@ async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
   await waitForNuxtHydration(page)
 
   const sendButton = page
-    .locator('.btn:has-text("Send your reply")')
+    .locator('.composer-send-btn')
     .filter({ visible: true })
   await sendButton.waitFor({
     state: 'visible',
     timeout: timeouts.ui.appearance,
   })
   await sendButton.click()
-  console.log('[Reply] Clicked Send your reply')
+  console.log('[Reply] Clicked Send reply')
 
   if (expectWelcomeModal) {
     // Wait for either welcome modal OR navigation to chats (modal might not appear in all flows)
