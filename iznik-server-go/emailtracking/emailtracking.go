@@ -909,7 +909,7 @@ func TimeSeries(c *fiber.Ctx) error {
 			SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened,
 			SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked,
 			SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces
-		FROM email_tracking
+		FROM email_tracking FORCE INDEX (sent_at)
 		LEFT JOIN users ON email_tracking.userid = users.id
 		WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?
 	`
@@ -1037,7 +1037,7 @@ func StatsByType(c *fiber.Ctx) error {
 			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
 			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
 			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces
-		FROM email_tracking
+		FROM email_tracking FORCE INDEX (sent_at)
 		LEFT JOIN users ON email_tracking.userid = users.id
 		WHERE users.tnuserid IS NULL
 	`
