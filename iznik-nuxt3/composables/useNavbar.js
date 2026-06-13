@@ -9,6 +9,7 @@ import { useAuthStore } from '~/stores/auth'
 import { fetchMe } from '~/composables/useMe'
 import { useRuntimeConfig } from '#app'
 import { TYPING_TIME_INVERVAL } from '~/constants'
+import { classifyStaleBuild } from '~/composables/useStaleBuild'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useMobileStore } from '~/stores/mobile'
@@ -103,7 +104,9 @@ export function useNavbar() {
   const chatCount = computed(() => {
     const count = Math.min(99, chatStore.unreadCount)
     if (mobileStore.isApp) {
-      mobileStore.setBadgeCount(Math.min(99, count + (notificationStore.count || 0)))
+      mobileStore.setBadgeCount(
+        Math.min(99, count + (notificationStore.count || 0))
+      )
     }
     return count
   })
@@ -337,12 +340,18 @@ export function useNavbar() {
 
             if (data?.deploy_id) {
               if (data.deploy_id !== runtimeConfig.public.NETLIFY_DEPLOY_ID) {
-                const deployDate = new Date(data.published_deploy.published_at)
+                // We're not on the latest deploy. Soft-nag once the new deploy has
+                // been live a while, but escalate to a forced reload once the build
+                // we're running is over a week stale (people who never refresh).
+                const verdict = classifyStaleBuild(
+                  runtimeConfig.public.BUILD_DATE,
+                  data.published_deploy.published_at,
+                  Date.now()
+                )
 
-                // Check it's not too soon to nag.  This stops annoyances when we have lots of releases in a short
-                // time.
-                if (deployDate.getTime() < Date.now() - 12 * 60 * 60 * 1000) {
-                  // We're not on the latest deploy, so show a warning.
+                if (verdict === 'hard') {
+                  useMiscStore().needToReloadHard = true
+                } else if (verdict === 'soft') {
                   useMiscStore().needToReload = true
                 }
               }

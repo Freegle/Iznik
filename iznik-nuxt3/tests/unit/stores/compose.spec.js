@@ -655,6 +655,22 @@ describe('compose store', () => {
       const store = useComposeStore()
       expect(store.messageValid({ value: 'Offer' })).toBe(false)
     })
+
+    it('returns false when the item is purely numeric', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: '123', description: 'Good condition' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('allows an item that merely contains a number', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: '3 chairs', description: 'Good condition' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
   })
 
   describe('postcodeValid getter', () => {
