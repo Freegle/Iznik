@@ -543,7 +543,109 @@ func PostDigestReply(c *fiber.Ctx) error {
 		})
 	}
 
-	replyText := strings.TrimSpace(body.Message)
+	return processDigestReply(c, userID, messageID, body.Message, emailTrackingID)
+}
+
+// PostDigestReplyShared handles the SHARED-form digest reply endpoint
+// (POST /amp/digest/reply, no :id in the path). Unlike PostDigestReply, all
+// identity fields come from the FORM BODY (mid, rt, exp, uid, message) so a
+// single <amp-form> in the digest template can submit a reply to ANY post by
+// binding mid/rt/exp from the tapped card's state — there's no per-post form.
+//
+// It validates the SAME HMAC as ValidateToken ("amp" + uid + mid + exp) using
+// the body values, then runs the identical reply logic via processDigestReply.
+//
+// @Summary Post reply from AMP digest email (shared form)
+// @Description Submits an inline reply to a digest-email post; identity in the body (mid/rt/exp/uid)
+// @Tags AMP
+// @Accept x-www-form-urlencoded
+// @Produce json
+// @Param mid formData int true "Message ID (the post being replied to)"
+// @Param rt formData string true "Token (HMAC)"
+// @Param uid formData int true "User ID"
+// @Param exp formData int true "Token expiry timestamp"
+// @Param tid formData int false "Email tracking ID for analytics"
+// @Param message formData string true "Reply text"
+// @Success 200 {object} ReplyResponse
+// @Failure 400 {object} ReplyResponse
+// @Router /amp/digest/reply [post]
+func PostDigestReplyShared(c *fiber.Ctx) error {
+	userID, messageID := validateBodyToken(c)
+	if userID == 0 || messageID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Invalid token",
+		})
+	}
+
+	var emailTrackingID *uint64
+	if tidStr := c.FormValue("tid"); tidStr != "" {
+		if tid, err := strconv.ParseUint(tidStr, 10, 64); err == nil {
+			emailTrackingID = &tid
+		}
+	}
+
+	messageText := c.FormValue("message")
+	if strings.TrimSpace(messageText) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Please enter a message.",
+		})
+	}
+
+	return processDigestReply(c, userID, messageID, messageText, emailTrackingID)
+}
+
+// validateBodyToken is the body-based equivalent of ValidateToken: it reads
+// rt/uid/exp/mid from the FORM BODY and validates the same HMAC
+// ("amp" + uid + mid + exp). Returns (userID, messageID) or (0, 0) on any
+// failure, mirroring ValidateToken's graceful-zero behaviour.
+func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
+	token := c.FormValue("rt")
+	uid := c.FormValue("uid")
+	exp := c.FormValue("exp")
+	mid := c.FormValue("mid")
+
+	if token == "" || uid == "" || exp == "" || mid == "" {
+		return 0, 0
+	}
+
+	expTime, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || time.Now().Unix() > expTime {
+		return 0, 0
+	}
+
+	secret := getAMPSecret()
+	if secret == "" {
+		return 0, 0
+	}
+
+	message := "amp" + uid + mid + exp
+	expectedMAC := computeHMAC(message, secret)
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expectedMAC)) != 1 {
+		return 0, 0
+	}
+
+	userID, _ := strconv.ParseUint(uid, 10, 64)
+	messageID, _ := strconv.ParseUint(mid, 10, 64)
+
+	db := database.DBConn
+	var exists bool
+	db.Raw("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
+	if !exists {
+		return 0, 0
+	}
+
+	return userID, messageID
+}
+
+// processDigestReply contains the shared digest-reply business logic used by
+// both the path-based PostDigestReply and the body-based PostDigestReplyShared.
+// It validates the reply length, looks up the post owner, rejects self-replies,
+// find-or-creates the User2User chat, inserts the Interested chat message and
+// records tracking/analytics.
+func processDigestReply(c *fiber.Ctx, userID, messageID uint64, rawMessage string, emailTrackingID *uint64) error {
+	replyText := strings.TrimSpace(rawMessage)
 	if len(replyText) > 10000 {
 		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
 			Success: false,

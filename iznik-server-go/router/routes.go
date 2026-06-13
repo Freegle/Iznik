@@ -1677,6 +1677,33 @@ func SetupRoutes(app *fiber.App) {
 	// @Success 302 {string} string "Redirect"
 	delivery.Get("/i/:id", emailtracking.Image)
 
+	// Compact redirect — reconstructs an internal destination from type+id.
+	// MORE path segments than /r/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/r/{ref}/{type}/{idenc}/{pos} [get]
+	// @Summary Compact delivery redirect
+	// @Description Reconstructs an internal destination URL from type+id and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (m, s, g)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect"
+	delivery.Get("/r/:ref/:type/:idenc/:pos", emailtracking.ClickCompact)
+
+	// Compact image — reconstructs a delivery URL from type+id+preset.
+	// MORE path segments than /i/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} [get]
+	// @Summary Compact delivery image
+	// @Description Reconstructs an image delivery URL from type+id+preset and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (t, u)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param preset path int true "Dimension preset (0,1,2)"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect to image"
+	delivery.Get("/i/:ref/:type/:idenc/:preset/:pos", emailtracking.ImageCompact)
+
 	// Note: MDN read receipts come as emails and are processed by the incoming mail handler.
 	// The emailtracking.RecordMDNOpen() function can be called via internal API.
 
@@ -1773,4 +1800,22 @@ func SetupRoutes(app *fiber.App) {
 	// @Param body body object true "Message body with 'message' field"
 	// @Success 200 {object} amp.ReplyResponse
 	ampGroup.Post("/digest/:id/reply", amp.PostDigestReply)
+
+	// Shared digest reply — identity (mid/rt/exp/uid) and message come from the
+	// FORM BODY, so one <amp-form> in the digest template replies to any post.
+	// Fewer path segments than /digest/:id/reply, so it's a distinct route.
+	// @Router /amp/digest/reply [post]
+	// @Summary Post reply to digest email post (shared form)
+	// @Description Submits an inline reply to a digest-email post; identity in the body
+	// @Tags AMP
+	// @Accept x-www-form-urlencoded
+	// @Produce json
+	// @Param mid formData int true "Message ID (the post being replied to)"
+	// @Param rt formData string true "Token (HMAC)"
+	// @Param uid formData int true "User ID"
+	// @Param exp formData int true "Token expiry timestamp"
+	// @Param tid formData int false "Email tracking ID for analytics"
+	// @Param message formData string true "Reply text"
+	// @Success 200 {object} amp.ReplyResponse
+	ampGroup.Post("/digest/reply", amp.PostDigestReplyShared)
 }

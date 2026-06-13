@@ -373,6 +373,125 @@ cmd_worktree_remove() {
     echo -e "${GREEN}Worktree '${name}' removed.${NC}"
 }
 
+# Prune worktrees whose PR is closed/merged when it is safe to do so, and flag
+# any worktree that has no open PR but still holds uncommitted or unpushed work.
+# Pass --dry-run (-n) to preview without removing anything.
+cmd_worktree_prune() {
+    local dry_run=false
+    if [[ "${1:-}" == "--dry-run" || "${1:-}" == "-n" ]]; then
+        dry_run=true
+    fi
+
+    if ! command -v gh >/dev/null 2>&1; then
+        echo -e "${RED}Error: the gh CLI is required to check PR state.${NC}" >&2
+        return 1
+    fi
+
+    local main_repo
+    main_repo=$(get_main_repo)
+
+    echo -e "${BLUE}Refreshing remote refs (fetch --prune)...${NC}"
+    git -C "$main_repo" fetch --prune origin >/dev/null 2>&1 || true
+
+    local -a to_remove=() flagged=() kept=()
+    local wt name branch dirty unpushed pr_line pr_num pr_state label why
+
+    while IFS= read -r wt; do
+        [[ "$wt" == "$main_repo" ]] && continue
+        name=$(basename "$wt")
+        branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+
+        # Safety signals: uncommitted changes, or commits on no remote.
+        dirty=""; unpushed=""
+        [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]] && dirty=1
+        [[ -n "$(git -C "$wt" rev-list HEAD --not --remotes 2>/dev/null | head -1)" ]] && unpushed=1
+
+        # PR state for the branch (NONE if detached or no PR exists).
+        pr_state="NONE"; pr_num=""
+        if [[ -n "$branch" ]]; then
+            pr_line=$(gh -R Freegle/Iznik pr list --head "$branch" --state all \
+                --json number,state --jq '.[0] | select(.) | "\(.number) \(.state)"' 2>/dev/null)
+            if [[ -n "$pr_line" ]]; then
+                pr_num=${pr_line%% *}
+                pr_state=${pr_line##* }
+            fi
+        fi
+
+        why=""
+        [[ -n "$dirty" ]] && why+="uncommitted "
+        [[ -n "$unpushed" ]] && why+="unpushed "
+
+        label="${name} [${branch:-detached HEAD}]"
+        [[ -n "$pr_num" ]] && label="${label} PR#${pr_num} ${pr_state}"
+
+        case "$pr_state" in
+            # Merged: the work is in master, so only uncommitted local edits are at risk.
+            MERGED)
+                if [[ -n "$dirty" ]]; then
+                    flagged+=("${label} — merged, but ${why}work present")
+                else
+                    to_remove+=("${wt}|${label}")
+                fi
+                ;;
+            # Closed (not merged): safe to drop only if nothing is unsaved.
+            CLOSED)
+                if [[ -n "$dirty" || -n "$unpushed" ]]; then
+                    flagged+=("${label} — closed, but ${why}work present")
+                else
+                    to_remove+=("${wt}|${label}")
+                fi
+                ;;
+            OPEN)
+                kept+=("${label} — open PR")
+                ;;
+            # No PR (or detached): never auto-remove; flag only if work would be lost.
+            *)
+                if [[ -n "$dirty" || -n "$unpushed" ]]; then
+                    flagged+=("${label} — no open PR, ${why}work present")
+                else
+                    kept+=("${label} — no PR, clean")
+                fi
+                ;;
+        esac
+    done < <(get_worktrees)
+
+    echo ""
+    $dry_run && echo -e "${YELLOW}== DRY RUN (nothing will be removed) ==${NC}"
+
+    echo -e "${GREEN}Removable (closed/merged PR, nothing to lose):${NC}"
+    [[ ${#to_remove[@]} -eq 0 ]] && echo "  (none)"
+    local entry path lbl
+    for entry in "${to_remove[@]}"; do
+        path=${entry%%|*}; lbl=${entry#*|}
+        if $dry_run; then
+            echo "  would remove: ${lbl}"
+        else
+            echo -e "  ${YELLOW}removing${NC}: ${lbl}"
+            if cmd_worktree_remove "$path" >/dev/null 2>&1; then
+                echo "    removed."
+            else
+                echo -e "    ${RED}remove failed — check manually${NC}"
+            fi
+        fi
+    done
+
+    echo ""
+    echo -e "${YELLOW}Flagged (has unsaved work — left in place):${NC}"
+    [[ ${#flagged[@]} -eq 0 ]] && echo "  (none)"
+    local m
+    for m in "${flagged[@]}"; do echo "  ⚠ ${m}"; done
+
+    echo ""
+    echo -e "${BLUE}Kept:${NC}"
+    [[ ${#kept[@]} -eq 0 ]] && echo "  (none)"
+    for m in "${kept[@]}"; do echo "  • ${m}"; done
+
+    echo ""
+    local remaining
+    remaining=$(( $(get_worktrees | wc -l) - 1 ))
+    echo -e "${GREEN}Worktrees remaining (excluding main): ${remaining}${NC}"
+}
+
 # Main command dispatch (skipped when sourced as a library, e.g. by tests)
 if [[ -n "${FREEGLE_LIB_ONLY:-}" ]]; then
     return 0 2>/dev/null || exit 0
@@ -398,8 +517,12 @@ case "${1:-help}" in
                 shift 2
                 cmd_worktree_remove "$@"
                 ;;
+            prune)
+                shift 2
+                cmd_worktree_prune "$@"
+                ;;
             *)
-                echo "Usage: freegle worktree {create|list|remove} [args]"
+                echo "Usage: freegle worktree {create|list|remove|prune} [args]"
                 ;;
         esac
         ;;
@@ -415,6 +538,8 @@ case "${1:-help}" in
         echo "  worktree create <name>  Create isolated worktree (unique ports, starts containers)"
         echo "  worktree list           List all worktrees"
         echo "  worktree remove <name>  Stop and remove a worktree"
+        echo "  worktree prune [-n]     Remove worktrees for closed/merged PRs (safe only);"
+        echo "                          flag any with no open PR but unsaved work. -n = dry-run"
         ;;
     *)
         echo "Unknown command: $1. Run 'freegle help' for usage." >&2
