@@ -36,8 +36,11 @@ User steer:
    rich notification. (A `notification` block would make FCM draw a plain one itself.)
 3. **Adaptive rich rendering** (the "tens of posts" answer):
    - **1 post** → Android `BigPictureStyle` with the item photo; iOS image attachment. Title = item name.
-   - **≥2 posts** → Android `InboxStyle`: a list of up to 5 item lines + a "+N more" overflow line,
-     summary "Freegle • N new posts", first item's photo as the large icon; iOS multiline body + image.
+   - **≥2 posts with ≥2 photos** → a **photo collage** of the top posts (Android `BigPictureStyle` of a
+     natively-tiled mosaic; iOS NSE composes the same), title "N new things near you", item names in the
+     summary line. (Multiple photos — composed in the native layer from the `images[]` URLs.)
+   - **≥2 posts with <2 photos** → Android `InboxStyle`: up to 5 item lines + "+N more" + summary; iOS
+     multiline body. (Text fallback when there aren't enough photos.)
    - Collapsed line everywhere: `title` "N new things near you", `message` "Sofa, Coffee table, Bookshelf +2 more".
    Old app versions (pre-Phase-A) just show `title`+`message` (graceful degradation) — this is why the
    server stays gated until adoption.
@@ -64,6 +67,7 @@ All FCM `data` values are **strings** (FCM requirement). Fields:
 | `message` | `Sofa, Coffee table, Books +4 more` | native collapsed + iOS body fallback + old apps | single line |
 | `route` | `/browse` | JS handler (`router.push`) | tap target |
 | `image` | `https://…/img_123.jpg` | Android BigPicture/largeIcon, iOS NSE | first/best post photo; may be empty |
+| `images` | `["https://…/a.jpg","https://…/b.jpg"]` | Android collage, iOS NSE collage | JSON array, ≤4 photo URLs across top posts; ≥2 → tiled collage (2=side-by-side, 3=1+2, 4=2×2), else fall back to text list |
 | `lines` | `["Offer: Sofa (Kingston)","Wanted: Bike (Surbiton)",…]` | Android InboxStyle, iOS body | JSON-encoded array, ≤5 entries |
 | `summary` | `Freegle • 7 new posts` | Android InboxStyle summaryText | |
 | `moreCount` | `2` | Android "+N more" line | `count - len(lines)`; "0" if none |

@@ -1283,8 +1283,22 @@ class PushNotificationService
             $title = $count . ' new things near you';
         }
 
-        // ---- Best photo URL ----
-        $imageUrl = $this->extractPostImageUrl($posts[0]['message']);
+        // ---- Photo URLs ----
+        // image  = first post's photo (single-post BigPicture / large icon / old apps).
+        // images = up to 4 photo URLs across the top posts; the app tiles these into a
+        //          collage for the multi-post expanded view (needs >=2, else it falls back
+        //          to the text list).
+        $imageUrls = [];
+        foreach ($posts as $item) {
+            if (count($imageUrls) >= 4) {
+                break;
+            }
+            $url = $this->extractPostImageUrl($item['message']);
+            if ($url) {
+                $imageUrls[] = $url;
+            }
+        }
+        $imageUrl = $imageUrls[0] ?? null;
 
         return [
             'channel_id'        => 'new_posts',
@@ -1295,6 +1309,7 @@ class PushNotificationService
             'message'           => $message,
             'route'             => '/browse',
             'image'             => (string) ($imageUrl ?? ''),
+            'images'            => json_encode(array_values($imageUrls)),
             'lines'             => json_encode($lines),
             'summary'           => 'Freegle • ' . $count . ' new post' . ($count === 1 ? '' : 's'),
             'moreCount'         => (string) $moreCount,

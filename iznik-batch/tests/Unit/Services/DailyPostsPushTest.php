@@ -214,6 +214,31 @@ class DailyPostsPushTest extends TestCase
         $this->assertSame('https://cdn.example.com/img123.jpg', $payload['image']);
     }
 
+    public function test_images_collects_top_post_photos_for_collage(): void
+    {
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // Two posts with photos, one without — images[] should hold the two photo URLs
+        // in order, and skip the photo-less post.
+        $m1 = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (London)');
+        MessageAttachment::create(['msgid' => $m1->id, 'externalurl' => 'https://cdn.example.com/a.jpg', 'archived' => 0, 'primary' => 1]);
+        $m2 = $this->createApprovedMessage($user, $group, 'WANTED: Bike (London)');
+        $m3 = $this->createApprovedMessage($user, $group, 'OFFER: Lamp (London)');
+        MessageAttachment::create(['msgid' => $m3->id, 'externalurl' => 'https://cdn.example.com/c.jpg', 'archived' => 0, 'primary' => 1]);
+        foreach ([$m1, $m2, $m3] as $m) {
+            $m->load('attachments');
+        }
+
+        $posts   = $this->buildPostsArray([$m1, $m2, $m3]);
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
+
+        $images = json_decode($payload['images'], true);
+        $this->assertSame(['https://cdn.example.com/a.jpg', 'https://cdn.example.com/c.jpg'], $images);
+        // image (single) is the first post's photo, for the single-post / fallback path.
+        $this->assertSame('https://cdn.example.com/a.jpg', $payload['image']);
+    }
+
     // -------------------------------------------------------------------------
     // notifyDailyNewPosts — send path (mocked service)
     // -------------------------------------------------------------------------
