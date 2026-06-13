@@ -1,5 +1,9 @@
 <template>
+  <!-- Hidden while the forced-login modal is up so the overlay can't sit over
+       (and intercept clicks on) it; the pane stays mounted so reply state is
+       preserved, and it reappears once login completes. -->
   <div
+    v-show="!forceLogin"
     class="reply-overlay"
     role="dialog"
     aria-modal="true"
@@ -241,6 +245,7 @@ import {
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
+import { useAuthStore } from '~/stores/auth'
 import { milesAway } from '~/composables/useDistance'
 import { useMe } from '~/composables/useMe'
 import {
@@ -275,6 +280,8 @@ const faraway = FAR_AWAY
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const miscStore = useMiscStore()
+const authStore = useAuthStore()
+const forceLogin = computed(() => authStore.forceLogin)
 const { me, myGroups } = useMe()
 
 // Initialize state machine

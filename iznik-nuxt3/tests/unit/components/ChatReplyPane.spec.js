@@ -69,6 +69,10 @@ vi.mock('~/stores/misc', () => ({
   }),
 }))
 
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => ({ forceLogin: false }),
+}))
+
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref({ id: 1 }),
