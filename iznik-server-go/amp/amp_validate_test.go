@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -355,6 +356,75 @@ func TestPostDigestReply_WrongHMAC_Returns400(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(body, &result))
 	assert.False(t, result.Success)
 	assert.Equal(t, "Invalid token", result.Message)
+}
+
+// ---------------------------------------------------------------------------
+// PostDigestReplyShared — body-based shared reply endpoint (no :id in path).
+// Validates the same HMAC as ValidateToken but reads mid/rt/exp/uid from the
+// FORM BODY. 400 when the token is invalid (no DB reached).
+// ---------------------------------------------------------------------------
+
+func newPostDigestReplySharedApp() *fiber.App {
+	app := fiber.New()
+	app.Post("/amp/digest/reply", PostDigestReplyShared)
+	return app
+}
+
+// postForm sends a urlencoded body to the shared reply app and returns the
+// decoded ReplyResponse + status code.
+func postForm(t *testing.T, app *fiber.App, form string) (int, ReplyResponse) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/amp/digest/reply", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	var result ReplyResponse
+	_ = json.Unmarshal(body, &result)
+	return resp.StatusCode, result
+}
+
+func TestPostDigestReplyShared_NoBody_Returns400(t *testing.T) {
+	app := newPostDigestReplySharedApp()
+	status, result := postForm(t, app, "")
+	assert.Equal(t, 400, status)
+	assert.False(t, result.Success)
+	assert.Equal(t, "Invalid token", result.Message)
+}
+
+func TestPostDigestReplyShared_MissingMid_Returns400(t *testing.T) {
+	// rt/uid/exp present but mid absent → validateBodyToken returns (0,0).
+	app := newPostDigestReplySharedApp()
+	form := "rt=abc&uid=1&exp=" + futureExp() + "&message=hi"
+	status, result := postForm(t, app, form)
+	assert.Equal(t, 400, status)
+	assert.Equal(t, "Invalid token", result.Message)
+}
+
+func TestPostDigestReplyShared_ExpiredToken_Returns400(t *testing.T) {
+	app := newPostDigestReplySharedApp()
+	form := "mid=200&rt=abc&uid=1&exp=" + pastExp() + "&message=hi"
+	status, result := postForm(t, app, form)
+	assert.Equal(t, 400, status)
+	assert.Equal(t, "Invalid token", result.Message)
+}
+
+func TestPostDigestReplyShared_WrongHMAC_Returns400(t *testing.T) {
+	os.Setenv("AMP_SECRET", "test-secret")
+	defer os.Unsetenv("AMP_SECRET")
+
+	app := newPostDigestReplySharedApp()
+	form := "mid=300&rt=wrong&uid=7&exp=" + futureExp() + "&message=hi"
+	status, result := postForm(t, app, form)
+	assert.Equal(t, 400, status)
+	assert.Equal(t, "Invalid token", result.Message)
+}
+
+// validateBodyToken with a correctly-computed HMAC reaches the user-existence
+// DB query, which can't run without a live DB. The wrong-HMAC test above
+// exercises the HMAC comparison itself ("amp"+uid+mid+exp via computeHMAC).
+func TestValidateBodyToken_CorrectHMACRequiresDB(t *testing.T) {
+	t.Skip("user-existence check needs live DB — covered by integration tests")
 }
 
 // TestPostDigestReply_ZeroResourceIDFromValidToken verifies the messageID==0
