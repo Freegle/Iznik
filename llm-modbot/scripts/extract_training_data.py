@@ -21,7 +21,7 @@ DB_CONFIG = {
     "host": "127.0.0.1",
     "port": 11234,
     "user": "root",
-    "password": "F5432f12azfvds",
+    "password": os.environ.get("LIVE_DB_PASSWORD", ""),
     "database": "iznik",
     "charset": "utf8mb4",
     "cursorclass": pymysql.cursors.DictCursor,

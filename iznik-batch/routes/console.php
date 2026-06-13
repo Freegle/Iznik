@@ -691,14 +691,6 @@ Schedule::command('donations:paypal-download')
     ->sendOutputTo(cronLog('donations:paypal-download'))
     ->runInBackground();
 
-// Audit Discourse users against MT mods (watching/bios/bounces) and email a report.
-// V1: cron/discourse_checkusers.php (daily at 03:08). Skips if Discourse API key unset.
-Schedule::command('discourse:check-users')
-    ->dailyAt('03:08')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('discourse:check-users'))
-    ->runInBackground();
-
 // Report Freegle groups not represented by an active mod on Discourse + mods not
 // signed up. V1: cron/discourse_not_signed_up.php (daily at 03:23). Skips if key unset.
 Schedule::command('discourse:not-signed-up')

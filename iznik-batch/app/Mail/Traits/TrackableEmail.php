@@ -123,6 +123,49 @@ trait TrackableEmail
     }
 
     /**
+     * Compact tracked link for one of our own resources (message, group, …).
+     * Emits /e/d/r/{ref}/{type}/{idEnc}/{pos} instead of base64'ing the full
+     * destination — far shorter for emails with many internal links. Falls
+     * back to the plain destination URL when tracking is disabled.
+     *
+     * @param string $type     Resource type code (e.g. 'm', 's', 'g')
+     * @param int    $id       Resource id (message/group id)
+     * @param string $position Short position code for click analytics
+     * @param string $fallbackUrl Direct URL used when tracking is off
+     */
+    public function trackedResourceUrl(string $type, int $id, string $position, string $fallbackUrl): string
+    {
+        if (!$this->tracking) {
+            return $fallbackUrl;
+        }
+
+        return $this->tracking->getCompactLinkUrl(
+            $type,
+            \App\Models\EmailTracking::encodeId($id),
+            $position
+        );
+    }
+
+    /**
+     * Compact tracked image for one of our own resources (message photo,
+     * avatar). Emits /e/d/i/{ref}/{type}/{idEnc}/{preset}/{pos}. Falls back
+     * to the direct image URL when tracking is disabled.
+     */
+    public function trackedResourceImageUrl(string $type, int $id, int $preset, string $position, string $fallbackUrl): string
+    {
+        if (!$this->tracking) {
+            return $fallbackUrl;
+        }
+
+        return $this->tracking->getCompactImageUrl(
+            $type,
+            \App\Models\EmailTracking::encodeId($id),
+            $preset,
+            $position
+        );
+    }
+
+    /**
      * Get tracking data to pass to MJML views.
      * Include this in your mjmlView() data array.
      */

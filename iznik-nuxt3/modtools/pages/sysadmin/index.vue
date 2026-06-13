@@ -53,6 +53,17 @@
           />
         </b-tab>
 
+        <!-- Digest Clicks Tab -->
+        <b-tab @click="onDigestClicksTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Digest Clicks</h2>
+          </template>
+          <ModSysAdminDigestClicks
+            v-if="showDigestClicks"
+            :key="'digestclicks-' + digestClicksBump"
+          />
+        </b-tab>
+
         <!-- Incoming Email Tab -->
         <b-tab @click="onIncomingEmailTab">
           <template #title>
@@ -93,6 +104,8 @@ const showCronJobs = ref(false)
 const cronJobsBump = ref(0)
 const showEmailStats = ref(false)
 const emailStatsBump = ref(0)
+const showDigestClicks = ref(false)
+const digestClicksBump = ref(0)
 const showIncomingEmail = ref(false)
 const incomingEmailBump = ref(0)
 
@@ -100,7 +113,8 @@ const topTabMap = {
   housekeeping: 0,
   cronjobs: 1,
   outgoing: 2,
-  incoming: 3,
+  digest: 3,
+  incoming: 4,
 }
 
 function onHousekeepingTab() {
@@ -118,6 +132,11 @@ function onEmailStatsTab() {
   emailStatsBump.value = Date.now()
 }
 
+function onDigestClicksTab() {
+  showDigestClicks.value = true
+  digestClicksBump.value = Date.now()
+}
+
 function onIncomingEmailTab() {
   showIncomingEmail.value = true
   incomingEmailBump.value = Date.now()
@@ -131,6 +150,7 @@ onMounted(() => {
     if (tab === 'housekeeping') onHousekeepingTab()
     else if (tab === 'cronjobs') onCronJobsTab()
     else if (tab === 'outgoing') onEmailStatsTab()
+    else if (tab === 'digest') onDigestClicksTab()
     else if (tab === 'incoming') onIncomingEmailTab()
   } else {
     // Default to showing housekeeping
