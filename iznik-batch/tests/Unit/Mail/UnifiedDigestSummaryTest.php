@@ -90,11 +90,39 @@ class UnifiedDigestSummaryTest extends TestCase
 
     private static function decodeTrackedTarget(string $url): string
     {
+        // Compact form: /e/d/r/{ref}/{type}/{idEnc}/{pos}. The Go handler
+        // reconstructs the destination from {type}+{id} (see
+        // iznik-server-go/emailtracking/compact.go): s/m -> /message/{id},
+        // g -> /explore/{id}.
+        if (preg_match('#/e/d/r/[^/]+/([a-z])/([^/]+)/#', $url, $m)) {
+            $id = self::decodeCompactId($m[2]);
+
+            return match ($m[1]) {
+                's', 'm' => '/message/'.$id,
+                'g' => '/explore/'.$id,
+                default => $url,
+            };
+        }
+
+        // Legacy form: arbitrary external URL base64'd in ?url=.
         if (preg_match('/[?&]url=([^&]+)/', $url, $m)) {
             return base64_decode(urldecode($m[1])) ?: $url;
         }
 
         return $url;
+    }
+
+    /** Inverse of EmailTracking::encodeId (base64url of big-endian bytes). */
+    private static function decodeCompactId(string $enc): int
+    {
+        $b64 = strtr($enc, '-_', '+/');
+        $b64 = str_pad($b64, (int) (ceil(strlen($b64) / 4) * 4), '=', STR_PAD_RIGHT);
+        $id = 0;
+        foreach (str_split(base64_decode($b64)) as $ch) {
+            $id = ($id << 8) | ord($ch);
+        }
+
+        return $id;
     }
 
     /**
@@ -148,6 +176,13 @@ class UnifiedDigestSummaryTest extends TestCase
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
             'userSite' => 'https://example.com',
             'siteName' => 'Freegle',
+            // AMP-only state the unified blade references (production builds
+            // these in UnifiedDigest::buildAmp* / prepareAmpPosts).
+            'ampPostMeta' => $posts->mapWithKeys(fn ($p) => [
+                (int) $p['message']->id => ['t' => $p['itemName'], 'k' => '', 'e' => 0],
+            ])->toArray(),
+            'ampApiUrl' => 'https://api.example.com/amp',
+            'ampUserId' => 42,
         ];
     }
 

@@ -371,7 +371,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `paypal_download.php` | Fallback for PayPal IPN handler; uses deprecated PayPal NVP/SOAP SDK (PayPal-PHP-SDK). Script comment: "This is a fallback - donateipn catches them normally." Not in Docker crontab. If PayPal integration is still needed a modern SDK would be required. |
 | `sa_train` | SpamAssassin training - external |
 | `cron_checker_iznik.php` | Monitoring - external tool |
-| `discourse_checkusers.php` | Discourse integration - separate system |
+| `discourse_checkusers.php` | Migrated then **retired** (2026-06): the per-mod "NOT A MOD"/"not getting any mails" report had no actionable value — mods routinely stand down. |
 | `discourse_not_signed_up.php` | Discourse integration - separate system |
 | ~~`locations_pgsql`~~ | ~~PostgreSQL locations~~ — **Migrated: `locations:sync-pgsql`** |
 | `doogal` | External data import script |
