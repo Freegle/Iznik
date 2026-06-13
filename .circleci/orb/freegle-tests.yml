@@ -850,6 +850,41 @@ commands:
             echo ""
             echo "✅ All containers verified"
 
+            # === Verify the spatial (routing) container booted on the Bristol extract ===
+            # spatial builds its road graph from OSM_PBF_PATH (set executor-level to the
+            # committed /app/testdata/bristol.osm.pbf). If that env var doesn't reach
+            # docker-compose, spatial exits on the absent /data/uk-latest.osm.pbf. Catch
+            # it HERE with full diagnostics rather than 30+ min later at the routing gate
+            # (where SSH isn't available on the self-hosted runner to investigate live).
+            echo ""
+            echo "=== Verifying spatial (routing) container is serving on the Bristol extract ==="
+            SPATIAL="${COMPOSE_PROJECT_NAME:-freegle}-spatial"
+            spatial_ok=false
+            for i in $(seq 1 40); do
+              status=$(docker inspect --format='{{.State.Status}}' "$SPATIAL" 2>/dev/null || echo "missing")
+              if [ "$status" = "running" ] && docker exec "$SPATIAL" curl -sf http://localhost:8196/health >/dev/null 2>&1; then
+                spatial_ok=true
+                echo "✅ spatial serving /health after $((i*3))s:"
+                docker exec "$SPATIAL" curl -s http://localhost:8196/health 2>/dev/null; echo ""
+                break
+              fi
+              if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+                echo "spatial entered '$status' state early — capturing diagnostics."
+                break
+              fi
+              sleep 3
+            done
+            if [ "$spatial_ok" != "true" ]; then
+              echo "❌ spatial container did not come up serving /health — routing-go tests cannot run."
+              echo "--- docker inspect state ---"
+              docker inspect --format='Status={{.State.Status}} Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' "$SPATIAL" 2>&1 || true
+              echo "--- OSM_PBF_PATH / DEPRIVATION_CSV seen by the container ---"
+              docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' "$SPATIAL" 2>/dev/null | grep -E "OSM_PBF_PATH|DEPRIVATION_CSV" || echo "(those env vars are NOT set on the container — they did not reach docker-compose)"
+              echo "--- spatial logs (last 80) ---"
+              docker logs "$SPATIAL" --tail 80 2>&1 || true
+              exit 1
+            fi
+
   # === Removed Commands (monorepo migration) ===
   # clone-freegle-docker: Removed — no longer needed; monorepo checkout replaces submodule cloning
   # replace-submodule: Removed — subtrees are inline; no submodule swapping needed
