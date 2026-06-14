@@ -77,15 +77,15 @@
               v-if="seg.type === 'text'"
               v-model="seg.content"
               class="seg-text"
-              rows="1"
+              rows="3"
               max-rows="30"
             />
             <b-form-textarea
               v-else-if="seg.type === 'editthis'"
               v-model="seg.value"
               :class="['seg-editthis', { 'seg-todo': !segEdited(seg) }]"
-              rows="1"
-              max-rows="8"
+              rows="3"
+              max-rows="12"
               :placeholder="seg.content"
             />
             <span v-else-if="seg.type === 'optional'" class="seg-optional">
