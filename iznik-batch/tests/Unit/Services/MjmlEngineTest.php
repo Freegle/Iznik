@@ -122,4 +122,50 @@ MJML;
         $this->expectException(\RuntimeException::class);
         $this->mrml()->compile('<mjml><mj-body><mj-not-a-tag></mj-body></mjml>');
     }
+
+    /**
+     * mrml is a strict XML parser and XML 1.0 forbids the C0 control
+     * characters (only TAB/LF/CR are legal). Stray control chars in
+     * user-supplied content — a post description copy-pasted from elsewhere
+     * carrying e.g. a vertical tab (\x0B) or file separator (\x1C) — used to
+     * abort the ENTIRE digest compile with "unable to parse next template in
+     * root template", silently costing that recipient their digest. They must
+     * be stripped before compiling, never be fatal.
+     */
+    public function test_invalid_xml_control_chars_are_stripped_not_fatal(): void
+    {
+        $mjml = "<mjml><mj-body><mj-section><mj-column>"
+            . "<mj-text>It was a bird table\x0B could be so again. Nice\x1C and sturdy.</mj-text>"
+            . "</mj-column></mj-section></mj-body></mjml>";
+
+        // Must NOT throw (previously: RuntimeException "unable to parse next
+        // template in root template").
+        $html = $this->mrml()->compile($mjml);
+
+        // Surrounding content survives,
+        $this->assertStringContainsString('bird table', $html);
+        $this->assertStringContainsString('Nice', $html);
+        $this->assertStringContainsString('sturdy', $html);
+        // but the illegal control characters are gone.
+        $this->assertStringNotContainsString("\x0B", $html);
+        $this->assertStringNotContainsString("\x1C", $html);
+    }
+
+    /**
+     * The control-char guard must not over-reach: TAB/LF/CR are valid XML 1.0
+     * and legitimate user content, so they must survive compilation.
+     */
+    public function test_legal_whitespace_controls_are_preserved(): void
+    {
+        $mjml = "<mjml><mj-body><mj-section><mj-column>"
+            . "<mj-text>alpha\tbeta\ngamma</mj-text>"
+            . "</mj-column></mj-section></mj-body></mjml>";
+
+        $html = $this->mrml()->compile($mjml);
+
+        // Content is intact (the words are not run together by stripping).
+        $this->assertStringContainsString('alpha', $html);
+        $this->assertStringContainsString('beta', $html);
+        $this->assertStringContainsString('gamma', $html);
+    }
 }
