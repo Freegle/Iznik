@@ -51,6 +51,16 @@ class MjmlCompilerService
      */
     public function compile(string $mjml): string
     {
+        // mrml is a strict XML parser and XML 1.0 forbids the C0 control
+        // characters (only TAB/LF/CR are legal). User-supplied content — post
+        // descriptions, item/location names — occasionally carries stray
+        // control chars (e.g. \x0B, \x1C from copy-paste) that would otherwise
+        // abort the ENTIRE digest with "unable to parse next template in root
+        // template". Strip them defensively before compiling. Byte-wise is
+        // safe for UTF-8 (these byte values never occur inside a multi-byte
+        // sequence, which uses 0x80-0xFF).
+        $mjml = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $mjml);
+
         return $this->engine === 'node'
             ? $this->compileWithNode($mjml)
             : $this->compileWithMrml($mjml);
