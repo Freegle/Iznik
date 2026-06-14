@@ -500,8 +500,27 @@ export const useAuthStore = defineStore({
     },
     async savePushId() {
       const mobileStore = useMobileStore()
-      if (mobileStore.mobilePushId === null)
-        console.log('******************* mobileStore.mobilePushId===null')
+      let dbg = null
+      try {
+        dbg = useDebugStore()
+      } catch (e) {}
+      // Detailed instrumentation: we had iOS devices obtain an FCM token but no
+      // FCMIOS row ever appear server-side. Log every guard decision, the
+      // outgoing PATCH, and any thrown error (the save() call below was
+      // previously un-try/catch'd, so on the un-awaited registration-listener
+      // path a rejection was swallowed silently).
+      dbg?.info('savePushId called', {
+        userPresent: this.user !== null,
+        userId: this.user?.id ?? null,
+        mobilePushIdType: typeof mobileStore.mobilePushId,
+        mobilePushIdLen:
+          typeof mobileStore.mobilePushId === 'string'
+            ? mobileStore.mobilePushId.length
+            : 0,
+        isiOS: mobileStore.isiOS,
+        alreadyAccepted:
+          mobileStore.acceptedMobilePushId === mobileStore.mobilePushId,
+      })
       // Tell server our push notification id if logged in
       if (
         this.user !== null &&
@@ -518,10 +537,26 @@ export const useAuthStore = defineStore({
               },
             },
           }
-          await this.$api.session.save(params)
-          mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
-          console.log('savePushId: saved OK')
+          dbg?.info('savePushId: sending PATCH /session', {
+            type: params.notifications.push.type,
+            subLen: params.notifications.push.subscription.length,
+          })
+          try {
+            await this.$api.session.save(params)
+            mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
+            dbg?.info('savePushId: saved OK')
+            console.log('savePushId: saved OK')
+          } catch (e) {
+            dbg?.info('savePushId: save FAILED', {
+              error: e?.message ?? String(e),
+            })
+            console.log('savePushId: save FAILED', e)
+          }
+        } else {
+          dbg?.info('savePushId: skipped — token already accepted')
         }
+      } else {
+        dbg?.info('savePushId: skipped — guard failed (not logged in or no token)')
       }
     },
     // Remember that we've logged out
