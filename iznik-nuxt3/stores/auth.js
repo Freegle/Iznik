@@ -542,10 +542,15 @@ export const useAuthStore = defineStore({
             subLen: params.notifications.push.subscription.length,
           })
           try {
-            await this.$api.session.save(params)
+            const resp = await this.$api.session.save(params)
             mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
-            dbg?.info('savePushId: saved OK')
-            console.log('savePushId: saved OK')
+            // Log the actual server response so we can prove the PATCH reached
+            // our API (ret:0/Success comes only from PatchSession) vs a phantom
+            // 2xx from elsewhere.
+            dbg?.info('savePushId: saved OK', {
+              resp: typeof resp === 'object' ? JSON.stringify(resp).slice(0, 200) : String(resp),
+            })
+            console.log('savePushId: saved OK', resp)
           } catch (e) {
             dbg?.info('savePushId: save FAILED', {
               error: e?.message ?? String(e),
