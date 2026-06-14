@@ -3,6 +3,7 @@
     <!-- Main content -->
     <div class="app-content">
       <PhotoUploader
+        ref="photoUploader"
         v-model="attachments"
         type="Message"
         :recognise="attachments.length === 0"
@@ -25,16 +26,21 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from '#imports'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 
 const router = useRouter()
 const composeStore = useComposeStore()
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
+
+// Ref to the PhotoUploader so a shared image (Share -> Freegle) can be fed in.
+const photoUploader = ref(null)
 
 // Check if sticky ad is rendered
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
@@ -90,6 +96,23 @@ function onPhotoProcessed() {
 function goNext() {
   router.push('/give/mobile/details')
 }
+
+// If the user reached this page by sharing an image into Freegle from another
+// app, attach the shared photo(s) to this OFFER. The native layer populates
+// mobileStore.pendingSharedImages and routes us here (see stores/mobile.js).
+onMounted(async () => {
+  const shared = mobileStore.pendingSharedImages
+  if (!shared || shared.length === 0) return
+  // Clear first so a later resume/navigation doesn't re-add the same photos.
+  mobileStore.pendingSharedImages = []
+  for (const webPath of shared) {
+    try {
+      await photoUploader.value?.processPhoto(webPath)
+    } catch (e) {
+      console.log('Failed to attach shared image', e?.message)
+    }
+  }
+})
 </script>
 
 <style scoped lang="scss">

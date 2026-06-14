@@ -813,6 +813,11 @@ onBeforeUnmount(() => {
     uppy.value = null
   }
 })
+
+// Allow a parent (e.g. the give-flow photos page handling a shared image) to
+// push a photo in programmatically. processPhoto runs the same quality check +
+// upload path as the camera/gallery flows; webPath must be fetch()-able.
+defineExpose({ processPhoto })
 </script>
 
 <style scoped lang="scss">
