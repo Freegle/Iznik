@@ -521,42 +521,53 @@ export const useAuthStore = defineStore({
         alreadyAccepted:
           mobileStore.acceptedMobilePushId === mobileStore.mobilePushId,
       })
-      // Tell server our push notification id if logged in
+      // Tell server our push notification id if logged in.
+      //
+      // We deliberately do NOT suppress on acceptedMobilePushId any more. The old
+      // optimisation only sent the token to the server the first time it saw a
+      // given token, then never again. That left no way to recover if the row
+      // never persisted, or was later deleted server-side (e.g. a push send hit a
+      // transiently-invalid token and pruned the subscription): the client kept
+      // thinking it was registered and never re-asserted it. Re-sending on every
+      // launch/resume is a cheap idempotent upsert (INSERT ... ON DUPLICATE KEY
+      // UPDATE keyed on subscription) and makes registration self-healing — which
+      // is also the behaviour reRegisterPush-on-resume was added to provide.
       if (
         this.user !== null &&
         typeof mobileStore.mobilePushId === 'string' &&
         mobileStore.mobilePushId.length > 0
       ) {
-        if (mobileStore.acceptedMobilePushId !== mobileStore.mobilePushId) {
-          const params = {
-            notifications: {
-              push: {
-                type: mobileStore.isiOS ? 'FCMIOS' : 'FCMAndroid',
-                subscription: mobileStore.mobilePushId,
-                deviceuserinfo: mobileStore.deviceuserinfo,
-              },
+        const params = {
+          notifications: {
+            push: {
+              type: mobileStore.isiOS ? 'FCMIOS' : 'FCMAndroid',
+              subscription: mobileStore.mobilePushId,
+              deviceuserinfo: mobileStore.deviceuserinfo,
             },
-          }
-          dbg?.info('savePushId: sending PATCH /session', {
-            type: params.notifications.push.type,
-            subLen: params.notifications.push.subscription.length,
+          },
+        }
+        dbg?.info('savePushId: sending PATCH /session', {
+          type: params.notifications.push.type,
+          subLen: params.notifications.push.subscription.length,
+        })
+        try {
+          const resp = await this.$api.session.save(params)
+          mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
+          dbg?.info('savePushId: saved OK', {
+            resp:
+              typeof resp === 'object'
+                ? JSON.stringify(resp).slice(0, 200)
+                : String(resp),
           })
-          try {
-            await this.$api.session.save(params)
-            mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
-            dbg?.info('savePushId: saved OK')
-            console.log('savePushId: saved OK')
-          } catch (e) {
-            dbg?.info('savePushId: save FAILED', {
-              error: e?.message ?? String(e),
-            })
-            console.log('savePushId: save FAILED', e)
-          }
-        } else {
-          dbg?.info('savePushId: skipped — token already accepted')
+          console.log('savePushId: saved OK', resp)
+        } catch (e) {
+          dbg?.info('savePushId: save FAILED', {
+            error: e?.message ?? String(e),
+          })
+          console.log('savePushId: save FAILED', e)
         }
       } else {
-        dbg?.info('savePushId: skipped — guard failed (not logged in or no token)')
+        dbg?.info('savePushId: skipped — not logged in or no token')
       }
     },
     // Remember that we've logged out

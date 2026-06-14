@@ -1659,6 +1659,7 @@ func PatchSession(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
+
 	db := database.DBConn
 
 	// Handle email confirmation via validatekey. This is a standalone operation
@@ -1842,9 +1843,16 @@ func PatchSession(c *fiber.Ctx) error {
 			}
 			var pushSub PushSub
 			if err := json.Unmarshal(*req.Notifications.Push, &pushSub); err == nil && pushSub.Type != "" {
+				// subscription has a UNIQUE constraint and a push token (FCM/APNs)
+				// identifies a device install, not a user. When a device switches
+				// accounts the same token re-registers, so we MUST reassign userid
+				// on conflict — otherwise the row stays bound to whoever logged in
+				// first and the current user gets no push (and pushes for the old
+				// user are delivered to this device). Reassign userid/type/apptype
+				// to the currently-logged-in user.
 				db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
-					"ON DUPLICATE KEY UPDATE type = ?, apptype = ?",
-					myid, pushSub.Type, pushSub.Subscription, apptype, pushSub.Type, apptype)
+					"ON DUPLICATE KEY UPDATE userid = ?, type = ?, apptype = ?",
+					myid, pushSub.Type, pushSub.Subscription, apptype, myid, pushSub.Type, apptype)
 			}
 		}()
 	}
