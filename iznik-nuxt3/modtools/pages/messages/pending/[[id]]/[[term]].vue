@@ -16,7 +16,7 @@
           v-model="groupid"
           all
           modonly
-          :work="['pending', 'pendingother']"
+          :work="['pending', 'pendingother', 'spam']"
           remember="pending"
           :url-override="urlOverride"
         />
@@ -87,7 +87,7 @@ const {
 
 summarykey.value = 'modtoolsMessagesPendingSummary'
 collection.value = 'Pending' // Pending also gets PendingOther
-workType.value = ['pending', 'pendingother']
+workType.value = ['pending', 'pendingother', 'spam']
 
 const { me, myGroups } = useMe()
 

@@ -151,4 +151,61 @@ describe('useModMessages — pending list auto-refresh', () => {
     // No new work → should NOT trigger a re-fetch
     expect(mockFetchMessagesMT).not.toHaveBeenCalled()
   })
+
+  // Regression test for Discourse #9783 — badge/list mismatch when a message is
+  // moved to Spam by ContentCheck (global concern keyword with action='block').
+  // The left-nav red badge counts pending+spam, so work.spam increasing raises
+  // the badge. But workType=['pending','pendingother'] excludes spam from workdetail,
+  // so the watcher's JSON.stringify comparison sees no change and skips getMessages.
+  // Result: red badge with an empty pending list.
+  it('does not refresh when spam increases and workType excludes spam (documents the bug)', async () => {
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { workType, collection } = setupModMessages(true)
+    collection.value = 'Pending'
+    workType.value = ['pending', 'pendingother'] // buggy: excludes 'spam'
+
+    await nextTick()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    // A ContentCheck 'block' action moves the message to Spam collection.
+    mockWork.value = { pending: 0, pendingother: 0, spam: 1, total: 1 }
+
+    await nextTick()
+    await flushPromises()
+
+    // workdetail = {pending:0, pendingother:0, total:0} — unchanged because spam
+    // is not in workType → watcher skips → list not refreshed (the bug).
+    expect(mockFetchMessagesMT).not.toHaveBeenCalled()
+  })
+
+  // Fix for Discourse #9783: adding 'spam' to workType ensures workdetail.total
+  // increases when work.spam increases, so the watcher fires and getMessages
+  // refreshes the list (which already shows Spam-collection messages since PR #709).
+  it('calls getMessages when spam count increases and workType includes spam', async () => {
+    mockWork.value = { pending: 0, pendingother: 0, spam: 0, total: 0 }
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { workType, collection } = setupModMessages(true)
+    collection.value = 'Pending'
+    workType.value = ['pending', 'pendingother', 'spam'] // fixed
+
+    await nextTick()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    // A ContentCheck 'block' action moves the message to Spam collection.
+    mockWork.value = { pending: 0, pendingother: 0, spam: 1, total: 1 }
+
+    await nextTick()
+    await flushPromises()
+
+    // workdetail = {pending:0, pendingother:0, spam:1, total:1} — changed → watcher
+    // fires → getMessages called → list shows the Spam message.
+    expect(mockFetchMessagesMT).toHaveBeenCalled()
+  })
 })
