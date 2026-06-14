@@ -14,7 +14,7 @@ ENV DOCKER_API_VERSION=1.44
 COPY package*.json ./
 
 # Install dependencies (using npm install since we don't have package-lock.json yet)
-RUN npm install
+RUN npm install --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 # Copy source code
 COPY . .

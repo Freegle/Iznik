@@ -7,7 +7,7 @@ ENV IZNIK_API_V1=http://freegle-apiv1:80/api \
 
 COPY package*.json setup-hooks.* ./
 COPY patches/ ./patches/
-RUN npm install --legacy-peer-deps
+RUN npm install --legacy-peer-deps --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 COPY . .
 
