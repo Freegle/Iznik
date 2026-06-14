@@ -427,6 +427,18 @@ platform :ios do
                   File.read('../ios/App/App.xcodeproj/project.pbxproj').include?('NotificationServiceExtension')
     UI.message(nse_present ? "✅ NSE target wired into App.xcodeproj" : "ℹ️  NSE not wired — building app without the extension")
 
+    # --- Share Extension: ensure the Xcode target exists (idempotent, GATED) ---
+    # No-op unless ENABLE_SHARE_EXTENSION=true (see add_share_extension_target.rb).
+    # When the flag is off this changes nothing — the app builds + signs exactly
+    # as before — so it can never affect the live release until deliberately
+    # enabled (which also requires the App Group + profiles to exist; see header).
+    sh("bundle exec ruby fastlane/add_share_extension_target.rb || bundle exec ruby add_share_extension_target.rb || echo '⚠️  Share Extension wiring step did not run'")
+    share_ext_present = ENV['ENABLE_SHARE_EXTENSION'] == 'true' &&
+                        File.exist?('../ios/App/ShareExtension/ShareViewController.swift') &&
+                        File.exist?('../ios/App/App.xcodeproj/project.pbxproj') &&
+                        File.read('../ios/App/App.xcodeproj/project.pbxproj').include?('ShareExtension')
+    UI.message(share_ext_present ? "✅ Share Extension target wired into App.xcodeproj" : "ℹ️  Share Extension not wired (disabled or unavailable)")
+
     # Read pre-calculated version from workspace file (same as Android)
     # Version was already incremented by the increment-version job
     version_file = '../.new_version'
@@ -554,6 +566,35 @@ platform :ios do
       UI.success("✅ NSE signing configured (profile: #{nse_profile_name})")
     end
 
+    # --- Share Extension signing (only when the target is wired; GATED) ---
+    # Mirrors the NSE: the App ID + App Store distribution profile for the Share
+    # Extension are pre-created ONCE by hand in the Apple Developer portal (with
+    # the App Group capability). We download-only (readonly) here — produce()
+    # needs interactive 2FA and would hang CI. No-op unless share_ext_present.
+    share_ext_profile_name = nil
+    if share_ext_present
+      share_ext_bundle = "org.ilovefreegle.iphone.ShareExtension"
+      get_provisioning_profile(app_identifier: share_ext_bundle, adhoc: false, readonly: true)
+      share_ext_profile_name = lane_context[SharedValues::SIGH_NAME]
+      share_ext_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH] ||
+                               (lane_context[SharedValues::SIGH_PROFILE_PATHS] || []).first
+
+      update_project_provisioning(
+        xcodeproj: "ios/App/App.xcodeproj",
+        target_filter: "ShareExtension",
+        profile: share_ext_profile_path,
+        code_signing_identity: "iPhone Distribution"
+      )
+      update_code_signing_settings(
+        use_automatic_signing: false,
+        path: "ios/App/App.xcodeproj",
+        targets: ["ShareExtension"],
+        code_sign_identity: "iPhone Distribution",
+        bundle_identifier: share_ext_bundle
+      )
+      UI.success("✅ Share Extension signing configured (profile: #{share_ext_profile_name})")
+    end
+
     # The Freegle profile is installed from a file; read its Name for the export map.
     freegle_profile_file = ENV['IOS_PROVISIONING_PROFILE_PATH'] || 'ios_appstore.mobileprovision'
     freegle_profile_file = "../#{freegle_profile_file}" unless freegle_profile_file.start_with?('/')
@@ -564,9 +605,21 @@ platform :ios do
       freegle_profile_name = m && m[1]
     end
 
-    # Two-target manual export needs an explicit provisioningProfiles map; only enable it
-    # when everything resolved, otherwise fall back to today's exact single-target build.
-    do_nse_export = nse_present && nse_profile_name && freegle_profile_name
+    # Manual multi-target export needs an explicit provisioningProfiles map; only
+    # enable it when at least one extension is wired AND everything resolved,
+    # otherwise fall back to today's exact single-target build. When the Share
+    # Extension is disabled this composes to exactly the previous app(+NSE) map.
+    manual_profiles = {}
+    manual_profiles["org.ilovefreegle.iphone"] = freegle_profile_name if freegle_profile_name
+    if nse_present && nse_profile_name
+      manual_profiles["org.ilovefreegle.iphone.NotificationServiceExtension"] = nse_profile_name
+    end
+    if share_ext_present && share_ext_profile_name
+      manual_profiles["org.ilovefreegle.iphone.ShareExtension"] = share_ext_profile_name
+    end
+    needs_manual_export = freegle_profile_name &&
+                          ((nse_present && nse_profile_name) ||
+                           (share_ext_present && share_ext_profile_name))
 
     gym_opts = {
       scheme: "Freegle",
@@ -576,18 +629,15 @@ platform :ios do
       output_directory: "./build",
       skip_package_dependencies_resolution: true
     }
-    if do_nse_export
+    if needs_manual_export
       gym_opts[:export_options] = {
         method: "app-store",
         signingStyle: "manual",
-        provisioningProfiles: {
-          "org.ilovefreegle.iphone" => freegle_profile_name,
-          "org.ilovefreegle.iphone.NotificationServiceExtension" => nse_profile_name
-        }
+        provisioningProfiles: manual_profiles
       }
-      UI.success("📦 Exporting app + NSE (profiles: #{freegle_profile_name} / #{nse_profile_name})")
+      UI.success("📦 Exporting app + extensions (#{manual_profiles.keys.join(', ')})")
     else
-      UI.message("📦 Exporting app only (NSE export not enabled this build)")
+      UI.message("📦 Exporting app only (no extensions enabled this build)")
     end
 
     # Build the app

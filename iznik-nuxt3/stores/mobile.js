@@ -244,6 +244,13 @@ export const useMobileStore = defineStore({
       if (process.client) {
         App.addListener('appUrlOpen', async (event) => {
           console.log('appUrlOpen', event.url)
+          // "Share an image into Freegle" on iOS: the Share Extension opens
+          // freegleshare://shared?p=<path>... — queue the image(s) and route
+          // into the give flow (mirrors the Android FreegleShare bridge).
+          if (event.url && event.url.indexOf('freegleshare://') === 0) {
+            this.handleSharedUrl(event.url)
+            return
+          }
           const lookfor = 'ilovefreegle.org'
           const ilfpos = event.url.indexOf(lookfor)
           if (ilfpos !== -1) {
@@ -327,6 +334,29 @@ export const useMobileStore = defineStore({
         router.push('/give/mobile/photos')
       } catch (e) {
         console.log('checkSharedIntent failed', e?.message)
+      }
+    },
+
+    // iOS share-extension handoff: parse freegleshare://shared?p=<path>&p=<path>,
+    // convert each shared-container path to a URL the WebView can fetch(), queue
+    // it, and route into the give flow. Same destination as checkSharedIntent.
+    handleSharedUrl(url) {
+      try {
+        const qpos = url.indexOf('?')
+        if (qpos === -1) return
+        const paths = url
+          .substring(qpos + 1)
+          .split('&')
+          .filter((kv) => kv.startsWith('p='))
+          .map((kv) => decodeURIComponent(kv.substring(2)))
+          .filter(Boolean)
+        if (!paths.length) return
+        this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
+        console.log('Shared images received (iOS)', this.pendingSharedImages.length)
+        const router = useRouter()
+        router.push('/give/mobile/photos')
+      } catch (e) {
+        console.log('handleSharedUrl failed', e?.message)
       }
     },
 

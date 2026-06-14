@@ -32,6 +32,14 @@
 				<string>fb134980666550322</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.ilovefreegle.iphone.share</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>freegleshare</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
