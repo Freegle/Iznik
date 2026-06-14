@@ -304,14 +304,11 @@ func main() {
 		return c.JSON(fiber.Map{"results": results})
 	})
 
-	// Serve OpenAPI spec.
-	api.Get("/openapi.yaml", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "application/yaml")
-		return c.SendFile("/app/openapi.yaml")
+	// Swagger UI (Redoc) — mirrors the v2 Go API pattern.
+	api.Get("/swagger", func(c *fiber.Ctx) error {
+		return c.Redirect("/swagger/index.html", 302)
 	})
-
-	// Browsable Swagger UI at /swagger/ (like the v2 Go API).
-	registerSwaggerUI(api)
+	api.Static("/swagger", "./swagger", fiber.Static{Index: "index.html"})
 
 	// Admin API
 	admin := fiber.New(fiber.Config{DisableStartupMessage: true})

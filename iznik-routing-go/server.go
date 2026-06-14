@@ -276,8 +276,11 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/digest-simulator", handleDigestSimulator(g, spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
 
-	// Public OpenAPI spec + Swagger UI (no auth), like the v2 Go API's /swagger/.
-	registerDocs(app)
+	// Swagger UI (Redoc) — mirrors the v2 Go API pattern.
+	app.Get("/swagger", func(c *fiber.Ctx) error {
+		return c.Redirect("/swagger/index.html", 302)
+	})
+	app.Static("/swagger", "./swagger", fiber.Static{Index: "index.html"})
 	return app
 }
 
