@@ -49,6 +49,9 @@ export const useMobileStore = defineStore({
     route: false,
     apprequiredversion: false,
     appupdaterequired: false,
+    // URLs (Capacitor.convertFileSrc) of images shared into the app from another
+    // app, waiting to be attached to a new OFFER by the give-flow photos page.
+    pendingSharedImages: [],
   }),
   actions: {
     init(config) {
@@ -115,6 +118,7 @@ export const useMobileStore = defineStore({
       await this.getDeviceInfo(Device)
       this.fixWindowOpen(AppLauncher)
       this.initDeepLinks(App)
+      this.initShareIntent(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
@@ -285,6 +289,44 @@ export const useMobileStore = defineStore({
             }, 500)
           }
         })
+      }
+    },
+
+    // "Share an image into Freegle" (Android ACTION_SEND). The native layer
+    // (MainActivity) copies the shared image(s) to its cache and exposes them via
+    // the window.FreegleShare JS bridge. We pull them at startup (cold share) and
+    // on every resume (warm share), then route into the give flow with the photos
+    // pre-attached. No-op unless the native bridge is present.
+    initShareIntent(App) {
+      if (process.client) {
+        this.checkSharedIntent()
+        App.addListener('resume', () => {
+          this.checkSharedIntent()
+        })
+      }
+    },
+
+    checkSharedIntent() {
+      if (!process.client || !this.isApp) return
+      try {
+        const bridge = window.FreegleShare
+        if (!bridge || typeof bridge.consume !== 'function') return
+        const raw = bridge.consume()
+        if (!raw) return
+        let paths
+        try {
+          paths = JSON.parse(raw)
+        } catch (e) {
+          return
+        }
+        if (!Array.isArray(paths) || paths.length === 0) return
+        // Convert native cache-file paths into URLs the WebView can fetch().
+        this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
+        console.log('Shared images received', this.pendingSharedImages.length)
+        const router = useRouter()
+        router.push('/give/mobile/photos')
+      } catch (e) {
+        console.log('checkSharedIntent failed', e?.message)
       }
     },
 
