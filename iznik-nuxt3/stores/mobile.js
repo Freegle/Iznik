@@ -671,6 +671,15 @@ export const useMobileStore = defineStore({
           message: replyText,
         })
         console.log('handleReplyAction: message sent successfully')
+        // Confirm the reply with a success haptic (best-effort; in-app only).
+        try {
+          const { Haptics, NotificationType } = await import(
+            '@capacitor/haptics'
+          )
+          await Haptics.notification({ type: NotificationType.Success })
+        } catch (he) {
+          dbg()?.debug('haptic not available', he?.message)
+        }
       } catch (e) {
         console.error('handleReplyAction error:', e.message)
       }
