@@ -66,7 +66,7 @@
            and a keep/remove control per <optional>, filled in order so you never
            have to look back at the template. -->
       <div v-else class="mt-2 segmented-editor border rounded p-3">
-        <p class="text-muted small mb-2">
+        <p class="text-danger small mb-2">
           Fill in the highlighted boxes and choose Keep or Remove for any
           optional parts. You can edit any of the rest of the wording too. This
           is the message the member will receive.
