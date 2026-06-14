@@ -13,8 +13,6 @@
 @if(isset($jobAds) && $jobAds->isNotEmpty())
 @php
     $jobsList = collect($jobAds)->values();
-    $jobsHalf = (int) ceil($jobsList->count() / 2);
-    $jobsColumns = [$jobsList->take($jobsHalf), $jobsList->slice($jobsHalf)];
 @endphp
 <mj-section background-color="#F7F6EC" padding="8px 6px 2px 6px" border-top="1px solid #e9ecef">
     <mj-column>
@@ -23,14 +21,13 @@
         </mj-text>
     </mj-column>
 </mj-section>
-{{-- Two 50% columns: 2-up on desktop, stacked on mobile. Tight side padding
-     and padding="0" columns so the side margins are slim and the seam between
-     the two halves (when they stack to one column on mobile) stays small. --}}
+{{-- Single full-width column: one job per row. Was split into two 50% columns
+     (2-up on desktop) but that left a visible seam between the two halves when
+     they stacked on mobile, so it's a single column now — no seam. --}}
 <mj-section background-color="#F7F6EC" padding="2px 6px 0 6px">
-    @foreach($jobsColumns as $jobsCol)
-    <mj-column width="50%" vertical-align="top" padding="0">
+    <mj-column padding="0">
         <mj-table cellpadding="0" cellspacing="0" width="100%">
-            @foreach($jobsCol as $job)
+            @foreach($jobsList as $job)
             <tr>
                 @if($job->image_url ?? null)
                 <td style="width: 44px; padding: 2px 4px 2px 0; vertical-align: top;">
@@ -52,7 +49,6 @@
             @endforeach
         </mj-table>
     </mj-column>
-    @endforeach
 </mj-section>
 <mj-section background-color="#F7F6EC" padding="2px 10px 0 10px">
     <mj-column>
@@ -63,16 +59,21 @@
 </mj-section>
 {{-- Small buttons, tight padding above and below. --}}
 <mj-section background-color="#F7F6EC" padding="4px 16px 8px 16px">
-    <mj-column width="50%">
-        <mj-button href="{{ $jobsUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="13px" inner-padding="6px 14px" border-radius="5px" width="92%">
-            View more jobs
-        </mj-button>
-    </mj-column>
-    <mj-column width="50%">
-        <mj-button href="{{ $donateUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="13px" inner-padding="6px 14px" border-radius="5px" width="92%">
-            Donating helps too!
-        </mj-button>
-    </mj-column>
+    {{-- mj-group keeps the two buttons side-by-side on mobile too (mj-columns
+         otherwise stack < 480px), saving a line. Short labels so each fits its
+         half-width button on a narrow phone. --}}
+    <mj-group>
+        <mj-column width="50%">
+            <mj-button href="{{ $jobsUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="13px" inner-padding="6px 14px" border-radius="5px" width="92%">
+                More jobs
+            </mj-button>
+        </mj-column>
+        <mj-column width="50%">
+            <mj-button href="{{ $donateUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="13px" inner-padding="6px 14px" border-radius="5px" width="92%">
+                Donate
+            </mj-button>
+        </mj-column>
+    </mj-group>
 </mj-section>
 @else
 <mj-section background-color="#ffffff" padding="0 20px 10px">
