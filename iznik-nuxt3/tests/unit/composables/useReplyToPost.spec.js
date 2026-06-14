@@ -229,7 +229,28 @@ describe('useReplyToPost', () => {
       const chatButtonRef = { openChat }
       const { replyToPost } = useReplyToPost()
       await replyToPost(chatButtonRef)
-      expect(openChat).toHaveBeenCalledWith(null, 'Hello, is this still available?', 42)
+      // openInNewTab=false, noNavigate=false by default.
+      expect(openChat).toHaveBeenCalledWith(
+        null,
+        'Hello, is this still available?',
+        42,
+        false,
+        false
+      )
+    })
+
+    it('passes noNavigate through to openChat when staying on the page', async () => {
+      const openChat = vi.fn().mockResolvedValue(undefined)
+      const chatButtonRef = { openChat }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef, true)
+      expect(openChat).toHaveBeenCalledWith(
+        null,
+        'Hello, is this still available?',
+        42,
+        false,
+        true
+      )
     })
 
     it('returns the replyMsgId on success', async () => {

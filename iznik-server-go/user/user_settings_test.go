@@ -64,7 +64,9 @@ func TestApplySettingsDefaultsToJSON_DoesNotOverrideExistingEngagement(t *testin
 
 func TestApplySettingsDefaultsToJSON_AllBaseFieldsPresent_ReturnsSameBytes(t *testing.T) {
 	// When nothing needs to change, the original bytes come back unchanged.
-	input := json.RawMessage(`{"notificationmails":false,"engagement":false}`)
+	// "All base fields" now includes notifications.dailypostspush, otherwise the
+	// function would inject it and re-serialise (so the bytes would differ).
+	input := json.RawMessage(`{"notificationmails":false,"engagement":false,"notifications":{"dailypostspush":true}}`)
 	result := ApplySettingsDefaultsToJSON(input, utils.SYSTEMROLE_USER)
 	assert.Equal(t, input, result)
 }
@@ -107,8 +109,8 @@ func TestApplySettingsDefaultsToJSON_DoesNotOverrideExistingBackupModNotifs(t *t
 }
 
 func TestApplySettingsDefaultsToJSON_ModAllFieldsPresent_ReturnsSameBytes(t *testing.T) {
-	// When all four mod fields are present, changed==false → original bytes returned.
-	input := json.RawMessage(`{"notificationmails":true,"engagement":true,"modnotifs":4,"backupmodnotifs":12}`)
+	// When all mod fields AND notifications.dailypostspush are present, changed==false → original bytes returned.
+	input := json.RawMessage(`{"notificationmails":true,"engagement":true,"modnotifs":4,"backupmodnotifs":12,"notifications":{"dailypostspush":true}}`)
 	result := ApplySettingsDefaultsToJSON(input, utils.SYSTEMROLE_MODERATOR)
 	assert.Equal(t, input, result)
 }
@@ -134,6 +136,47 @@ func TestApplySettingsDefaultsToJSON_NullJSON(t *testing.T) {
 	// subsequent m["notificationmails"] = true write panics at runtime.
 	t.Skip("latent bug: JSON null produces a nil map, causing a write-to-nil-map panic")
 	ApplySettingsDefaultsToJSON(json.RawMessage(`null`), "")
+}
+
+// ---------------------------------------------------------------------------
+// notifications sub-object defaults (dailypostspush)
+// ---------------------------------------------------------------------------
+
+func TestApplySettingsDefaultsToJSON_DailyPostsPushDefaultsToTrue(t *testing.T) {
+	// When notifications.dailypostspush is absent it must be injected as true.
+	result := ApplySettingsDefaultsToJSON(json.RawMessage(`{}`), utils.SYSTEMROLE_USER)
+	m := unmarshalSettings(t, result)
+	notifs, ok := m["notifications"].(map[string]interface{})
+	require.True(t, ok, "notifications must be a map")
+	assert.Equal(t, true, notifs["dailypostspush"], "dailypostspush default should be true")
+}
+
+func TestApplySettingsDefaultsToJSON_DailyPostsPushPreservedWhenTrue(t *testing.T) {
+	// An explicit true must not be overwritten.
+	result := ApplySettingsDefaultsToJSON(json.RawMessage(`{"notifications":{"dailypostspush":true}}`), utils.SYSTEMROLE_USER)
+	m := unmarshalSettings(t, result)
+	notifs, ok := m["notifications"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, notifs["dailypostspush"])
+}
+
+func TestApplySettingsDefaultsToJSON_DailyPostsPushPreservedWhenFalse(t *testing.T) {
+	// An explicit false (user opt-out) must be left alone.
+	result := ApplySettingsDefaultsToJSON(json.RawMessage(`{"notifications":{"dailypostspush":false}}`), utils.SYSTEMROLE_USER)
+	m := unmarshalSettings(t, result)
+	notifs, ok := m["notifications"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, false, notifs["dailypostspush"])
+}
+
+func TestApplySettingsDefaultsToJSON_ExistingNotificationsKeysPreserved(t *testing.T) {
+	// Other keys inside notifications must survive the default injection.
+	result := ApplySettingsDefaultsToJSON(json.RawMessage(`{"notifications":{"email":false}}`), utils.SYSTEMROLE_USER)
+	m := unmarshalSettings(t, result)
+	notifs, ok := m["notifications"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, false, notifs["email"], "pre-existing notifications.email must be preserved")
+	assert.Equal(t, true, notifs["dailypostspush"], "dailypostspush default still injected")
 }
 
 // ---------------------------------------------------------------------------

@@ -38,6 +38,70 @@ class UnifiedDigestRetryTest extends TestCase
             [['msgid' => $message->id, 'groups' => [$group->id]]],
             $descriptor['posts']
         );
+        // Immediate digests have no "came and went" section.
+        $this->assertSame([], $descriptor['completed']);
+    }
+
+    public function test_descriptor_round_trips_daily_completed_posts(): void
+    {
+        // The daily digest's "came and went" (Taken/Received) section is handed
+        // to the constructor as completedPosts. A durable retry must round-trip
+        // those message ids, otherwise the rebuilt daily digest renders without
+        // the whole section — the gap this guards against.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group);
+
+        $livePost = $this->createTestMessage($poster, $group);
+        $completedMessage = $this->createTestMessage($poster, $group);
+
+        $digest = new UnifiedDigest(
+            $recipient,
+            collect([['message' => $livePost, 'postedToGroups' => [$group->id]]]),
+            UnifiedDigestService::MODE_DAILY,
+            collect(),
+            collect([$completedMessage])
+        );
+
+        // Descriptor captures the completed message id.
+        $this->assertSame([$completedMessage->id], $digest->mailDescriptor()['completed']);
+
+        // Rebuild re-fetches it and restores the completedPosts collection.
+        $rebuilt = UnifiedDigest::rebuildFromDescriptor($digest->mailDescriptor());
+        $this->assertInstanceOf(UnifiedDigest::class, $rebuilt);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'completedPosts');
+        $ref->setAccessible(true);
+        $rebuiltCompleted = $ref->getValue($rebuilt);
+
+        $this->assertCount(1, $rebuiltCompleted);
+        $this->assertSame($completedMessage->id, $rebuiltCompleted->first()->id);
+        // And it round-trips through a second descriptor.
+        $this->assertSame([$completedMessage->id], $rebuilt->mailDescriptor()['completed']);
+    }
+
+    public function test_rebuild_drops_completed_posts_that_have_since_been_deleted(): void
+    {
+        // A completed message deleted between send and retry must drop out of
+        // the rebuilt section rather than blow up the rebuild.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $livePost = $this->createTestMessage($this->createTestUser(), $group);
+
+        $rebuilt = UnifiedDigest::rebuildFromDescriptor([
+            'userid' => $user->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'posts' => [['msgid' => $livePost->id, 'groups' => [$group->id]]],
+            'completed' => [999999999],
+        ]);
+
+        $this->assertInstanceOf(UnifiedDigest::class, $rebuilt);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'completedPosts');
+        $ref->setAccessible(true);
+        $this->assertCount(0, $ref->getValue($rebuilt));
     }
 
     public function test_rebuild_from_descriptor_reconstructs_equivalent_digest(): void

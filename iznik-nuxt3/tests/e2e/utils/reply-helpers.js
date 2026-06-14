@@ -368,19 +368,22 @@ async function clickReplyButton(page) {
 /**
  * Helper: Click Send and wait for result
  */
-async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
+async function clickSendAndWait(
+  page,
+  { expectWelcomeModal = false, stayOnPage = false } = {}
+) {
   // Ensure Vue has hydrated so @click handlers are attached to SSR-rendered buttons
   await waitForNuxtHydration(page)
 
   const sendButton = page
-    .locator('.btn:has-text("Send your reply")')
+    .locator('.composer-send-btn')
     .filter({ visible: true })
   await sendButton.waitFor({
     state: 'visible',
     timeout: timeouts.ui.appearance,
   })
   await sendButton.click()
-  console.log('[Reply] Clicked Send your reply')
+  console.log('[Reply] Clicked Send reply')
 
   if (expectWelcomeModal) {
     // Wait for either welcome modal OR navigation to chats (modal might not appear in all flows)
@@ -405,6 +408,23 @@ async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
     } catch {
       console.log('[Reply] Welcome modal did not appear, continuing...')
     }
+  }
+
+  if (stayOnPage) {
+    // Replying from a list page (browse/explore) sends WITHOUT navigating: once
+    // the reply completes the pane is removed (detached, not merely hidden as it
+    // is while the login/welcome modal is up) and we stay on the list.
+    await page.locator('.reply-overlay').waitFor({
+      state: 'detached',
+      timeout: timeouts.navigation.default,
+    })
+    if (page.url().includes('/chats/')) {
+      throw new Error(
+        `Expected to stay on the list after sending, but navigated to ${page.url()}`
+      )
+    }
+    console.log('[Reply] Stayed on the list after sending (no chat navigation)')
+    return
   }
 
   // Wait for navigation to chats (the successful reply destination)
@@ -442,10 +462,30 @@ async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
   }
 }
 
+/**
+ * Helper: Wait for BreakpointFettler to set a specific breakpoint in the Pinia
+ * misc store. Call this after setViewportSize on mobile/tablet tests before
+ * clicking Reply, so expandReply() sees the correct breakpoint rather than null.
+ */
+async function waitForBreakpoint(page, expectedBreakpoint) {
+  await page.waitForFunction(
+    (bp) => {
+      const nuxt = document.querySelector('#__nuxt')
+      if (!nuxt?.__vue_app__) return false
+      const pinia = nuxt.__vue_app__.config?.globalProperties?.$pinia
+      if (!pinia?.state?.value?.misc) return false
+      return pinia.state.value.misc.breakpoint === bp
+    },
+    expectedBreakpoint,
+    { timeout: 10000 }
+  )
+}
+
 module.exports = {
   waitForAuthInLocalStorage,
   waitForAuthHydration,
   waitForNuxtHydration,
+  waitForBreakpoint,
   dismissLoginModalIfPresent,
   navigateToMessageViaBrowse,
   navigateToMessageViaExplore,

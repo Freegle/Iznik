@@ -12,6 +12,7 @@ export const useMiscStore = defineStore({
     breakpoint: null,
     isLandscape: false,
     fullscreenModalOpen: false,
+    replyOverlayOpen: false,
     vals: {},
     somethingWentWrong: false,
     errorDetails: null,
@@ -52,6 +53,9 @@ export const useMiscStore = defineStore({
     },
     setFullscreenModalOpen(val) {
       this.fullscreenModalOpen = val
+    },
+    setReplyOverlayOpen(val) {
+      this.replyOverlayOpen = val
     },
     setSource(val) {
       this.source = val

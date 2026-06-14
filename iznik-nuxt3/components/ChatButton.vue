@@ -99,11 +99,13 @@ const handleButtonClick = async (event) => {
   await openChat(null, null, null, openInNewTab)
 }
 
-const gotoChat = () => {
-  openChat(null, null, null)
-}
-
-const openChat = async (event, firstmessage, firstmsgid, openInNewTab) => {
+const openChat = async (
+  event,
+  firstmessage,
+  firstmsgid,
+  openInNewTab,
+  noNavigate = false
+) => {
   emit('click')
   console.log(
     'Open chat',
@@ -178,18 +180,24 @@ const openChat = async (event, firstmessage, firstmsgid, openInNewTab) => {
 
       // We may be called from within a profile modal. We want to skip the navigation guard which would otherwise
       // close the modal.
-      if (openInNewTab) {
-        window.open(`/chats/${chatid}`, '_blank')
-      } else {
-        router.push({
-          name: 'chats-id',
-          query: {
-            noguard: true,
-          },
-          params: {
-            id: chatid,
-          },
-        })
+      //
+      // noNavigate lets the reply flow create + send the chat without leaving
+      // the current page — used when replying from a list (browse/explore) so
+      // the user stays put and can reply to more items.
+      if (!noNavigate) {
+        if (openInNewTab) {
+          window.open(`/chats/${chatid}`, '_blank')
+        } else {
+          router.push({
+            name: 'chats-id',
+            query: {
+              noguard: true,
+            },
+            params: {
+              id: chatid,
+            },
+          })
+        }
       }
     } else {
       // chatid is null/undefined - log this as it means openChatToUser failed silently

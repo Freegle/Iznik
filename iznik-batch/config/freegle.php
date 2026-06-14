@@ -168,6 +168,14 @@ return [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
     ],
 
+    // Safety gate for the daily new-posts push notification (push:daily-posts).
+    //   ''   → send to NOBODY (the default). Safe to deploy — no pushes are
+    //          sent until an operator explicitly enables via env.
+    //   '*'  → all eligible users (FD-app token + opted-in).
+    //   'a@x.com,b@y' → comma-separated email list for pilot testing.
+    // An explicit --user= on the command bypasses this gate for manual sampling.
+    'posts_push_allowlist' => env('FREEGLE_POSTS_PUSH_ALLOWLIST', ''),
+
     'images' => [
         // Image domain for user profile images
         'domain' => env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),
@@ -398,6 +406,11 @@ return [
         // hour, so it catches night-time outages the daytime-only volume floor
         // would miss.
         'outgoing_stall_window_hours' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
+        // Alert (24/7) when at least this many SpoolMail durable-retry jobs have
+        // exhausted their 24h window and parked in failed_jobs. A non-zero
+        // count almost always means a render bug is dropping a whole class of
+        // email; deploy the fix then run `php artisan mail:retry-failed`.
+        'failed_mail_retry_threshold' => env('FREEGLE_EMAIL_HEALTH_FAILED_MAIL_RETRY_THRESHOLD', 1),
     ],
 
     /*

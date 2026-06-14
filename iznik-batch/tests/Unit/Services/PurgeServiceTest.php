@@ -333,6 +333,32 @@ class PurgeServiceTest extends TestCase
         $this->assertDatabaseHas('email_tracking', ['id' => $recentTracking->id]);
     }
 
+    public function test_purge_all_logs_purges_email_tracking_at_30_days(): void
+    {
+        // email_tracking is now purged by the daily log purge (purge:logs ->
+        // purgeAllLogs). Previously it was only in the unscheduled purge:all, so
+        // the table grew unbounded and the stats endpoints timed out. Retention
+        // is 30 days.
+        $old = EmailTracking::create([
+            'tracking_id' => EmailTracking::generateTrackingId(),
+            'email_type' => 'Test',
+            'recipient_email' => $this->uniqueEmail('alog-old'),
+            'sent_at' => now()->subDays(35),
+        ]);
+        $recent = EmailTracking::create([
+            'tracking_id' => EmailTracking::generateTrackingId(),
+            'email_type' => 'Test',
+            'recipient_email' => $this->uniqueEmail('alog-recent'),
+            'sent_at' => now()->subDays(25),
+        ]);
+
+        $results = $this->service->purgeAllLogs();
+
+        $this->assertArrayHasKey('email_tracking', $results);
+        $this->assertDatabaseMissing('email_tracking', ['id' => $old->id]);
+        $this->assertDatabaseHas('email_tracking', ['id' => $recent->id]);
+    }
+
     public function test_purge_html_body(): void
     {
         $user = $this->createTestUser();

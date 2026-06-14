@@ -13,9 +13,12 @@ const {
   loginViaHomepage,
   logoutIfLoggedIn,
   signUpViaHomepage,
-  waitForEnabledSignInButton,
 } = require('./utils/user')
-const { clickReplyButton, clickSendAndWait } = require('./utils/reply-helpers')
+const {
+  clickReplyButton,
+  clickSendAndWait,
+  waitForNuxtHydration,
+} = require('./utils/reply-helpers')
 
 test.describe('Reply Flow - Social Login Simulation', () => {
   /**
@@ -91,14 +94,30 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     await emailInput.fill(loginEmail)
     console.log('[Test] Filled email field')
 
-    // Now simulate what happens after social login completes:
-    // We'll use the navbar login to actually authenticate, then verify state survived
+    // Fill the collection time (required for OFFER) so Send can proceed. The
+    // reply pane is a full-screen overlay covering the navbar, so authentication
+    // happens through the forced-login modal that Send raises. Completing that
+    // login still bumps loginCount and re-renders the app while a reply is live,
+    // which is exactly the mechanism this test guards.
+    const composeCollect = page
+      .locator('textarea[name="collect"]')
+      .filter({ visible: true })
+    await composeCollect.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await composeCollect.fill('Can collect anytime')
 
-    // Click navbar sign-in button using the test class (same pattern as loginViaHomepage)
-    const signInButton = await waitForEnabledSignInButton(page)
-    expect(signInButton).toBeTruthy()
-    await signInButton.click()
-    console.log('[Test] Clicked navbar login (simulating social login popup)')
+    await waitForNuxtHydration(page)
+    const composeSend = page
+      .locator('.composer-send-btn')
+      .filter({ visible: true })
+    await composeSend.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await composeSend.click()
+    console.log('[Test] Clicked Send — forced login (loginCount bump) expected')
 
     // Wait for login modal to appear
     await page.locator('#loginModal').first().waitFor({
@@ -179,56 +198,43 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     })
     console.log('[Test] Login verified - sign-in button no longer visible')
 
-    // The app has now re-rendered due to login (loginCount key change)
-    // Verify the reply text survived the re-render
-
-    // May need to click reply button again if section collapsed after re-render
-    const restoredTextarea = page
-      .locator('textarea[name="reply"]')
-      .filter({ visible: true })
-    if (!(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))) {
-      console.log(
-        '[Test] Reply section collapsed after re-render, expanding...'
-      )
-      await clickReplyButton(page)
-    }
-
-    await restoredTextarea.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    const restoredText = await restoredTextarea.inputValue()
-
-    console.log(`[Test] Reply text after app re-render: "${restoredText}"`)
-    // Reply text persistence after login/re-render may not be preserved
-    // The key test is that the loginCount mechanism works and we can still complete the reply
-    if (restoredText) {
-      console.log('[Test] Reply state survived loginCount key bump!')
-    } else {
-      console.log('[Test] Reply text was cleared after re-render - refilling')
-      await restoredTextarea.fill('Reply after social login simulation')
-    }
-
-    // Also fill in collection time if it's visible and empty (required field)
-    const collectTextarea = page
-      .locator('textarea[name="collect"]')
-      .filter({ visible: true })
+    // After the forced login the state machine resumes and sends the reply we
+    // composed — proving the reply survived the loginCount re-render. Fall back
+    // to completing it manually only if it genuinely didn't resume.
     try {
-      await collectTextarea.waitFor({ state: 'visible', timeout: 3000 })
-      const collectText = await collectTextarea.inputValue()
-      if (!collectText) {
-        await collectTextarea.fill('Can collect anytime')
-        console.log('[Test] Filled collect time')
-      }
+      await page.waitForURL(/\/chats\//, {
+        timeout: timeouts.navigation.default,
+      })
+      console.log('[Test] Reply state survived loginCount key bump!')
     } catch {
-      // Collect field might not be visible (e.g., WANTED message)
+      console.log(
+        '[Test] State machine did not auto-resume, completing reply manually'
+      )
+      const restoredTextarea = page
+        .locator('textarea[name="reply"]')
+        .filter({ visible: true })
+      if (
+        !(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))
+      ) {
+        await clickReplyButton(page)
+      }
+      if (!(await restoredTextarea.inputValue().catch(() => ''))) {
+        await restoredTextarea.fill('Reply after social login simulation')
+      }
+      const collectAgain = page
+        .locator('textarea[name="collect"]')
+        .filter({ visible: true })
+      if (await collectAgain.isVisible({ timeout: 3000 }).catch(() => false)) {
+        if (!(await collectAgain.inputValue())) {
+          await collectAgain.fill('Can collect anytime')
+        }
+      }
+      await clickSendAndWait(page)
     }
 
-    // Now complete the reply to verify full flow works
-    await clickSendAndWait(page)
     expect(page.url()).toContain('/chats/')
     console.log(
-      '[Test] Social login simulation complete - reply sent successfully'
+      '[Test] Social login simulation complete — reply sent successfully'
     )
 
     // Cleanup

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   toRadian,
   getDistance,
@@ -6,6 +6,7 @@ import {
   calculateMapHeight,
   osmtile,
   loadLeaflet,
+  nearbyGroups,
 } from '~/composables/useMap'
 
 // ============================================================
@@ -63,13 +64,7 @@ describe('getDistance', () => {
   // Known distances with loose tolerances to be robust across floating-point
   it.each([
     // [label, origin, destination, expectedKm, toleranceKm]
-    [
-      'London → Paris ~340 km',
-      [51.5074, -0.1278],
-      [48.8566, 2.3522],
-      340,
-      20,
-    ],
+    ['London → Paris ~340 km', [51.5074, -0.1278], [48.8566, 2.3522], 340, 20],
     [
       'London → Manchester ~260 km',
       [51.5074, -0.1278],
@@ -177,9 +172,7 @@ describe('osmtile', () => {
       public: { OSM_TILE: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
     })
     try {
-      expect(osmtile()).toBe(
-        'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-      )
+      expect(osmtile()).toBe('https://tile.openstreetmap.org/{z}/{x}/{y}.png')
     } finally {
       globalThis.useRuntimeConfig = originalConfig
     }
@@ -282,6 +275,150 @@ describe('calculateMapHeight', () => {
       // fraction=1.5: 600/1.5 - 70 = 400 - 70 = 330
       expect(calculateMapHeight(1.5)).toBeCloseTo(330, 5)
     })
+  })
+})
+
+// ============================================================
+// nearbyGroups — find joinable communities near a point
+// ============================================================
+describe('nearbyGroups', () => {
+  // Reference search point: Manchester city centre
+  const MANCHESTER = { lat: 53.4808, lng: -2.2426 }
+
+  // A small fixture of groups at known locations
+  const manchesterGroup = {
+    id: 1,
+    namedisplay: 'Manchester Freegle',
+    nameshort: 'Manchester',
+    lat: 53.4808,
+    lng: -2.2426,
+    onmap: 1,
+    publish: 1,
+  }
+  const stockportGroup = {
+    id: 2,
+    namedisplay: 'Stockport Freegle',
+    nameshort: 'Stockport',
+    lat: 53.4106,
+    lng: -2.1575,
+    onmap: 1,
+    publish: 1,
+  }
+  const londonGroup = {
+    id: 3,
+    namedisplay: 'London Freegle',
+    nameshort: 'London',
+    lat: 51.5074,
+    lng: -0.1278,
+    onmap: 1,
+    publish: 1,
+  }
+
+  it('returns an empty array when the point is missing or incomplete', () => {
+    expect(nearbyGroups(null, [manchesterGroup])).toEqual([])
+    expect(nearbyGroups(undefined, [manchesterGroup])).toEqual([])
+    expect(nearbyGroups({ lat: 53.48 }, [manchesterGroup])).toEqual([])
+    expect(nearbyGroups({ lng: -2.24 }, [manchesterGroup])).toEqual([])
+  })
+
+  it('returns an empty array when there are no groups', () => {
+    expect(nearbyGroups(MANCHESTER, [])).toEqual([])
+    expect(nearbyGroups(MANCHESTER, null)).toEqual([])
+    expect(nearbyGroups(MANCHESTER, undefined)).toEqual([])
+  })
+
+  it('sorts groups by ascending distance from the point', () => {
+    const result = nearbyGroups(MANCHESTER, [
+      londonGroup,
+      manchesterGroup,
+      stockportGroup,
+    ])
+    expect(result.map((g) => g.id)).toEqual([1, 2, 3])
+  })
+
+  it('accepts groups passed as an object map (e.g. summaryList)', () => {
+    const result = nearbyGroups(MANCHESTER, {
+      3: londonGroup,
+      1: manchesterGroup,
+      2: stockportGroup,
+    })
+    expect(result.map((g) => g.id)).toEqual([1, 2, 3])
+  })
+
+  it('excludes groups that are not on the map', () => {
+    const hidden = { ...stockportGroup, id: 9, onmap: 0 }
+    const result = nearbyGroups(MANCHESTER, [manchesterGroup, hidden])
+    expect(result.map((g) => g.id)).toEqual([1])
+  })
+
+  it('excludes groups that are not published', () => {
+    const unpublished = { ...stockportGroup, id: 9, publish: 0 }
+    const result = nearbyGroups(MANCHESTER, [manchesterGroup, unpublished])
+    expect(result.map((g) => g.id)).toEqual([1])
+  })
+
+  it('excludes groups without coordinates', () => {
+    const noCoords = { ...stockportGroup, id: 9, lat: null, lng: null }
+    const result = nearbyGroups(MANCHESTER, [manchesterGroup, noCoords])
+    expect(result.map((g) => g.id)).toEqual([1])
+  })
+
+  it('respects showjoin: excludes groups further than showjoin miles away', () => {
+    // London is ~260 km (~160 miles) from Manchester. A showjoin of 20 miles
+    // means London will not offer to be joined from Manchester.
+    const londonLimited = { ...londonGroup, showjoin: 20 }
+    const result = nearbyGroups(MANCHESTER, [manchesterGroup, londonLimited])
+    expect(result.map((g) => g.id)).toEqual([1])
+  })
+
+  it('respects showjoin: includes groups within showjoin miles', () => {
+    // Stockport is ~8 km (~5 miles) from Manchester; showjoin 20 includes it.
+    const stockportLimited = { ...stockportGroup, showjoin: 20 }
+    const result = nearbyGroups(MANCHESTER, [stockportLimited])
+    expect(result.map((g) => g.id)).toEqual([2])
+  })
+
+  it('treats a falsy showjoin as no distance limit', () => {
+    const farNoLimit = { ...londonGroup, showjoin: 0 }
+    const result = nearbyGroups(MANCHESTER, [farNoLimit])
+    expect(result.map((g) => g.id)).toEqual([3])
+  })
+
+  it('uses the nearer of the main and secondary (alt) centres', () => {
+    // Main centre in London (far) but an alt centre near Manchester (close),
+    // with a tight showjoin that only the alt centre satisfies.
+    const twoCentres = {
+      ...londonGroup,
+      id: 9,
+      showjoin: 20,
+      altlat: 53.4808,
+      altlng: -2.2426,
+    }
+    const result = nearbyGroups(MANCHESTER, [twoCentres])
+    expect(result.map((g) => g.id)).toEqual([9])
+  })
+
+  it('excludes groups the user is already a member of', () => {
+    const result = nearbyGroups(
+      MANCHESTER,
+      [manchesterGroup, stockportGroup, londonGroup],
+      { isMember: (id) => id === 1 }
+    )
+    expect(result.map((g) => g.id)).toEqual([2, 3])
+  })
+
+  it('limits the number of results returned', () => {
+    const result = nearbyGroups(
+      MANCHESTER,
+      [londonGroup, manchesterGroup, stockportGroup],
+      { limit: 2 }
+    )
+    expect(result.map((g) => g.id)).toEqual([1, 2])
+  })
+
+  it('returns the group objects unchanged', () => {
+    const result = nearbyGroups(MANCHESTER, [manchesterGroup])
+    expect(result[0]).toBe(manchesterGroup)
   })
 })
 

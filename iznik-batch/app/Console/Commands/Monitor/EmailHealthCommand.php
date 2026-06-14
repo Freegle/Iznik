@@ -67,6 +67,25 @@ class EmailHealthCommand extends Command
 
         $this->info("Outgoing stall window: {$stallCount} emails in last {$stallWindowHours}h");
 
+        // --- Mail-retry dead-letter check (runs 24/7) ---
+        // SpoolMail jobs that exhausted their 24h retry window land in
+        // failed_jobs. A non-zero count almost always means a render bug is
+        // dropping a whole class of email (the failure this retry mechanism
+        // exists to surface), so alert at any hour — the fix needs deploying
+        // and `php artisan mail:retry-failed` re-drives the backlog.
+        $failedRetryThreshold = (int) config('freegle.email_health.failed_mail_retry_threshold', 1);
+
+        $failedRetryCount = DB::table('failed_jobs')
+            ->where('payload', 'like', '%SpoolMail%')
+            ->count();
+
+        if ($failedRetryCount >= $failedRetryThreshold) {
+            $failures[] = "MAIL RETRY DEAD-LETTER: {$failedRetryCount} mail job(s) parked in failed_jobs "
+                . '(deploy the render fix, then run `php artisan mail:retry-failed`)';
+        }
+
+        $this->info("Mail-retry dead-letter: {$failedRetryCount} failed SpoolMail job(s)");
+
         if ($isDaytime) {
             // --- Incoming email check (daytime only) ---
             $incomingWindowHours = (int) config('freegle.email_health.incoming_window_hours', 2);
