@@ -1659,20 +1659,6 @@ func PatchSession(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-	// TEMP DEBUG (user-gated): trace iOS FCMIOS push registration. iOS sends the
-	// PATCH and the client logs "saved OK", but no FCMIOS row appears. Log what
-	// the server actually received so we can see whether the body/push arrived.
-	if myid == 35909200 {
-		body := c.Body()
-		if len(body) > 500 {
-			body = body[:500]
-		}
-		stdlog.Printf("DBGPUSH [%d]: method=%s ctype=%q bodyLen=%d notif=%v push=%v body=%q",
-			myid, c.Method(), c.Get("Content-Type"), len(c.Body()),
-			req.Notifications != nil,
-			req.Notifications != nil && req.Notifications.Push != nil,
-			string(body))
-	}
 
 	db := database.DBConn
 
@@ -1856,18 +1842,17 @@ func PatchSession(c *fiber.Ctx) error {
 				Subscription string `json:"subscription"`
 			}
 			var pushSub PushSub
-			uerr := json.Unmarshal(*req.Notifications.Push, &pushSub)
-			if myid == 35909200 {
-				stdlog.Printf("DBGPUSH [%d]: unmarshalErr=%v type=%q subLen=%d apptype=%s",
-					myid, uerr, pushSub.Type, len(pushSub.Subscription), apptype)
-			}
-			if uerr == nil && pushSub.Type != "" {
-				res := db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
-					"ON DUPLICATE KEY UPDATE type = ?, apptype = ?",
-					myid, pushSub.Type, pushSub.Subscription, apptype, pushSub.Type, apptype)
-				if myid == 35909200 {
-					stdlog.Printf("DBGPUSH [%d]: insert rows=%d err=%v", myid, res.RowsAffected, res.Error)
-				}
+			if err := json.Unmarshal(*req.Notifications.Push, &pushSub); err == nil && pushSub.Type != "" {
+				// subscription has a UNIQUE constraint and a push token (FCM/APNs)
+				// identifies a device install, not a user. When a device switches
+				// accounts the same token re-registers, so we MUST reassign userid
+				// on conflict — otherwise the row stays bound to whoever logged in
+				// first and the current user gets no push (and pushes for the old
+				// user are delivered to this device). Reassign userid/type/apptype
+				// to the currently-logged-in user.
+				db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
+					"ON DUPLICATE KEY UPDATE userid = ?, type = ?, apptype = ?",
+					myid, pushSub.Type, pushSub.Subscription, apptype, myid, pushSub.Type, apptype)
 			}
 		}()
 	}

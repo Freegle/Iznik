@@ -3494,6 +3494,49 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
 	})
+
+	t.Run("ON DUPLICATE KEY UPDATE reassigns userid when a device switches accounts", func(t *testing.T) {
+		// A push token (FCM/APNs) identifies a device install, not a user. The
+		// subscription column is UNIQUE, so when a device switches accounts the
+		// same token re-registers and must move to the new user — otherwise the
+		// new user gets no push and pushes for the old user hit this device.
+		prefix := uniquePrefix("push_reassign")
+		token_val := fmt.Sprintf("fcm-token-reassign-%s", prefix)
+		body, _ := json.Marshal(map[string]interface{}{
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMIOS",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		// User A registers the device token first.
+		userA := CreateTestUser(t, prefix+"a", "User")
+		_, tokenA := CreateTestSession(t, userA)
+		reqA := httptest.NewRequest("PATCH", "/api/session?jwt="+tokenA, bytes.NewReader(body))
+		reqA.Header.Set("Content-Type", "application/json")
+		getApp().Test(reqA)
+
+		// User B logs in on the SAME device (same token) and registers.
+		userB := CreateTestUser(t, prefix+"b", "User")
+		_, tokenB := CreateTestSession(t, userB)
+		reqB := httptest.NewRequest("PATCH", "/api/session?jwt="+tokenB, bytes.NewReader(body))
+		reqB.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(reqB)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		// The token row must now belong to B (the current user), not A.
+		var owner uint64
+		db.Raw("SELECT userid FROM users_push_notifications WHERE subscription = ?", token_val).Scan(&owner)
+		assert.Equal(t, userB, owner, "device token must reassign to the current user")
+
+		var countA int64
+		db.Raw("SELECT COUNT(*) FROM users_push_notifications WHERE userid = ? AND subscription = ?", userA, token_val).Scan(&countA)
+		assert.Equal(t, int64(0), countA, "previous owner must lose the reassigned token")
+
+		db.Exec("DELETE FROM users_push_notifications WHERE subscription = ?", token_val)
+	})
 }
 
 // TestTopicActiveWithin exercises the pure predicate used to filter Discourse
