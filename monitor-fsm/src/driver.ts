@@ -44,6 +44,7 @@ import {
 import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
+import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
 import { putStatusPost } from './db/discourse-status.js'
@@ -215,7 +216,13 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
           failed.push({ context: name, state, url })
         }
       }
-      if (failed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+      if (failed.length > 0) {
+        // A PR red ONLY on Coveralls coverage-delta checks (tests pass) is not a
+        // hard CI failure — the coverage booster handles it. Don't force the
+        // instance back to CHECK_CI for coverage jitter.
+        const { realFailed } = partitionFailedChecks(failed)
+        if (realFailed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+      }
     }
     return { redPRs }
   } catch (err: any) {

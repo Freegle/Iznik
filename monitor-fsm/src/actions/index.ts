@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
 import { DISCOURSE_BASE } from '../discourse.js'
+import { partitionFailedChecks } from '../coverage-checks.js'
 import {
   getDb,
   getTopicCursor,
@@ -1499,7 +1500,7 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_my_open_pr_ci',
-    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
+    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. A PR whose ONLY failing checks are Coveralls coverage-delta checks (tests green, just a sub-noise coverage dip) is NOT counted as red — it is returned in coverageJitterPRs so the coverage booster can add genuine coverage to its branch rather than the fix-CI path thrashing on noise. Returns {redPRs, pendingPRs, behindPRs, coverageJitterPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
     handler: async () => {
       const listRes = await sh('gh', [
         'pr', 'list',
@@ -1515,6 +1516,11 @@ print(urllib.request.urlopen(req).read().decode())
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
       const behindPRs: Array<{ number: number; title: string; url: string }> = []
+      // PRs whose ONLY failing checks are Coveralls coverage-delta checks: tests
+      // pass, but a suite's global coverage dipped below base (often sub-0.1%
+      // noise). These are NOT red CI to fix — they're a signal to add genuine
+      // coverage to that PR's branch until the suite clears the noise floor.
+      const coverageJitterPRs: Array<{ number: number; title: string; url: string; branch: string; coverageChecks: Array<{ context: string; state: string; url: string }> }> = []
 
       for (const pr of prs) {
         // A BEHIND branch has green CI on its current HEAD — that's good enough.
@@ -1554,8 +1560,21 @@ print(urllib.request.urlopen(req).read().decode())
             pending.push({ context: name, state, url })
           }
         }
-        if (failed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
-        else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
+        if (failed.length > 0) {
+          const { realFailed, coverageFailed } = partitionFailedChecks(failed)
+          if (realFailed.length > 0) {
+            // Genuine failure (and possibly coverage too) — fix the CI.
+            redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+          } else {
+            // Coverage-jitter only: tests are green. Keep it OUT of redPRs so the
+            // fix-CI path doesn't thrash/exhaust on noise; the coverage booster
+            // (WRITE_COVERAGE) adds genuine coverage to this branch instead.
+            coverageJitterPRs.push({ number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, coverageChecks: coverageFailed })
+            out(`check_my_open_pr_ci: PR #${pr.number} red ONLY on coverage (${coverageFailed.map(c => c.context).join(', ')}) — coverage-jitter, will boost coverage not "fix CI"`)
+          }
+        } else if (pending.length > 0) {
+          pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
+        }
       }
 
       // allGreen: no red PRs and no actively pending CI. BEHIND PRs with green CI
@@ -1639,7 +1658,7 @@ print(urllib.request.urlopen(req).read().decode())
         }
       }
 
-      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
+      return { redPRs, pendingPRs, behindPRs, coverageJitterPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
     },
   },
 
@@ -2329,13 +2348,17 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       }
 
       const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
+      const coverageJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
       let target: string
       if (redCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
       else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
-      else target = 'WRITE_COVERAGE'
-      return { count: prCount, redCount, pendingCount, dirtyPRs, verify, red, _transition: target }
+      else target = 'WRITE_COVERAGE'  // includes the coverage-jitter-boost path (see WRITE_COVERAGE STEP 0)
+      if (coverageJitterPRs.length > 0) {
+        out(`coverage_gate_decide: ${coverageJitterPRs.length} coverage-jitter PR(s) [${coverageJitterPRs.map((p: any) => '#' + p.number).join(', ')}] — booster will add genuine coverage to clear the noise floor`)
+      }
+      return { count: prCount, redCount, pendingCount, dirtyPRs, coverageJitterPRs, verify, red, _transition: target }
     },
   },
 

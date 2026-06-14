@@ -319,6 +319,28 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'job_ad_' . $index,
                 'job_click'
             );
+
+            // Intelligent truncation, shared by the MJML + AMP templates so the
+            // narrow 2-column rows clamp to ~2 lines. The job title can be long
+            // and already carry its own location ("Pricing Manager - Halifax;
+            // Home Based; Reading"); appending $job->location in brackets on top
+            // can run to 3+ lines. Budget the combined "title (location)" to
+            // ~JOB_TEXT_MAX chars, prioritising the title: a title that alone
+            // exceeds the budget is truncated and the location dropped;
+            // otherwise the location fills whatever budget remains.
+            $jobMax = 48;
+            $title = trim((string) $job->title);
+            if (mb_strlen($title) > $jobMax) {
+                $job->display_title = \Illuminate\Support\Str::limit($title, $jobMax, '…');
+                $job->display_location = null;
+            } else {
+                $job->display_title = $title;
+                $loc = trim((string) ($job->location ?? ''));
+                $remaining = $jobMax - mb_strlen($title) - 3; // room for " ()"
+                $job->display_location = ($loc !== '' && $remaining >= 6)
+                    ? \Illuminate\Support\Str::limit($loc, $remaining, '…')
+                    : null;
+            }
         }
         $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
         $donateUrl = $this->trackedUrl(config('freegle.donate.url', 'https://freegle.in/paypal1510'), 'donate', 'donate');
@@ -430,6 +452,19 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         if ($this->isAmpEnabled()) {
             $ampPosts = $this->prepareAmpPosts();
 
+            // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to
+            // 200,000 bytes; a large daily digest's cards push it over and Gmail
+            // rejects the WHOLE AMP. Cap the cards here (the summary and the
+            // <amp-state> map are derived from $ampPosts too, so capping once
+            // shrinks all three) and surface an "and N more — browse all" link.
+            // The HTML and text parts still carry EVERY post; this cap is AMP
+            // only. applyAmpToMessage()'s 199KB guard remains the final backstop.
+            $ampCap = 65;
+            $ampMorePosts = max(0, $ampPosts->count() - $ampCap);
+            if ($ampMorePosts > 0) {
+                $ampPosts = $ampPosts->take($ampCap)->values();
+            }
+
             // Build the shared per-post metadata map for the AMP template.
             // Storing {title, token, expiry} once per message in an
             // <amp-state> at the top of the body — instead of inlining the
@@ -448,6 +483,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $this->renderAmpTemplate('emails.amp.digest.unified', [
                 'user' => $this->user,
                 'posts' => $ampPosts,
+                'ampMorePosts' => $ampMorePosts,
                 'completedPosts' => $this->preparedCompletedPosts,
                 'postCount' => $this->posts->count(),
                 'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'amp_settings', 'settings'),
