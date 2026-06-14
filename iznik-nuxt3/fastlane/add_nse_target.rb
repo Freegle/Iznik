@@ -99,9 +99,14 @@ else
 end
 
 # Ensure the source file is in a group and in the NSE target's compile phase (idempotent).
-group = project.main_group.find_subpath("App/#{EXT_NAME}", true)
+# The group path is relative to SOURCE_ROOT (the .xcodeproj's dir = ios/App), and the
+# NSE source lives at ios/App/NotificationServiceExtension/ (nse_dir above). The path must
+# therefore be EXT_NAME alone — NOT "App/#{EXT_NAME}", which resolved to
+# ios/App/App/NotificationServiceExtension/ and made the archive fail with
+# "Build input file cannot be found: .../App/NotificationServiceExtension/NotificationService.swift".
+group = project.main_group.find_subpath(EXT_NAME, true)
 group.set_source_tree('SOURCE_ROOT')
-group.set_path("App/#{EXT_NAME}")
+group.set_path(EXT_NAME)
 
 swift_name = 'NotificationService.swift'
 swift_ref  = group.files.find { |f| f.display_name == swift_name } ||
