@@ -1659,6 +1659,21 @@ func PatchSession(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
+	// TEMP DEBUG (user-gated): trace iOS FCMIOS push registration. iOS sends the
+	// PATCH and the client logs "saved OK", but no FCMIOS row appears. Log what
+	// the server actually received so we can see whether the body/push arrived.
+	if myid == 35909200 {
+		body := c.Body()
+		if len(body) > 500 {
+			body = body[:500]
+		}
+		stdlog.Printf("DBGPUSH [%d]: method=%s ctype=%q bodyLen=%d notif=%v push=%v body=%q",
+			myid, c.Method(), c.Get("Content-Type"), len(c.Body()),
+			req.Notifications != nil,
+			req.Notifications != nil && req.Notifications.Push != nil,
+			string(body))
+	}
+
 	db := database.DBConn
 
 	// Handle email confirmation via validatekey. This is a standalone operation
@@ -1841,10 +1856,18 @@ func PatchSession(c *fiber.Ctx) error {
 				Subscription string `json:"subscription"`
 			}
 			var pushSub PushSub
-			if err := json.Unmarshal(*req.Notifications.Push, &pushSub); err == nil && pushSub.Type != "" {
-				db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
+			uerr := json.Unmarshal(*req.Notifications.Push, &pushSub)
+			if myid == 35909200 {
+				stdlog.Printf("DBGPUSH [%d]: unmarshalErr=%v type=%q subLen=%d apptype=%s",
+					myid, uerr, pushSub.Type, len(pushSub.Subscription), apptype)
+			}
+			if uerr == nil && pushSub.Type != "" {
+				res := db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
 					"ON DUPLICATE KEY UPDATE type = ?, apptype = ?",
 					myid, pushSub.Type, pushSub.Subscription, apptype, pushSub.Type, apptype)
+				if myid == 35909200 {
+					stdlog.Printf("DBGPUSH [%d]: insert rows=%d err=%v", myid, res.RowsAffected, res.Error)
+				}
 			}
 		}()
 	}
