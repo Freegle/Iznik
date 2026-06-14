@@ -118,5 +118,38 @@
 	<string>To save Freegle handover appointments to your calendar</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>To save Freegle handover appointments to your calendar</string>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.ilovefreegle.shortcut.give</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Give</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Give something away</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAdd</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.ilovefreegle.shortcut.find</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Ask</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Ask for something</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeSearch</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.ilovefreegle.shortcut.chats</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Chats</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>My chats</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeMessage</string>
+		</dict>
+	</array>
 </dict>
 </plist>
