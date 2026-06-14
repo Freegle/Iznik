@@ -19,8 +19,8 @@ class ReengageMailRenderTest extends TestCase
     {
         $html = view('emails.mjml.reengage.nearby', $this->data('nearby'))->render();
 
-        $this->assertStringContainsString('Edinburgh', $html);          // area name
         $this->assertStringContainsString('47', $html);                 // nearby count
+        $this->assertStringContainsString('near you', $html);           // generic, no place name
         $this->assertStringContainsString("See what's near you", $html); // primary CTA
         $this->assertStringContainsString('Dining chairs', $html);       // a nearby card
         $this->assertStringContainsString('alex@example.com', $html);     // footer recipient line
@@ -77,8 +77,6 @@ class ReengageMailRenderTest extends TestCase
             'offers' => [],
             'offerCount' => 0,
             'hasLocation' => false,
-            'areaName' => null,
-            'areaLabel' => 'your area',
         ]);
 
         $html = view('emails.mjml.reengage.nearby', $data)->render();

@@ -4,14 +4,14 @@
   you" guilt for community/charity win-back). One clear primary CTA.
 --}}
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => $offerCount > 0 ? "$offerCount free items offered near " . $areaLabel . " this week" : 'See what neighbours are giving away near you'])
+  @include('emails.mjml.partials.head', ['preview' => $offerCount > 0 ? "$offerCount free items offered near you this week" : 'See what neighbours are giving away near you'])
   <mj-body background-color="#f4f4f4">
 
     {{-- Header band with logo --}}
     <mj-section mj-class="bg-success" padding="22px 0">
       <mj-column width="68%" vertical-align="middle">
         <mj-text font-size="22px" font-weight="bold" color="#ffffff" padding="0 25px">
-          Still freegling near {{ $areaLabel }}? 👋
+          Still freegling? 👋
         </mj-text>
       </mj-column>
       <mj-column width="32%" vertical-align="middle">
@@ -27,7 +27,7 @@
         </mj-text>
         @if($hasLocation && $offerCount > 0)
         <mj-text font-size="16px" color="#333333" padding="0 25px" line-height="1.5">
-          It's been a little while! Your neighbours have been busy — <strong>{{ number_format($offerCount) }} free {{ \Illuminate\Support\Str::plural('item', $offerCount) }}</strong> have been offered near {{ $areaLabel }} in the last week alone. Here are a few that are up for grabs right now:
+          It's been a little while! Your neighbours have been busy — <strong>{{ number_format($offerCount) }} free {{ \Illuminate\Support\Str::plural('item', $offerCount) }}</strong> have been offered near you in the last week alone. Here are a few that are up for grabs right now:
         </mj-text>
         @else
         <mj-text font-size="16px" color="#333333" padding="0 25px" line-height="1.5">

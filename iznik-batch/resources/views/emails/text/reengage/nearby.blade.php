@@ -2,7 +2,7 @@ Hi {{ $name }},
 
 It's been a little while!
 @if($hasLocation && $offerCount > 0)
-Your neighbours have been busy — {{ number_format($offerCount) }} free {{ \Illuminate\Support\Str::plural('item', $offerCount) }} have been offered near {{ $areaLabel }} in the last week alone.
+Your neighbours have been busy — {{ number_format($offerCount) }} free {{ \Illuminate\Support\Str::plural('item', $offerCount) }} have been offered near you in the last week alone.
 @else
 People near you are still giving away good stuff every day.
 @endif

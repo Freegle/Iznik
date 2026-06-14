@@ -229,16 +229,13 @@ class ReengageService
      */
     public function subjectFor(int $stage, array $c): string
     {
-        $area = $c['areaName'] ?? null;
         $count = (int) ($c['offerCount'] ?? 0);
 
         return match ($stage) {
-            1 => $count > 0 && $area
-                ? number_format($count) . " free things near {$area} this week"
-                : ($area ? "See what's free near {$area}" : "See what's being given away near you"),
-            2 => $area
-                ? "Your neighbours near {$area} have been freegling"
-                : "See who's been freegling near you",
+            1 => $count > 0
+                ? number_format($count) . ' free things near you this week'
+                : "See what's being given away near you",
+            2 => "See who's been freegling near you",
             3 => 'Shall we stay in touch?',
             default => 'We miss you on Freegle',
         };

@@ -6,7 +6,7 @@
   items-only / generic version when faces or photos aren't available.
 --}}
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'See who has been freegling near ' . $areaLabel])
+  @include('emails.mjml.partials.head', ['preview' => 'See who has been freegling near you'])
   <mj-body background-color="#f4f4f4">
 
     {{-- Header band with logo --}}
@@ -28,7 +28,7 @@
           Hi {{ $name }},
         </mj-text>
         <mj-text font-size="16px" color="#333333" padding="0 25px" line-height="1.5">
-          While you've been away, real people near {{ $areaLabel }} have been giving and getting. Here are a few of your neighbours and some of what they've shared:
+          While you've been away, real people near you have been giving and getting. Here are a few of your neighbours and some of what they've shared:
         </mj-text>
       </mj-column>
     </mj-section>
@@ -62,7 +62,7 @@
       <mj-column>
         @php $shownNames = array_map(fn ($f) => $f['name'], array_slice($faces, 0, 3)); @endphp
         <mj-text font-size="16px" color="#333333" align="center" padding="6px 25px" line-height="1.5">
-          <strong>{{ implode(', ', $shownNames) }}</strong> and lots of other neighbours near {{ $areaLabel }} have been freegling this month.
+          <strong>{{ implode(', ', $shownNames) }}</strong> and lots of other neighbours near you have been freegling this month.
         </mj-text>
       </mj-column>
     </mj-section>

@@ -83,12 +83,14 @@ touch is deliberately a soft, value-led "what's near you" (low annoyance risk),
 and the trigger is env-tunable. Refining to an **email-engagement** signal
 (non-opens/clicks of recent digests) is the recommended pre-ramp improvement.
 
-**Localisation.** Lat/lng waterfall (`settings.mylocation` → `lastlocation`);
-the place label prefers the user's picked location, then their **Freegle group's
-town** (curated/recognizable — the raw `lastlocation` name is often a road or
-postcode fragment like "WV3"), then a guarded location name, else "your area";
-nearby OFFERs (item photos) via
-the existing `NearbyOffersService`; the stage-2 collage uses recent nearby
+**Localisation.** The localisation is the *content*, not a place name. We
+deliberately do **not** print a derived place label ("near Edinburgh") — the
+user's stored location/group is too unreliable for that (road/postcode
+fragments, multi-group ambiguity), so confidently naming the wrong town reads
+worse than saying nothing. Copy stays generic ("near you"). What's genuinely
+local is the data: nearby OFFERs (item photos) via the existing
+`NearbyOffersService`, fetched by the `settings.mylocation` → `lastlocation`
+lat/lng waterfall; the stage-2 collage uses recent nearby
 posters who have uploaded an avatar (first name + profile photo — the same
 public wall data shown in-app). Everything degrades gracefully — no location, no
 avatars, or no photos still yields a sensible email.
@@ -133,7 +135,7 @@ Tunables: `FREEGLE_REENGAGE_TRIGGER_DAYS` (30), `_STAGE_GAP_DAYS` (45),
 |---|---|---|
 | ![Stage 1 — nearby](reengage-screenshots/stage1-nearby.png) | ![Stage 2 — impact](reengage-screenshots/stage2-impact.png) | ![Stage 3 — preferences](reengage-screenshots/stage3-preferences.png) |
 
-(Sample data shown — area name, counts and items are illustrative.)
+(Sample data shown — counts, avatars and items are illustrative.)
 
 ## Rollout
 

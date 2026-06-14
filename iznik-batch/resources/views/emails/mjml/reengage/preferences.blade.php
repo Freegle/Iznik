@@ -65,7 +65,7 @@
     <mj-section mj-class="bg-green-light" padding="16px 20px" border-radius="10px">
       <mj-column>
         <mj-text font-size="14px" color="#333333" align="center" line-height="1.5">
-          Just so you know — <strong>{{ number_format($offerCount) }}</strong> free {{ \Illuminate\Support\Str::plural('item', $offerCount) }} were offered near {{ $areaLabel }} this week. There's always something going.
+          Just so you know — <strong>{{ number_format($offerCount) }}</strong> free {{ \Illuminate\Support\Str::plural('item', $offerCount) }} were offered near you this week. There's always something going.
         </mj-text>
       </mj-column>
     </mj-section>

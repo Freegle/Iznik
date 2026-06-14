@@ -1,6 +1,6 @@
 Hi {{ $name }},
 
-While you've been away, real people near {{ $areaLabel }} have been giving and getting.
+While you've been away, real people near you have been giving and getting.
 @if(!empty($faces))
 
 A few of your neighbours freegling this month:

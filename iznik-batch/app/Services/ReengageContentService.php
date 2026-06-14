@@ -2,8 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -41,13 +39,9 @@ class ReengageContentService
         $userSite = rtrim((string) config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
         $src = 'reengage-' . $template;
 
-        $areaName = $this->areaName($user);
-
         $base = [
             'name'           => $this->firstName($user),
             'email'          => $user->email_preferred,
-            'areaName'       => $areaName,
-            'areaLabel'      => $areaName ?: 'your area',
             'userSite'       => $userSite,
             'findUrl'        => $user->loginLink('/find', $src),
             'giveUrl'        => $user->loginLink('/give', $src),
@@ -87,8 +81,6 @@ class ReengageContentService
         $base = [
             'name'           => 'Alex',
             'email'          => $email,
-            'areaName'       => 'Edinburgh',
-            'areaLabel'      => 'Edinburgh',
             'userSite'       => $userSite,
             'findUrl'        => $userSite . '/find',
             'giveUrl'        => $userSite . '/give',
@@ -233,76 +225,6 @@ class ReengageContentService
         }
 
         return $user->getLatLng();
-    }
-
-    /**
-     * A short, human place label for "near <X>": the saved location's area
-     * name, else its display name, else the lastlocation name (group suffix
-     * after the last comma stripped). Null when nothing is known.
-     */
-    private function areaName(User $user): ?string
-    {
-        // 1. The area/location the user explicitly picked on the site — cleanest.
-        $settings = $user->settings ?? [];
-        $picked = $settings['mylocation']['area']['name']
-            ?? $settings['mylocation']['name']
-            ?? null;
-        if (is_string($picked) && trim($picked) !== '') {
-            return trim($picked);
-        }
-
-        // 2. Their Freegle group's town. Group names are curated and
-        //    recognizable ("Coventry Freegle"), unlike the auto-resolved
-        //    lastlocation name which is often a road/polygon fragment.
-        if ($group = $this->groupAreaName($user)) {
-            return $group;
-        }
-
-        // 3. Last resort: the saved location's name — but only if it looks like
-        //    a real place (guards out fragments like "10"/"12"). Strip any
-        //    "Place, GroupSuffix" tail.
-        if ($user->lastlocation) {
-            $name = DB::table('locations')->where('id', $user->lastlocation)->value('name');
-            if (is_string($name)) {
-                if (($pos = strrpos($name, ',')) !== false) {
-                    $name = substr($name, 0, $pos);
-                }
-                $name = trim($name);
-                if ($name !== '' && preg_match('/[A-Za-z]{3,}/', $name)) {
-                    return $name;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * The user's Freegle group as a recognizable place label, with the
-     * "Freegle" branding stripped (e.g. "Coventry Freegle" -> "Coventry").
-     */
-    private function groupAreaName(User $user): ?string
-    {
-        $groupName = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $user->id)
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->orderByDesc('memberships.added')
-            ->selectRaw('COALESCE(NULLIF(groups.namefull, ""), groups.nameshort) AS name')
-            ->value('name');
-
-        if (!is_string($groupName) || $groupName === '') {
-            return null;
-        }
-
-        // Strip the "Freegle" branding (with any adjoining space) — handles
-        // "Coventry Freegle", "Freegle Inverness" AND the spaceless nameshort
-        // "CoventryFreegle" (a \b-anchored match would miss the last one).
-        $name = trim((string) preg_replace('/\s*freegle\s*/i', ' ', $groupName));
-        $name = trim($name, " -–&");
-
-        return $name !== '' ? $name : null;
     }
 
     private function firstName(User $user): string

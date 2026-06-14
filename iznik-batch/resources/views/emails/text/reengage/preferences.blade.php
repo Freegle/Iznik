@@ -8,7 +8,7 @@ If you'd still like to be part of your local community, just choose an option:
 * Email me less often (switch to an occasional round-up): {{ $settingsUrl }}
 @if($hasLocation && $offerCount > 0)
 
-Just so you know — {{ number_format($offerCount) }} free {{ \Illuminate\Support\Str::plural('item', $offerCount) }} were offered near {{ $areaLabel }} this week. There's always something going.
+Just so you know — {{ number_format($offerCount) }} free {{ \Illuminate\Support\Str::plural('item', $offerCount) }} were offered near you this week. There's always something going.
 @endif
 
 Rather not? Unsubscribe and we'll stop emailing you: {{ $unsubscribeUrl }}
