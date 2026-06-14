@@ -1,0 +1,252 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Group;
+use App\Models\Message;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Builds the semi-localised content for the re-engagement sequence: what's
+ * been freegled near the user, the local community's recent impact, and the
+ * auto-login CTAs. Every piece degrades gracefully — a user with no location
+ * still gets a sensible (non-localised) email rather than a broken one.
+ */
+class ReengageContentService
+{
+    /** Radius (km) for the "items near you" count and cards. */
+    private const NEARBY_RADIUS_KM = 10;
+
+    /** How many recent days count as "near you this week". */
+    private const NEARBY_DAYS = 7;
+
+    /** How far back the local-impact totals look. */
+    private const IMPACT_DAYS = 30;
+
+    public function __construct(
+        private readonly NearbyOffersService $nearbyOffers = new NearbyOffersService(),
+    ) {
+    }
+
+    /**
+     * Build the full template data array for a given user and sequence stage.
+     *
+     * @return array<string, mixed> Plain strings/ints/arrays, safe to serialise
+     *                              onto a queued Mailable.
+     */
+    public function buildContent(User $user, string $template): array
+    {
+        $userSite = rtrim((string) config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $src = 'reengage-' . $template;
+
+        $areaName = $this->areaName($user);
+
+        $base = [
+            'name'           => $this->firstName($user),
+            'email'          => $user->email_preferred,
+            'areaName'       => $areaName,
+            'areaLabel'      => $areaName ?: 'your area',
+            'userSite'       => $userSite,
+            'findUrl'        => $user->loginLink('/find', $src),
+            'giveUrl'        => $user->loginLink('/give', $src),
+            'browseUrl'      => $user->loginLink('/browse', $src),
+            'settingsUrl'    => $user->loginLink('/settings', $src),
+            'unsubscribeUrl' => $user->listUnsubscribeUrl(),
+        ];
+
+        return match ($template) {
+            'nearby'      => array_merge($base, $this->nearbyContent($user)),
+            'impact'      => array_merge($base, $this->impactContent($user), $this->nearbyContent($user, 3)),
+            'preferences' => array_merge($base, $this->nearbyContent($user, 0)),
+            default       => $base,
+        };
+    }
+
+    /**
+     * Sample content for the operator preview (`mail:reengage --preview=`),
+     * so the templates can be eyeballed in mailpit without real DB users.
+     *
+     * @return array<string, mixed>
+     */
+    public function previewContent(string $template, string $email): array
+    {
+        $userSite = rtrim((string) config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $placeholder = (string) config('freegle.images.offer_placeholder', $userSite . '/placeholder-offer.png');
+
+        $sampleOffers = collect([
+            ['subject' => 'Dining chairs (x4)', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/1'],
+            ['subject' => 'Children\'s books', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/2'],
+            ['subject' => 'Garden planters', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/3'],
+            ['subject' => 'Bookshelf', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/4'],
+        ]);
+
+        $base = [
+            'name'           => 'Alex',
+            'email'          => $email,
+            'areaName'       => 'Edinburgh',
+            'areaLabel'      => 'Edinburgh',
+            'userSite'       => $userSite,
+            'findUrl'        => $userSite . '/find',
+            'giveUrl'        => $userSite . '/give',
+            'browseUrl'      => $userSite . '/browse',
+            'settingsUrl'    => $userSite . '/settings',
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+        ];
+
+        $nearby = [
+            'offers'      => $sampleOffers->all(),
+            'offerCount'  => 47,
+            'hasLocation' => true,
+        ];
+
+        $impact = [
+            'impactOutcomes' => 312,
+            'impactWeightKg' => 1840,
+            'impactGroups'   => 3,
+            'hasImpact'      => true,
+        ];
+
+        return match ($template) {
+            'nearby'      => array_merge($base, $nearby),
+            'impact'      => array_merge($base, $impact, ['offers' => $sampleOffers->take(3)->all(), 'offerCount' => 47, 'hasLocation' => true]),
+            'preferences' => array_merge($base, ['offers' => [], 'offerCount' => 47, 'hasLocation' => true]),
+            default       => $base,
+        };
+    }
+
+    /**
+     * Nearby OFFER activity: a count of items posted near the user this week
+     * plus a handful of cards. Falls back to recent offers if no location.
+     *
+     * @return array{offers: array, offerCount: int, hasLocation: bool}
+     */
+    private function nearbyContent(User $user, int $cardLimit = 4): array
+    {
+        [$lat, $lng] = $this->resolveLatLng($user);
+        $hasLocation = $lat !== null && $lng !== null;
+
+        $offers = $cardLimit > 0
+            ? ($hasLocation
+                ? $this->nearbyOffers->getOffersNearLocation((float) $lat, (float) $lng, $cardLimit)
+                : $this->nearbyOffers->getRandomOffers($cardLimit))
+            : collect();
+
+        return [
+            'offers'      => $offers->all(),
+            'offerCount'  => $hasLocation ? $this->countNearbyOffers((float) $lat, (float) $lng) : 0,
+            'hasLocation' => $hasLocation,
+        ];
+    }
+
+    /**
+     * Count recent approved OFFERs within the nearby box (same bounding-box
+     * approximation NearbyOffersService uses).
+     */
+    private function countNearbyOffers(float $lat, float $lng): int
+    {
+        $deg = self::NEARBY_RADIUS_KM / 111.0;
+
+        return (int) Message::query()
+            ->offers()
+            ->approved()
+            ->notDeleted()
+            ->withLocation()
+            ->recent(self::NEARBY_DAYS)
+            ->whereBetween('lat', [$lat - $deg, $lat + $deg])
+            ->whereBetween('lng', [$lng - $deg, $lng + $deg])
+            ->count();
+    }
+
+    /**
+     * Local impact totals over the user's member Freegle groups: items given
+     * away (Outcomes) and estimated weight saved (Weight) in the last 30 days.
+     *
+     * @return array{impactOutcomes: int, impactWeightKg: int, impactGroups: int, hasImpact: bool}
+     */
+    private function impactContent(User $user): array
+    {
+        $groupIds = DB::table('memberships')
+            ->join('groups', 'groups.id', '=', 'memberships.groupid')
+            ->where('memberships.userid', $user->id)
+            ->where('groups.type', Group::TYPE_FREEGLE)
+            ->pluck('groups.id')
+            ->all();
+
+        if (empty($groupIds)) {
+            return ['impactOutcomes' => 0, 'impactWeightKg' => 0, 'impactGroups' => 0, 'hasImpact' => false];
+        }
+
+        $since = now()->subDays(self::IMPACT_DAYS)->toDateString();
+
+        $row = DB::table('stats')
+            ->whereIn('groupid', $groupIds)
+            ->where('date', '>=', $since)
+            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'Outcomes' THEN count END), 0) AS outcomes")
+            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'Weight' THEN count END), 0) AS weight")
+            ->first();
+
+        $outcomes = (int) ($row->outcomes ?? 0);
+        $weightKg = (int) round((float) ($row->weight ?? 0));
+
+        return [
+            'impactOutcomes' => $outcomes,
+            'impactWeightKg' => $weightKg,
+            'impactGroups'   => count($groupIds),
+            'hasImpact'      => $outcomes > 0 || $weightKg > 0,
+        ];
+    }
+
+    /**
+     * Lat/lng waterfall matching NewsfeedDigestService::resolveLatLng:
+     * the saved 'mylocation' setting first, then the user's lastlocation.
+     *
+     * @return array{0: float|null, 1: float|null}
+     */
+    private function resolveLatLng(User $user): array
+    {
+        $settings = $user->settings ?? [];
+        if (isset($settings['mylocation']['lat'], $settings['mylocation']['lng'])) {
+            return [(float) $settings['mylocation']['lat'], (float) $settings['mylocation']['lng']];
+        }
+
+        return $user->getLatLng();
+    }
+
+    /**
+     * A short, human place label for "near <X>": the saved location's area
+     * name, else its display name, else the lastlocation name (group suffix
+     * after the last comma stripped). Null when nothing is known.
+     */
+    private function areaName(User $user): ?string
+    {
+        $settings = $user->settings ?? [];
+        $name = $settings['mylocation']['area']['name']
+            ?? $settings['mylocation']['name']
+            ?? null;
+
+        if (!$name && $user->lastlocation) {
+            $name = DB::table('locations')->where('id', $user->lastlocation)->value('name');
+            if ($name && ($pos = strrpos($name, ',')) !== false) {
+                $name = trim(substr($name, 0, $pos));
+            }
+        }
+
+        $name = is_string($name) ? trim($name) : null;
+
+        return $name !== '' ? $name : null;
+    }
+
+    private function firstName(User $user): string
+    {
+        $first = $user->firstname ?: null;
+        if ($first) {
+            return $first;
+        }
+
+        // Fall back to the first word of the sanitised display name.
+        $display = trim((string) $user->display_name);
+
+        return $display !== '' ? explode(' ', $display)[0] : 'there';
+    }
+}

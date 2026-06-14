@@ -741,6 +741,20 @@ Schedule::command('mail:engage')
     ->sendOutputTo(cronLog('mail:engage'))
     ->runInBackground();
 
+// Localised 3-stage re-engagement sequence for lapsed users, graduated across
+// the lifecycle (~30 / 75 / 120 days inactive) so it catches the steep early
+// drop-off where reactivation is strongest, finishing before the older
+// `engage` AtRisk/Inactive sunset (~175 days). Dark by default: inert unless
+// FREEGLE_REENGAGE_ALLOWLIST is set AND "Reengage" is in
+// FREEGLE_MAIL_ENABLED_TYPES. Runs daily so users enter the sequence
+// continuously as they cross the trigger; gap-spacing is enforced in the
+// service, not the cron.
+Schedule::command('mail:reengage')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:reengage'))
+    ->runInBackground();
+
 // Ask eligible users with outcomes/offers to share their Freegle story.
 // V1: cron/stories.php (weekly Saturday 11:00)
 Schedule::command('stories:ask')
