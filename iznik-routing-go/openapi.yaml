@@ -1,0 +1,158 @@
+openapi: 3.0.3
+info:
+  title: Freegle Routing & Isochrone API
+  description: >
+    OSM-based routing, isochrone and fairness service for Freegle. Computes
+    travel-time isochrones, fairness-weighted reachability and proximity
+    queries (nearby freeglers, nearby groups, ripple schedules, digest
+    simulation) over a road/path graph built from an OSM extract.
+
+
+    Two listeners are exposed: an internal port (no auth, trusted backend
+    services) and an external port where every `/v1/*` route requires a valid
+    moderator JWT (pass it as the `jwt` query parameter or an
+    `Authorization: Bearer` header). The `/health`, `/demo`, `/openapi.yaml`
+    and `/swagger/` routes are always public.
+  version: "1.0.0"
+servers:
+  - url: /
+    description: This server
+tags:
+  - name: meta
+    description: Health and documentation
+  - name: isochrone
+    description: Travel-time reachability
+  - name: proximity
+    description: Nearby people, groups and posts
+paths:
+  /health:
+    get:
+      tags: [meta]
+      summary: Health check
+      description: Returns service status and graph readiness.
+      responses:
+        '200':
+          description: Service is healthy.
+  /demo:
+    get:
+      tags: [meta]
+      summary: Interactive demo page
+      description: An HTML page for visually exploring isochrones and fairness layers.
+      responses:
+        '200':
+          description: HTML demo page.
+  /v1/isochrone:
+    get:
+      tags: [isochrone]
+      summary: Travel-time isochrone
+      description: The polygon reachable within `minutes` of the origin point.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Origin latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Origin longitude }
+        - { name: minutes, in: query, required: false, schema: { type: number, format: double, default: 15 }, description: Travel-time budget (minutes) }
+      responses:
+        '200': { description: Isochrone polygon (GeoJSON-style). }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/fairness:
+    get:
+      tags: [isochrone]
+      summary: Fairness-weighted isochrone
+      description: >
+        Isochrone adjusted by a deprivation/fairness layer, so areas of higher
+        need are weighted more heavily.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Origin latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Origin longitude }
+        - { name: minutes, in: query, required: false, schema: { type: number, format: double, default: 15 }, description: Travel-time budget (minutes) }
+        - { name: fairness, in: query, required: false, schema: { type: number, format: double, default: 0 }, description: Fairness weighting (0 = none) }
+        - { name: mode, in: query, required: false, schema: { type: string, default: walk, enum: [walk, drive] }, description: Travel mode }
+      responses:
+        '200': { description: Fairness-weighted isochrone polygon. }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/nearby-freeglers:
+    get:
+      tags: [proximity]
+      summary: Freeglers within an isochrone
+      description: Freeglers reachable within `minutes` of the origin, via the spatial KNN service.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Origin latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Origin longitude }
+        - { name: minutes, in: query, required: false, schema: { type: number, format: double, default: 15 }, description: Travel-time budget (minutes) }
+        - { name: mode, in: query, required: false, schema: { type: string, default: walk, enum: [walk, drive] }, description: Travel mode }
+      responses:
+        '200': { description: Freeglers inside the isochrone. }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/ripple-schedule:
+    get:
+      tags: [proximity]
+      summary: Ripple-out schedule
+      description: A time-stepped ("ripple") schedule of expanding reachability from the origin.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Origin latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Origin longitude }
+        - { name: ticks, in: query, required: false, schema: { type: integer, default: 30 }, description: Number of ripple steps }
+        - { name: max_minutes, in: query, required: false, schema: { type: number, format: double, default: 30 }, description: Maximum travel time (minutes) }
+        - { name: curve, in: query, required: false, schema: { type: string, default: step-70 }, description: Ripple curve shape }
+        - { name: mode, in: query, required: false, schema: { type: string, default: drive, enum: [walk, drive] }, description: Travel mode }
+      responses:
+        '200': { description: Ripple schedule. }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/ripple-eval:
+    post:
+      tags: [proximity]
+      summary: Evaluate a ripple schedule
+      description: Evaluates a supplied ripple schedule against the graph and spatial data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ripple-evaluation request (origin, schedule and options).
+      responses:
+        '200': { description: Evaluation result. }
+        '400': { description: Invalid JSON body. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/posts-for-member:
+    get:
+      tags: [proximity]
+      summary: Posts reachable by a member
+      description: Posts within travel reach of a member's location, optionally as of a given date.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Member latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Member longitude }
+        - { name: max_minutes, in: query, required: false, schema: { type: number, format: double }, description: Maximum travel time (minutes) }
+        - { name: date, in: query, required: false, schema: { type: string, format: date }, description: As-of date (YYYY-MM-DD) }
+      responses:
+        '200': { description: Reachable posts. }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/digest-simulator:
+    get:
+      tags: [proximity]
+      summary: Simulate a digest catchment
+      description: Simulates which posts a digest at the given location would include.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Longitude }
+        - { name: group_by_poster, in: query, required: false, schema: { type: boolean, default: false }, description: Group results by poster }
+      responses:
+        '200': { description: Simulated digest contents. }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }
+  /v1/groups/nearby:
+    get:
+      tags: [proximity]
+      summary: Nearby groups
+      description: Freegle groups near the given point.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double }, description: Latitude }
+        - { name: lng, in: query, required: true, schema: { type: number, format: double }, description: Longitude }
+      responses:
+        '200': { description: Nearby groups. }
+        '400': { description: Missing or non-numeric lat/lng. }
+        '401': { description: Missing/invalid JWT (external listener only). }

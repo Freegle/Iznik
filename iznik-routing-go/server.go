@@ -275,6 +275,9 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/posts-for-member", handlePostsForMember(g, spatialURL))
 	v1.Get("/digest-simulator", handleDigestSimulator(g, spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
+
+	// Public OpenAPI spec + Swagger UI (no auth), like the v2 Go API's /swagger/.
+	registerDocs(app)
 	return app
 }
 

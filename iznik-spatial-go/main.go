@@ -310,6 +310,9 @@ func main() {
 		return c.SendFile("/app/openapi.yaml")
 	})
 
+	// Browsable Swagger UI at /swagger/ (like the v2 Go API).
+	registerSwaggerUI(api)
+
 	// Admin API
 	admin := fiber.New(fiber.Config{DisableStartupMessage: true})
 
