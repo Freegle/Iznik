@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Group;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -240,19 +242,62 @@ class ReengageContentService
      */
     private function areaName(User $user): ?string
     {
+        // 1. The area/location the user explicitly picked on the site — cleanest.
         $settings = $user->settings ?? [];
-        $name = $settings['mylocation']['area']['name']
+        $picked = $settings['mylocation']['area']['name']
             ?? $settings['mylocation']['name']
             ?? null;
+        if (is_string($picked) && trim($picked) !== '') {
+            return trim($picked);
+        }
 
-        if (!$name && $user->lastlocation) {
+        // 2. Their Freegle group's town. Group names are curated and
+        //    recognizable ("Coventry Freegle"), unlike the auto-resolved
+        //    lastlocation name which is often a road/polygon fragment.
+        if ($group = $this->groupAreaName($user)) {
+            return $group;
+        }
+
+        // 3. Last resort: the saved location's name — but only if it looks like
+        //    a real place (guards out fragments like "10"/"12"). Strip any
+        //    "Place, GroupSuffix" tail.
+        if ($user->lastlocation) {
             $name = DB::table('locations')->where('id', $user->lastlocation)->value('name');
-            if ($name && ($pos = strrpos($name, ',')) !== false) {
-                $name = trim(substr($name, 0, $pos));
+            if (is_string($name)) {
+                if (($pos = strrpos($name, ',')) !== false) {
+                    $name = substr($name, 0, $pos);
+                }
+                $name = trim($name);
+                if ($name !== '' && preg_match('/[A-Za-z]{3,}/', $name)) {
+                    return $name;
+                }
             }
         }
 
-        $name = is_string($name) ? trim($name) : null;
+        return null;
+    }
+
+    /**
+     * The user's Freegle group as a recognizable place label, with the
+     * "Freegle" branding stripped (e.g. "Coventry Freegle" -> "Coventry").
+     */
+    private function groupAreaName(User $user): ?string
+    {
+        $groupName = DB::table('memberships')
+            ->join('groups', 'groups.id', '=', 'memberships.groupid')
+            ->where('memberships.userid', $user->id)
+            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
+            ->where('groups.type', Group::TYPE_FREEGLE)
+            ->orderByDesc('memberships.added')
+            ->selectRaw('COALESCE(NULLIF(groups.namefull, ""), groups.nameshort) AS name')
+            ->value('name');
+
+        if (!is_string($groupName) || $groupName === '') {
+            return null;
+        }
+
+        $name = trim((string) preg_replace('/\bfreegle\b/i', '', $groupName));
+        $name = trim($name, " -–&");
 
         return $name !== '' ? $name : null;
     }

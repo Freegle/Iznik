@@ -84,7 +84,10 @@ and the trigger is env-tunable. Refining to an **email-engagement** signal
 (non-opens/clicks of recent digests) is the recommended pre-ramp improvement.
 
 **Localisation.** Lat/lng waterfall (`settings.mylocation` → `lastlocation`);
-area label from the saved location's area name; nearby OFFERs (item photos) via
+the place label prefers the user's picked location, then their **Freegle group's
+town** (curated/recognizable — the raw `lastlocation` name is often a road or
+postcode fragment like "WV3"), then a guarded location name, else "your area";
+nearby OFFERs (item photos) via
 the existing `NearbyOffersService`; the stage-2 collage uses recent nearby
 posters who have uploaded an avatar (first name + profile photo — the same
 public wall data shown in-app). Everything degrades gracefully — no location, no

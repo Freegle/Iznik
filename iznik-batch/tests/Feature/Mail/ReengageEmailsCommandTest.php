@@ -5,6 +5,7 @@ namespace Tests\Feature\Mail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Services\EmailSpoolerService;
+use App\Services\ReengageContentService;
 use App\Services\ReengageService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -258,6 +259,37 @@ class ReengageEmailsCommandTest extends TestCase
         $this->assertSame(1, $result['stage1']);   // counted...
         $this->assertDatabaseMissing('reengage', ['userid' => $user->id]); // ...but not recorded
         Mail::assertNothingSent();
+    }
+
+    // ── Place label ──────────────────────────────────────────────────────────
+
+    public function test_area_label_falls_back_to_group_town(): void
+    {
+        // No settings.mylocation, no lastlocation — should use the Freegle
+        // group's town ("Coventry Freegle" -> "Coventry"), not a blank.
+        $user = $this->createTestUser();
+        $group = Group::create([
+            'nameshort' => 'CoventryFreegle_' . uniqid(),
+            'namefull'  => 'Coventry Freegle',
+            'type'      => Group::TYPE_FREEGLE,
+            'publish'   => 1,
+            'onmap'     => 1,
+            'onhere'    => 1,
+            'lat'       => 52.4068,
+            'lng'       => -1.5197,
+        ]);
+        DB::table('memberships')->insert([
+            'userid'     => $user->id,
+            'groupid'    => $group->id,
+            'collection' => Membership::COLLECTION_APPROVED,
+            'role'       => Membership::ROLE_MEMBER,
+            'added'      => now(),
+        ]);
+
+        $content = (new ReengageContentService())->buildContent($user->fresh(), 'nearby');
+
+        $this->assertSame('Coventry', $content['areaName']);
+        $this->assertSame('Coventry', $content['areaLabel']);
     }
 
     // ── Command smoke ────────────────────────────────────────────────────────
