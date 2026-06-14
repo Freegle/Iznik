@@ -45,9 +45,7 @@ function matchInners(text, re) {
 // final message a recipient sees (after the mod has edited/decided).
 export function stripDirectiveTags(text) {
   if (!text) return text
-  return text
-    .replace(/<\/?editthis>/gi, '')
-    .replace(/<\/?optional>/gi, '')
+  return text.replace(/<\/?editthis>/gi, '').replace(/<\/?optional>/gi, '')
 }
 
 // Replace the Nth (0-based) occurrence of a tag with `replacement(inner)`.
@@ -100,7 +98,11 @@ export function hasUndecidedOptional(text) {
 export function sendBlockers(currentText, originalEditThisInners) {
   const editThis = pendingEditThis(currentText, originalEditThisInners)
   const optional = hasUndecidedOptional(currentText)
-  return { editThis, optionalUndecided: optional, ok: editThis.length === 0 && !optional }
+  return {
+    editThis,
+    optionalUndecided: optional,
+    ok: editThis.length === 0 && !optional,
+  }
 }
 
 // ── Segmented editor model ──────────────────────────────────────────────────
@@ -112,7 +114,7 @@ export function sendBlockers(currentText, originalEditThisInners) {
 // template.
 //
 // Segment shapes:
-//   { type: 'text',     content }                 fixed prose (not editable)
+//   { type: 'text',     content }                 prose; freely editable (content)
 //   { type: 'editthis', content, value, edited }  must-fill; content=placeholder
 //   { type: 'optional', content, removed }        removed: undefined until decided
 const SEGMENT_RE = /<(editthis|optional)>([\s\S]*?)<\/\1>/gi
@@ -124,14 +126,17 @@ export function parseSegments(text) {
   let last = 0
   let m
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) segments.push({ type: 'text', content: text.slice(last, m.index) })
+    if (m.index > last)
+      segments.push({ type: 'text', content: text.slice(last, m.index) })
     const type = m[1].toLowerCase() // 'editthis' | 'optional'
     const content = m[2]
-    if (type === 'editthis') segments.push({ type, content, value: content, edited: false })
+    if (type === 'editthis')
+      segments.push({ type, content, value: content, edited: false })
     else segments.push({ type, content, removed: undefined })
     last = m.index + m[0].length
   }
-  if (last < text.length) segments.push({ type: 'text', content: text.slice(last) })
+  if (last < text.length)
+    segments.push({ type: 'text', content: text.slice(last) })
   return segments
 }
 
@@ -171,5 +176,9 @@ export function segmentsSendBlockers(segments) {
       undecided.push(i)
     }
   })
-  return { unedited, undecided, ok: unedited.length === 0 && undecided.length === 0 }
+  return {
+    unedited,
+    undecided,
+    ok: unedited.length === 0 && undecided.length === 0,
+  }
 }
