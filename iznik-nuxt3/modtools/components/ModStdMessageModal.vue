@@ -66,15 +66,20 @@
            and a keep/remove control per <optional>, filled in order so you never
            have to look back at the template. -->
       <div v-else class="mt-2 segmented-editor border rounded p-3">
-        <p class="text-muted small mb-2">
-          Fill in the highlighted boxes and choose Keep or Remove for any optional
-          parts. This is the message the member will receive.
+        <p class="text-danger small mb-2">
+          Fill in the highlighted boxes and choose Keep or Remove for any
+          optional parts. You can edit any of the rest of the wording too. This
+          is the message the member will receive.
         </p>
         <div class="segmented-body">
           <template v-for="(seg, i) in segments" :key="'seg' + i">
-            <span v-if="seg.type === 'text'" class="seg-text">{{
-              seg.content
-            }}</span>
+            <b-form-textarea
+              v-if="seg.type === 'text'"
+              v-model="seg.content"
+              class="seg-text"
+              rows="1"
+              max-rows="30"
+            />
             <b-form-textarea
               v-else-if="seg.type === 'editthis'"
               v-model="seg.value"
@@ -106,9 +111,11 @@
                   Remove
                 </b-button>
               </span>
-              <span v-else-if="seg.removed === false" class="seg-optional-kept">{{
-                seg.content
-              }}</span>
+              <span
+                v-else-if="seg.removed === false"
+                class="seg-optional-kept"
+                >{{ seg.content }}</span
+              >
               <span v-else class="seg-optional-removed">
                 <s class="text-muted">{{ seg.content }}</s>
                 <b-button
@@ -124,11 +131,7 @@
           </template>
         </div>
       </div>
-      <NoticeMessage
-        v-if="directiveWarning"
-        variant="danger"
-        class="mt-1 mb-1"
-      >
+      <NoticeMessage v-if="directiveWarning" variant="danger" class="mt-1 mb-1">
         {{ directiveWarning }}
       </NoticeMessage>
       <div
@@ -406,6 +409,24 @@ const toEmail = computed(() => {
   return ret
 })
 
+// True when the recipient is a TrashNothing member. They post via TN, so their
+// own posts live on TN's site — identified by a tnuserid (or a trashnothing.com
+// from-address as a fallback when the user record isn't fully loaded).
+const isTnUser = computed(() => {
+  if (user.value?.tnuserid) return true
+  const from = message.value?.fromaddr
+  return !!(from && from.includes('trashnothing.com'))
+})
+
+// Where the member goes to edit/repost their own posts ($editlink). TrashNothing
+// members manage theirs on TN's "Your Posts" page (per TN's help docs), not on
+// ilovefreegle.org, so sending them to /myposts would be a dead end for them.
+const editLink = computed(() =>
+  isTnUser.value
+    ? 'https://trashnothing.com/user/posts'
+    : 'https://www.ilovefreegle.org/myposts'
+)
+
 const processLabel = computed(() => {
   switch (stdmsg.value?.action) {
     case 'Approve':
@@ -679,8 +700,9 @@ async function substitutionStrings(text) {
     text = text.replace(/\$myname/g, me.value.displayname)
     text = text.replace(/\$nummembers/g, group.membercount)
     text = text.replace(/\$nummods/g, group.modcount)
-    // Link the member to where they can edit/repost their own posts.
-    text = text.replace(/\$editlink/g, 'https://www.ilovefreegle.org/myposts')
+    // Link the member to where they can edit/repost their own posts. TrashNothing
+    // members are sent to TN's own posts page (see editLink).
+    text = text.replace(/\$editlink/g, editLink.value)
     if (group.settings && group.settings.reposts) {
       text = text.replace(/\$repostoffer/g, group.settings.reposts.offer)
       text = text.replace(/\$repostwanted/g, group.settings.reposts.wanted)
@@ -1037,8 +1059,29 @@ defineExpose({ fillin, show, modal })
   line-height: 1.7;
   font-size: 1rem;
 }
+/* Fixed prose is editable too (mods often tweak the wording), so render it as an
+   auto-sizing textarea rather than a static span. Styled to read as part of the
+   message — a light border that strengthens on hover/focus signals it's editable,
+   while staying visually quieter than the amber "must fill in" editthis boxes. */
 .seg-text {
-  white-space: pre-wrap;
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+  padding: 4px 8px;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background-color: #fff;
+  font: inherit;
+  line-height: 1.4;
+}
+.seg-text:hover {
+  border-color: #adb5bd;
+}
+.seg-text:focus,
+.seg-text:focus-visible {
+  outline: none;
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
 }
 /* editthis boxes sit on their own full-width line so each editable bit reads as
    a clear fillable field. A placeholder box is highlighted (amber) so outstanding

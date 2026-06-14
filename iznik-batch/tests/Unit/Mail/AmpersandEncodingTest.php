@@ -178,6 +178,10 @@ class AmpersandEncodingTest extends TestCase
             ]),
             'postCount'      => 1,
             'mode'           => UnifiedDigestService::MODE_DAILY,
+            // UnifiedDigest::build() always passes accentColor to the template
+            // (#4895DD for the null-immediate daily case); the shared _jobs
+            // partial now needs it in the daily branch too, so mirror it here.
+            'accentColor'    => '#4895DD',
             'sponsors'       => collect(),
             'jobAds'         => collect(),
             'jobsUrl'        => 'https://example.com/jobs',
@@ -329,6 +333,10 @@ class AmpersandEncodingTest extends TestCase
             ]]),
             'postCount'      => 1,
             'mode'           => UnifiedDigestService::MODE_DAILY,
+            // UnifiedDigest::build() always passes accentColor to the template
+            // (#4895DD for the null-immediate daily case); the shared _jobs
+            // partial now needs it in the daily branch too, so mirror it here.
+            'accentColor'    => '#4895DD',
             'sponsors'       => collect(),
             'jobAds'         => collect(),
             'jobsUrl'        => 'https://example.com/jobs',

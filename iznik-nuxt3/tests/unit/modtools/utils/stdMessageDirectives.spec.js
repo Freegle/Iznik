@@ -17,7 +17,8 @@ import {
 describe('stdMessageDirectives', () => {
   describe('parseEditThis', () => {
     it('returns the inner text of each editthis block', () => {
-      const t = 'Hi <editthis>a clearer title</editthis> and <editthis>why</editthis>.'
+      const t =
+        'Hi <editthis>a clearer title</editthis> and <editthis>why</editthis>.'
       expect(parseEditThis(t)).toEqual(['a clearer title', 'why'])
     })
     it('is case-insensitive and multiline', () => {
@@ -125,20 +126,44 @@ describe('stdMessageDirectives', () => {
 
   describe('parseSegments', () => {
     it('splits a message into ordered text/editthis/optional segments', () => {
-      const t = 'Hi <editthis>name</editthis>, see <optional>browse first</optional> ok'
+      const t =
+        'Hi <editthis>name</editthis>, see <optional>browse first</optional> ok'
       const segs = parseSegments(t)
       expect(segs.map((s) => s.type)).toEqual([
-        'text', 'editthis', 'text', 'optional', 'text',
+        'text',
+        'editthis',
+        'text',
+        'optional',
+        'text',
       ])
       expect(segs[0].content).toBe('Hi ')
-      expect(segs[1]).toMatchObject({ type: 'editthis', content: 'name', value: 'name', edited: false })
-      expect(segs[3]).toMatchObject({ type: 'optional', content: 'browse first', removed: undefined })
+      expect(segs[1]).toMatchObject({
+        type: 'editthis',
+        content: 'name',
+        value: 'name',
+        edited: false,
+      })
+      expect(segs[3]).toMatchObject({
+        type: 'optional',
+        content: 'browse first',
+        removed: undefined,
+      })
       expect(segs[4].content).toBe(' ok')
     })
     it('preserves order with multiple editthis blocks', () => {
-      const segs = parseSegments('a<editthis>1</editthis>b<editthis>2</editthis>c')
-      expect(segs.filter((s) => s.type === 'editthis').map((s) => s.content)).toEqual(['1', '2'])
-      expect(segs.map((s) => s.type)).toEqual(['text', 'editthis', 'text', 'editthis', 'text'])
+      const segs = parseSegments(
+        'a<editthis>1</editthis>b<editthis>2</editthis>c'
+      )
+      expect(
+        segs.filter((s) => s.type === 'editthis').map((s) => s.content)
+      ).toEqual(['1', '2'])
+      expect(segs.map((s) => s.type)).toEqual([
+        'text',
+        'editthis',
+        'text',
+        'editthis',
+        'text',
+      ])
     })
     it('handles a plain message (single text segment) and empty input', () => {
       expect(parseSegments('just text').map((s) => s.type)).toEqual(['text'])
@@ -157,22 +182,36 @@ describe('stdMessageDirectives', () => {
 
   describe('assembleSegments', () => {
     it('builds the final message from edited segments in order', () => {
-      const segs = parseSegments('Hi <editthis>NAME</editthis>.\n\n<optional>browse first</optional>\n\nThanks')
+      const segs = parseSegments(
+        'Hi <editthis>NAME</editthis>.\n\n<optional>browse first</optional>\n\nThanks'
+      )
       segs.find((s) => s.type === 'editthis').value = 'Jo'
       segs.find((s) => s.type === 'optional').removed = false // kept
       expect(assembleSegments(segs)).toBe('Hi Jo.\n\nbrowse first\n\nThanks')
     })
     it('drops a removed optional and tidies the blank lines', () => {
-      const segs = parseSegments('Hi <editthis>NAME</editthis>.\n\n<optional>browse first</optional>\n\nThanks')
+      const segs = parseSegments(
+        'Hi <editthis>NAME</editthis>.\n\n<optional>browse first</optional>\n\nThanks'
+      )
       segs.find((s) => s.type === 'editthis').value = 'Jo'
       segs.find((s) => s.type === 'optional').removed = true
       expect(assembleSegments(segs)).toBe('Hi Jo.\n\nThanks')
+    })
+    it('includes edits made to a fixed text segment', () => {
+      // The mod can edit the surrounding prose, not just the editthis boxes.
+      const segs = parseSegments('Hello <editthis>NAME</editthis>, thanks.')
+      segs.find((s) => s.type === 'editthis').value = 'Jo'
+      const textSeg = segs.find((s) => s.type === 'text')
+      textSeg.content = textSeg.content.replace('Hello', 'Hi there')
+      expect(assembleSegments(segs)).toBe('Hi there Jo, thanks.')
     })
   })
 
   describe('segmentsSendBlockers', () => {
     it('blocks while an editthis is unchanged or an optional undecided', () => {
-      const segs = parseSegments('Hi <editthis>NAME</editthis> <optional>x</optional>')
+      const segs = parseSegments(
+        'Hi <editthis>NAME</editthis> <optional>x</optional>'
+      )
       let r = segmentsSendBlockers(segs)
       expect(r.ok).toBe(false)
       expect(r.unedited.length).toBe(1)

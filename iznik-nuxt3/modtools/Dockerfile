@@ -9,13 +9,13 @@ ENV IZNIK_API_V1=http://freegle-apiv1:80/api \
 COPY iznik-nuxt3 .
 
 # Install dependencies in parent directory and generate .nuxt
-RUN npm install --legacy-peer-deps && npx nuxi prepare
+RUN npm install --legacy-peer-deps --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && npx nuxi prepare
 
 # Change to modtools directory
 WORKDIR /app/modtools
 
 # Install modtools specific dependencies
-RUN npm install --legacy-peer-deps
+RUN npm install --legacy-peer-deps --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 EXPOSE 3000
 
