@@ -89,10 +89,6 @@ func PostStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
 	}
 
-	if !auth.IsSystemMod(myid) {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to create configs"})
-	}
-
 	type CreateRequest struct {
 		Configid     uint64  `json:"configid"`
 		Title        string  `json:"title"`
@@ -124,6 +120,10 @@ func PostStdMsg(c *fiber.Ctx) error {
 	}
 	if req.Configid == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 3, "status": "Must supply configid"})
+	}
+
+	if !canModifyConfig(myid, req.Configid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
 	db := database.DBConn

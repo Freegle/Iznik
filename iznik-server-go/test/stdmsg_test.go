@@ -200,3 +200,55 @@ func TestDeleteStdMsgWithJSONBody(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM mod_stdmsgs WHERE id = ?", msgID).Scan(&count)
 	assert.Equal(t, int64(0), count)
 }
+
+// TestPostStdMsgByGroupMod verifies that a regular group moderator (systemrole="User")
+// can add a standard message to an unprotected config they did not create.
+// Bug: PostStdMsg used IsSystemMod() instead of canModifyConfig(), blocking group mods.
+func TestPostStdMsgByGroupMod(t *testing.T) {
+	prefix := uniquePrefix("StdMsgGrpMod")
+	groupID := CreateTestGroup(t, prefix)
+	// systemrole "User" = regular group mod, not a system-level mod
+	groupModID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, groupModID, groupID, "Owner")
+	_, token := CreateTestSession(t, groupModID)
+
+	// Config created by someone else but not protected — any mod can modify it
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	cfgID := createTestModConfig(t, prefix+"_cfg", otherID)
+
+	body := fmt.Sprintf(`{"configid":%d,"title":"%s_newmsg"}`, cfgID, prefix)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.Greater(t, result["id"].(float64), float64(0))
+}
+
+// TestPostStdMsgByGroupModProtectedConfig verifies that a regular group mod
+// cannot add a stdmsg to a protected config they did not create.
+func TestPostStdMsgByGroupModProtectedConfig(t *testing.T) {
+	prefix := uniquePrefix("StdMsgGrpModProt")
+	groupID := CreateTestGroup(t, prefix)
+	groupModID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, groupModID, groupID, "Owner")
+	_, token := CreateTestSession(t, groupModID)
+
+	// Config created by someone else AND protected
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	cfgID := createTestModConfig(t, prefix+"_cfg", ownerID)
+	database.DBConn.Exec("UPDATE mod_configs SET protected = 1 WHERE id = ?", cfgID)
+
+	body := fmt.Sprintf(`{"configid":%d,"title":"%s_newmsg"}`, cfgID, prefix)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(4), result["ret"])
+}
