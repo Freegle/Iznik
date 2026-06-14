@@ -523,16 +523,17 @@ platform :ios do
     nse_profile_name = nil
     if nse_present
       nse_bundle = "org.ilovefreegle.iphone.NotificationServiceExtension"
-      begin
-        # Register the App ID in the Developer portal if it doesn't exist yet
-        # (skip_itc: don't create an App Store Connect app — it's only an extension).
-        produce(app_identifier: nse_bundle, app_name: "Freegle Notification Service", skip_itc: true)
-      rescue => e
-        UI.important("produce (NSE App ID) — continuing, likely already exists: #{e.message}")
-      end
-
-      # Create/download an App Store distribution profile for the NSE.
-      get_provisioning_profile(app_identifier: nse_bundle, adhoc: false)
+      # The NSE App ID and its App Store distribution profile are registered ONCE
+      # by hand in the Apple Developer portal (Identifiers + Profiles). We do NOT
+      # call produce() here: App-ID creation needs interactive Apple-ID + 2FA that
+      # the App Store Connect API key can't satisfy in CI, so produce() hangs with
+      # no output until CircleCI kills the job at the 30-minute no-output timeout.
+      #
+      # Download-only: readonly so get_provisioning_profile just fetches the
+      # pre-created profile via the API key and never attempts (interactive)
+      # creation. If the profile is somehow missing it fails fast instead of
+      # hanging.
+      get_provisioning_profile(app_identifier: nse_bundle, adhoc: false, readonly: true)
       nse_profile_name = lane_context[SharedValues::SIGH_NAME]
       nse_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH] ||
                          (lane_context[SharedValues::SIGH_PROFILE_PATHS] || []).first
