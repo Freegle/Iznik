@@ -124,5 +124,12 @@ func GenerateName() string {
 		return "A freegler"
 	}
 
-	return fillWord(start, length, namegenTrigrams)
+	// fillWord stops early if the trigram chain dead-ends, so the result can be
+	// shorter than minLen (down to the 2-char start). Guard the length contract:
+	// fall back rather than return a too-short stub.
+	name := fillWord(start, length, namegenTrigrams)
+	if len(name) < minLen {
+		return "A freegler"
+	}
+	return name
 }

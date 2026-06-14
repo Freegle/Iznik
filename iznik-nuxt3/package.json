@@ -117,7 +117,7 @@
     "@fortawesome/free-brands-svg-icons": "^6.2.0",
     "@fortawesome/free-solid-svg-icons": "^6.1.1",
     "@fortawesome/vue-fontawesome": "^3.0.0-5",
-    "@freegle/capacitor-push-notifications-cap7": "https://github.com/Freegle/capacitor-push-notifications-cap7/archive/0fe0b8768f345a7efc3e0153b10360394308afbd.tar.gz",
+    "@freegle/capacitor-push-notifications-cap7": "https://github.com/Freegle/capacitor-push-notifications-cap7/archive/29ec671e99882e155df289ebad8e81c80d4fd893.tar.gz",
     "@google-pay/button-element": "^3.1.0",
     "@nuxtjs/sentry": "^5.1.7",
     "@pinia/nuxt": "0.9.0",

@@ -81,7 +81,7 @@ class DailyPostsPushTest extends TestCase
         $posts   = $this->buildPostsArray($msgs);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
-        $this->assertSame('2 new things near you', $payload['title']);
+        $this->assertSame('2 new freegles near you', $payload['title']);
         $this->assertSame('2', $payload['count']);
     }
 
@@ -107,7 +107,7 @@ class DailyPostsPushTest extends TestCase
         $posts   = $this->buildPostsArray($msgs);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
-        $this->assertSame('7 new things near you', $payload['title']);
+        $this->assertSame('7 new freegles near you', $payload['title']);
         $this->assertSame('7', $payload['count']);
 
         $lines = json_decode($payload['lines'], TRUE);

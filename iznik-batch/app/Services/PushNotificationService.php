@@ -1280,7 +1280,7 @@ class PushNotificationService
             // Single post: title is the item name itself (BigPictureStyle).
             $title = $this->extractItemName($posts[0]['message']);
         } else {
-            $title = $count . ' new things near you';
+            $title = $count . ' new freegles near you';
         }
 
         // ---- Photo URLs ----
