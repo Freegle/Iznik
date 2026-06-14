@@ -396,7 +396,7 @@
 
           <!-- Inline reply section for two-column layout -->
           <div v-if="isTwoColumnLayout" class="inline-reply-section">
-            <div v-if="!replyExpanded">
+            <div>
               <!-- Promised notice -->
               <div
                 v-if="
@@ -445,24 +445,6 @@
                 <nuxt-link to="/chats">Chats</nuxt-link>.
               </b-alert>
             </div>
-
-            <!-- Expanded reply section -->
-            <div v-else class="reply-expanded-section">
-              <NoticeMessage
-                v-if="message.promised && !message.promisedtome"
-                variant="warning"
-                class="mb-2"
-              >
-                Already promised - you might not get it.
-              </NoticeMessage>
-              <client-only>
-                <MessageReplySection
-                  :id="id"
-                  @close="replyExpanded = false"
-                  @sent="sent"
-                />
-              </client-only>
-            </div>
           </div>
         </div>
       </div>
@@ -472,9 +454,9 @@
     <div
       v-if="!isTwoColumnLayout"
       class="app-footer"
-      :class="{ expanded: replyExpanded, stickyAdRendered }"
+      :class="{ stickyAdRendered }"
     >
-      <div v-if="!replyExpanded" class="w-100">
+      <div class="w-100">
         <!-- Promised notice -->
         <div
           v-if="message.promised && !message.successful && replyable && !fromme"
@@ -515,25 +497,21 @@
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
         </b-alert>
       </div>
-
-      <!-- Expanded reply section -->
-      <div v-else class="reply-expanded-section">
-        <NoticeMessage
-          v-if="message.promised && !message.promisedtome"
-          variant="warning"
-          class="mb-2"
-        >
-          Already promised - you might not get it.
-        </NoticeMessage>
-        <client-only>
-          <MessageReplySection
-            :id="id"
-            @close="replyExpanded = false"
-            @sent="sent"
-          />
-        </client-only>
-      </div>
     </div>
+
+    <!-- Chat-style reply pane, shown as a full-screen overlay on every
+         breakpoint. Wrapped in its own Suspense so its async setup doesn't
+         suspend the whole page when it opens. -->
+    <Teleport to="body">
+      <Suspense v-if="showReplyOverlay">
+        <ChatReplyPane
+          :message-id="id"
+          :stay-on-send="inModal || fullscreenOverlay"
+          @close="showReplyOverlay = false"
+          @sent="sent"
+        />
+      </Suspense>
+    </Teleport>
 
     <!-- Map Modal - Full Screen -->
     <Teleport v-if="showMapModal" to="body">
@@ -602,8 +580,7 @@ import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
-import NoticeMessage from '~/components/NoticeMessage'
-import MessageReplySection from '~/components/MessageReplySection'
+import ChatReplyPane from '~/components/ChatReplyPane'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -678,7 +655,7 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
 // State
 const replied = ref(false)
-const replyExpanded = ref(false)
+const showReplyOverlay = ref(false)
 const mountTime = ref(null)
 const showMapModal = ref(false)
 const showShareModal = ref(false)
@@ -860,24 +837,26 @@ function stopThumbnailAutoScroll() {
 }
 
 function expandReply() {
-  console.log(
-    'DEBUG expandReply called, replyable:',
-    props.replyable,
-    'replied:',
-    replied.value,
-    'fromme:',
-    fromme.value
-  )
-  replyExpanded.value = true
+  // Open the chat-style reply pane as a full-screen overlay on every
+  // breakpoint. It sits on top of wherever you are, so closing it returns you
+  // to exactly where you were, and after sending you land in the real chat.
+  showReplyOverlay.value = true
 }
 
 function sent() {
-  replyExpanded.value = false
+  showReplyOverlay.value = false
   replied.value = true
-  // Close after a brief delay so user sees confirmation
-  setTimeout(() => {
-    emit('close')
-  }, 1500)
+
+  // When we're a message inside a list (browse / explore), the reply was sent
+  // WITHOUT navigating to the chat. Show the "Message sent" confirmation
+  // briefly, then close this message so the user is back on the list and can
+  // reply to more items. On the standalone message page the state machine has
+  // already navigated to the chat, so we leave navigation alone.
+  if (props.inModal || props.fullscreenOverlay) {
+    setTimeout(() => {
+      emit('close')
+    }, 1500)
+  }
 }
 
 // Handle browser back button/swipe
@@ -924,10 +903,9 @@ onMounted(() => {
   // Start auto-scroll hint for thumbnail carousel
   startThumbnailAutoScroll()
 
-  // If the user arrived via a "Reply" CTA in an email (?reply=1), open
-  // the compose form straight away so they don't need to click Reply
-  // again. expandReply() only sets the ref — the template still gates
-  // the actual MessageReplySection render on replyable/replied/etc.,
+  // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
+  // chat-style reply pane straight away so they don't need to click Reply
+  // again. The pane fetches its own message data and gates its own render,
   // so this is safe to call unconditionally.
   if (useRoute().query.reply) {
     expandReply()
@@ -2185,11 +2163,6 @@ onUnmounted(() => {
 .footer-buttons:has(.cancel-button:only-child) .cancel-button {
   flex: 1;
   width: 100% !important;
-}
-
-.reply-expanded-section {
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .promised-notice {

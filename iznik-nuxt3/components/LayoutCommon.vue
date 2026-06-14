@@ -15,8 +15,10 @@
       <client-only>
         <div v-if="allowAd">
           <div
-            class="sticky w-100 d-flex flex-column"
+            class="sticky w-100 flex-column"
             :class="{
+              'd-flex': !replyOverlayOpen,
+              'd-none': replyOverlayOpen,
               allowClicks: !stickyAdRendered,
               'bg-white': stickyAdRendered,
             }"
@@ -186,6 +188,9 @@ const route = useRoute()
 
 // Computed properties
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+// Hide the sticky ad/jobs banner while the chat-style reply pane is open so it
+// doesn't overlap the full-screen overlay.
+const replyOverlayOpen = computed(() => miscStore.replyOverlayOpen)
 const routePath = computed(() => route?.path)
 const allowAd = computed(() => {
   // We don't want to show the ad on the landing page when logged out - looks tacky.
