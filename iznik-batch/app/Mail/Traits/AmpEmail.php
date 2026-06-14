@@ -236,7 +236,20 @@ trait AmpEmail
     protected function renderAmpTemplate(string $template, array $data = []): void
     {
         $this->ampData = array_merge($this->getDefaultAmpData(), $data);
-        $this->ampHtml = view($template, $this->ampData)->render();
+
+        // The MJML/HTML part is run through MjmlCompilerService, which strips
+        // XML-illegal C0 control characters. The AMP part is NOT compiled
+        // through it — the rendered Blade IS the AMP — so a stray control char
+        // in user content (a post description, a job title) reaches the AMP
+        // raw and makes Gmail reject the ENTIRE AMP as invalid (intermittent:
+        // depends on which posts/jobs land in this digest). Strip the same
+        // illegal control chars here (TAB/LF/CR kept). Byte-wise is UTF-8-safe
+        // (these byte values never occur inside a multi-byte sequence).
+        $this->ampHtml = preg_replace(
+            '/[\x00-\x08\x0B\x0C\x0E-\x1F]/',
+            '',
+            view($template, $this->ampData)->render()
+        );
     }
 
     /**
@@ -268,6 +281,20 @@ trait AmpEmail
     protected function applyAmpToMessage(Email $message): void
     {
         if (!$this->ampHtml || !$this->isAmpEnabled()) {
+            return;
+        }
+
+        // AMP for Email caps the AMP document at 200,000 bytes; beyond that
+        // Gmail rejects the WHOLE AMP as invalid ("dynamic content not
+        // rendered"). A large multi-post digest can cross it (~85+ posts).
+        // Ship the valid HTML rather than an invalid AMP: skip attaching the
+        // AMP part when it's over the limit. 199,000 leaves a small margin.
+        if (strlen($this->ampHtml) > 199000) {
+            \Illuminate\Support\Facades\Log::info('AMP part dropped: over AMP4Email 200KB document limit', [
+                'mailable' => static::class,
+                'amp_bytes' => strlen($this->ampHtml),
+            ]);
+
             return;
         }
 

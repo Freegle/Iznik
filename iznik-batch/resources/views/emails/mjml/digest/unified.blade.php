@@ -51,6 +51,9 @@
         {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
+        {{-- Jobs near you, at the top (V1 parity). Shared partial. --}}
+        @include('emails.mjml.digest._jobs')
+
         {{-- Card: image left + content right (matches browse page layout) --}}
         <mj-section background-color="#ffffff" padding="0" border-radius="4px">
             {{-- Image column --}}
@@ -158,10 +161,6 @@
             </mj-column>
         </mj-section>
 
-        {{-- Jobs near you (V1 single.mjml parity). Shared partial — see the
-             daily branch below, which includes the same block. --}}
-        @include('emails.mjml.digest._jobs')
-
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
         {{-- DAILY MODE: multi-post digest with thumbnail nav               --}}
@@ -264,6 +263,10 @@
         </mj-section>
         @endif
 
+        {{-- Jobs near you, at the top before the posts (V1 multiple.mjml
+             parity). Shared partial — same block the immediate branch uses. --}}
+        @include('emails.mjml.digest._jobs')
+
         {{-- Post cards --}}
         @foreach($posts as $index => $post)
         {{-- Card separator --}}
@@ -315,12 +318,6 @@
         ])
         @endforeach
         @endif
-
-        {{-- Jobs near you (V1 multiple.mjml parity). Shared partial — the daily
-             branch silently lacked this block, so daily digests showed no jobs
-             while the immediate branch and the AMP part did. Placed after
-             "came and went" to mirror the AMP section order. --}}
-        @include('emails.mjml.digest._jobs')
 
         {{-- Browse all CTA --}}
         <mj-section background-color="#ffffff" padding="16px 20px 20px 20px">

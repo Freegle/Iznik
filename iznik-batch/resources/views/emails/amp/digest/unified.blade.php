@@ -510,46 +510,79 @@
     /* Job listings block (V1 single.html parity — mirrors the MJML jobs block) */
     .jobs-section {
       background-color: #F7F6EC;
-      padding: 16px 20px;
+      padding: 8px 8px 16px 8px;
       border-top: 1px solid #e9ecef;
     }
+    .more-posts {
+      text-align: center;
+      font-size: 13px;
+      color: #666666;
+      margin: 6px 0 12px 0;
+    }
+    .more-posts a {
+      color: #338808;
+      font-weight: bold;
+      text-decoration: none;
+    }
     .jobs-title {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: bold;
       color: #333333;
       text-align: center;
-      margin: 0 0 10px 0;
+      margin: 0 0 4px 0;
     }
+    {{-- Flex row: thumbnail on the left, title + location text on the right.
+         Flex (not the old inline thumb + <br>) keeps the location inline after
+         the title instead of dropping it below the thumbnail, and avoids the
+         underlined-whitespace "underscore" the thumbnail anchor used to show. --}}
     .job-row {
-      margin: 0 0 8px 0;
+      display: flex;
+      align-items: flex-start;
+      margin: 0 0 6px 0;
+    }
+    /* Two-up on larger screens (halves the height); single column on mobile. */
+    @media (min-width: 481px) {
+      .jobs-list { display: flex; flex-wrap: wrap; }
+      .job-row { width: 50%; }
+    }
+    .job-thumb-link {
+      flex: 0 0 auto;
+      margin-right: 8px;
+      line-height: 0;
+      text-decoration: none;
     }
     .job-thumb {
       width: 40px;
       height: 40px;
       border-radius: 4px;
-      margin-right: 8px;
-      vertical-align: middle;
+    }
+    {{-- AMP4Email forbids -webkit-line-clamp, so the 2-line cap here relies on
+         the ~48-char display_title truncation done in UnifiedDigest. --}}
+    .job-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
     }
     .job-link {
       color: #338808;
       font-weight: bold;
       text-decoration: none;
       font-size: 14px;
-      line-height: 1.25;
+      line-height: 1.3;
     }
     .job-location {
       color: #666666;
       font-size: 12px;
-      line-height: 1.3;
     }
     .jobs-note {
-      font-size: 12px;
-      color: #666666;
-      line-height: 1.4;
-      margin: 8px 0 0 0;
+      font-size: 11px;
+      color: #888888;
+      line-height: 1.3;
+      text-align: center;
+      margin: 4px 0 0 0;
     }
     .jobs-buttons {
-      margin-top: 12px;
+      margin-top: 6px;
       text-align: center;
     }
     .jobs-button {
@@ -557,10 +590,10 @@
       background-color: #338808;
       color: #ffffff;
       text-decoration: none;
-      font-size: 14px;
-      padding: 10px 25px;
+      font-size: 13px;
+      padding: 6px 14px;
       border-radius: 5px;
-      margin: 4px;
+      margin: 3px;
     }
 
     /* Sponsors (V1 parity — mirrors the MJML sponsors block) */
@@ -736,6 +769,34 @@
       <div class="form-status"><div class="submit-error">@{{message}}</div></div>
     </template>
 
+    {{-- Jobs near you, at the top before the posts (V1 multiple.mjml parity;
+         kept in lockstep with the MJML jobs partial). AMP4Email needs concrete
+         amp-img dimensions, so the thumb is a fixed 40x40. --}}
+    @if(isset($jobAds) && $jobAds->isNotEmpty())
+    <div class="jobs-section">
+      <p class="jobs-title">Jobs near you</p>
+      {{-- .jobs-list is a flex-wrap container on desktop (2-up) and a plain
+           block on mobile (stacked). Each .job-row is itself a flex row:
+           thumbnail-link + text. Location sits inline after the title; the
+           combined text is pre-clamped to ~2 lines in UnifiedDigest. --}}
+      <div class="jobs-list">
+      @foreach($jobAds as $job)
+        <div class="job-row">
+          @if($job->image_url ?? null)
+          <a href="{{ $job->tracked_url }}" class="job-thumb-link"><amp-img class="job-thumb" src="{{ $job->image_url }}" width="40" height="40" layout="fixed" alt=""></amp-img></a>
+          @endif
+          <span class="job-text"><a href="{{ $job->tracked_url }}" class="job-link">{{ $job->display_title ?? $job->title }}</a>@if($job->display_location ?? null) <span class="job-location">({{ $job->display_location }})</span>@endif</span>
+        </div>
+      @endforeach
+      </div>
+      <p class="jobs-note">If you are interested and click, it will raise a little to help keep Freegle running and free to use.</p>
+      <div class="jobs-buttons">
+        <a href="{{ $jobsUrl }}" class="jobs-button">View more jobs</a>
+        <a href="{{ $donateUrl }}" class="jobs-button">Donating helps too!</a>
+      </div>
+    </div>
+    @endif
+
     {{-- Post cards --}}
     @foreach($posts as $index => $post)
     @php $isSingle = $postCount === 1; @endphp
@@ -827,6 +888,13 @@
     @endif
     @endforeach
 
+    {{-- AMP post cap: AMP for Email hard-limits the document to 200KB, so the
+         cards above are capped (see UnifiedDigest::build). The HTML part still
+         carries every post; link to the site for the remainder. --}}
+    @if(($ampMorePosts ?? 0) > 0)
+    <p class="more-posts">…and {{ $ampMorePosts }} more {{ \Illuminate\Support\Str::plural('post', $ampMorePosts) }} — <a href="{{ $browseUrl }}">browse all on Freegle</a></p>
+    @endif
+
     {{-- "Came and went": Taken/Received posts since the last digest, greyed
          with a nudge to increase digest frequency. Daily only; empty = hidden. --}}
     @if(count($completedPosts ?? []) > 0)
@@ -844,33 +912,6 @@
         'muted' => true,
     ])
     @endforeach
-    @endif
-
-    {{-- Jobs near you (V1 single.html parity — mirrors the MJML jobs block).
-         AMP4Email needs concrete amp-img dimensions, so the thumb is a fixed
-         40x40. --}}
-    @if(isset($jobAds) && $jobAds->isNotEmpty())
-    <div class="jobs-section">
-      <p class="jobs-title">Jobs near you</p>
-      @foreach($jobAds as $job)
-      <div class="job-row">
-        @if($job->image_url ?? null)
-        <a href="{{ $job->tracked_url }}">
-          <amp-img class="job-thumb" src="{{ $job->image_url }}" width="40" height="40" layout="fixed" alt=""></amp-img>
-        </a>
-        @endif
-        <a href="{{ $job->tracked_url }}" class="job-link">{{ $job->title }}</a>
-        @if($job->location ?? null)
-        <br /><span class="job-location">{{ $job->location }}</span>
-        @endif
-      </div>
-      @endforeach
-      <p class="jobs-note">If you are interested and click, it will raise a little to help keep Freegle running and free to use.</p>
-      <div class="jobs-buttons">
-        <a href="{{ $jobsUrl }}" class="jobs-button">View more jobs</a>
-        <a href="{{ $donateUrl }}" class="jobs-button">Donating helps too!</a>
-      </div>
-    </div>
     @endif
 
     {{-- Sponsors (V1 parity — mirrors the MJML sponsors block) --}}
