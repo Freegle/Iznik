@@ -296,7 +296,10 @@ class ReengageContentService
             return null;
         }
 
-        $name = trim((string) preg_replace('/\bfreegle\b/i', '', $groupName));
+        // Strip the "Freegle" branding (with any adjoining space) — handles
+        // "Coventry Freegle", "Freegle Inverness" AND the spaceless nameshort
+        // "CoventryFreegle" (a \b-anchored match would miss the last one).
+        $name = trim((string) preg_replace('/\s*freegle\s*/i', ' ', $groupName));
         $name = trim($name, " -–&");
 
         return $name !== '' ? $name : null;

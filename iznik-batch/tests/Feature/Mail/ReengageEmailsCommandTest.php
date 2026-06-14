@@ -292,6 +292,35 @@ class ReengageEmailsCommandTest extends TestCase
         $this->assertSame('Coventry', $content['areaLabel']);
     }
 
+    public function test_group_town_strips_freegle_from_spaceless_nameshort(): void
+    {
+        // No namefull → falls back to nameshort ("DudleyFreegle...") which has
+        // no space before "Freegle"; the strip must still remove it.
+        $user = $this->createTestUser();
+        $group = Group::create([
+            'nameshort' => 'DudleyFreegle' . uniqid(),
+            'namefull'  => '',
+            'type'      => Group::TYPE_FREEGLE,
+            'publish'   => 1,
+            'onmap'     => 1,
+            'onhere'    => 1,
+            'lat'       => 52.5123,
+            'lng'       => -2.0810,
+        ]);
+        DB::table('memberships')->insert([
+            'userid'     => $user->id,
+            'groupid'    => $group->id,
+            'collection' => Membership::COLLECTION_APPROVED,
+            'role'       => Membership::ROLE_MEMBER,
+            'added'      => now(),
+        ]);
+
+        $content = (new ReengageContentService())->buildContent($user->fresh(), 'nearby');
+
+        $this->assertStringStartsWith('Dudley', (string) $content['areaName']);
+        $this->assertStringNotContainsStringIgnoringCase('freegle', (string) $content['areaName']);
+    }
+
     // ── Command smoke ────────────────────────────────────────────────────────
 
     public function test_command_runs(): void
