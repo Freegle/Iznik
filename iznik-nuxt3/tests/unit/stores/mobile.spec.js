@@ -793,6 +793,142 @@ describe('mobile store', () => {
     })
   })
 
+  describe('handleNotification — new_posts channel', () => {
+    let store
+
+    beforeEach(() => {
+      store = useMobileStore()
+      store.isApp = true
+      store.config = { public: {} }
+    })
+
+    // The new_posts push arrives with channel_id='new_posts' and route='/browse'.
+    // When the app is in the background (okToMove=true), tapping should navigate
+    // to /browse via router.push — exactly like any other routable push.
+    it('routes to /browse when new_posts push is tapped (background)', async () => {
+      vi.mock('@capacitor/app', () => ({
+        App: { getState: () => Promise.resolve({ isActive: false }) },
+      }))
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          okToMove: true,
+          data: {
+            channel_id: 'new_posts',
+            category: 'NEW_POSTS',
+            badge: '7',
+            modtools: 'false',
+            route: '/browse',
+            notId: '200000001',
+            count: '7',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/browse')
+      logSpy.mockRestore()
+    })
+
+    // When the new_posts push arrives in the FOREGROUND we must NOT trigger
+    // fetchChats — that's only meaningful for chat notifications.
+    it('does NOT refresh chats when a new_posts push arrives in the foreground', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'new_posts',
+            category: 'NEW_POSTS',
+            foreground: true,
+            badge: '7',
+            modtools: 'false',
+            route: '/browse',
+            notId: '200000001',
+            count: '7',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      // fetchChats must NOT be called — new_posts pushes carry no chat data
+      expect(mockFetchChats).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    // A foreground new_posts push should not trigger fetchMessages either.
+    it('does NOT fetch messages when a new_posts push arrives in the foreground', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'new_posts',
+            foreground: true,
+            badge: '3',
+            modtools: 'false',
+            route: '/browse',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockFetchMessages).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    // Badge update must still fire on a new_posts push (the count field
+    // carries the number of new items, used as the app badge value).
+    it('updates badge count from a new_posts push', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const mockBadge = { set: vi.fn() }
+      store.lastBadgeCount = -1
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'new_posts',
+            badge: '5',
+            modtools: 'false',
+            route: '/browse',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        mockBadge
+      )
+
+      // data.count is set from parseInt(data.badge) inside handleNotification
+      expect(mockBadge.set).toHaveBeenCalledWith({ count: 5 })
+      logSpy.mockRestore()
+    })
+
+    // A regular chat push in the foreground should still refresh chats
+    // (regression guard — verifies the channel_id guard is specific to new_posts).
+    it('still refreshes chats for a foreground chat_messages push', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'chat_messages',
+            foreground: true,
+            badge: '2',
+            modtools: '0',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      logSpy.mockRestore()
+    })
+  })
+
   describe('handleNotification duplicate-navigation guard', () => {
     it('skips router.push when already on the target chat route', async () => {
       // AssertFlip: before the fix, router.currentRoute.path is accessed directly

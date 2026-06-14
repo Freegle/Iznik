@@ -895,7 +895,7 @@ class UnifiedDigestService
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @return Collection
      */
-    protected function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
+    public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
         // every group on a periodic cadence (hourly/2h/4h/8h/daily), folding

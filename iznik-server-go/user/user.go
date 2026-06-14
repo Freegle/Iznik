@@ -521,6 +521,27 @@ func ApplySettingsDefaultsToJSON(settings json.RawMessage, systemrole string) js
 		changed = true
 	}
 
+	// settings.notifications is a nested object; create it when absent.
+	// Inject per-key defaults for any key absent from that sub-object.
+	{
+		var notifs map[string]interface{}
+		if raw, ok := m["notifications"]; ok {
+			notifs, _ = raw.(map[string]interface{})
+		}
+		if notifs == nil {
+			notifs = make(map[string]interface{})
+		}
+		notifChanged := false
+		if _, ok := notifs["dailypostspush"]; !ok {
+			notifs["dailypostspush"] = true
+			notifChanged = true
+		}
+		if notifChanged {
+			m["notifications"] = notifs
+			changed = true
+		}
+	}
+
 	// Mod-specific defaults only for users with a moderator+ systemrole.
 	// Injecting these for regular users caused settings contamination when
 	// the frontend echoed the full settings blob back via PATCH.

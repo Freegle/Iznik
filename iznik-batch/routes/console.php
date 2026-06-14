@@ -408,6 +408,21 @@ Schedule::command('mail:digest:unified --mode=daily')
 //         ->runInBackground();
 // }
 
+// Daily new-posts push notification (push:daily-posts).
+//
+// Trails the daily email digest (07:00) by 30 minutes so users who open
+// the email aren't also hit by a push in the same moment. The
+// once-per-London-day guard inside the command turns every later tick into
+// a no-op, so this is safe to leave scheduled even before the allowlist is
+// configured — it exits immediately when FREEGLE_POSTS_PUSH_ALLOWLIST is ''.
+Schedule::command('push:daily-posts')
+    ->timezone(config('freegle.timezone'))
+    ->everyThirtyMinutes()
+    ->between('7:30', '12:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('push:daily-posts'))
+    ->runInBackground();
+
 // Immediate mode - V1-parity per-group iteration, sharded 8-way.
 //
 // A single worker manages ~250 emails/min; arrival rate × avg

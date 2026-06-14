@@ -71,6 +71,7 @@ export const useAuthStore = defineStore({
             push: true,
             facebook: true,
             app: true,
+            dailypostspush: true,
           }
         }
 
