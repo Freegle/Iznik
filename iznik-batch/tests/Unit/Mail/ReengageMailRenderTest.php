@@ -26,13 +26,29 @@ class ReengageMailRenderTest extends TestCase
         $this->assertStringContainsString('alex@example.com', $html);     // footer recipient line
     }
 
-    public function test_impact_template_renders_stats(): void
+    public function test_impact_template_renders_people_collage(): void
     {
         $html = view('emails.mjml.reengage.impact', $this->data('impact'))->render();
 
-        $this->assertStringContainsString('312', $html);   // items rehomed
-        $this->assertStringContainsString('1,840kg', $html); // weight saved (number_format)
+        // Neighbour names + avatars (the collage), not stat counters.
+        $this->assertStringContainsString('Jane', $html);
+        $this->assertStringContainsString('i.pravatar.cc', $html);     // an avatar image
+        $this->assertStringContainsString('Dining chairs', $html);     // an item photo caption/alt
         $this->assertStringContainsString('Join back in', $html);
+        // The old abstract stat counters should be gone.
+        $this->assertStringNotContainsString('kept out of landfill near you', $html);
+    }
+
+    public function test_impact_collage_omits_face_row_without_avatars(): void
+    {
+        $data = array_merge($this->data('impact'), ['faces' => []]);
+
+        $html = view('emails.mjml.reengage.impact', $data)->render();
+
+        // Still a valid email with the CTA, just no neighbour row.
+        $this->assertStringContainsString('<mjml>', $html);
+        $this->assertStringContainsString('Join back in', $html);
+        $this->assertStringNotContainsString('i.pravatar.cc', $html);
     }
 
     public function test_preferences_template_offers_downgrade_and_unsubscribe(): void

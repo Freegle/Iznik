@@ -57,9 +57,10 @@ so it can ship dark without touching production sending.
 
 1. **`nearby`** — "what's been freegled near you": a count of free items offered
    near the user this week + live item cards. CTA *See what's near you*.
-2. **`impact`** — "your community's impact": items rehomed + weight kept out of
-   landfill over the user's local Freegle groups + a couple of live items.
-   CTA *Join back in*.
+2. **`impact`** — "your community has been busy": a **collage** of real
+   neighbours (avatars + first names) and the things they've shared (item
+   photos), instead of abstract stat counters — concrete and human. CTA *Join
+   back in*.
 3. **`preferences`** — "shall we stay in touch?": honest opt-in confirmation +
    gentle sunset notice. Primary *Keep me freegling* (auto-login), secondary
    *Email me less often*, clear unsubscribe. Doubles as a GDPR consent refresh.
@@ -83,10 +84,11 @@ and the trigger is env-tunable. Refining to an **email-engagement** signal
 (non-opens/clicks of recent digests) is the recommended pre-ramp improvement.
 
 **Localisation.** Lat/lng waterfall (`settings.mylocation` → `lastlocation`);
-area label from the saved location's area name; nearby OFFERs via the existing
-`NearbyOffersService`; impact via the `stats` table over the user's member
-Freegle groups. Everything degrades gracefully — no location still yields a
-sensible (non-localised) email.
+area label from the saved location's area name; nearby OFFERs (item photos) via
+the existing `NearbyOffersService`; the stage-2 collage uses recent nearby
+posters who have uploaded an avatar (first name + profile photo — the same
+public wall data shown in-app). Everything degrades gracefully — no location, no
+avatars, or no photos still yields a sensible email.
 
 **Eligibility / suppression** mirrors the engage flow: approved Freegle
 membership, per-group engagement opt-out honoured, `deleted`/`bouncing`/

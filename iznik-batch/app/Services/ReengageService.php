@@ -236,9 +236,9 @@ class ReengageService
             1 => $count > 0 && $area
                 ? number_format($count) . " free things near {$area} this week"
                 : ($area ? "See what's free near {$area}" : "See what's being given away near you"),
-            2 => ($c['hasImpact'] ?? false) && $area
-                ? "Your Freegle community near {$area} has been busy"
-                : "See your local community's impact",
+            2 => $area
+                ? "Your neighbours near {$area} have been freegling"
+                : "See who's been freegling near you",
             3 => 'Shall we stay in touch?',
             default => 'We miss you on Freegle',
         };

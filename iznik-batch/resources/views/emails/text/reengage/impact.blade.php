@@ -1,19 +1,22 @@
 Hi {{ $name }},
 
-While you've been away, freeglers near {{ $areaLabel }} have kept perfectly good things out of the bin and in the hands of people who needed them.
-@if($hasImpact)
+While you've been away, real people near {{ $areaLabel }} have been giving and getting.
+@if(!empty($faces))
 
-In the last month, across {{ $impactGroups }} local {{ \Illuminate\Support\Str::plural('group', $impactGroups) }} you're part of:
-- {{ number_format($impactOutcomes) }} things given a new home
-- {{ number_format($impactWeightKg) }}kg kept out of landfill
+A few of your neighbours freegling this month:
+@foreach(array_slice($faces, 0, 5) as $face)
+- {{ $face['name'] }}
+@endforeach
 @endif
 @if(!empty($offers))
 
-Up for grabs near you right now:
-@foreach(array_slice($offers, 0, 3) as $offer)
+Some of what's been shared near you:
+@foreach(array_slice($offers, 0, 4) as $offer)
 - {{ $offer['subject'] }}: {{ $offer['url'] }}
 @endforeach
 @endif
+
+Together they're keeping good stuff out of landfill — one freegle at a time.
 
 Join back in: {{ $findUrl }}
 Offer something: {{ $giveUrl }}

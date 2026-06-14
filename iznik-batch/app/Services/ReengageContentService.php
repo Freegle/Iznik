@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Group;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -57,7 +56,9 @@ class ReengageContentService
 
         return match ($template) {
             'nearby'      => array_merge($base, $this->nearbyContent($user)),
-            'impact'      => array_merge($base, $this->impactContent($user), $this->nearbyContent($user, 3)),
+            // Stage 2 is a people-and-items collage, not stat counters: item
+            // photos (offers) + neighbour avatars/first names (faces).
+            'impact'      => array_merge($base, $this->nearbyContent($user, 4), ['faces' => $this->nearbyFaces($user)]),
             'preferences' => array_merge($base, $this->nearbyContent($user, 0)),
             default       => $base,
         };
@@ -100,16 +101,16 @@ class ReengageContentService
             'hasLocation' => true,
         ];
 
-        $impact = [
-            'impactOutcomes' => 312,
-            'impactWeightKg' => 1840,
-            'impactGroups'   => 3,
-            'hasImpact'      => true,
+        $sampleFaces = [
+            ['name' => 'Jane',  'avatar' => 'https://i.pravatar.cc/150?img=5'],
+            ['name' => 'Mo',    'avatar' => 'https://i.pravatar.cc/150?img=12'],
+            ['name' => 'Priya', 'avatar' => 'https://i.pravatar.cc/150?img=32'],
+            ['name' => 'Tom',   'avatar' => 'https://i.pravatar.cc/150?img=45'],
         ];
 
         return match ($template) {
             'nearby'      => array_merge($base, $nearby),
-            'impact'      => array_merge($base, $impact, ['offers' => $sampleOffers->take(3)->all(), 'offerCount' => 47, 'hasLocation' => true]),
+            'impact'      => array_merge($base, ['offers' => $sampleOffers->all(), 'offerCount' => 47, 'hasLocation' => true, 'faces' => $sampleFaces]),
             'preferences' => array_merge($base, ['offers' => [], 'offerCount' => 47, 'hasLocation' => true]),
             default       => $base,
         };
@@ -159,42 +160,61 @@ class ReengageContentService
     }
 
     /**
-     * Local impact totals over the user's member Freegle groups: items given
-     * away (Outcomes) and estimated weight saved (Weight) in the last 30 days.
+     * Real neighbours for the stage-2 collage: recent nearby posters who have
+     * uploaded a profile photo, returned as first name + avatar URL. This is
+     * the same public wall data freeglers already see in-app; we only include
+     * users who chose to add an avatar, and show first names only.
      *
-     * @return array{impactOutcomes: int, impactWeightKg: int, impactGroups: int, hasImpact: bool}
+     * @return array<int, array{name: string, avatar: string}>
      */
-    private function impactContent(User $user): array
+    private function nearbyFaces(User $user, int $limit = 6): array
     {
-        $groupIds = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $user->id)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->pluck('groups.id')
-            ->all();
-
-        if (empty($groupIds)) {
-            return ['impactOutcomes' => 0, 'impactWeightKg' => 0, 'impactGroups' => 0, 'hasImpact' => false];
+        [$lat, $lng] = $this->resolveLatLng($user);
+        if ($lat === null || $lng === null) {
+            return [];
         }
 
-        $since = now()->subDays(self::IMPACT_DAYS)->toDateString();
+        $deg = self::NEARBY_RADIUS_KM / 111.0;
 
-        $row = DB::table('stats')
-            ->whereIn('groupid', $groupIds)
-            ->where('date', '>=', $since)
-            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'Outcomes' THEN count END), 0) AS outcomes")
-            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'Weight' THEN count END), 0) AS weight")
-            ->first();
+        $userIds = Message::query()
+            ->offers()
+            ->approved()
+            ->notDeleted()
+            ->withLocation()
+            ->recent(self::IMPACT_DAYS)
+            ->whereBetween('lat', [$lat - $deg, $lat + $deg])
+            ->whereBetween('lng', [$lng - $deg, $lng + $deg])
+            ->whereNotNull('fromuser')
+            ->orderByDesc('arrival')
+            ->limit($limit * 5)
+            ->pluck('fromuser')
+            ->unique()
+            ->take($limit * 3)
+            ->all();
 
-        $outcomes = (int) ($row->outcomes ?? 0);
-        $weightKg = (int) round((float) ($row->weight ?? 0));
+        if (empty($userIds)) {
+            return [];
+        }
 
-        return [
-            'impactOutcomes' => $outcomes,
-            'impactWeightKg' => $weightKg,
-            'impactGroups'   => count($groupIds),
-            'hasImpact'      => $outcomes > 0 || $weightKg > 0,
-        ];
+        $faces = [];
+        foreach (User::whereIn('id', $userIds)->get() as $poster) {
+            $avatar = $poster->getProfileImageUrl();
+            if (!$avatar) {
+                continue;
+            }
+
+            $first = trim((string) explode(' ', trim((string) $poster->display_name))[0]);
+            if ($first === '' || $first === 'Freegle') {
+                continue;
+            }
+
+            $faces[] = ['name' => $first, 'avatar' => $avatar];
+            if (count($faces) >= $limit) {
+                break;
+            }
+        }
+
+        return $faces;
     }
 
     /**

@@ -1,17 +1,19 @@
 {{--
-  Re-engagement sequence — stage 2 of 3: "your community's impact".
-  Localised collective impact (items rehomed, weight saved from landfill) is a
-  strong belonging/mission lever for charity win-back. One clear primary CTA.
+  Re-engagement sequence — stage 2 of 3: the local community as a COLLAGE of
+  real people (neighbour avatars + first names) and the things they've shared
+  (item photos), instead of abstract stat counters. All public wall data; only
+  neighbours who uploaded an avatar are shown, first names only. Degrades to an
+  items-only / generic version when faces or photos aren't available.
 --}}
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => $hasImpact ? "Your community saved " . number_format($impactWeightKg) . "kg from landfill recently" : 'See the difference your local community is making'])
+  @include('emails.mjml.partials.head', ['preview' => 'See who has been freegling near ' . $areaLabel])
   <mj-body background-color="#f4f4f4">
 
     {{-- Header band with logo --}}
     <mj-section mj-class="bg-success" padding="22px 0">
       <mj-column width="68%" vertical-align="middle">
         <mj-text font-size="22px" font-weight="bold" color="#ffffff" padding="0 25px">
-          Look what your community's been up to 🌱
+          Your community has been busy 🌱
         </mj-text>
       </mj-column>
       <mj-column width="32%" vertical-align="middle">
@@ -26,71 +28,57 @@
           Hi {{ $name }},
         </mj-text>
         <mj-text font-size="16px" color="#333333" padding="0 25px" line-height="1.5">
-          While you've been away, freeglers near {{ $areaLabel }} have kept perfectly good things out of the bin and in the hands of people who needed them.
+          While you've been away, real people near {{ $areaLabel }} have been giving and getting. Here are a few of your neighbours and some of what they've shared:
         </mj-text>
       </mj-column>
     </mj-section>
 
-    @if($hasImpact)
-    {{-- Impact stat badges --}}
-    <mj-section background-color="#ffffff" padding="14px 12px 6px">
-      <mj-column width="50%" background-color="#f0f7e6" border-radius="12px" padding="18px 8px">
-        <mj-text align="center" font-size="34px" font-weight="bold" color="#338808" padding="0">
-          {{ number_format($impactOutcomes) }}
-        </mj-text>
-        <mj-text align="center" font-size="13px" color="#555555" padding="4px 6px 0" line-height="1.4">
-          things given a new home in the last month
-        </mj-text>
-      </mj-column>
-      <mj-column width="50%" background-color="#e6f4f8" border-radius="12px" padding="18px 8px">
-        <mj-text align="center" font-size="34px" font-weight="bold" color="#00A1CB" padding="0">
-          {{ number_format($impactWeightKg) }}kg
-        </mj-text>
-        <mj-text align="center" font-size="13px" color="#555555" padding="4px 6px 0" line-height="1.4">
-          kept out of landfill near you
-        </mj-text>
-      </mj-column>
-    </mj-section>
-    <mj-section background-color="#ffffff" padding="2px 0 6px">
-      <mj-column>
-        <mj-text align="center" font-size="13px" color="#888888" padding="0 25px">
-          across {{ $impactGroups }} local {{ \Illuminate\Support\Str::plural('group', $impactGroups) }} you're part of
-        </mj-text>
-      </mj-column>
-    </mj-section>
-    @else
-    <mj-section background-color="#ffffff" padding="10px 0 6px">
-      <mj-column>
-        <mj-text align="center" font-size="17px" color="#338808" font-weight="bold" padding="6px 25px" line-height="1.5">
-          Every day, your local Freegle groups quietly keep usable things out of the bin — one freegle at a time.
-        </mj-text>
-      </mj-column>
-    </mj-section>
-    @endif
-
-    {{-- A couple of live nearby items, if we have them --}}
+    {{-- Item photos --}}
     @if(!empty($offers))
-    <mj-section background-color="#ffffff" padding="14px 0 2px">
-      <mj-column>
-        <mj-text font-size="15px" font-weight="bold" color="#333333" align="center" padding="0 25px">
-          Up for grabs near you right now
-        </mj-text>
-      </mj-column>
-    </mj-section>
-    <mj-section background-color="#ffffff" padding="6px 12px 4px">
-      @foreach(array_slice($offers, 0, 3) as $offer)
-      <mj-column width="33%" padding="0 4px">
-        <mj-image src="{{ $offer['thumbnail_url'] ?? config('freegle.images.offer_placeholder') }}" href="{{ $offer['url'] }}" alt="{{ $offer['subject'] }}" width="120px" border-radius="8px" padding="0" />
-        <mj-text font-size="12px" color="#338808" align="center" font-weight="bold" padding="6px 4px 0" line-height="1.3">
-          {{ $offer['subject'] }}
-        </mj-text>
+    <mj-section background-color="#ffffff" padding="16px 12px 4px">
+      @foreach(array_slice($offers, 0, 4) as $offer)
+      <mj-column width="25%" padding="0 4px">
+        <mj-image src="{{ $offer['thumbnail_url'] ?? config('freegle.images.offer_placeholder') }}" href="{{ $offer['url'] }}" alt="{{ $offer['subject'] }}" width="118px" border-radius="8px" padding="0" />
       </mj-column>
       @endforeach
     </mj-section>
     @endif
 
+    {{-- Neighbour avatars + first names --}}
+    @if(!empty($faces))
+    <mj-section background-color="#ffffff" padding="12px 12px 2px">
+      @foreach(array_slice($faces, 0, 4) as $face)
+      <mj-column width="25%" padding="0 4px">
+        <mj-image src="{{ $face['avatar'] }}" alt="{{ $face['name'] }}" width="78px" border-radius="50%" padding="0" />
+        <mj-text align="center" font-size="13px" font-weight="bold" color="#338808" padding="7px 2px 0">
+          {{ $face['name'] }}
+        </mj-text>
+      </mj-column>
+      @endforeach
+    </mj-section>
+
+    {{-- Names sentence --}}
+    <mj-section background-color="#ffffff" padding="10px 0 2px">
+      <mj-column>
+        @php $shownNames = array_map(fn ($f) => $f['name'], array_slice($faces, 0, 3)); @endphp
+        <mj-text font-size="16px" color="#333333" align="center" padding="6px 25px" line-height="1.5">
+          <strong>{{ implode(', ', $shownNames) }}</strong> and lots of other neighbours near {{ $areaLabel }} have been freegling this month.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    @endif
+
+    {{-- Soft, qualitative impact (no counters) --}}
+    <mj-section background-color="#ffffff" padding="2px 0 6px">
+      <mj-column>
+        <mj-text font-size="15px" color="#338808" font-weight="bold" align="center" padding="4px 25px" line-height="1.5">
+          Together they're keeping good stuff out of landfill — one freegle at a time.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
     {{-- Primary CTA --}}
-    <mj-section background-color="#ffffff" padding="20px 0 6px">
+    <mj-section background-color="#ffffff" padding="18px 0 6px">
       <mj-column>
         <mj-button mj-class="btn-success" href="{{ $findUrl }}" border-radius="6px" font-size="17px" font-weight="bold" inner-padding="15px 34px">
           Join back in
