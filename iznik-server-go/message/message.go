@@ -3693,6 +3693,17 @@ func handleOutcomeIntended(c *fiber.Ctx, myid uint64, req PostMessageRequest) er
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
 	}
 
+	// Reject Taken/Received intended outcomes for pending posts: the batch job
+	// (ChaseUpService::processIntendedOutcomes) would otherwise apply the outcome
+	// 30 minutes later with no pending-state guard.
+	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
+		var pendingCount int64
+		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
+		if pendingCount > 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "Cannot record intended outcome on a pending post")
+		}
+	}
+
 	// Simple insert-or-update.
 	db.Exec("INSERT INTO messages_outcomes_intended (msgid, outcome) VALUES (?, ?) ON DUPLICATE KEY UPDATE outcome = VALUES(outcome)",
 		req.ID, req.Outcome)
@@ -3776,6 +3787,19 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "deleted": true})
 		}
 	}
+
+	// For Taken/Received: reject if the message is still pending on any group.
+	// A pending post has not been approved yet, so recording a successful outcome
+	// on it prematurely removes it from listings. Withdrawn is handled above
+	// (soft-delete). Discourse: https://discourse.ilovefreegle.org/t/9788/7
+	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
+		var pendingCount int64
+		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
+		if pendingCount > 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "Cannot mark a pending post as "+req.Outcome)
+		}
+	}
+
 
 	// Check for existing outcome. System-generated expiry markers are
 	// overwriteable; anything user-recorded is a real conflict.

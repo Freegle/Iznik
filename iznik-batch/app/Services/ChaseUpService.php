@@ -139,6 +139,20 @@ class ChaseUpService
                 continue;
             }
 
+            // Skip Taken/Received on pending posts: the post has not been approved yet,
+            // so recording a successful outcome would mark it as done prematurely.
+            // Discourse: https://discourse.ilovefreegle.org/t/9788/7
+            if (in_array($intended->outcome, ['Taken', 'Received'])) {
+                $isPending = DB::table('messages_groups')
+                    ->where('msgid', $intended->msgid)
+                    ->where('collection', MessageGroup::COLLECTION_PENDING)
+                    ->exists();
+
+                if ($isPending) {
+                    continue;
+                }
+            }
+
             if ($dryRun) {
                 Log::info("Dry run: would process intended outcome '{$intended->outcome}' for message #{$intended->msgid}");
                 $count++;

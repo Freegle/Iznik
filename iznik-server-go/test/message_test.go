@@ -9240,3 +9240,47 @@ func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode, "Partner Promise should fail if fromaddr not in partner domain")
 }
+
+// TestPostMessageReceivedOnPendingWanted asserts that marking a pending WANTED post as
+// Received is rejected by the API. Pending posts have not been approved yet; recording a
+// Received outcome on them prematurely removes them from listings.
+// Discourse: https://discourse.ilovefreegle.org/t/9788/7
+func TestPostMessageReceivedOnPendingWanted(t *testing.T) {
+	prefix := uniquePrefix("msgpend_rcv")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, posterToken := CreateTestSession(t, posterID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Wanted', ?, NOW(), NOW())",
+		posterID, prefix+" pending wanted", locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, prefix+" pending wanted").Scan(&msgID)
+	if msgID == 0 {
+		t.Fatal("Failed to create pending message")
+	}
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)",
+		msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Received",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", posterToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode, "Received outcome must be rejected on a pending Wanted post")
+
+	var outcomeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(0), outcomeCount, "No outcome should be recorded for a pending Wanted post")
+}
