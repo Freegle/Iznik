@@ -22,7 +22,7 @@ func (d *NewsfeedDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 func (d *NewsfeedDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
 	rows, err := mysqlDB.Query(`
 		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat,
-		       type, userid, deleted
+		       COALESCE(type, '') AS type, COALESCE(userid, 0) AS userid, deleted
 		FROM newsfeed
 		WHERE modified > ?
 	`, since.UTC())
@@ -91,7 +91,7 @@ func (d *NewsfeedDataset) Within(idx *Index, params QueryParams) ([]int64, error
 
 func loadNewsfeed(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
-		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat, type, userid
+		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat, COALESCE(type, '') AS type, COALESCE(userid, 0) AS userid
 		FROM newsfeed
 		WHERE deleted IS NULL
 		  AND replyto IS NULL

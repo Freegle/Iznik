@@ -27,7 +27,7 @@ func (d *MessagesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Tim
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
-		       ms.msgtype, ms.groupid,
+		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
 		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised,
 		       ms.successful
 		FROM messages_spatial ms
@@ -104,7 +104,7 @@ func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
-		       ms.msgtype, ms.groupid,
+		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
 		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised
 		FROM messages_spatial ms
 		LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid

@@ -73,6 +73,7 @@ import (
 	"github.com/freegle/iznik-server-go/team"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/userdump"
 	"github.com/freegle/iznik-server-go/visualise"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
@@ -1652,6 +1653,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} systemlogs.CountsResponse
 		systemLogsGroup.Get("/counts", systemlogs.GetLogCounts)
+
+		// User support data dump (Support/Admin only) — streams a per-user SQLite
+		// database of every user-linked table plus their Loki logs and Sentry issues.
+		rg.Get("/modtools/user/:id/dump", userdump.GetUserDump)
 	}
 
 	// Delivery routes (public - no auth required for email client access)
