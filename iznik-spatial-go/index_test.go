@@ -1,12 +1,47 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/peterstace/simplefeatures/geom"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRebuildFlow_CheckpointSurvivesRename(t *testing.T) {
+	// Regression: rebuild() renames only the .db file, so the WAL must be
+	// checkpointed into it first — otherwise a large index reopens as
+	// "no items table" (its newest pages stranded in the orphaned -wal).
+	dir := t.TempDir()
+	tmpPath := filepath.Join(dir, "x.db.building")
+	finalPath := filepath.Join(dir, "x.db")
+
+	idx, err := CreateIndex(tmpPath)
+	require.NoError(t, err)
+
+	const n = 5000
+	items := make([]Item, n)
+	for i := 0; i < n; i++ {
+		lng := -3 + float64(i%400)/100
+		lat := 51 + float64(i%500)/100
+		items[i] = Item{ExtID: int64(i + 1), MinLng: lng, MaxLng: lng, MinLat: lat, MaxLat: lat}
+	}
+	require.NoError(t, InsertItems(idx, items, nil))
+	require.NoError(t, idx.Checkpoint())
+	require.NoError(t, idx.Close())
+
+	require.NoError(t, os.Rename(tmpPath, finalPath))
+
+	reopened, err := OpenIndex(finalPath)
+	require.NoError(t, err, "reopened renamed index must still have its items table")
+	defer reopened.Close()
+
+	cnt, err := reopened.CountRows()
+	require.NoError(t, err)
+	assert.Equal(t, int64(n), cnt)
+}
 
 // mustGeom parses a WKT string into a geom.Geometry, failing the test on error.
 func mustGeom(t *testing.T, wkt string) geom.Geometry {
