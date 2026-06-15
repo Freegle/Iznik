@@ -33,6 +33,15 @@ if [ -f "$PARENT_ENV" ]; then
   set -a; { source "$PARENT_ENV"; } 2>/dev/null || true; set +a
 fi
 
+# The FSM brain + delegates run `claude`, which must use the Claude Code
+# SUBSCRIPTION session, NOT a standalone API key. ../.env defines
+# ANTHROPIC_API_KEY (for other tools) and the source above exports it; if it
+# reaches `claude` it bills that key, and once its balance is exhausted every
+# LLM call fails with "Credit balance is too low" and the FSM does nothing.
+# Drop it so claude falls back to the logged-in session. (driver.ts also deletes
+# it from process.env as the primary guard; this is belt-and-suspenders.)
+unset ANTHROPIC_API_KEY
+
 # ── Single-instance guard ─────────────────────────────────────────────────────
 # Prevent two run-loop.sh processes from running concurrently (e.g. if the
 # scheduled /loop wakeup fires while a prior run is still in progress).

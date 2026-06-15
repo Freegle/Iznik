@@ -24,6 +24,17 @@
 // behaviour. Must be set BEFORE the adapter import.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
+// Force the brain + delegate `claude` calls onto the Claude Code SUBSCRIPTION
+// session, never a standalone API key. ../.env sets ANTHROPIC_API_KEY (for other
+// tools) and run-loop.sh exports it; if it reaches the claude-agent-sdk brain
+// call or the delegate_to_coder spawns (which pass no custom env, so they
+// inherit this process's), `claude` bills THAT key instead of the session — and
+// once its prepaid balance is exhausted every LLM call returns "Credit balance
+// is too low" and the FSM silently does nothing (iterations complete, 0 PRs).
+// Deleting it here (before the adapter import / any spawn) makes claude fall
+// back to the logged-in Max subscription. Belt-and-suspenders with run-loop.sh.
+if (process.env.ANTHROPIC_API_KEY) delete process.env.ANTHROPIC_API_KEY
+
 import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
