@@ -11,8 +11,12 @@ after a configurable delay (default **20 minutes**), giving mods and microvolunt
 window to intervene, **unless** danger signals are present, with a configurable
 **quality-check sample** held back for manual review.
 
-Plus a modtools Approved-page filter dropdown (auto-approved / recently-joined / outside
-CGA) that defaults to summary view for the auto-approved variant.
+Plus ModTools oversight: dedicated **Checked** and **Trusted** views (`/messages/checked`,
+`/messages/trusted`; Go `filter=checked|trusted`), a live **auto-approve countdown** on
+Pending posts with a ≥10-minute on-load review guarantee (`messages_groups.autoapprove_hold_until`
++ a per-group `autoapproveat`), and help boxes explaining each queue. (An earlier experiment with
+an Approved-page `autoapproved/recentjoin/outsidecga` dropdown was reverted — it is NOT in the
+shipped design.)
 
 ## Production sizing (live, last 30 days)
 
@@ -81,13 +85,16 @@ Then approve (same side effects as `AutoApproveService::approveOnGroup`) + log A
 `abs(crc32((string)$msgid)) % 100 < percent` → **held** (skip; mod reviews, or 48h fallback
 catches it). Deterministic so a message never oscillates.
 
-## Frontend / Go API filter (secondary)
+## Frontend / Go API oversight (shipped design)
 
-- Go `ListMessagesMT` (`/api/modtools/messages`): new `filter` param — `autoapproved`
-  (`mg.approvedby IS NULL`), `recentjoin` (join memberships added ≥ NOW()-7d),
-  `outsidecga` (spatial: message point not within group polygon). Go tests for each.
-- Approved page `[[id]]/[[term]].vue`: `<b-form-select>` dropdown (default "All"); pass
-  `filter` to `fetchMessagesMT`; when `autoapproved` selected set the summary miscStore key.
+- Go `ListMessagesMT` (`/api/modtools/messages`): `filter=checked|trusted` over the Approved
+  collection (checked = auto-approved from NULL-status members; trusted = DEFAULT/UNMODERATED),
+  restricted to unchecked posts within `MESSAGE_CHECK_WINDOW_DAYS`. Also bumps
+  `autoapprove_hold_until` (extend-only, ≥NOW()+10m) for fetched Pending rows.
+- New pages `/messages/checked/[[id]].vue` and `/messages/trusted/[[id]].vue` (summary view,
+  "Mark all as checked"). Approved page unchanged apart from a help box.
+- `ModMessage.vue`: live countdown badge from per-group `autoapproveat` (Pending only).
+- `ModHelpPending/Checked/Trusted/Approved.vue`: dismissible help boxes (useHelpBox).
 - `ModSettingsGroup.vue`: two `<ModGroupSetting>` controls (delay minutes, quality %).
 
 ## Config / settings
@@ -126,8 +133,8 @@ catches it). Deterministic so a message never oscillates.
 | 3 | AutoApproveCleanCommand + test | ✅ | 4 command tests |
 | 4 | Schedule entry (console.php) | ✅ | everyMinute, withoutOverlapping |
 | 5 | config/freegle.php defaults | ✅ | autoapprove block (no Group.php change — absent=site default) |
-| 6 | Go ListMessagesMT filter + tests | ✅ | autoapproved/recentjoin/outsidecga + 3 Go tests; suite running |
-| 7 | Frontend approved-page dropdown + summary | ✅ | b-form-select; summary on autoapproved |
+| 6 | Go ListMessagesMT filter + tests | ✅ | filter=checked\|trusted (autoapproved/recentjoin/outsidecga experiment reverted) |
+| 7 | Checked/Trusted pages + countdown + help boxes | ✅ | /messages/checked,/trusted; autoapproveat countdown; ModHelp* boxes |
 | 8 | ModSettingsGroup.vue settings controls | ✅ | delay_minutes + quality_check_percent |
 | 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
 | 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (awaiting CI; never merge) |
