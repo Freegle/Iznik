@@ -8,6 +8,7 @@ use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 /**
@@ -18,7 +19,21 @@ use Tests\TestCase;
  */
 class SendDigestCommandTest extends TestCase
 {
+    use SeedsSpatialIndex;
+
     private const LONG_MESSAGE = 'This is a chitchat post that is definitely long enough to pass the filter.';
+
+    /** @var int[] newsfeed ids seeded into the spatial index, removed in tearDown. */
+    private array $seededNewsfeedIds = [];
+
+    protected function tearDown(): void
+    {
+        if ($this->seededNewsfeedIds) {
+            $this->removeSpatial('newsfeed', $this->seededNewsfeedIds);
+            $this->seededNewsfeedIds = [];
+        }
+        parent::tearDown();
+    }
 
     private function makeLocation(): int
     {
@@ -48,7 +63,7 @@ class SendDigestCommandTest extends TestCase
     private function createPost(int $userId, int $groupId, array $attributes = []): int
     {
         // Default 1 day old: older than the 12h minhourage floor, within 14 days.
-        return DB::table('newsfeed')->insertGetId(array_merge([
+        $id = DB::table('newsfeed')->insertGetId(array_merge([
             'userid' => $userId,
             'groupid' => $groupId,
             'type' => 'Message',
@@ -57,6 +72,13 @@ class SendDigestCommandTest extends TestCase
             'timestamp' => now()->subDay(),
             'position' => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', 3857)"),
         ], $attributes));
+
+        // The digest now selects nearby posts via the spatial 'newsfeed' index
+        // (KNN), so seed this post there at the default London position above.
+        $this->seedSpatialPoint('newsfeed', $id, 51.5074, -0.1278);
+        $this->seededNewsfeedIds[] = $id;
+
+        return $id;
     }
 
     private function makeLocationNamed(string $name): int

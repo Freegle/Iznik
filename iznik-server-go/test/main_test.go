@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -104,11 +105,34 @@ func setupLocationTestData() {
 	db.Exec(`INSERT IGNORE INTO locations_spatial (locationid, geometry)
 		VALUES (1000002, ST_GeomFromText('POINT(-3.206000 55.958000)', 3857))`)
 
+	// Seed the postcode points into the spatial server's live "postcodes" index
+	// so ClosestPostcode (which now queries spatial KNN, not locations_spatial)
+	// finds them without waiting for a MySQL-driven index rebuild.
+	seedSpatialPostcode(1687412, -4.939858, 52.006292)
+	seedSpatialPostcode(1000001, -3.205333, 55.957571)
+	seedSpatialPostcode(1000002, -3.206000, 55.958000)
+
 	// PAF addresses for TestAddresses (linked to location 1687412)
 	db.Exec(`INSERT IGNORE INTO paf_addresses (id, postcodeid, udprn) VALUES (102367696, 1687412, 50464672)`)
 
 	// LoveJunk partner key for TestCreateChatMessageLoveJunk
 	db.Exec("INSERT IGNORE INTO partners_keys (partner, `key`) VALUES ('lovejunk', 'testkey123')")
+}
+
+// seedSpatialPostcode upserts a postcode point into the spatial server's live
+// "postcodes" index via the admin API, so ClosestPostcode tests get a
+// deterministic result decoupled from the MySQL-driven index rebuild. The admin
+// port is the public port + 1 (8194 -> 8195), matching the spatial server.
+func seedSpatialPostcode(id int64, lng, lat float64) {
+	admin := os.Getenv("SPATIAL_KNN_URL")
+	if admin == "" {
+		admin = "http://localhost:8194"
+	}
+	admin = strings.Replace(admin, ":8194", ":8195", 1)
+	body := fmt.Sprintf(`{"items":[{"id":%d,"wkt":"POINT(%f %f)"}]}`, id, lng, lat)
+	if resp, err := http.Post(admin+"/v1/postcodes/upsert", "application/json", strings.NewReader(body)); err == nil && resp != nil {
+		resp.Body.Close()
+	}
 }
 
 // verifyRequiredTables checks that tables created by Laravel migrations exist.
