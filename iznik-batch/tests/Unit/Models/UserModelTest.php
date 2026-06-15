@@ -5,6 +5,7 @@ namespace Tests\Unit\Models;
 use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserEmail;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class UserModelTest extends TestCase
@@ -425,6 +426,39 @@ class UserModelTest extends TestCase
         $this->assertArrayHasKey('location', $result);
         $this->assertTrue($result['jobs']->isEmpty());
         $this->assertNull($result['location']);
+    }
+
+    public function test_get_job_ads_suppressed_for_recent_donor(): void
+    {
+        // A located user who donated recently is ad-free, matching the website.
+        $locId = DB::table('locations')->insertGetId([
+            'name' => 'EH1 1AA',
+            'type' => 'Postcode',
+            'lat' => 55.9533,
+            'lng' => -3.1883,
+        ]);
+        $user = User::create(['fullname' => 'Donor', 'added' => now(), 'lastlocation' => $locId]);
+        DB::table('users_donations')->insert([
+            'userid' => $user->id,
+            'timestamp' => now()->subDays(5),
+            'GrossAmount' => 10,
+        ]);
+
+        $this->assertTrue($user->isAdFree());
+        $this->assertTrue($user->getJobAds()['jobs']->isEmpty());
+    }
+
+    public function test_is_ad_free_false_for_old_or_no_donation(): void
+    {
+        $user = User::create(['fullname' => 'Old donor', 'added' => now()]);
+        $this->assertFalse($user->isAdFree(), 'no donation → not ad-free');
+
+        DB::table('users_donations')->insert([
+            'userid' => $user->id,
+            'timestamp' => now()->subDays(60), // beyond the 31-day window
+            'GrossAmount' => 10,
+        ]);
+        $this->assertFalse($user->isAdFree(), 'old donation → not ad-free');
     }
 
     public function test_get_profile_image_url_returns_null_without_image(): void
