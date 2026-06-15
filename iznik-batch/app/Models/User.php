@@ -841,7 +841,10 @@ class User extends Model implements Auditable
     {
         [$lat, $lng] = $this->getLatLng();
 
-        if (!$lat || !$lng) {
+        // Suppress job ads for recent donors, matching the website (recentDonor
+        // in useMe.js / ADFREE_PERIOD in iznik-server-go): ad-free for 31 days
+        // after a donation, 41 for External (bank-transfer) ones that arrive late.
+        if (!$lat || !$lng || $this->isAdFree()) {
             return [
                 'jobs' => collect(),
                 'location' => NULL,
@@ -854,6 +857,27 @@ class User extends Model implements Auditable
             'jobs' => $jobs,
             'location' => NULL,  // Not currently used.
         ];
+    }
+
+    /**
+     * True when the user is within their ad-free period after a donation,
+     * mirroring iznik-server-go ADFREE_PERIOD (31 days) + ADFREE_GRACE_PERIOD
+     * (10 extra days for External / bank-transfer donations).
+     */
+    public function isAdFree(): bool
+    {
+        $latest = DB::table('users_donations')
+            ->where('userid', $this->id)
+            ->orderByDesc('timestamp')
+            ->first(['timestamp', 'type']);
+
+        if (!$latest || !$latest->timestamp) {
+            return false;
+        }
+
+        $days = ($latest->type === 'External') ? 41 : 31;
+
+        return strtotime($latest->timestamp) > (time() - $days * 86400);
     }
 
     /**
