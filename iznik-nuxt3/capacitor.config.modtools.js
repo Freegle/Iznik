@@ -33,6 +33,7 @@ const config = {
       '@capacitor/device',
       '@capacitor/browser',
       '@capacitor/app-launcher',
+      '@capacitor/camera',
     ],
     buildOptions: {
       releaseType: 'APK',
@@ -53,6 +54,7 @@ const config = {
       '@capacitor/device',
       '@capacitor/browser',
       '@capacitor/app-launcher',
+      '@capacitor/camera',
     ],
   },
 
