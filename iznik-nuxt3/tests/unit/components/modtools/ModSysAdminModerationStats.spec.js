@@ -7,8 +7,6 @@ const sampleStats = {
   arrived: 100,
   manualApproved: 20,
   manualRejected: 5,
-  autoChecked: 60,
-  autoFallback: 5,
   trusted: 10,
   autoApproved: 65,
   autoModChecked: 30,
@@ -59,6 +57,8 @@ describe('ModSysAdminModerationStats.vue', () => {
     expect(params.end).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(new Date(params.start) <= new Date(params.end)).toBe(true)
     expect(wrapper.vm.stats).toEqual(sampleStats)
+    // autoApproved is the single real auto-approved figure (no autoChecked/autoFallback).
+    expect(wrapper.vm.stats.autoApproved).toBe(65)
   })
 
   it('formats percentages and guards divide-by-zero', () => {

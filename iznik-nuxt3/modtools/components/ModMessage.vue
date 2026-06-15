@@ -133,6 +133,14 @@
             >
               Pending
             </span>
+            <span
+              v-if="pending && countdownLabel"
+              data-testid="autoapprove-countdown"
+              class="small ms-2"
+              :class="countdownLabel.cls"
+            >
+              {{ countdownLabel.text }}
+            </span>
             <!-- Approved-by is shown by MessageHistory with resolved name -->
             <div v-if="message.deadline" class="text-danger small">
               Deadline: end {{ dateonly(message.deadline) }}
@@ -897,6 +905,11 @@ const userStore = useUserStore()
 
 const message = computed(() => messageStore.byId(props.messageid))
 
+// --- Auto-approve countdown (A5) ---
+// `now` ticks every second (see onMounted) so the countdown label recomputes live.
+const now = ref(Date.now())
+let countdownInterval = null
+
 watch(
   () => props.messageid,
   async (id) => {
@@ -1204,6 +1217,37 @@ const pending = computed(() => {
   return hasCollection('Pending')
 })
 
+// The soonest non-null autoapproveat across all Pending groups for this message.
+const soonestAutoapproveat = computed(() => {
+  if (!message.value?.groups) return null
+  let best = null
+  for (const g of message.value.groups) {
+    if (g.collection === 'Pending' && g.autoapproveat) {
+      const t = new Date(g.autoapproveat).getTime()
+      if (best === null || t < best) best = t
+    }
+  }
+  return best
+})
+
+// Live countdown label + CSS class, recomputed every second via `now`.
+const countdownLabel = computed(() => {
+  const target = soonestAutoapproveat.value
+  if (target === null) return null
+  const secsLeft = Math.floor((target - now.value) / 1000)
+  if (secsLeft <= 0) return { text: 'Auto-approving…', cls: 'text-info' }
+  const totalMins = Math.floor(secsLeft / 60)
+  const secs = secsLeft % 60
+  if (totalMins >= 60) {
+    const hrs = Math.floor(totalMins / 60)
+    return { text: `Auto-approves in ~${hrs}h`, cls: 'text-muted' }
+  }
+  return {
+    text: `Auto-approves in ${totalMins}m ${String(secs).padStart(2, '0')}s`,
+    cls: 'text-warning fw-bold',
+  }
+})
+
 const eSubject = computed(() => {
   if (!message.value) return ''
   return twem(message.value.subject)
@@ -1494,11 +1538,20 @@ onMounted(() => {
       userStore.fetch(heldbyId.value)
     }
   }
+
+  // Per-second ticker for the auto-approve countdown badge.
+  countdownInterval = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
 })
 
 onBeforeUnmount(() => {
   if (message.value) {
     emit('destroy', message.value.id, props.next)
+  }
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+    countdownInterval = null
   }
 })
 
