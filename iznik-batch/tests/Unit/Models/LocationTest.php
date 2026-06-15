@@ -5,6 +5,7 @@ namespace Tests\Unit\Models;
 use App\Models\Group;
 use App\Models\Location;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 /**
@@ -16,47 +17,58 @@ use Tests\TestCase;
  */
 class LocationTest extends TestCase
 {
-    private const NO_POSTCODE_DATA = 'No postcode data in test database';
+    use SeedsSpatialIndex;
+
+    private const TEST_PC_ID = 99000001;
+
     /**
-     * Check if test location data exists before running spatial tests.
+     * Seed a known full postcode into both the test DB (for the by-id enrich)
+     * and the spatial server's live "postcodes" index (for the KNN lookup).
      */
-    private function hasLocationData(): bool
+    private function seedPostcode(int $id, string $name, float $lat, float $lng): void
     {
-        return DB::table('locations')
-            ->where('type', 'Postcode')
-            ->whereRaw("LOCATE(' ', name) > 0")
-            ->exists();
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $id], [
+            'name'     => $name,
+            'type'     => 'Postcode',
+            'lat'      => $lat,
+            'lng'      => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+        $this->seedSpatialPoint('postcodes', $id, $lat, $lng);
     }
 
     public function test_closest_postcode_returns_result_for_known_coords(): void
     {
-        if (!$this->hasLocationData()) {
-            $this->markTestSkipped(self::NO_POSTCODE_DATA);
+        $this->seedPostcode(self::TEST_PC_ID, 'EH1 1AA', 55.9533, -3.1883);
+
+        try {
+            $result = Location::closestPostcode(55.9533, -3.1883);
+
+            $this->assertNotNull($result);
+            $this->assertEquals(self::TEST_PC_ID, (int) $result->id);
+            $this->assertEquals('EH1 1AA', $result->name);
+            $this->assertNotEmpty($result->name);
+        } finally {
+            $this->removeSpatial('postcodes', [self::TEST_PC_ID]);
+            DB::table('locations')->where('id', self::TEST_PC_ID)->delete();
         }
-
-        // Central Edinburgh — should find a postcode.
-        $result = Location::closestPostcode(55.9533, -3.1883);
-
-        $this->assertNotNull($result);
-        $this->assertArrayHasKey('id', $result);
-        $this->assertArrayHasKey('name', $result);
-        $this->assertArrayHasKey('lat', $result);
-        $this->assertArrayHasKey('lng', $result);
-        $this->assertNotEmpty($result['name']);
     }
 
     public function test_closest_postcode_returns_full_postcode(): void
     {
-        if (!$this->hasLocationData()) {
-            $this->markTestSkipped(self::NO_POSTCODE_DATA);
+        $this->seedPostcode(self::TEST_PC_ID, 'SW1A 1AA', 51.5074, -0.1278);
+
+        try {
+            $result = Location::closestPostcode(51.5074, -0.1278);
+
+            $this->assertNotNull($result);
+            // Full postcodes have a space in them (e.g. "SW1A 1AA").
+            $this->assertStringContainsString(' ', $result->name);
+        } finally {
+            $this->removeSpatial('postcodes', [self::TEST_PC_ID]);
+            DB::table('locations')->where('id', self::TEST_PC_ID)->delete();
         }
-
-        // Central London — well-populated area.
-        $result = Location::closestPostcode(51.5074, -0.1278);
-
-        $this->assertNotNull($result);
-        // Full postcodes have a space in them (e.g. "SW1A 1AA").
-        $this->assertStringContainsString(' ', $result['name']);
     }
 
     public function test_closest_postcode_returns_null_for_ocean(): void
@@ -115,25 +127,21 @@ class LocationTest extends TestCase
         $this->assertNotContains($towerHamlets->id, $groups, 'Group with no containing polygon must not appear when containment match exists');
     }
 
-    public function test_closest_postcode_includes_area_data(): void
+    public function test_closest_postcode_returns_coordinates(): void
     {
-        if (!$this->hasLocationData()) {
-            $this->markTestSkipped(self::NO_POSTCODE_DATA);
-        }
+        // Nottingham.
+        $this->seedPostcode(self::TEST_PC_ID, 'NG1 1AA', 52.9548, -1.1581);
 
-        // Nottingham — should have area data.
-        $result = Location::closestPostcode(52.9548, -1.1581);
+        try {
+            $result = Location::closestPostcode(52.9548, -1.1581);
 
-        if ($result === null) {
-            $this->markTestSkipped('No postcode found near Nottingham in test data');
-        }
-
-        // If the postcode has an areaid, we should get area info.
-        // Not all postcodes have area data, so only assert structure if present.
-        if (isset($result['area'])) {
-            $this->assertIsArray($result['area']);
-            $this->assertArrayHasKey('id', $result['area']);
-            $this->assertArrayHasKey('name', $result['area']);
+            $this->assertNotNull($result);
+            $this->assertEquals(self::TEST_PC_ID, (int) $result->id);
+            $this->assertNotNull($result->lat);
+            $this->assertNotNull($result->lng);
+        } finally {
+            $this->removeSpatial('postcodes', [self::TEST_PC_ID]);
+            DB::table('locations')->where('id', self::TEST_PC_ID)->delete();
         }
     }
 }
