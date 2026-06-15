@@ -706,6 +706,11 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
       # Allowed domains for email tracking redirects
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
@@ -868,6 +873,11 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
       - GROUP_DOMAIN=groups.ilovefreegle.org
