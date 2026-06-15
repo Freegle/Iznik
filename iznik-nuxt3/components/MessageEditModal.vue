@@ -62,6 +62,11 @@
           <p class="invalid-feedback">
             Please provide either a description or a photo.
           </p>
+          <NoticeMessage v-if="invalidBody" variant="danger" class="mt-1">
+            <p class="mb-0">
+              {{ bodyMessage }}
+            </p>
+          </NoticeMessage>
         </div>
 
         <!-- Quantity and Deadline row -->
@@ -159,7 +164,11 @@ import { uid } from '~/composables/useId'
 import PostCode from '~/components/PostCode'
 import { useOurModal } from '~/composables/useOurModal'
 import { MESSAGE_EXPIRE_TIME } from '~/constants'
-import { isNumericOnlyItem } from '~/composables/useItemValidation'
+import {
+  isUnpostableItem,
+  isNumericOnlyBody,
+  invalidBodyMessage,
+} from '~/composables/useItemValidation'
 
 const OurUploader = defineAsyncComponent(() =>
   import('~/components/OurUploader')
@@ -259,12 +268,22 @@ const typeOptions = computed(() => {
   ]
 })
 
+// A purely-numeric description ("24") tells nobody what the item is; flag it.
+const invalidBody = computed(() => isNumericOnlyBody(edittextbody.value))
+const bodyMessage = computed(() => invalidBodyMessage(type.value))
+
 const isSaveButtonDisabled = computed(() => {
-  // Block saving a purely-numeric item (PostItem shows the reason inline).
-  if (isNumericOnlyItem(edititem.value)) {
+  // Block saving an unpostable item — a bare number or a content-free catch-all
+  // ("anything"). PostItem shows the reason inline.
+  if (isUnpostableItem(edititem.value)) {
     return true
   }
-  return !edittextbody.value && !attachments.value?.length
+  // A purely-numeric description doesn't count as a real description.
+  const hasBody =
+    edittextbody.value &&
+    edittextbody.value.trim() &&
+    !isNumericOnlyBody(edittextbody.value)
+  return !hasBody && !attachments.value?.length
 })
 
 async function save(finishSpinner) {

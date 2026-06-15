@@ -671,6 +671,33 @@ describe('compose store', () => {
       ]
       expect(store.messageValid({ value: 'Offer' })).toBe(true)
     })
+
+    it('returns false when the item is a content-free catch-all', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: 'anything', description: 'Good condition' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('returns false when the description is purely numeric and there are no photos', () => {
+      const store = useComposeStore()
+      store.messages = [{ type: 'Offer', item: 'Sofa', description: '24' }]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('allows a purely-numeric description when there are real photos', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: '24',
+          attachments: [{ id: 1 }],
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
   })
 
   describe('postcodeValid getter', () => {
