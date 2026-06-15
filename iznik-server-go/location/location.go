@@ -46,6 +46,16 @@ type Location struct {
 // server's "postcodes" KNN dataset. Returns a zero Location if the spatial
 // server has nothing nearby or is unreachable.
 func ClosestPostcode(lat float32, lng float32) Location {
+	// (0,0) is the codebase-wide "location unknown" sentinel (e.g. GetLatLng
+	// returns it for a user with no derivable location). It sits in the Atlantic
+	// off Africa, so a UK KNN would still return *some* postcode (the nearest,
+	// however far) — the old expanding-bbox lookup returned empty here. Preserve
+	// that: no location in, no postcode out. (lng=0 alone is valid — the Greenwich
+	// meridian crosses the UK — so only the both-zero sentinel is excluded.)
+	if lat == 0 && lng == 0 {
+		return Location{}
+	}
+
 	results, err := spatial.KNN("postcodes", float64(lng), float64(lat), 1, "")
 	if err != nil || len(results) == 0 {
 		return Location{}
