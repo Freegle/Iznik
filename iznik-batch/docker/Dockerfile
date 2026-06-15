@@ -48,6 +48,13 @@ RUN cp /tmp/mjml.so "$(php-config --extension-dir)/mjml.so" \
     && docker-php-ext-enable mjml \
     && php -m | grep -qi '^mjml$'
 
+# osmium-tool merges the Great Britain + Ireland/Northern Ireland OSM extracts
+# into the unified uk-latest.osm.pbf that the routing server loads
+# (used by the spatial:update-data scheduled command).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends osmium-tool \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /var/www/html
 
 # Copy application files

@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use OwenIt\Auditing\Contracts\Auditable;
 
 class Location extends Model implements Auditable
@@ -27,6 +29,32 @@ class Location extends Model implements Auditable
 
     public static function closestPostcode(float $lat, float $lng): ?object
     {
+        $spatialUrl = config('freegle.spatial_server_url', 'http://localhost:8194');
+
+        try {
+            $response = Http::timeout(3)->get("{$spatialUrl}/v1/locations/knn", [
+                'lat'   => $lat,
+                'lng'   => $lng,
+                'limit' => 1,
+                'type'  => 'Postcode',
+            ]);
+
+            if ($response->successful()) {
+                $results = $response->json('results', []);
+                if (!empty($results)) {
+                    $id = $results[0]['id'];
+                    return DB::table('locations')->where('id', $id)
+                        ->select('id', 'name', 'lat', 'lng')
+                        ->first();
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('closestPostcode spatial server unavailable, falling back to MySQL', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Fallback: expanding BBox on locations_spatial.
         $srid = config('freegle.srid', 3857);
         $scan = 0.00001953125;
 

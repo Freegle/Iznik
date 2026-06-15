@@ -13,6 +13,7 @@ class ContentCheckService
 {
     public function __construct(
         private readonly ?ContentEmbeddingService $embeddingService = null,
+        private readonly ?MessageSpatialService $messageSpatialService = null,
     ) {}
 
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
@@ -266,7 +267,7 @@ class ContentCheckService
                                 // Now Approved — add to the spatial index immediately so the
                                 // post shows in browse/search without waiting for the periodic
                                 // messages:update-spatial-index reconciler.
-                                (new MessageSpatialService())->addApprovedMessage((int) $row->msgid);
+                                ($this->messageSpatialService ?? app(MessageSpatialService::class))->addApprovedMessage((int) $row->msgid);
 
                                 $stats['approved']++;
                             });

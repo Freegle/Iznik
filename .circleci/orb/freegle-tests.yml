@@ -15,6 +15,11 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle
+      # Boot the routing (spatial) container on the small committed Bristol extract —
+      # no 2.5GB UK graph in CI. Must be executor-level (not a per-step export) so it
+      # reaches the `docker-compose up` step, which runs in a different shell.
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       PW_WORKERS: 4
 
   machine-executor-local:
@@ -32,6 +37,9 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
+      # Boot spatial on the committed Bristol extract (see machine-executor note).
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       PW_WORKERS: 11
       # Port offsets (+9000) to avoid conflicts with any local dev stack
       PORT_TRAEFIK_HTTP: 9080
@@ -70,6 +78,9 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
+      # Boot spatial on the committed Bristol extract (see machine-executor note).
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       # PW_WORKERS reduced 11 -> 6 (orb 1.1.339) then 6 -> 4 (orb 1.1.340) to
       # stop build-test-katapult CPU-heartbeat starvation in the parallel test
       # phase. RAM/swap are fine (20G swapfile), but Chromium workers + Laravel +
@@ -433,6 +444,10 @@ commands:
 
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
+            # Boot the routing (spatial) container on the small committed Bristol
+            # extract — no 2.5GB UK graph in CI — so routing-go tests can run.
+            export OSM_PBF_PATH="${OSM_PBF_PATH:-/app/testdata/bristol.osm.pbf}"
+            export DEPRIVATION_CSV="${DEPRIVATION_CSV:-/app/testdata/bristol_lsoa.csv}"
 
             # Clean up any existing containers first.
             # Do NOT pass --volumes: wiping named volumes forces MySQL to re-initialise
@@ -835,6 +850,41 @@ commands:
             echo ""
             echo "✅ All containers verified"
 
+            # === Verify the spatial (routing) container booted on the Bristol extract ===
+            # spatial builds its road graph from OSM_PBF_PATH (set executor-level to the
+            # committed /app/testdata/bristol.osm.pbf). If that env var doesn't reach
+            # docker-compose, spatial exits on the absent /data/uk-latest.osm.pbf. Catch
+            # it HERE with full diagnostics rather than 30+ min later at the routing gate
+            # (where SSH isn't available on the self-hosted runner to investigate live).
+            echo ""
+            echo "=== Verifying spatial (routing) container is serving on the Bristol extract ==="
+            SPATIAL="${COMPOSE_PROJECT_NAME:-freegle}-spatial"
+            spatial_ok=false
+            for i in $(seq 1 40); do
+              status=$(docker inspect --format='{{.State.Status}}' "$SPATIAL" 2>/dev/null || echo "missing")
+              if [ "$status" = "running" ] && docker exec "$SPATIAL" curl -sf http://localhost:8196/health >/dev/null 2>&1; then
+                spatial_ok=true
+                echo "✅ spatial serving /health after $((i*3))s:"
+                docker exec "$SPATIAL" curl -s http://localhost:8196/health 2>/dev/null; echo ""
+                break
+              fi
+              if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+                echo "spatial entered '$status' state early — capturing diagnostics."
+                break
+              fi
+              sleep 3
+            done
+            if [ "$spatial_ok" != "true" ]; then
+              echo "❌ spatial container did not come up serving /health — routing-go tests cannot run."
+              echo "--- docker inspect state ---"
+              docker inspect --format='Status={{.State.Status}} Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' "$SPATIAL" 2>&1 || true
+              echo "--- OSM_PBF_PATH / DEPRIVATION_CSV seen by the container ---"
+              docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' "$SPATIAL" 2>/dev/null | grep -E "OSM_PBF_PATH|DEPRIVATION_CSV" || echo "(those env vars are NOT set on the container — they did not reach docker-compose)"
+              echo "--- spatial logs (last 80) ---"
+              docker logs "$SPATIAL" --tail 80 2>&1 || true
+              exit 1
+            fi
+
   # === Removed Commands (monorepo migration) ===
   # clone-freegle-docker: Removed — no longer needed; monorepo checkout replaces submodule cloning
   # replace-submodule: Removed — subtrees are inline; no submodule swapping needed
@@ -872,6 +922,10 @@ commands:
 
             # Ensure COMPOSE_PROFILES is set (may not be in .env if profiles branch not merged yet)
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
+            # Boot the routing (spatial) container on the small committed Bristol
+            # extract — no 2.5GB UK graph in CI — so routing-go tests can run.
+            export OSM_PBF_PATH="${OSM_PBF_PATH:-/app/testdata/bristol.osm.pbf}"
+            export DEPRIVATION_CSV="${DEPRIVATION_CSV:-/app/testdata/bristol_lsoa.csv}"
 
             # Two-phase startup: all databases must exist before application containers start.
             #
@@ -2956,6 +3010,37 @@ jobs:
               echo "✅ All tests passed!"
             fi
           no_output_timeout: 50m
+
+      - run:
+          name: Run routing-go tests
+          command: |
+            # iznik-routing-go tests run via the status container, which docker-execs
+            # `go test ./...` in the spatial container (booted on the committed Bristol
+            # extract). Self-contained gate: a failure here fails the job.
+            echo "🧪 Routing-go tests (iznik-routing-go)..."
+            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/routing")
+            http_code="${response: -3}"
+            if [ "$http_code" != "200" ] && [ "$http_code" != "409" ]; then
+              echo "❌ Failed to trigger routing tests (HTTP $http_code)"
+              exit 1
+            fi
+            while true; do
+              sleep 5
+              status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status" || echo '{"status":"error"}')
+              status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              if [ "$status" = "completed" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "✅ Routing tests passed"; break
+                else
+                  echo "❌ Routing tests failed"; exit 1
+                fi
+              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                echo "❌ Routing tests failed"; exit 1
+              fi
+            done
+          no_output_timeout: 10m
 
       - store_artifacts:
           path: ~/test-output
