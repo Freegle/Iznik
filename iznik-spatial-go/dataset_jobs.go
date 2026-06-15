@@ -23,7 +23,7 @@ func (d *JobsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 
 func (d *JobsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
 	rows, err := mysqlDB.Query(`
-		SELECT id, ST_AsWKB(geometry) AS wkb, title, city, cpc, visible
+		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, visible
 		FROM jobs
 		WHERE seenat > ?
 	`, since.UTC())
@@ -104,7 +104,7 @@ func (d *JobsDataset) Within(idx *Index, params QueryParams) ([]int64, error) {
 
 func loadJobs(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
-		SELECT id, ST_AsWKB(geometry) AS wkb, title, city, cpc
+		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc
 		FROM jobs
 		WHERE visible = 1 AND cpc >= 0.10
 		  AND geometry IS NOT NULL
