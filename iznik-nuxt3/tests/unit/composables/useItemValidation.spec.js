@@ -25,6 +25,23 @@ describe('isNumericOnlyItem', () => {
     expect(isNumericOnlyItem('0')).toBe(true)
   })
 
+  it('rejects numbers with punctuation but no letters (decimals, separators, prices)', () => {
+    expect(isNumericOnlyItem('12.5')).toBe(true)
+    expect(isNumericOnlyItem('1,000')).toBe(true)
+    expect(isNumericOnlyItem('12.50')).toBe(true)
+    expect(isNumericOnlyItem('£5')).toBe(true)
+    expect(isNumericOnlyItem('£5.00')).toBe(true)
+    expect(isNumericOnlyItem('3 - 4')).toBe(true)
+  })
+
+  it('rejects strings of only punctuation/symbols', () => {
+    expect(isNumericOnlyItem('!!!')).toBe(true)
+    expect(isNumericOnlyItem('???')).toBe(true)
+    expect(isNumericOnlyItem('...')).toBe(true)
+    expect(isNumericOnlyItem('@#$%')).toBe(true)
+    expect(isNumericOnlyItem('- -')).toBe(true)
+  })
+
   it('allows a normal item name', () => {
     expect(isNumericOnlyItem('Red sofa')).toBe(false)
   })
@@ -34,12 +51,15 @@ describe('isNumericOnlyItem', () => {
     expect(isNumericOnlyItem('size 12 boots')).toBe(false)
   })
 
-  it('allows decimals and thousands separators (not purely digits)', () => {
-    expect(isNumericOnlyItem('12.5')).toBe(false)
-    expect(isNumericOnlyItem('1,000')).toBe(false)
+  it('allows letters from any language/script (has descriptive text)', () => {
+    expect(isNumericOnlyItem('café')).toBe(false)
+    expect(isNumericOnlyItem('naïve')).toBe(false)
+    expect(isNumericOnlyItem('стол')).toBe(false)
+    expect(isNumericOnlyItem('椅子')).toBe(false)
+    expect(isNumericOnlyItem('5kg potatoes')).toBe(false)
   })
 
-  it('treats empty / nullish as not-numeric (handled by the required check)', () => {
+  it('treats empty / nullish as not-blocked (handled by the required check)', () => {
     expect(isNumericOnlyItem('')).toBe(false)
     expect(isNumericOnlyItem('   ')).toBe(false)
     expect(isNumericOnlyItem(null)).toBe(false)
@@ -58,12 +78,19 @@ describe('isNumericOnlyBody', () => {
     expect(isNumericOnlyBody('  7 ')).toBe(true)
   })
 
+  it('rejects numbers/prices/punctuation with no letters', () => {
+    expect(isNumericOnlyBody('12.50')).toBe(true)
+    expect(isNumericOnlyBody('£5')).toBe(true)
+    expect(isNumericOnlyBody('!!!')).toBe(true)
+    expect(isNumericOnlyBody('1,000')).toBe(true)
+  })
+
   it('allows real descriptions, including ones containing numbers', () => {
     expect(isNumericOnlyBody('Good condition, collect after 6pm')).toBe(false)
     expect(isNumericOnlyBody('Size 12')).toBe(false)
   })
 
-  it('treats empty / nullish as not-numeric', () => {
+  it('treats empty / nullish as not-blocked', () => {
     expect(isNumericOnlyBody('')).toBe(false)
     expect(isNumericOnlyBody('   ')).toBe(false)
     expect(isNumericOnlyBody(null)).toBe(false)
@@ -99,8 +126,9 @@ describe('isVagueItem', () => {
 })
 
 describe('isUnpostableItem', () => {
-  it('is true for a bare number or a content-free term', () => {
+  it('is true for a value with no descriptive words or a content-free term', () => {
     expect(isUnpostableItem('123')).toBe(true)
+    expect(isUnpostableItem('£5')).toBe(true)
     expect(isUnpostableItem('everything')).toBe(true)
   })
 
@@ -111,8 +139,9 @@ describe('isUnpostableItem', () => {
 })
 
 describe('unpostableItemMessage', () => {
-  it('returns the numeric message for a bare number', () => {
+  it('returns the numeric message for a value with no descriptive words', () => {
     expect(unpostableItemMessage('123')).toBe(INVALID_ITEM_MESSAGE)
+    expect(unpostableItemMessage('£5')).toBe(INVALID_ITEM_MESSAGE)
   })
 
   it('returns the vague message for a catch-all term', () => {

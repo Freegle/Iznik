@@ -1,10 +1,11 @@
 // Client-side compose validation. A post has to actually say what's being given
 // away or wanted, so we reject — before posting — item names and descriptions
-// that carry no real information: a bare number, or a content-free catch-all
+// that carry no real information: a value with no descriptive words (a bare
+// number, a price, or only punctuation/symbols), or a content-free catch-all
 // term like "anything" / "everything".
 
 export const INVALID_ITEM_MESSAGE =
-  "That's not a valid item — please say what it actually is, not just a number."
+  "That's not a valid item — please say what it actually is, not just a number or symbols."
 
 export const VAGUE_ITEM_MESSAGE =
   "Please be specific about the item — a general word like that isn't enough for people to know what you mean."
@@ -12,10 +13,10 @@ export const VAGUE_ITEM_MESSAGE =
 // Description/body messages depend on the post type so the wording reads
 // naturally ("looking for" vs "giving away").
 export const INVALID_BODY_MESSAGE_OFFER =
-  "Please describe what you're giving away — a number on its own doesn't tell anyone what it is."
+  "Please describe what you're giving away — numbers or symbols on their own don't tell anyone what it is."
 
 export const INVALID_BODY_MESSAGE_WANTED =
-  "Please explain what you're looking for — a number on its own doesn't tell anyone what you want."
+  "Please explain what you're looking for — numbers or symbols on their own don't tell anyone what you want."
 
 // Catch-all terms that say nothing about the actual item. Matched as whole
 // strings (anchored), lower-cased and trimmed, so "anything" is blocked but
@@ -40,33 +41,40 @@ const UNPOSTABLE_ITEM_PATTERNS = [
   /^eney think$/,
 ]
 
-// Shared core: true when the value is nothing but digits (after trim), e.g.
-// "123" or " 42 ". Decimals, thousands separators and anything that merely
-// contains a number ("3 chairs") are allowed. Empty/nullish → false (emptiness
-// is handled separately by the required check).
-function isNumericOnly(value) {
+// Shared core: true when the value has no descriptive letters after trimming —
+// i.e. it's nothing but digits, punctuation, currency symbols and/or whitespace,
+// e.g. "123", " 42 ", "12.50", "1,000", "£5" or "!!!". Anything containing a
+// letter of any script ("3 chairs", "size 12 boots", "café", "стол") is allowed.
+// Empty/nullish → false (emptiness is handled separately by the required check).
+function hasNoDescriptiveText(value) {
   if (!value) return false
-  return /^\d+$/.test(value.trim())
+  const trimmed = value.trim()
+  if (trimmed === '') return false
+  // \p{L} matches a letter in any language, so non-English descriptions pass.
+  return !/\p{L}/u.test(trimmed)
 }
 
 /**
- * True when the item name is nothing but digits. See isNumericOnly.
+ * True when the item name carries no descriptive words — a bare number, a price,
+ * or only punctuation/symbols (e.g. "123", "12.50", "£5", "!!!"). See
+ * hasNoDescriptiveText.
  *
  * @param {string|null|undefined} item
  * @returns {boolean}
  */
 export function isNumericOnlyItem(item) {
-  return isNumericOnly(item)
+  return hasNoDescriptiveText(item)
 }
 
 /**
- * True when the description/body is nothing but digits — same rule as items.
+ * True when the description/body carries no descriptive words — same rule as
+ * items.
  *
  * @param {string|null|undefined} body
  * @returns {boolean}
  */
 export function isNumericOnlyBody(body) {
-  return isNumericOnly(body)
+  return hasNoDescriptiveText(body)
 }
 
 /**
@@ -84,8 +92,9 @@ export function isVagueItem(item) {
 }
 
 /**
- * An item that can never be posted: a bare number or a content-free catch-all
- * term. This is the single predicate the compose flows gate submission on.
+ * An item that can never be posted: a value with no descriptive words or a
+ * content-free catch-all term. This is the single predicate the compose flows
+ * gate submission on.
  *
  * @param {string|null|undefined} item
  * @returns {boolean}
