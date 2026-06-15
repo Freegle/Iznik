@@ -102,7 +102,7 @@ func Stats(c *fiber.Ctx) error {
 			"WHERE mg.approvedat BETWEEN ? AND ? AND mg.approvedby IS NULL "+
 			"AND mg.contentcheck_checked_at IS NOT NULL AND mg.deleted=0 "+
 			"AND (mem.ourPostingStatus='DEFAULT' OR mem.ourPostingStatus='UNMODERATED') "+
-			"AND NOT EXISTS (SELECT 1 FROM logs l WHERE l.msgid=mg.msgid AND l.type='Message' AND l.subtype='Autoapproved')",
+			"AND NOT EXISTS (SELECT 1 FROM logs l WHERE l.msgid=mg.msgid AND l.groupid=mg.groupid AND l.type='Message' AND l.subtype='Autoapproved')",
 			start, end).Scan(&stats.Trusted)
 	})
 

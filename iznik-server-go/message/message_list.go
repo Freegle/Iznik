@@ -624,6 +624,22 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"messages": []uint64{}})
 	}
 
+	// A3. Reset-to-minimum hold (extend-only) for the messages just loaded. When a
+	// moderator views the Pending queue, every fetched post is given at least 10 more
+	// minutes before it becomes eligible for auto-approval, so nothing vanishes while
+	// the page is open. GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW()+10m) is
+	// extend-only: an existing hold further out is never shortened. Scope: Pending,
+	// heldby IS NULL, deleted=0, only the mod's groups.
+	if collection == utils.COLLECTION_PENDING && len(groupIDs) > 0 {
+		db.Exec(
+			"UPDATE messages_groups "+
+				"SET autoapprove_hold_until = GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE) "+
+				"WHERE msgid IN ? AND groupid IN ? "+
+				"AND collection = 'Pending' AND heldby IS NULL AND deleted = 0",
+			msgIDs, groupIDs,
+		)
+	}
+
 	// Build pagination context from last ID.
 	var respCtx *PaginationContext
 	if len(msgIDs) == limit {

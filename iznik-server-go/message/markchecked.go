@@ -46,7 +46,8 @@ func MarkChecked(c *fiber.Ctx) error {
 	if req.Groupid == 0 {
 		groupIDs = user.GetActiveModGroupIDs(myid)
 		if len(groupIDs) == 0 {
-			return c.JSON(fiber.Map{"success": true, "checked": 0})
+			// Not a moderator of any group — cannot mark anything checked (D11).
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 		}
 	} else {
 		if !user.IsModOfGroup(myid, req.Groupid) {
@@ -60,13 +61,16 @@ func MarkChecked(c *fiber.Ctx) error {
 		// Mark the specified posts checked — only ones still unchecked, and only
 		// on groups the mod moderates.
 		r := db.Exec("UPDATE messages_groups SET checkedat = NOW(), checkedby = ? "+
-			"WHERE msgid IN ? AND groupid IN ? AND checkedat IS NULL",
-			myid, req.IDs, groupIDs)
+			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND checkedat IS NULL",
+			myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
 		rowsAffected = r.RowsAffected
 	} else {
 		// Mark the whole bucket checked (the "mark all as checked" action). The
 		// bucket condition mirrors the Checked/Trusted list filter so exactly the
 		// posts a mod is looking at get cleared.
+		if req.Filter != "checked" && req.Filter != "trusted" {
+			return fiber.NewError(fiber.StatusBadRequest, "filter must be 'checked' or 'trusted' (D10)")
+		}
 		statusWhere := "mem.ourPostingStatus IS NULL"
 		if req.Filter == "trusted" {
 			statusWhere = "(mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED')"
