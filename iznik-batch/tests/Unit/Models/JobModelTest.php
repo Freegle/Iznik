@@ -4,10 +4,60 @@ namespace Tests\Unit\Models;
 
 use App\Models\Job;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 class JobModelTest extends TestCase
 {
+    use SeedsSpatialIndex;
+
+    /** @var int[] job ids seeded into the spatial index, removed in tearDown. */
+    private array $seededJobIds = [];
+
+    protected function tearDown(): void
+    {
+        if ($this->seededJobIds) {
+            $this->removeSpatial('jobs', $this->seededJobIds);
+            $this->seededJobIds = [];
+        }
+        parent::tearDown();
+    }
+
+    /**
+     * Insert a job row AND seed it into the spatial "jobs" index so KNN returns
+     * it. Jobs are polygons in the index (FindNearestPolygon skips nil-WKB
+     * points), so we seed a small box around the point. Defaults to the standard
+     * London test coords and a cpc above the floor; override via $attrs.
+     */
+    private function seedJob(array $attrs = [], float $lat = 51.5074, float $lng = -0.1278): int
+    {
+        $srid = (int) config('freegle.srid', 3857);
+        $attrs += [
+            'location' => 'London',
+            'company' => 'Test',
+            'city' => 'London',
+            'url' => 'https://example.com',
+            'cpc' => 0.20,
+            'visible' => 1,
+        ];
+        $attrs['geometry'] = DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid));
+
+        $id = DB::table('jobs')->insertGetId($attrs);
+
+        $d = 0.0005;
+        $this->seedSpatial('jobs', $id, sprintf(
+            'POLYGON((%F %F, %F %F, %F %F, %F %F, %F %F))',
+            $lng - $d, $lat - $d,
+            $lng + $d, $lat - $d,
+            $lng + $d, $lat + $d,
+            $lng - $d, $lat + $d,
+            $lng - $d, $lat - $d
+        ));
+        $this->seededJobIds[] = $id;
+
+        return $id;
+    }
+
     public function test_job_model_has_correct_table(): void
     {
         $job = new Job();
@@ -35,7 +85,8 @@ class JobModelTest extends TestCase
 
     public function test_minimum_cpc_constant(): void
     {
-        $this->assertEquals(0.02, Job::MINIMUM_CPC);
+        // Matches the spatial "jobs" dataset floor and the public jobs page.
+        $this->assertEquals(0.10, Job::MINIMUM_CPC);
     }
 
     public function test_job_model_is_not_guarded_except_id(): void
@@ -46,7 +97,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_returns_collection(): void
     {
-        // Test that nearLocation returns a collection even with no jobs.
+        // Returns a collection even with nothing seeded for this location.
         $result = Job::nearLocation(51.5074, -0.1278);
 
         $this->assertInstanceOf(\Illuminate\Support\Collection::class, $result);
@@ -54,9 +105,10 @@ class JobModelTest extends TestCase
 
     public function test_near_location_returns_empty_for_no_jobs(): void
     {
-        // Ensure table is empty for this test.
         DB::table('jobs')->delete();
 
+        // Nothing in the test DB, so even if the index returns ids the by-id
+        // enrich finds nothing.
         $result = Job::nearLocation(51.5074, -0.1278);
 
         $this->assertTrue($result->isEmpty());
@@ -65,25 +117,12 @@ class JobModelTest extends TestCase
     public function test_near_location_respects_limit(): void
     {
         DB::table('jobs')->delete();
-        $srid = config('freegle.srid', 3857);
 
-        // Insert 5 visible jobs with good CPC near London.
+        // Five eligible jobs at the search point.
         for ($i = 0; $i < 5; $i++) {
-            $lat = 51.5074 + ($i * 0.001);
-            $lng = -0.1278 + ($i * 0.001);
-            DB::table('jobs')->insert([
-                'title' => 'Test Job ' . $i,
-                'location' => 'London',
-                'company' => 'Test Company',
-                'city' => 'London',
-                'url' => 'https://example.com/job/' . $i,
-                'cpc' => 0.05,
-                'visible' => 1,
-                'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-            ]);
+            $this->seedJob(['title' => 'Test Job ' . $i]);
         }
 
-        // Request 3 jobs - should get 3.
         $result = Job::nearLocation(51.5074, -0.1278, 3);
 
         $this->assertCount(3, $result);
@@ -92,37 +131,12 @@ class JobModelTest extends TestCase
     public function test_near_location_filters_by_minimum_cpc(): void
     {
         DB::table('jobs')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
-        // Insert job with CPC below minimum.
-        DB::table('jobs')->insert([
-            'title' => 'Low CPC Job',
-            'location' => 'London',
-            'company' => 'Test Company',
-            'city' => 'London',
-            'url' => 'https://example.com/job/low',
-            'cpc' => 0.01,  // Below MINIMUM_CPC of 0.02.
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $this->seedJob(['title' => 'Low CPC Job', 'cpc' => 0.05]);  // below 0.10
+        $this->seedJob(['title' => 'Good CPC Job', 'cpc' => 0.20]);
 
-        // Insert job with CPC at minimum.
-        DB::table('jobs')->insert([
-            'title' => 'Good CPC Job',
-            'location' => 'London',
-            'company' => 'Test Company',
-            'city' => 'London',
-            'url' => 'https://example.com/job/good',
-            'cpc' => 0.02,  // At MINIMUM_CPC.
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $result = Job::nearLocation(51.5074, -0.1278);
 
-        $result = Job::nearLocation($lat, $lng);
-
-        // Should only get the one with good CPC.
         $this->assertCount(1, $result);
         $this->assertEquals('Good CPC Job', $result->first()->title);
     }
@@ -130,98 +144,41 @@ class JobModelTest extends TestCase
     public function test_near_location_filters_by_visibility(): void
     {
         DB::table('jobs')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
-        // Insert visible job.
-        DB::table('jobs')->insert([
-            'title' => 'Visible Job',
-            'location' => 'London',
-            'company' => 'Test Company',
-            'city' => 'London',
-            'url' => 'https://example.com/job/visible',
-            'cpc' => 0.05,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $this->seedJob(['title' => 'Visible Job', 'visible' => 1]);
+        $this->seedJob(['title' => 'Hidden Job', 'visible' => 0]);
 
-        // Insert hidden job.
-        DB::table('jobs')->insert([
-            'title' => 'Hidden Job',
-            'location' => 'London',
-            'company' => 'Test Company',
-            'city' => 'London',
-            'url' => 'https://example.com/job/hidden',
-            'cpc' => 0.05,
-            'visible' => 0,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $result = Job::nearLocation(51.5074, -0.1278);
 
-        $result = Job::nearLocation($lat, $lng);
-
-        // Should only get the visible one.
         $this->assertCount(1, $result);
         $this->assertEquals('Visible Job', $result->first()->title);
     }
 
-    public function test_near_location_varies_picks_from_top_cpc_pool(): void
+    public function test_near_location_varies_picks_within_pool(): void
     {
-        // When there are more jobs available than the limit, nearLocation
-        // shuffles within a candidate pool sized to limit * VARIETY_POOL_MULTIPLIER
-        // so consecutive immediate-mode digests don't always show the same
-        // ads. Verify (a) the result size stays at limit and (b) every
-        // returned job comes from the top (limit*M) by CPC — anything
-        // below that pool size must never be picked.
+        // With more eligible jobs than the limit, nearLocation shuffles within a
+        // candidate pool (limit * VARIETY_POOL_MULTIPLIER) so consecutive sends
+        // don't always show the same ads. The pool is now the nearest jobs
+        // (matching the web view's KNN selection), not the top-CPC ones, so we
+        // assert the variety invariants only: every result is the right size,
+        // and repeated calls surface more than `limit` distinct jobs.
         DB::table('jobs')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
         $limit = 4;
-        $poolSize = $limit * Job::VARIETY_POOL_MULTIPLIER; // 12
-        $totalJobs = $poolSize + 5; // 17 — five jobs below the pool that must never appear.
-
-        // CPCs strictly descending so we know exactly which IDs belong in
-        // the eligible top-12 pool versus the always-excluded tail.
-        $insertedIdsByRank = [];
-        for ($i = 0; $i < $totalJobs; $i++) {
-            $cpc = round(1.00 - ($i * 0.01), 4); // 1.00, 0.99, ... well above MINIMUM_CPC.
-            DB::table('jobs')->insert([
-                'title' => 'Job rank ' . $i,
-                'location' => 'London',
-                'company' => 'Test',
-                'city' => 'London',
-                'url' => 'https://example.com/job/' . $i,
-                'cpc' => $cpc,
-                'visible' => 1,
-                'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-            ]);
-            $insertedIdsByRank[] = DB::getPdo()->lastInsertId();
+        $total = $limit * Job::VARIETY_POOL_MULTIPLIER + 3; // 15
+        for ($i = 0; $i < $total; $i++) {
+            $this->seedJob(['title' => 'Job rank ' . $i, 'cpc' => round(1.00 - ($i * 0.01), 4)]);
         }
 
-        $eligibleIds = array_slice($insertedIdsByRank, 0, $poolSize);
-        $excludedIds = array_slice($insertedIdsByRank, $poolSize);
-
-        // Run the query several times; track which IDs ever appear.
         $allSeen = [];
         for ($call = 0; $call < 8; $call++) {
-            $result = Job::nearLocation($lat, $lng, $limit);
+            $result = Job::nearLocation(51.5074, -0.1278, $limit);
             $this->assertCount($limit, $result, 'Result count must always equal limit');
             foreach ($result as $job) {
-                $this->assertNotContains(
-                    (string) $job->id,
-                    $excludedIds,
-                    'No job below the variety pool may ever be selected'
-                );
                 $allSeen[$job->id] = true;
             }
         }
 
-        // With limit=4 picked from a pool of 12 the probability of seeing
-        // only 4 IDs across 8 calls is vanishingly small (~1 in 1e6), so
-        // requiring strictly more than $limit unique IDs proves the
-        // shuffle is actually doing something.
         $this->assertGreaterThan(
             $limit,
             count($allSeen),
@@ -232,47 +189,15 @@ class JobModelTest extends TestCase
     public function test_near_location_orders_by_cpc_desc(): void
     {
         DB::table('jobs')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
-        // Insert jobs with different CPCs.
-        DB::table('jobs')->insert([
-            'title' => 'Low CPC',
-            'location' => 'London',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com/1',
-            'cpc' => 0.03,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        // All above the 0.10 floor; fewer than the default limit so there is no
+        // variety shuffle and the CPC-desc order is preserved.
+        $this->seedJob(['title' => 'Low CPC', 'cpc' => 0.10]);
+        $this->seedJob(['title' => 'High CPC', 'cpc' => 0.30]);
+        $this->seedJob(['title' => 'Medium CPC', 'cpc' => 0.20]);
 
-        DB::table('jobs')->insert([
-            'title' => 'High CPC',
-            'location' => 'London',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com/2',
-            'cpc' => 0.10,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $result = Job::nearLocation(51.5074, -0.1278);
 
-        DB::table('jobs')->insert([
-            'title' => 'Medium CPC',
-            'location' => 'London',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com/3',
-            'cpc' => 0.05,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
-
-        $result = Job::nearLocation($lat, $lng);
-
-        // Should be ordered high to low CPC.
         $this->assertEquals('High CPC', $result[0]->title);
         $this->assertEquals('Medium CPC', $result[1]->title);
         $this->assertEquals('Low CPC', $result[2]->title);
@@ -280,27 +205,13 @@ class JobModelTest extends TestCase
 
     public function test_near_location_title_cases_lowercase_location(): void
     {
-        // The jobs feed stores location names lowercase ("manchester",
-        // "stoke-on-trent"). nearLocation should title-case them so emails
-        // read naturally instead of "Senior Manager manchester".
+        // The jobs feed stores location names lowercase ("stoke-on-trent");
+        // nearLocation title-cases them so emails read naturally.
         DB::table('jobs')->delete();
-        DB::table('ai_images')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
-        DB::table('jobs')->insert([
-            'title' => 'Test Job',
-            'location' => 'stoke-on-trent',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com',
-            'cpc' => 0.05,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $this->seedJob(['title' => 'Test Job', 'location' => 'stoke-on-trent']);
 
-        $result = Job::nearLocation($lat, $lng);
+        $result = Job::nearLocation(51.5074, -0.1278);
 
         $this->assertCount(1, $result);
         $this->assertEquals('Stoke-On-Trent', $result->first()->location);
@@ -308,28 +219,13 @@ class JobModelTest extends TestCase
 
     public function test_near_location_adds_placeholder_image_for_jobs_without_ai_images(): void
     {
-        // When a job has no matching ai_images row, image_url falls back to
-        // briefcase.png — a friendly cartoon briefcase rendered in the same
-        // AI-image house style as the per-title illustrations so rows look
-        // consistent alongside ones with a real AI image.
+        // With no matching ai_images row, image_url falls back to briefcase.png.
         DB::table('jobs')->delete();
         DB::table('ai_images')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
-        DB::table('jobs')->insert([
-            'title' => 'Test Job',
-            'location' => 'London',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com',
-            'cpc' => 0.05,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $this->seedJob(['title' => 'Test Job']);
 
-        $result = Job::nearLocation($lat, $lng);
+        $result = Job::nearLocation(51.5074, -0.1278);
 
         $this->assertCount(1, $result);
         $job = $result->first();
@@ -341,44 +237,27 @@ class JobModelTest extends TestCase
     {
         DB::table('jobs')->delete();
         DB::table('ai_images')->delete();
-        $srid = config('freegle.srid', 3857);
-        $lat = 51.5074;
-        $lng = -0.1278;
 
         $jobTitle = 'Software Developer';
-
         $canonicalTitle = strtolower($jobTitle);
 
-        DB::table('jobs')->insert([
-            'title' => $jobTitle,
-            'canonical_title' => $canonicalTitle,
-            'location' => 'London',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com',
-            'cpc' => 0.05,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
-        ]);
+        $this->seedJob(['title' => $jobTitle, 'canonical_title' => $canonicalTitle]);
 
-        // Add AI image for this job's canonical title.
         DB::table('ai_images')->insert([
             'name' => $canonicalTitle,
             'externaluid' => 'freegletusd-abc123',
         ]);
 
-        $result = Job::nearLocation($lat, $lng);
+        $result = Job::nearLocation(51.5074, -0.1278);
 
         $this->assertCount(1, $result);
         $job = $result->first();
         $this->assertNotNull($job->image_url);
-        // Should contain the file ID from the externaluid.
         $this->assertStringContainsString('abc123', $job->image_url);
     }
 
     public function test_build_image_url_returns_null_for_null_externaluid(): void
     {
-        // Use reflection to test protected method.
         $reflection = new \ReflectionClass(Job::class);
         $method = $reflection->getMethod('buildImageUrl');
         $method->setAccessible(true);
@@ -394,7 +273,6 @@ class JobModelTest extends TestCase
         $method = $reflection->getMethod('buildImageUrl');
         $method->setAccessible(true);
 
-        // Missing freegletusd- prefix.
         $result = $method->invoke(null, 'invalid-format');
 
         $this->assertNull($result);
@@ -426,30 +304,15 @@ class JobModelTest extends TestCase
         $this->assertStringContainsString('w=50', $result);
     }
 
-    public function test_near_location_expands_search_area_to_find_jobs(): void
+    public function test_near_location_finds_jobs_within_search_reach(): void
     {
+        // A job ~5.5km north is still within the spatial KNN's search reach.
         DB::table('jobs')->delete();
-        $srid = config('freegle.srid', 3857);
 
-        // Place job slightly outside initial search box but within expansion range.
-        $jobLat = 51.5074 + 0.05;  // About 5.5km north.
-        $jobLng = -0.1278;
+        $this->seedJob(['title' => 'Distant Job', 'location' => 'North London'], 51.5074 + 0.05, -0.1278);
 
-        DB::table('jobs')->insert([
-            'title' => 'Distant Job',
-            'location' => 'North London',
-            'company' => 'Test',
-            'city' => 'London',
-            'url' => 'https://example.com',
-            'cpc' => 0.05,
-            'visible' => 1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT($jobLng $jobLat)', $srid)"),
-        ]);
-
-        // Search from a point where initial box won't contain the job.
         $result = Job::nearLocation(51.5074, -0.1278);
 
-        // Should find the job through box expansion.
         $this->assertCount(1, $result);
     }
 }
