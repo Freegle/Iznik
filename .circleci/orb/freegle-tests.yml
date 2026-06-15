@@ -3012,6 +3012,38 @@ jobs:
           no_output_timeout: 50m
 
       - run:
+          name: Run spatial-go tests
+          command: |
+            # iznik-spatial-go (KNN) tests run via the status container, which
+            # docker-execs `go test ./...` in the spatial-knn container (frontend
+            # profile, already up). Serial gate that runs AFTER the Go API tests
+            # (the parallel block above); a failure here fails the job.
+            echo "🧪 Spatial-go tests (iznik-spatial-go)..."
+            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial")
+            http_code="${response: -3}"
+            if [ "$http_code" != "200" ] && [ "$http_code" != "409" ]; then
+              echo "❌ Failed to trigger spatial tests (HTTP $http_code)"
+              exit 1
+            fi
+            while true; do
+              sleep 5
+              status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial/status" || echo '{"status":"error"}')
+              status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              if [ "$status" = "completed" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "✅ Spatial tests passed"; break
+                else
+                  echo "❌ Spatial tests failed"; exit 1
+                fi
+              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                echo "❌ Spatial tests failed"; exit 1
+              fi
+            done
+          no_output_timeout: 10m
+
+      - run:
           name: Run routing-go tests
           command: |
             # iznik-routing-go tests run via the status container, which docker-execs
