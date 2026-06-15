@@ -44,7 +44,7 @@
               <b-td class="text-muted">{{ pct(stats.manualRejected, stats.arrived) }}</b-td>
             </b-tr>
             <b-tr>
-              <b-td>Auto-approved (Checked)</b-td>
+              <b-td>Auto-approved (Checked delay + 48h fallback)</b-td>
               <b-td class="text-end">{{ stats.autoApproved }}</b-td>
               <b-td class="text-muted">{{ pct(stats.autoApproved, stats.arrived) }}</b-td>
             </b-tr>

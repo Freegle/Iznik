@@ -2,6 +2,7 @@
   <div>
     <client-only>
       <ScrollToTop />
+      <ModHelpTrusted />
       <div class="d-flex justify-content-between">
         <ModGroupSelect
           v-model="groupid"
@@ -29,7 +30,7 @@
       >
         Nothing to check. These are posts that went live without moderation from
         trusted (Group Settings) members — once you've checked them they drop off
-        here, and anything older than a week is treated as checked.
+        here, and anything older than a week is excluded from this queue.
       </NoticeMessage>
       <div v-if="groupsreceived">
         <ModMessages />
