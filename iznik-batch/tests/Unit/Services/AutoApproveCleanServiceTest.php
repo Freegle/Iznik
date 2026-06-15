@@ -403,4 +403,137 @@ class AutoApproveCleanServiceTest extends TestCase
         $this->assertApproved($message->id, $group->id);
         $this->assertDatabaseHas('messages_spamham', ['msgid' => $message->id, 'spamham' => 'Ham']);
     }
+
+    // --- A2: autoapprove_hold_until predicate ---
+
+    public function test_hold_until_future_keeps_post_pending(): void
+    {
+        // A post whose autoapprove_hold_until is 5 minutes in the future must
+        // be skipped by the auto-approver even though the delay has elapsed.
+        [$user, $group, $message] = $this->makeApprovable();
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update(['autoapprove_hold_until' => now()->addMinutes(5)]);
+
+        $this->service->process();
+
+        $this->assertStillPending($message->id, $group->id);
+    }
+
+    public function test_hold_until_past_allows_approval(): void
+    {
+        // A post whose autoapprove_hold_until has already expired must still
+        // be auto-approved normally.
+        [$user, $group, $message] = $this->makeApprovable();
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update(['autoapprove_hold_until' => now()->subMinutes(1)]);
+
+        $this->service->process();
+
+        $this->assertApproved($message->id, $group->id);
+    }
+
+    // --- D1: cross-group Spam-collection guard ---
+
+    public function test_spam_on_another_group_blocks_approval_on_this_group(): void
+    {
+        // Message is clean and pending on group A (eligible for auto-approval),
+        // BUT also in the Spam collection on group B.
+        // AutoApproveCleanService must NOT auto-approve it on group A.
+        [$user, $groupA, $message] = $this->makeApprovable();
+
+        $groupB = $this->createTestGroup();
+        // Insert a Spam-collection row for the same message on group B.
+        DB::table('messages_groups')->insert([
+            'msgid'      => $message->id,
+            'groupid'    => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_SPAM,
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $this->service->process();
+
+        $this->assertStillPending($message->id, $groupA->id);
+    }
+
+    // --- D3: quality-sample filter + dry-run stat placement ---
+
+    public function test_already_quality_sampled_row_is_excluded_from_candidate_query(): void
+    {
+        // A row already marked quality_sample=1 must not appear in the candidate
+        // query at all. This verifies the ->where('mg.quality_sample', 0) guard.
+        [$user, $group, $message] = $this->makeApprovable([
+            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 0]]],
+        ]);
+        // Manually pre-mark the row as already sampled (e.g. by a previous run).
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update(['quality_sample' => 1]);
+
+        $stats = $this->service->process();
+
+        // The row is excluded from the candidate set entirely — held_quality is 0
+        // because the service never even sees it.
+        $this->assertEquals(0, $stats['held_quality'], 'already-sampled row must not increment held_quality again');
+        $this->assertStillPending($message->id, $group->id);
+    }
+
+    public function test_held_quality_stat_not_incremented_in_dry_run(): void
+    {
+        // $stats['held_quality']++ must be inside the if(!$dryRun) block so a
+        // dry-run pass doesn't falsely inflate the cron stat.
+        [$user, $group, $message] = $this->makeApprovable([
+            'group' => ['settings' => ['autoapprove' => ['quality_check_percent' => 100]]],
+        ]);
+
+        $stats = $this->service->process(dryRun: true);
+
+        $this->assertEquals(0, $stats['held_quality'], 'held_quality must be 0 in a dry run');
+        $this->assertStillPending($message->id, $group->id);
+    }
+
+    // --- D6: OFFER freebie-alert background task ---
+
+    public function test_approved_offer_queues_freebie_alert_background_task(): void
+    {
+        // An approved OFFER must insert a background_tasks row with
+        // task_type=TASK_FREEBIE_ALERTS_ADD containing the msgid, so the Go
+        // background-task processor can fan out push notifications to nearby users.
+        [$user, $group, $message] = $this->makeApprovable([
+            'message' => ['type' => \App\Models\Message::TYPE_OFFER],
+        ]);
+
+        $this->service->process();
+
+        $this->assertApproved($message->id, $group->id);
+        $this->assertDatabaseHas('background_tasks', [
+            'task_type' => \App\Models\BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
+        ]);
+        // Verify the data payload contains the correct msgid.
+        $task = DB::table('background_tasks')
+            ->where('task_type', \App\Models\BackgroundTask::TASK_FREEBIE_ALERTS_ADD)
+            ->first();
+        $data = json_decode($task->data, true);
+        $this->assertEquals((int) $message->id, $data['msgid']);
+    }
+
+    public function test_approved_wanted_does_not_queue_freebie_alert(): void
+    {
+        // Only OFFERs trigger freebie alerts; WANTEDs must not insert a row.
+        [$user, $group, $message] = $this->makeApprovable([
+            'message' => ['type' => \App\Models\Message::TYPE_WANTED],
+        ]);
+
+        $this->service->process();
+
+        $this->assertApproved($message->id, $group->id);
+        $this->assertDatabaseMissing('background_tasks', [
+            'task_type' => \App\Models\BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
+        ]);
+    }
 }

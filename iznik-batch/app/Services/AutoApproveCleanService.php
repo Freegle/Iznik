@@ -76,15 +76,30 @@ class AutoApproveCleanService
             ->whereNull('m.heldby')
             ->whereNull('mg.spamreason')
             ->whereNull('m.spamreason')
+            // Never auto-approve a message that is in the Spam collection on ANY
+            // group (Discourse #9654). Spam-collection messages surface in the
+            // Pending review queue but must be actioned by a human — mirroring
+            // the identical guard in AutoApproveService.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_groups as spam_mg')
+                    ->whereColumn('spam_mg.msgid', 'mg.msgid')
+                    ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
+                    ->where('spam_mg.deleted', 0);
+            })
             ->where('mg.deleted', 0)
             ->whereNull('m.deleted')
             ->whereNull('u.deleted')
             ->whereNull('mem.ourPostingStatus')           // the auto-moderated tier
             ->whereNotNull('mg.contentcheck_checked_at')   // content check has run ...
             ->whereNull('mg.contentcheck_reasons')         // ... and the post was clean
+            ->where('mg.quality_sample', 0)               // already-sampled rows are excluded entirely
             ->whereRaw(
                 "mg.arrival <= (NOW() - INTERVAL COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(g.settings, '$.autoapprove.delay_minutes')) AS UNSIGNED), 0), ?) MINUTE)",
                 [$this->defaultDelayMinutes()]
+            )
+            ->whereRaw(
+                '(mg.autoapprove_hold_until IS NULL OR mg.autoapprove_hold_until <= NOW())'
             )
             ->orderBy('mg.msgid')
             ->orderBy('mg.groupid')
@@ -112,8 +127,8 @@ class AutoApproveCleanService
                             ->where('groupid', $row->groupid)
                             ->where('quality_sample', 0)
                             ->update(['quality_sample' => 1]);
+                        $stats['held_quality']++;
                     }
-                    $stats['held_quality']++;
                     continue;
                 }
 

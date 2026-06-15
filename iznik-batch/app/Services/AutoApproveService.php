@@ -133,6 +133,12 @@ class AutoApproveService
                     ->where('lh.kind', LockdownHoldsService::KIND_POST)
                     ->whereNull('lh.outcome');
             })
+            // Respect a moderator-set hold window (set by the Go Pending list fetch,
+            // extend-only to NOW()+10m) so a post a mod is actively reviewing is not
+            // auto-approved out from under them.
+            ->whereRaw(
+                '(messages_groups.autoapprove_hold_until IS NULL OR messages_groups.autoapprove_hold_until <= NOW())'
+            )
             ->where(function ($q) {
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
