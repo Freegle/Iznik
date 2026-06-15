@@ -55,11 +55,13 @@ class Job extends Model
             return collect();
         }
 
-        $results = static::select('id', 'title', 'canonical_title', 'location', 'company', 'city', 'url', 'cpc')
+        $results = static::select('id', 'title', 'canonical_title', 'location', 'company', 'city', 'url', 'cpc', 'clickability')
             ->whereIn('id', $ids)
             ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
             ->where('visible', 1)
-            ->orderByDesc('cpc')
+            // Rank by expected value (cpc * clickability), matching the public
+            // jobs page (Go job.GetJobs) so digest and web agree on ordering.
+            ->orderByRaw('cpc * clickability DESC, id ASC')
             ->get();
 
         // Randomize the candidate pool so consecutive immediate-mode digests

@@ -38,6 +38,7 @@ class JobModelTest extends TestCase
             'city' => 'London',
             'url' => 'https://example.com',
             'cpc' => 0.20,
+            'clickability' => 1,
             'visible' => 1,
         ];
         $attrs['geometry'] = DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid));
