@@ -13,6 +13,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\ItemService;
+use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -3463,41 +3464,9 @@ class IncomingMailService
      */
     private function findClosestPostcodeId(float $lat, float $lng): ?int
     {
-        $srid = config('freegle.srid', 3857);
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
 
-        // Start with a small search radius and expand if needed
-        $scan = 0.00001953125;
-
-        while ($scan <= 0.2) {
-            $swlat = $lat - $scan;
-            $nelat = $lat + $scan;
-            $swlng = $lng - $scan;
-            $nelng = $lng + $scan;
-
-            $poly = "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
-
-            $sql = "SELECT locations.id,
-                           ST_distance(locations_spatial.geometry, ST_GeomFromText('POINT($lng $lat)', $srid)) AS dist
-                    FROM locations_spatial
-                    INNER JOIN locations ON locations.id = locations_spatial.locationid
-                    WHERE MBRContains(ST_Envelope(ST_GeomFromText('$poly', $srid)), locations_spatial.geometry)
-                      AND locations.type = 'Postcode'
-                      AND LOCATE(' ', locations.name) > 0
-                    ORDER BY dist ASC,
-                             CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0
-                                  ELSE ST_AREA(locations_spatial.geometry) END ASC
-                    LIMIT 1";
-
-            $result = DB::selectOne($sql);
-
-            if ($result) {
-                return (int) $result->id;
-            }
-
-            $scan *= 2;
-        }
-
-        return null;
+        return $ids[0] ?? null;
     }
 
     /**

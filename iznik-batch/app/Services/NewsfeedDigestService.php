@@ -6,7 +6,7 @@ use App\Mail\Newsfeed\NewsfeedDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
-use App\Support\GreatCircle;
+use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -48,10 +48,13 @@ class NewsfeedDigestService
     /** Posts must be at least this many hours old (V1 digest $minhourage=12). */
     private const MIN_HOUR_AGE = 12;
 
-    /** getNearbyDistance: start radius (m), target poster count, cap (m). V1 800 / 10 / 32187. */
-    private const NEARBY_START_METRES = 800;
-    private const NEARBY_TARGET_POSTERS = 10;
-    private const NEARBY_MAX_METRES = 32187;
+    /**
+     * How many nearest newsfeed posts to pull from the spatial server before
+     * applying the digest filters (type/window/seen/min-age) in MySQL. Large
+     * enough to reach far in sparse areas (the old radius cap was ~20 miles),
+     * while staying well under the spatial server's 1000-result limit.
+     */
+    private const NEARBY_CANDIDATES = 500;
 
     /**
      * Process all eligible groups/members.
@@ -138,17 +141,24 @@ class NewsfeedDigestService
 
         $lastSeen = (int) (DB::table('newsfeed_users')->where('userid', $userId)->value('newsfeedid') ?? 0);
 
-        // V1 getNearbyDistance: grow the radius until ~10 recent posters are in
-        // range (or we hit the cap), then select the latest posts within that box.
-        $dist = $this->getNearbyDistance($lat, $lng);
-        $box = $this->boxSql($lat, $lng, $dist);
+        // Nearest recent chitchat posts via the spatial server's "newsfeed"
+        // dataset, then apply the digest filters in MySQL. Replaces the V1
+        // grow-the-radius-until-10-posters box; like the Go API's nearby
+        // newsfeed, this uses nearest-N (the final ORDER BY timestamp + the
+        // MAX_ITEMS/window filters keep the same "latest nearby posts" result).
+        $ids = (new SpatialQueryService())->nearestIds('newsfeed', $lat, $lng, self::NEARBY_CANDIDATES);
+        if (empty($ids)) {
+            return 0;
+        }
+
         $oldest = now()->subDays(self::WINDOW_DAYS)->toDateTimeString();
         $typePlaceholders = implode(',', array_fill(0, count(self::FEED_TYPES), '?'));
+        $idPlaceholders = implode(',', array_fill(0, count($ids), '?'));
 
         $posts = DB::select(
             "SELECT newsfeed.id, newsfeed.type, newsfeed.userid, newsfeed.message, newsfeed.timestamp
              FROM newsfeed
-             WHERE MBRContains({$box}, newsfeed.position)
+             WHERE newsfeed.id IN ({$idPlaceholders})
                AND newsfeed.replyto IS NULL
                AND newsfeed.deleted IS NULL
                AND newsfeed.hidden IS NULL
@@ -158,7 +168,7 @@ class NewsfeedDigestService
                AND TIMESTAMPDIFF(HOUR, newsfeed.timestamp, NOW()) >= ?
              ORDER BY newsfeed.pinned DESC, newsfeed.timestamp DESC
              LIMIT " . self::MAX_ITEMS,
-            array_merge([$userId], self::FEED_TYPES, [$oldest, self::MIN_HOUR_AGE])
+            array_merge($ids, [$userId], self::FEED_TYPES, [$oldest, self::MIN_HOUR_AGE])
         );
 
         if (empty($posts)) {
@@ -244,55 +254,6 @@ class NewsfeedDigestService
         return [$lat, $lng];
     }
 
-    /**
-     * V1 Newsfeed::getNearbyDistance: start at 800m and double until at least 10
-     * distinct people have posted (non-reply, non-Alert, last 30 days) within the
-     * box, or we reach the cap (~20 miles).
-     */
-    private function getNearbyDistance(float $lat, float $lng): int
-    {
-        $dist = self::NEARBY_START_METRES;
-        $since = now()->subDays(30)->toDateTimeString();
-
-        do {
-            $dist *= 2;
-            $box = $this->boxSql($lat, $lng, $dist);
-
-            $others = DB::select(
-                "SELECT DISTINCT userid FROM newsfeed
-                 WHERE MBRContains({$box}, position)
-                   AND replyto IS NULL
-                   AND type <> 'Alert'
-                   AND timestamp >= ?
-                 LIMIT " . self::NEARBY_TARGET_POSTERS,
-                [$since]
-            );
-        } while ($dist < self::NEARBY_MAX_METRES && count($others) < self::NEARBY_TARGET_POSTERS);
-
-        return $dist;
-    }
-
-    /**
-     * Build the ST_GeomFromText POLYGON box SQL for a given centre + distance,
-     * matching V1 (NE corner at bearing 45°, SW at 225°).
-     */
-    private function boxSql(float $lat, float $lng, int $dist): string
-    {
-        $ne = GreatCircle::getPositionByDistance($dist, 45, $lat, $lng);
-        $sw = GreatCircle::getPositionByDistance($dist, 225, $lat, $lng);
-        $srid = (int) config('freegle.srid', 3857);
-
-        $poly = sprintf(
-            'POLYGON((%F %F, %F %F, %F %F, %F %F, %F %F))',
-            $sw['lng'], $sw['lat'],
-            $sw['lng'], $ne['lat'],
-            $ne['lng'], $ne['lat'],
-            $ne['lng'], $sw['lat'],
-            $sw['lng'], $sw['lat']
-        );
-
-        return "ST_GeomFromText('{$poly}', {$srid})";
-    }
 
     /**
      * The poster's public location name with the group suffix stripped (V1

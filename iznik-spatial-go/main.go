@@ -41,6 +41,7 @@ func main() {
 		&UserApproxLocsDataset{},
 		&GroupsDataset{},
 		&JobsDataset{},
+		&PostcodesDataset{},
 	}
 
 	srv := newServer(mysqlDB, idxDir, allDatasets)

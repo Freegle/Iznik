@@ -34,7 +34,7 @@ class UserLocationRemapService
 
             $location = DB::table('locations')
                 ->where('id', $locationId)
-                ->select('id', 'osm_id', 'name', 'type', 'popularity', 'gridid', 'postcodeid', 'areaid', 'lat', 'lng', 'maxdimension')
+                ->select('id', 'osm_id', 'name', 'type', 'popularity', 'postcodeid', 'areaid', 'lat', 'lng', 'maxdimension')
                 ->first();
 
             if (!$location) {

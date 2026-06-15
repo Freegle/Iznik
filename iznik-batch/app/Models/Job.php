@@ -19,9 +19,11 @@ class Job extends Model
     ];
 
     /**
-     * Minimum CPC (cost per click) to show a job ad.
+     * Minimum CPC (cost per click) to show a job ad. Matches the spatial
+     * server's "jobs" dataset floor and the public jobs page, so digest job
+     * ads are drawn from the same eligible pool as everything else.
      */
-    public const MINIMUM_CPC = 0.02;
+    public const MINIMUM_CPC = 0.10;
 
     /**
      * Candidate-pool multiplier used to break the "same N jobs forever"
@@ -33,7 +35,7 @@ class Job extends Model
     public const VARIETY_POOL_MULTIPLIER = 3;
 
     /**
-     * Query jobs near a location using bounding box search.
+     * Query jobs near a location via the spatial server's "jobs" KNN dataset.
      *
      * @param float $lat Latitude
      * @param float $lng Longitude
@@ -41,45 +43,24 @@ class Job extends Model
      */
     public static function nearLocation(float $lat, float $lng, int $limit = 4): Collection
     {
-        // Use same bounding box approach as iznik-server for efficient spatial index usage.
-        // Expand the box iteratively until we find enough jobs. Fetch a
-        // larger candidate pool so the random selection below has room to
-        // vary the picks across consecutive sends.
-        $step = 0.02;
-        $ambit = $step;
-        $srid = config('freegle.srid', 3857);
-
+        // Fetch a larger candidate pool so the random selection below has room
+        // to vary the picks across consecutive sends.
         $candidatePool = $limit * self::VARIETY_POOL_MULTIPLIER;
 
-        $results = collect();
-        $gotIds = [];
-
-        while ($results->count() < $candidatePool && $ambit < 1) {
-            $swlat = $lat - $ambit;
-            $nelat = $lat + $ambit;
-            $swlng = $lng - $ambit;
-            $nelng = $lng + $ambit;
-
-            $poly = "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
-
-            $jobs = static::select('id', 'title', 'canonical_title', 'location', 'company', 'city', 'url', 'cpc')
-                ->whereRaw("ST_Within(geometry, ST_GeomFromText(?, ?))", [$poly, $srid])
-                ->whereRaw("cpc >= ?", [self::MINIMUM_CPC])
-                ->where('visible', 1)
-                ->when(count($gotIds) > 0, function ($query) use ($gotIds) {
-                    $query->whereNotIn('id', $gotIds);
-                })
-                ->orderByDesc('cpc')
-                ->limit($candidatePool - $results->count())
-                ->get();
-
-            foreach ($jobs as $job) {
-                $gotIds[] = $job->id;
-                $results->push($job);
-            }
-
-            $ambit += $step;
+        // The spatial server's "jobs" dataset is the source of truth for which
+        // jobs are eligible (visible, cpc >= floor) and where they are: ask it
+        // for the nearest candidate ids, then enrich + re-check from MySQL.
+        $ids = (new \App\Services\SpatialQueryService())->nearestIds('jobs', $lat, $lng, $candidatePool);
+        if (empty($ids)) {
+            return collect();
         }
+
+        $results = static::select('id', 'title', 'canonical_title', 'location', 'company', 'city', 'url', 'cpc')
+            ->whereIn('id', $ids)
+            ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
+            ->where('visible', 1)
+            ->orderByDesc('cpc')
+            ->get();
 
         // Randomize the candidate pool so consecutive immediate-mode digests
         // (or chat notifications) to the same user don't show identical job
