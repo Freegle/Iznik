@@ -75,7 +75,7 @@
           :state="descriptionState"
         />
         <div v-if="descriptionState === false" class="invalid-feedback d-block">
-          Please add a description to help people understand what you need.
+          {{ descriptionError }}
         </div>
       </div>
     </div>
@@ -104,8 +104,10 @@ import { useMiscStore } from '~/stores/misc'
 import OurUploadedImage from '~/components/OurUploadedImage'
 import api from '~/api'
 import {
-  isNumericOnlyItem,
-  INVALID_ITEM_MESSAGE,
+  isUnpostableItem,
+  isNumericOnlyBody,
+  unpostableItemMessage,
+  INVALID_BODY_MESSAGE_WANTED,
 } from '~/composables/useItemValidation'
 
 const router = useRouter()
@@ -152,7 +154,7 @@ onMounted(() => {
 
 // Item validation state - null initially, false if error, true if valid
 const itemState = computed(() => {
-  if (isNumericOnlyItem(item.value)) {
+  if (isUnpostableItem(item.value)) {
     return false
   }
   if (showItemError.value && (!item.value || !item.value.trim())) {
@@ -161,14 +163,15 @@ const itemState = computed(() => {
   return item.value ? true : null
 })
 
-// Error message shown under the item field. A purely-numeric item is never a
-// valid description, so we flag it as soon as it's typed.
-const itemError = computed(() =>
-  isNumericOnlyItem(item.value) ? INVALID_ITEM_MESSAGE : null
-)
+// Error message shown under the item field. A bare number or a content-free
+// catch-all ("anything") is never a valid item, so we flag it as it's typed.
+const itemError = computed(() => unpostableItemMessage(item.value))
 
 // Description validation state
 const descriptionState = computed(() => {
+  if (isNumericOnlyBody(description.value)) {
+    return false
+  }
   if (
     showDescriptionError.value &&
     (!description.value || !description.value.trim())
@@ -177,6 +180,13 @@ const descriptionState = computed(() => {
   }
   return null
 })
+
+// Message shown under the description field when it's invalid.
+const descriptionError = computed(() =>
+  isNumericOnlyBody(description.value)
+    ? INVALID_BODY_MESSAGE_WANTED
+    : 'Please add a description to help people understand what you need.'
+)
 
 // Get attachments
 const attachments = computed(() => {
@@ -318,7 +328,7 @@ function onItemBlur() {
 }
 
 function validateAndNext() {
-  if (!item.value || !item.value.trim() || isNumericOnlyItem(item.value)) {
+  if (!item.value || !item.value.trim() || isUnpostableItem(item.value)) {
     showItemError.value = true
     nextTick(() => {
       const input = document.getElementById('item-name')
@@ -329,9 +339,13 @@ function validateAndNext() {
     return
   }
 
-  // Check that we have either a description or real (non-AI) photos.
-  // AI-only photos require a description.
-  const hasDescription = description.value && description.value.trim()
+  // Check that we have either a real description or real (non-AI) photos.
+  // A purely-numeric description doesn't count. AI-only photos require a
+  // description.
+  const hasDescription =
+    description.value &&
+    description.value.trim() &&
+    !isNumericOnlyBody(description.value)
   const realPhotos = attachments.value
     ? attachments.value.filter(
         (a) => !a.externalmods || a.externalmods.ai !== true

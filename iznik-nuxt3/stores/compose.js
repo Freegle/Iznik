@@ -2,7 +2,10 @@ import { defineStore } from 'pinia'
 import { useMessageStore } from '~/stores/message'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
-import { isNumericOnlyItem } from '~/composables/useItemValidation'
+import {
+  isUnpostableItem,
+  isNumericOnlyBody,
+} from '~/composables/useItemValidation'
 
 const defaultOffer = {
   id: 0,
@@ -604,17 +607,21 @@ export const useComposeStore = defineStore({
           const realPhotos = atts.filter(
             (a) => !a.externalmods || a.externalmods.ai !== true
           )
+          // A purely-numeric description ("24") is no more use than a blank one,
+          // so it doesn't count as having a description.
           const hasDescription =
-            message.description && message.description.trim()
+            message.description &&
+            message.description.trim() &&
+            !isNumericOnlyBody(message.description)
           const hasRealPhotos = realPhotos.length > 0
 
-          // A message is valid if there is an item, the item isn't just a number,
-          // and there is either a description or real photos.
-          // AI-only photos require a description.
+          // A message is valid if there is an item, the item isn't just a number
+          // or a content-free catch-all ("anything"), and there is either a real
+          // description or real photos. AI-only photos require a description.
           if (
             !message.item ||
             !message.item.trim() ||
-            isNumericOnlyItem(message.item) ||
+            isUnpostableItem(message.item) ||
             (!hasDescription && !hasRealPhotos)
           ) {
             valid = false
