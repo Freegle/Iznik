@@ -102,6 +102,15 @@ Schedule::command('messages:contentcheck')
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
+// Update UK spatial data - runs monthly.
+// Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
+// Signals Go spatial server to reload after update.
+Schedule::command('spatial:update-data')
+    ->monthlyOn(1, '03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('spatial:update-data'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')
@@ -850,12 +859,13 @@ Schedule::command('locations:fix-skewed')
     ->sendOutputTo(cronLog('locations:fix-skewed'))
     ->runInBackground();
 
-// V1: cron/locations_pgsql (locations_pgsql_update.php + locations_pgsql_map.php)
-// Full sync of MySQL locations to PostgreSQL/PostGIS, then remap postcodes to areas.
-Schedule::command('locations:sync-pgsql')
+// Nightly full postcode -> nearest-area remap, via the spatial server (MySQL
+// locations_spatial + iznik-spatial-go KNN). No PostgreSQL. DoogalService-imported
+// postcodes rely on this pass to be mapped onto group areas.
+Schedule::command('locations:remap-postcodes')
     ->dailyAt('01:00')
     ->withoutOverlapping()
-    ->sendOutputTo(cronLog('locations:sync-pgsql'))
+    ->sendOutputTo(cronLog('locations:remap-postcodes'))
     ->runInBackground();
 
 // V1: cron/user_ratings.php
@@ -1155,3 +1165,6 @@ Schedule::command('eee:sync-mv-labels')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('eee:sync-mv-labels'))
     ->runInBackground();
+
+// ripple:monitor command exists but is not yet scheduled — pending decision
+// on production rollout.  See plans/reference/ripple-curve-evaluation.md.

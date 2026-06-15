@@ -1,4 +1,4 @@
-export type TestType = 'go' | 'php' | 'laravel' | 'vitest' | 'playwright'
+export type TestType = 'go' | 'spatial' | 'php' | 'laravel' | 'vitest' | 'playwright'
 
 export type TestStatus = 'idle' | 'running' | 'completed' | 'failed'
 
@@ -37,6 +37,13 @@ export const testConfigs: Record<TestType, TestConfig> = {
     name: 'Go API Tests',
     description: 'Tests for the v2 API (iznik-server-go)',
     filterPlaceholder: 'Filter tests (e.g., TestMessage)',
+    hasReport: false,
+  },
+  spatial: {
+    type: 'spatial',
+    name: 'Spatial Server Tests',
+    description: 'Tests for the spatial KNN server (iznik-spatial-go)',
+    filterPlaceholder: 'Filter tests (e.g., TestDeleteByExtID)',
     hasReport: false,
   },
   php: {

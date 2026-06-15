@@ -18,9 +18,9 @@ use Illuminate\Support\Facades\Log;
  *
  * Mapping new postcodes onto Freegle group areas is deliberately NOT done here:
  * V1's Location::create() called remapPostcodes() inline, but in Laravel that
- * work is owned by the scheduled `locations:sync-pgsql` job
+ * work is owned by the nightly scheduled `locations:remap-postcodes` job
  * ({@see PostcodeRemapService}) — the same "background cron job to save us" that
- * V1 relied on for the PostGIS copy.
+ * V1 relied on.
  */
 class DoogalService
 {

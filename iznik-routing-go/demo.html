@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rippling Out Explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+#map { position: absolute; inset: 0; }
+
+/* ── Control panel ─────────────────────────────────────────────────── */
+#panel {
+  position: absolute; top: 10px; right: 10px;
+  background: #fff; border-radius: 10px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.25);
+  width: 290px; z-index: 1000; overflow: hidden;
+}
+#panel-header {
+  background: #61AE24; color: #fff; padding: 12px 16px;
+  font-weight: 700; font-size: 15px; letter-spacing: .3px;
+  display: flex; align-items: center; gap: 8px;
+}
+#panel-header img { width: 24px; height: 24px; border-radius: 4px; }
+#panel-body { padding: 14px 16px 16px; }
+
+/* Search */
+#search-wrap { position: relative; margin-bottom: 12px; }
+#search-box {
+  width: 100%; padding: 8px 10px; border: 1px solid #ccc;
+  border-radius: 6px; font-size: 13px; outline: none;
+}
+#search-box:focus { border-color: #61AE24; }
+#search-results {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #fff; border: 1px solid #ccc; border-top: none;
+  border-radius: 0 0 6px 6px; list-style: none;
+  margin: 0; padding: 0; z-index: 10; max-height: 180px;
+  overflow-y: auto; box-shadow: 0 4px 8px rgba(0,0,0,.1);
+}
+#search-results li {
+  padding: 7px 10px; cursor: pointer; font-size: 12px;
+  border-bottom: 1px solid #f0f0f0; line-height: 1.3;
+}
+#search-results li:hover { background: #f2f9e6; }
+#search-results li:last-child { border-bottom: none; }
+
+/* Mode buttons */
+.mode-row { display: flex; gap: 6px; margin-bottom: 14px; }
+.mode-btn {
+  flex: 1; padding: 7px 4px; border: 1.5px solid #ddd;
+  border-radius: 6px; background: #fafafa; cursor: pointer;
+  font-size: 12px; font-weight: 500; color: #555; transition: all .15s;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.mode-btn .icon { font-size: 18px; }
+.mode-btn:hover { border-color: #61AE24; color: #61AE24; background: #f2f9e6; }
+.mode-btn.active { border-color: #61AE24; background: #61AE24; color: #fff; }
+
+/* Sliders */
+.slider-row { margin-bottom: 12px; }
+.slider-label {
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: #666; margin-bottom: 4px; font-weight: 500;
+}
+.slider-label .val { color: #222; font-weight: 700; }
+input[type=range] {
+  width: 100%; height: 4px; accent-color: #61AE24; cursor: pointer;
+}
+
+/* Fairness slider gradient track hint */
+.fairness-track {
+  height: 6px; border-radius: 3px; margin-bottom: 6px;
+  background: linear-gradient(to right, #888 0%, #d73027 50%, #d73027 100%);
+  opacity: .25; pointer-events: none;
+}
+
+/* Tip text */
+.tip {
+  font-size: 11px; color: #888; margin-top: 8px;
+  padding-top: 8px; border-top: 1px solid #f0f0f0;
+}
+
+/* Stats */
+#stats { margin-top: 12px; }
+#stats table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+#stats td, #stats th {
+  padding: 4px 6px; text-align: left;
+}
+#stats th { color: #888; font-weight: 500; font-size: 11px; }
+#stats tr:nth-child(even) { background: #fafafa; }
+.q-dot {
+  display: inline-block; width: 10px; height: 10px;
+  border-radius: 50%; margin-right: 4px; vertical-align: middle;
+}
+.score-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+.score-bar-wrap {
+  flex: 1; margin: 0 8px; height: 8px;
+  background: #1a9850; border-radius: 4px; overflow: hidden;
+}
+.score-bar { height: 100%; background: #d73027; border-radius: 4px; }
+.score-val { font-weight: 700; font-size: 13px; color: #d73027; }
+
+/* Status */
+#status {
+  position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,.65); color: #fff; padding: 6px 14px;
+  border-radius: 20px; font-size: 13px; z-index: 1000;
+  pointer-events: none; transition: opacity .3s;
+}
+#status.hidden { opacity: 0; }
+
+/* Legend */
+#legend {
+  position: absolute; bottom: 10px; left: 10px;
+  background: rgba(255,255,255,.92); border-radius: 8px;
+  padding: 10px 12px; font-size: 11px; z-index: 1000;
+  box-shadow: 0 2px 6px rgba(0,0,0,.15);
+}
+#legend h4 { margin: 0 0 6px; font-size: 11px; color: #555; }
+.leg-item {
+  display: flex; align-items: center; gap: 6px; margin: 3px 0;
+}
+.leg-swatch {
+  width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0;
+}
+
+/* Ripple animation */
+.ripple-row {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 0 4px; padding-top: 10px;
+  border-top: 1px solid #f0f0f0;
+}
+#ripple-btn {
+  background: #61AE24; color: #fff; border: none;
+  border-radius: 6px; padding: 6px 12px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+#ripple-btn:hover { background: #4d8b1d; }
+#ripple-btn.stop { background: #c0392b; }
+#ripple-btn:disabled { background: #aaa; cursor: default; }
+.ripple-info { font-size: 11px; color: #888; }
+#freegler-bar {
+  font-size: 12px; font-weight: 600; color: #333;
+  margin: 4px 0 8px;
+}
+#freegler-bar.hidden { display: none; }
+
+/* Layer toggles */
+.layer-toggles {
+  display: flex; flex-wrap: wrap; gap: 4px 6px;
+  margin: 6px 0; padding-top: 8px; border-top: 1px solid #f0f0f0;
+}
+.layer-toggle {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #555; cursor: pointer;
+  user-select: none;
+}
+.layer-toggle input[type=checkbox] { cursor: pointer; accent-color: #61AE24; width: 12px; height: 12px; }
+
+/* Timeline / scrubber */
+#timeline {
+  position: absolute;
+  top: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(255,255,255,.95);
+  border-radius: 10px; padding: 10px 24px 12px;
+  z-index: 1000; min-width: 560px;
+  box-shadow: 0 3px 10px rgba(0,0,0,.22);
+}
+#timeline.hidden { display: none; }
+#tl-elapsed {
+  font-size: 15px; font-weight: 700; color: #61AE24;
+  text-align: center; margin-bottom: 8px; letter-spacing: .3px;
+  pointer-events: none;
+}
+/* Scrubber wrapper — tick labels sit below the input */
+#tl-scrub-wrap {
+  position: relative;
+  margin: 26px 4px 34px;
+}
+#tl-slider {
+  width: 100%; height: 6px;
+  -webkit-appearance: none; appearance: none;
+  background: linear-gradient(to right, #61AE24 var(--tl-pct, 0%), #e0e0e0 var(--tl-pct, 0%));
+  border-radius: 3px; outline: none; cursor: pointer;
+  margin: 0;
+}
+#tl-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px;
+  background: #61AE24; border: 3px solid #fff;
+  border-radius: 50%; box-shadow: 0 1px 5px rgba(0,0,0,.3);
+  cursor: pointer;
+}
+#tl-slider::-moz-range-thumb {
+  width: 16px; height: 16px;
+  background: #61AE24; border: 3px solid #fff;
+  border-radius: 50%; box-shadow: 0 1px 5px rgba(0,0,0,.3);
+  cursor: pointer; border: 3px solid #fff;
+}
+/* Tick-label overlay (pointer-events:none so slider stays interactive) */
+#tl-tick-layer {
+  position: absolute; top: 10px; left: 0; right: 0; pointer-events: none;
+}
+/* Edge-aware label alignment */
+.tl-tick {
+  position: absolute; top: 10px; transform: translateX(-50%);
+  font-size: 10px; color: #888;
+  white-space: nowrap; font-weight: 500;
+}
+.tl-tick.tl-edge-left  { transform: translateX(0); }
+.tl-tick.tl-edge-right { transform: translateX(-100%); }
+.tl-tick.expansion { color: #c44; font-weight: 700; }
+.tl-tick-mark {
+  position: absolute; width: 1px; height: 6px;
+  background: #bbb; top: -8px;
+  transform: translateX(-50%);
+}
+.tl-tick-mark.expansion { background: #c44; height: 8px; }
+
+/* Loading spinner */
+.spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid #f3f3f3; border-top: 2px solid #61AE24;
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <div id="panel-header">
+    <span>🗺</span>
+    Rippling Out Explorer
+  </div>
+  <div id="panel-body">
+
+    <div id="search-wrap">
+      <input id="search-box" type="text" placeholder="Search UK location…" autocomplete="off">
+      <ul id="search-results"></ul>
+    </div>
+
+    <div class="mode-row">
+      <button class="mode-btn" data-mode="walk">
+        <span class="icon">🚶</span>Walk
+      </button>
+      <button class="mode-btn active" data-mode="cycle">
+        <span class="icon">🚴</span>Cycle
+      </button>
+      <button class="mode-btn" data-mode="drive">
+        <span class="icon">🚗</span>Drive
+      </button>
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Travel time</span>
+        <span class="val"><span id="time-val">15</span> min</span>
+      </div>
+      <input type="range" id="time-slider" min="1" max="30" step="1" value="15">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Fairness adjustment</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <button id="balance-btn" title="Find the fairness level that achieves proportionate coverage (~60% deprived)" style="font-size:10px;padding:2px 7px;border:1px solid #61AE24;border-radius:4px;background:#f2f9e6;color:#4d8b1d;cursor:pointer;white-space:nowrap">⊕ Proportionate</button>
+          <span class="val"><span id="fairness-val">50</span>%</span>
+        </span>
+      </div>
+      <input type="range" id="fairness-slider" min="0" max="100" step="5" value="50">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-top:2px">
+        <span>Distance only</span><span>Strongly favour deprived</span>
+      </div>
+    </div>
+
+    <div id="stats">
+      <div class="tip">Click on the map or search to set an offer location.</div>
+    </div>
+
+    <!-- Ripple animation -->
+    <div class="ripple-row">
+      <button id="ripple-btn">▶ Animate ripple</button>
+      <span id="ripple-info" class="ripple-info">by cycle · 1–30 min</span>
+    </div>
+    <div class="slider-row" style="margin-top:6px;margin-bottom:4px">
+      <div class="slider-label">
+        <span style="font-size:11px">Animation speed</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-bottom:2px">
+        <span>Slow</span><span>Fast</span>
+      </div>
+      <input type="range" id="speed-slider" min="1" max="10" step="1" value="5">
+    </div>
+    <div id="freegler-bar" class="hidden" style="font-size:12px;color:#555;margin:6px 0 4px">
+      &nbsp;
+    </div>
+
+    <!-- Layer toggles -->
+    <div class="layer-toggles">
+      <label class="layer-toggle"><input type="checkbox" id="tog-quintiles" checked> Deprivation</label>
+      <label class="layer-toggle"><input type="checkbox" id="tog-freeglers" checked> Freeglers</label>
+      <label class="layer-toggle"><input type="checkbox" id="tog-groups" checked> Groups</label>
+    </div>
+
+    <!-- Groups section -->
+    <div id="groups-section" style="margin-top:10px;padding-top:10px;border-top:1px solid #f0f0f0;display:none">
+      <div style="font-size:11px;font-weight:600;color:#555;margin-bottom:5px">Freegle groups</div>
+      <div id="groups-list" style="font-size:11px;color:#666;line-height:1.7"></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="legend">
+  <h4>Legend</h4>
+  <div class="leg-item">
+    <div class="leg-swatch" style="background:none;border:2.5px solid #cc0000"></div> Travel time boundary
+  </div>
+  <div style="font-size:10px;color:#888;margin:3px 0 2px">Deprivation (outside boundary):</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#d73027;opacity:.75"></div> Q1 — most deprived</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#fc8d59;opacity:.75"></div> Q2</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#fee08b;opacity:.75;border:1px solid #ccc"></div> Q3</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#91cf60;opacity:.75"></div> Q4</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#1a9850;opacity:.75"></div> Q5 — least deprived</div>
+  <div class="leg-item" style="margin-top:5px;padding-top:5px;border-top:1px solid #eee">
+    <div style="width:10px;height:10px;border-radius:50%;background:#e8380d;flex-shrink:0"></div> Active Freegler
+  </div>
+  <div class="leg-item" style="margin-top:5px;padding-top:5px;border-top:1px solid #eee">
+    <div class="leg-swatch" style="background:none;border:2px solid #005bb5"></div> Freegle group
+  </div>
+  <div class="leg-item">
+    <span style="color:#e07000;font-size:13px;margin-right:2px">⚡</span> Cross-posting begins
+  </div>
+</div>
+
+<div id="status" class="hidden">Loading…</div>
+
+<!-- Rippling-out time timeline / scrubber -->
+<div id="timeline" class="hidden">
+  <div id="tl-elapsed">Just posted</div>
+  <div id="tl-scrub-wrap">
+    <input type="range" id="tl-slider" min="0" max="29" step="1" value="0">
+    <div id="tl-tick-layer"></div>
+  </div>
+</div>
+
+<script>
+const QCOLORS = ['', '#d73027', '#fc8d59', '#fee08b', '#91cf60', '#1a9850'];
+const QNAMES  = ['', 'Q1 (most deprived)', 'Q2', 'Q3', 'Q4', 'Q5 (least deprived)'];
+
+// ── Map ──────────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView([52.5, -1.8], 7);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CartoDB',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+
+// ── State ────────────────────────────────────────────────────────────────────
+let currentLat = null, currentLng = null;
+let currentMode = 'cycle';
+let marker = null;
+let layers = {};
+let debounceTimer = null;
+let isochroneGeneration = 0;
+
+// ── Mode buttons ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentMode = btn.dataset.mode;
+    if (ripplePlaying || rippleFrames.length > 0) stopRipple();
+    if (currentLat !== null) scheduleUpdate();
+  });
+});
+
+// ── Sliders ──────────────────────────────────────────────────────────────────
+const timeSlider     = document.getElementById('time-slider');
+const fairnessSlider = document.getElementById('fairness-slider');
+
+timeSlider.addEventListener('input', () => {
+  document.getElementById('time-val').textContent = timeSlider.value;
+  if (currentLat !== null) scheduleUpdate();
+});
+fairnessSlider.addEventListener('input', () => {
+  document.getElementById('fairness-val').textContent = fairnessSlider.value;
+  if (currentLat !== null) scheduleUpdate();
+});
+
+// ── Layer toggles ────────────────────────────────────────────────────────────
+let showQuintiles = true;
+let showFreeglers = true;
+let showGroups    = true;
+
+document.getElementById('tog-quintiles').addEventListener('change', function() {
+  showQuintiles = this.checked;
+  Object.entries(layers).forEach(([k, lyr]) => {
+    if (k !== 'standard') {
+      if (showQuintiles) { if (!map.hasLayer(lyr)) lyr.addTo(map); }
+      else               { if (map.hasLayer(lyr)) map.removeLayer(lyr); }
+    }
+  });
+  if (showQuintiles) requestAnimationFrame(updateFairnessClip);
+});
+
+document.getElementById('tog-freeglers').addEventListener('change', function() {
+  showFreeglers = this.checked;
+  if (showFreeglers) drawFreeglersLayer();
+  else { freeglersMarkers.forEach(m => map.removeLayer(m)); freeglersMarkers = []; }
+});
+
+document.getElementById('tog-groups').addEventListener('change', function() {
+  showGroups = this.checked;
+  if (showGroups) drawGroupsOverlay();
+  else { groupLayers.forEach(l => map.removeLayer(l)); groupLayers = [];
+         document.getElementById('groups-section').style.display = 'none'; }
+});
+
+// ── Nominatim search ─────────────────────────────────────────────────────────
+const searchBox     = document.getElementById('search-box');
+const searchResults = document.getElementById('search-results');
+let searchTimer = null;
+
+searchBox.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchBox.value.trim();
+  if (q.length < 2) { searchResults.innerHTML = ''; return; }
+  searchTimer = setTimeout(() => nominatimSearch(q), 400);
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#search-wrap')) searchResults.innerHTML = '';
+});
+
+function nominatimSearch(q) {
+  fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&countrycodes=gb&addressdetails=0`)
+    .then(r => r.json())
+    .then(results => {
+      searchResults.innerHTML = '';
+      results.forEach(r => {
+        const li = document.createElement('li');
+        const parts = r.display_name.split(', ');
+        li.textContent = parts.slice(0, 4).join(', ');
+        li.title = r.display_name;
+        li.addEventListener('click', () => {
+          searchResults.innerHTML = '';
+          searchBox.value = parts[0];
+          setLocation(parseFloat(r.lat), parseFloat(r.lon), true);
+        });
+        searchResults.appendChild(li);
+      });
+    })
+    .catch(() => { searchResults.innerHTML = '<li style="color:#aaa">Search unavailable</li>'; });
+}
+
+// ── Map click ────────────────────────────────────────────────────────────────
+map.on('click', e => setLocation(e.latlng.lat, e.latlng.lng, false));
+
+// ── Browser geolocation on load ──────────────────────────────────────────────
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      // Only fly to user's location if they haven't already set one.
+      if (currentLat === null) setLocation(pos.coords.latitude, pos.coords.longitude, true);
+    },
+    () => {} // silently ignore denial/unavailable
+  );
+}
+
+function setLocation(lat, lng, fly) {
+  currentLat = lat;
+  currentLng = lng;
+  if (marker) map.removeLayer(marker);
+  marker = L.circleMarker([lat, lng], {
+    radius: 8, color: '#e8380d', weight: 3,
+    fillColor: '#fff', fillOpacity: 1
+  }).addTo(map).bindTooltip('Offer location').openTooltip();
+  if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13));
+  fetchAndDrawGroups(lat, lng);
+  updateIsochrone();
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+function scheduleUpdate() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(updateIsochrone, 350);
+}
+
+function clearLayers() {
+  Object.values(layers).forEach(l => { if (map.hasLayer(l)) map.removeLayer(l); });
+  layers = {};
+}
+
+function showStatus(msg, loading) {
+  const el = document.getElementById('status');
+  el.innerHTML = loading ? `<span class="spinner"></span> ${msg}` : msg;
+  el.classList.remove('hidden');
+  if (!loading) setTimeout(() => el.classList.add('hidden'), 2000);
+}
+
+function updateIsochrone() {
+  if (currentLat === null) return;
+  const gen = ++isochroneGeneration;
+  const minutes  = parseInt(timeSlider.value);
+  const fairness = parseInt(fairnessSlider.value) / 100;
+  const url = `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}&fairness=${fairness}`;
+
+  showStatus('Computing isochrone…', true);
+
+  fetch(url)
+    .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+    .then(async data => {
+      if (gen !== isochroneGeneration) return;
+      drawPolygons(data, 0);
+      updateStats(data);
+      if (data.snap_lat && data.snap_lng && marker) {
+        marker.setLatLng([data.snap_lat, data.snap_lng]);
+      }
+      await fetchFreeglers();
+      drawFreeglersLayer();
+      updateFreeglersInside(data);
+      showStatus('Done', false);
+    })
+    .catch(err => {
+      showStatus('Error: ' + err.message, false);
+      document.getElementById('stats').innerHTML = `<div class="tip" style="color:#c00">${err.message}</div>`;
+    });
+}
+
+// Chaikin corner-cutting: smooths a closed ring without changing geographic extent.
+function chaikinSmooth(ring, iterations) {
+  iterations = iterations || 3;
+  let pts = ring.slice(0, -1); // drop closing duplicate
+  for (let iter = 0; iter < iterations; iter++) {
+    const smoothed = [];
+    const n = pts.length;
+    for (let j = 0; j < n; j++) {
+      const a = pts[j], b = pts[(j + 1) % n];
+      smoothed.push([0.75*a[0] + 0.25*b[0], 0.75*a[1] + 0.25*b[1]]);
+      smoothed.push([0.25*a[0] + 0.75*b[0], 0.25*a[1] + 0.75*b[1]]);
+    }
+    pts = smoothed;
+  }
+  pts.push(pts[0]); // re-close
+  return pts;
+}
+
+// geo: GeoJSON [lng, lat] → Leaflet [lat, lng], with Chaikin smoothing for display
+function geoToLeaflet(coords) {
+  return chaikinSmooth(coords).map(([lng, lat]) => [lat, lng]);
+}
+
+// drawPolygons(data, transitionMs)
+// transitionMs > 0: cross-fade old→new with scale-grow; 0 = instant replace.
+function drawPolygons(data, transitionMs) {
+  lastIsoData = data;
+  const dur = transitionMs || 0;
+  const outgoing = Object.assign({}, layers);
+  const newLayers = {};
+
+  function applyTransition(el, durationMs) {
+    if (!el) return;
+    el.style.transformBox = 'fill-box';
+    el.style.transformOrigin = 'center';
+    el.style.transform = 'scale(0.88)';
+    el.style.transition = `transform ${durationMs}ms ease-out, fill-opacity ${durationMs}ms ease-out, opacity ${durationMs}ms ease-out`;
+  }
+
+  function addPoly(key, coords, opts, targetFill, targetOpacity, tooltip) {
+    const lyr = L.polygon(coords, { ...opts, fillOpacity: 0, opacity: 0 })
+      .addTo(map).bindTooltip(tooltip);
+    newLayers[key] = lyr;
+    if (dur > 0) {
+      const el = lyr.getElement();
+      applyTransition(el, dur);
+      requestAnimationFrame(() => {
+        if (el) el.style.transform = 'scale(1)';
+        lyr.setStyle({ fillOpacity: targetFill, opacity: targetOpacity });
+      });
+    } else {
+      lyr.setStyle({ fillOpacity: targetFill, opacity: targetOpacity });
+    }
+    return lyr;
+  }
+
+  // Draw Q5 first (bottom) → Q1 last (top) so deprived tooltips win.
+  if (showQuintiles) [5, 4, 3, 2, 1].forEach(q => {
+    const qr = data.quintiles && data.quintiles[q];
+    if (!qr) return;
+    if (hasRing(qr.polygon)) {
+      addPoly(`q${q}`, geoToLeaflet(qr.polygon.geometry.coordinates[0]),
+        { color: QCOLORS[q], weight: 0.5, fillColor: QCOLORS[q] },
+        0.30, 1, `${QNAMES[q]} (standard reach) · ${qr.time_budget_min.toFixed(1)} min`);
+    }
+    (qr.islands || []).forEach((island, i) => {
+      if (!hasRing(island)) return;
+      addPoly(`q${q}_island_${i}`, geoToLeaflet(island.geometry.coordinates[0]),
+        { color: QCOLORS[q], weight: 2, dashArray: '5 4', fillColor: QCOLORS[q] },
+        0.40, 1, `${QNAMES[q]} — fairness bonus area`);
+    });
+  });
+
+  if (hasRing(data.standard)) {
+    addPoly('standard', geoToLeaflet(data.standard.geometry.coordinates[0]),
+      { color: '#cc0000', weight: 2.5, fillColor: 'none' },
+      0, 1, 'Standard reach boundary (no fairness adjustment)');
+  }
+
+  // Retire outgoing layers
+  if (dur > 0) {
+    Object.values(outgoing).forEach(lyr => {
+      const el = lyr.getElement();
+      if (el) el.style.transition = `fill-opacity ${dur}ms ease-out, opacity ${dur}ms ease-out`;
+      lyr.setStyle({ fillOpacity: 0, opacity: 0 });
+      setTimeout(() => { if (map.hasLayer(lyr)) map.removeLayer(lyr); }, dur + 50);
+    });
+  } else {
+    Object.values(outgoing).forEach(lyr => { if (map.hasLayer(lyr)) map.removeLayer(lyr); });
+  }
+
+  layers = newLayers;
+  // Double-rAF handles the no-animation case (slider tweak while map is idle).
+  // map.once('moveend') handles flyTo: Leaflet skips path re-projection while
+  // _animatingZoom=true, so 'd' is only finalised after moveend fires.
+  requestAnimationFrame(() => requestAnimationFrame(updateFairnessClip));
+  map.once('moveend', updateFairnessClip);
+}
+
+function hasRing(poly) {
+  return poly && poly.geometry && poly.geometry.coordinates &&
+         poly.geometry.coordinates[0] && poly.geometry.coordinates[0].length >= 4;
+}
+
+// Clip quintile polygons to only show shading OUTSIDE the standard travel boundary.
+// Uses an SVG clipPath with evenodd fill: big rect + standard polygon path = "outside" region.
+function updateFairnessClip() {
+  const svgEl = map.getPane('overlayPane').querySelector('svg');
+  if (!svgEl) return;
+
+  let defs = svgEl.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    svgEl.insertBefore(defs, svgEl.firstChild);
+  }
+  const existing = svgEl.querySelector('#fairness-outside-clip');
+  if (existing) existing.remove();
+
+  const stdLyr = layers.standard;
+  const stdEl = stdLyr && stdLyr.getElement && stdLyr.getElement();
+  const stdD = stdEl && stdEl.getAttribute('d');
+
+  // If no standard polygon, remove any existing clip from all quintile layers.
+  if (!stdD) {
+    Object.entries(layers).forEach(([k, lyr]) => {
+      if (k !== 'standard') { const el = lyr.getElement && lyr.getElement(); if (el) el.removeAttribute('clip-path'); }
+    });
+    return;
+  }
+
+  // Combined path: big rect + standard polygon with evenodd = "outside standard polygon"
+  const clipPath = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
+  clipPath.id = 'fairness-outside-clip';
+  const combinedPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  combinedPath.setAttribute('d', 'M -99999 -99999 L 99999 -99999 L 99999 99999 L -99999 99999 Z ' + stdD);
+  combinedPath.setAttribute('clip-rule', 'evenodd');
+  clipPath.appendChild(combinedPath);
+  defs.appendChild(clipPath);
+
+  // Apply clip to all quintile layers (everything except standard outline).
+  Object.entries(layers).forEach(([k, lyr]) => {
+    if (k !== 'standard') {
+      const el = lyr.getElement && lyr.getElement();
+      if (el) el.setAttribute('clip-path', 'url(#fairness-outside-clip)');
+    }
+  });
+}
+
+function swingometerAngleXY(pct) {
+  const angle = Math.max(-90, Math.min(90, (pct - 60) / 40 * 90));
+  const rad = angle * Math.PI / 180;
+  const R = 42;
+  return { x: (R * Math.sin(rad)).toFixed(1), y: (-R * Math.cos(rad)).toFixed(1) };
+}
+
+function setSwingometer(pct) {
+  const needle = document.getElementById('swing-needle');
+  const labelEl = document.getElementById('swing-label');
+  const pctEl = document.getElementById('swing-pct');
+  if (!needle || !labelEl || !pctEl) return;
+  const { x, y } = swingometerAngleXY(pct);
+  needle.setAttribute('x2', x);
+  needle.setAttribute('y2', y);
+  const swingLabel = pct < 52 ? 'Affluent bias' : pct > 68 ? 'Deprived bias' : 'Balanced';
+  const swingColor = pct < 52 ? '#4477aa' : pct > 68 ? '#d73027' : '#1a9850';
+  const aboveBaseline = pct >= 60;
+  const diff = Math.abs(pct - 60);
+  labelEl.textContent = swingLabel;
+  labelEl.style.color = swingColor;
+  pctEl.innerHTML = `${pct}% of Freeglers within reach are in deprived areas<br>
+    <span style="color:${aboveBaseline ? '#1a9850' : '#d73027'};font-weight:600">${aboveBaseline ? '▲' : '▼'} ${diff}% ${aboveBaseline ? 'above' : 'below'} proportionate</span>`;
+}
+
+function updateStats(data) {
+  const statsEl = document.getElementById('stats');
+  const hasFairness = data.fairness_score !== undefined && data.fairness_score >= 0;
+
+  if (!hasFairness) {
+    const noRoads = !hasRing(data.standard);
+    statsEl.innerHTML = noRoads
+      ? `<div class="tip">No road data near this location.</div>`
+      : `<div class="tip">No deprivation index for this area — only the standard isochrone is shown.</div>`;
+    return;
+  }
+
+  // Initial needle position from road-node score while waiting for Freegler data
+  const roadPct = Math.round(data.fairness_score * 100);
+  const { x: nx, y: ny } = swingometerAngleXY(roadPct);
+
+  statsEl.innerHTML = `
+    <div style="text-align:center;margin-top:6px">
+      <svg viewBox="-65 -58 130 72" width="160" style="display:block;margin:auto;overflow:visible">
+        <path d="M -52 0 A 52 52 0 0 1 0 -52" fill="none" stroke="#4477aa" stroke-width="14" opacity="0.30" stroke-linecap="butt"/>
+        <path d="M 0 -52 A 52 52 0 0 1 52 0" fill="none" stroke="#d73027" stroke-width="14" opacity="0.30" stroke-linecap="butt"/>
+        <line x1="0" y1="-44" x2="0" y2="-60" stroke="#555" stroke-width="1.5"/>
+        <line id="swing-needle" x1="0" y1="0" x2="${nx}" y2="${ny}" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="0" cy="0" r="5" fill="#333"/>
+        <text x="-60" y="16" text-anchor="middle" font-size="9" fill="#4477aa" font-weight="600">Affluent</text>
+        <text x="60" y="16" text-anchor="middle" font-size="9" fill="#d73027" font-weight="600">Deprived</text>
+        <text x="0" y="-62" text-anchor="middle" font-size="9" fill="#555">Balanced</text>
+      </svg>
+      <div id="swing-label" style="font-size:14px;font-weight:700;color:#888;margin:2px 0 4px">Loading Freegler data…</div>
+      <div id="swing-pct" style="font-size:11px;color:#888;line-height:1.5">Waiting for Freegler data…</div>
+    </div>`;
+}
+
+// ── Proportionate-balance button ─────────────────────────────────────────────
+// Binary-search for the fairness W that achieves ~60% deprived-node coverage.
+document.getElementById('balance-btn').addEventListener('click', async () => {
+  if (currentLat === null) { showStatus('Click a location first', false); return; }
+  const btn = document.getElementById('balance-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Searching…';
+
+  const minutes = parseInt(timeSlider.value);
+  let lo = 0, hi = 1.0, best = 0.5;
+  for (let iter = 0; iter < 8; iter++) {
+    const mid = (lo + hi) / 2;
+    try {
+      const url = `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}&fairness=${mid.toFixed(4)}`;
+      const data = await fetch(url).then(r => r.json());
+      if (data.fairness_score === undefined) break;
+      best = mid;
+      if (data.fairness_score < 0.60) lo = mid; else hi = mid;
+    } catch (e) { break; }
+  }
+
+  const sliderVal = Math.round(best * 100 / 5) * 5; // snap to step=5
+  fairnessSlider.value = sliderVal;
+  document.getElementById('fairness-val').textContent = sliderVal;
+  btn.disabled = false;
+  btn.textContent = '⊕ Proportionate';
+  updateIsochrone();
+});
+
+// ── Freegler dots ─────────────────────────────────────────────────────────────
+let allFreeglers = [];
+let freeglersMarkers = [];
+
+// Fetch active Freeglers visible in the current map view from the live V2 API.
+const V2_API = 'http://localhost:8194';
+let freeglersMapTimer = null;
+
+async function fetchFreeglers(bounds) {
+  const b = bounds || map.getBounds();
+  const url = `${V2_API}/api/userapproxlocs?minLat=${b.getSouth().toFixed(6)}&maxLat=${b.getNorth().toFixed(6)}&minLng=${b.getWest().toFixed(6)}&maxLng=${b.getEast().toFixed(6)}`;
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    allFreeglers = (data.results || []).map(x => x.extra).filter(e => e && e.lat && e.lng);
+  } catch (e) {
+    allFreeglers = [];
+  }
+}
+
+// Fetch Freeglers for the initial map view on page load.
+fetchFreeglers().then(drawFreeglersLayer);
+
+// Refresh Freegler dots and group list when the map view changes (debounced).
+// Both zoomend and moveend can finalise Leaflet path 'd' attributes after flyTo.
+map.on('zoomend moveend', () => updateFairnessClip());
+
+map.on('moveend zoomend', () => {
+  if (ripplePlaying) return; // animation manages its own fetches/redraws
+  drawGroupsOverlay(); // re-filter sidebar list to current viewport
+  // On zoom change: redraw immediately (zoom threshold may have changed)
+  drawFreeglersLayer();
+  clearTimeout(freeglersMapTimer);
+  freeglersMapTimer = setTimeout(async () => {
+    await fetchFreeglers();
+    drawFreeglersLayer();
+    if (lastIsoData) updateFreeglersInside(lastIsoData);
+  }, 400);
+});
+
+// Grid-deduplicated freegler list: one entry per unique approx lat/lng.
+// Multiple users at the same grid point are merged; count drives dot size.
+let freeglersGrid = [];
+
+function buildFreeglersGrid() {
+  const m = new Map();
+  allFreeglers.forEach(f => {
+    const key = `${f.lat.toFixed(4)},${f.lng.toFixed(4)}`;
+    if (!m.has(key)) m.set(key, { lat: f.lat, lng: f.lng, count: 0 });
+    m.get(key).count++;
+  });
+  freeglersGrid = [...m.values()];
+}
+
+const FREEGLER_DOT_MIN_ZOOM = 11; // only render dots when zoomed in enough
+
+function drawFreeglersLayer() {
+  freeglersMarkers.forEach(m => map.removeLayer(m));
+  freeglersMarkers = [];
+  if (!showFreeglers) return;
+  buildFreeglersGrid();
+  if (map.getZoom() < FREEGLER_DOT_MIN_ZOOM) return; // too zoomed out — skip
+  freeglersGrid.forEach(g => {
+    const m = L.circleMarker([g.lat, g.lng], {
+      radius: 1, color: '#e8380d', weight: 1,
+      fillColor: '#e8380d', fillOpacity: 0.6,
+    }).bindTooltip(`${g.count} freeglers here`, { sticky: true }).addTo(map);
+    freeglersMarkers.push(m);
+  });
+}
+
+function pointInRing(fLng, fLat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > fLat) !== (yj > fLat) &&
+        fLng < (xj - xi) * (fLat - yi) / (yj - yi) + xi)
+      inside = !inside;
+  }
+  return inside;
+}
+
+// Returns quintile (1-5) of a Freegler if inside the isochrone, 0 if outside.
+// Falls back to standard polygon (assigning Q3) when no deprivation data is loaded.
+function quintileOfFreegler(fLng, fLat, data) {
+  for (let q = 1; q <= 5; q++) {
+    const qr = (data.quintiles || {})[q];
+    if (!qr) continue;
+    if (hasRing(qr.polygon) && pointInRing(fLng, fLat, qr.polygon.geometry.coordinates[0])) return q;
+    for (const isl of (qr.islands || [])) {
+      if (hasRing(isl) && pointInRing(fLng, fLat, isl.geometry.coordinates[0])) return q;
+    }
+  }
+  // No quintile data — fall back to standard polygon boundary
+  const std = data.standard;
+  if (hasRing(std) && pointInRing(fLng, fLat, std.geometry.coordinates[0])) return 3;
+  return 0;
+}
+
+// Estimated fraction of notifiable group members who have no stored location.
+// These users are distributed proportionately: the same fraction of unlocated
+// members are notified as located members (per the ripple-out plan §User Selection).
+// Tune this constant when real group membership data is available.
+const UNLOCATED_FRACTION = 0.35;
+
+function updateFreeglersInside(data) {
+  if (freeglersGrid.length === 0 && allFreeglers.length > 0) buildFreeglersGrid();
+  let insideCount = 0, deprivedCount = 0;
+  freeglersGrid.forEach((g, i) => {
+    const q = quintileOfFreegler(g.lng, g.lat, data);
+    if (q > 0) {
+      insideCount += g.count;
+      if (q <= 3) deprivedCount += g.count;
+      if (freeglersMarkers[i]) freeglersMarkers[i].setStyle({ fillOpacity: 1, opacity: 1 });
+    } else {
+      if (freeglersMarkers[i]) freeglersMarkers[i].setStyle({ fillOpacity: 0.12, opacity: 0.2 });
+    }
+  });
+
+  // Notifiable estimate: located inside + proportionate share of unlocated pool.
+  const totalLocated = allFreeglers.length;
+  const bar = document.getElementById('freegler-bar');
+  if (insideCount >= 0 && totalLocated > 0) {
+    const fraction = insideCount / totalLocated;
+    const estimatedUnlocated = Math.round(totalLocated * (UNLOCATED_FRACTION / (1 - UNLOCATED_FRACTION)));
+    const unlocatedShare = Math.round(estimatedUnlocated * fraction);
+    const totalEstimate = insideCount + unlocatedShare;
+    bar.innerHTML =
+      `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">` +
+      `~${totalEstimate.toLocaleString()} would be notified</div>` +
+      `<div style="font-size:10px;color:#666;margin-top:1px">` +
+      `${insideCount.toLocaleString()} with known location` +
+      (unlocatedShare > 0 ? ` + ~${unlocatedShare.toLocaleString()} unlocated share` : '') +
+      `</div>` +
+      `<div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px;display:block">` +
+      `TrashNothing members use a separate algorithm</div>`;
+    bar.classList.remove('hidden');
+  }
+
+  if (insideCount > 0) {
+    const pct = Math.round(deprivedCount / insideCount * 100);
+    setSwingometer(pct);
+  }
+}
+
+function groupCentroid(f) {
+  const coords = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+  if (!coords || !coords.length) return [0, 0];
+  let sumLng = 0, sumLat = 0;
+  coords.forEach(([lng, lat]) => { sumLng += lng; sumLat += lat; });
+  return [sumLng / coords.length, sumLat / coords.length];
+}
+
+function distSq(lat1, lng1, lat2, lng2) {
+  const dlat = lat1 - lat2;
+  const dlng = (lng1 - lng2) * Math.cos(lat1 * Math.PI / 180);
+  return dlat * dlat + dlng * dlng;
+}
+
+// ── Group boundaries ──────────────────────────────────────────────────────────
+let groupLayers = [];
+let groupFeatures = [];    // raw GeoJSON features
+let homeGroupIds = new Set(); // IDs of groups that contain the offer point
+let lastIsoData = null;   // most recently fetched isochrone response
+
+async function fetchAndDrawGroups(lat, lng) {
+  groupLayers.forEach(l => map.removeLayer(l));
+  groupLayers = [];
+  groupFeatures = [];
+  homeGroupIds = new Set();
+  try {
+    // Pass current viewport bounds so all visible groups are returned,
+    // not just those within ±3° of the offer point.
+    const b = map.getBounds().pad(0.3);
+    const bbox = `&minLat=${b.getSouth().toFixed(6)}&maxLat=${b.getNorth().toFixed(6)}&minLng=${b.getWest().toFixed(6)}&maxLng=${b.getEast().toFixed(6)}`;
+    const r = await fetch(`${V2_API}/api/groupboundaries?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}${bbox}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    groupFeatures = data.features || [];
+    groupFeatures.forEach(f => {
+      if (f.properties.contains) homeGroupIds.add(f.properties.id);
+    });
+    drawGroupsOverlay();
+  } catch (e) { /* no group data — silently skip */ }
+}
+
+// Returns true if two line segments (ax,ay)-(bx,by) and (cx,cy)-(dx,dy) intersect.
+function segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+  const d1x = bx - ax, d1y = by - ay;
+  const d2x = dx - cx, d2y = dy - cy;
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 1e-12) return false;
+  const t = ((cx - ax) * d2y - (cy - ay) * d2x) / cross;
+  const u = ((cx - ax) * d1y - (cy - ay) * d1x) / cross;
+  return t > 0 && t < 1 && u > 0 && u < 1;
+}
+
+// Full overlap test: vertex-in-ring (catches containment) + edge-edge
+// intersection (catches boundary crossing where no vertex is inside the other).
+function ringsOverlap(ring1, ring2) {
+  // Quick bbox pre-filter
+  let r1minX = Infinity, r1maxX = -Infinity, r1minY = Infinity, r1maxY = -Infinity;
+  let r2minX = Infinity, r2maxX = -Infinity, r2minY = Infinity, r2maxY = -Infinity;
+  for (const [x, y] of ring1) { if (x < r1minX) r1minX=x; if (x > r1maxX) r1maxX=x; if (y < r1minY) r1minY=y; if (y > r1maxY) r1maxY=y; }
+  for (const [x, y] of ring2) { if (x < r2minX) r2minX=x; if (x > r2maxX) r2maxX=x; if (y < r2minY) r2minY=y; if (y > r2maxY) r2maxY=y; }
+  if (r1maxX < r2minX || r2maxX < r1minX || r1maxY < r2minY || r2maxY < r1minY) return false;
+
+  // Vertex-in-ring (handles full containment)
+  for (const [lng, lat] of ring1) {
+    if (pointInRing(lng, lat, ring2)) return true;
+  }
+  for (const [lng, lat] of ring2) {
+    if (pointInRing(lng, lat, ring1)) return true;
+  }
+  // Edge-edge intersection (handles boundary crossing without containment)
+  for (let i = 0; i < ring1.length - 1; i++) {
+    const [ax, ay] = ring1[i], [bx, by] = ring1[i + 1];
+    for (let j = 0; j < ring2.length - 1; j++) {
+      const [cx, cy] = ring2[j], [dx, dy] = ring2[j + 1];
+      if (segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy)) return true;
+    }
+  }
+  return false;
+}
+
+// Collect all isochrone rings: standard polygon + all quintile polygons + islands.
+function allIsoRings(isoData) {
+  const rings = [];
+  if (!isoData) return rings;
+  if (hasRing(isoData.standard)) rings.push(isoData.standard.geometry.coordinates[0]);
+  for (let q = 1; q <= 5; q++) {
+    const qr = (isoData.quintiles || {})[q];
+    if (!qr) continue;
+    if (hasRing(qr.polygon)) rings.push(qr.polygon.geometry.coordinates[0]);
+    for (const isl of (qr.islands || [])) {
+      if (hasRing(isl)) rings.push(isl.geometry.coordinates[0]);
+    }
+  }
+  return rings;
+}
+
+// Returns a Set of group IDs that any isochrone ring overlaps.
+function reachedGroupIds(isoData) {
+  const reached = new Set();
+  const isoRings = allIsoRings(isoData);
+  if (isoRings.length === 0) return reached;
+  for (const f of groupFeatures) {
+    const gRing = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+    if (!gRing || gRing.length < 4) continue;
+    for (const isoRing of isoRings) {
+      if (ringsOverlap(isoRing, gRing)) { reached.add(f.properties.id); break; }
+    }
+  }
+  return reached;
+}
+
+function drawGroupsOverlay() {
+  groupLayers.forEach(l => map.removeLayer(l));
+  groupLayers = [];
+  const listEl = document.getElementById('groups-list');
+  const sectionEl = document.getElementById('groups-section');
+  listEl.innerHTML = '';
+
+  if (!showGroups) { sectionEl.style.display = 'none'; return; }
+
+  if (groupFeatures.length === 0) {
+    sectionEl.style.display = 'none';
+    return;
+  }
+  sectionEl.style.display = '';
+
+  const mapBounds = map.getBounds();
+  const reached = reachedGroupIds(lastIsoData);
+
+  // Filter to groups visible in the current viewport (polygon bbox overlaps map bounds)
+  function groupInView(f) {
+    const coords = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+    if (!coords || coords.length < 4) return false;
+    const lngs = coords.map(c => c[0]), lats = coords.map(c => c[1]);
+    const polyBounds = L.latLngBounds(
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)]
+    );
+    return mapBounds.intersects(polyBounds);
+  }
+
+  // Home groups first, then adjacent sorted by distance from offer point
+  const sorted = [...groupFeatures]
+    .filter(groupInView)
+    .sort((a, b) => {
+      if (a.properties.contains !== b.properties.contains) return a.properties.contains ? -1 : 1;
+      if (currentLat === null) return 0;
+      const cA = groupCentroid(a), cB = groupCentroid(b);
+      return distSq(currentLat, currentLng, cA[1], cA[0]) - distSq(currentLat, currentLng, cB[1], cB[0]);
+    });
+
+  // Draw all group polygons on the map (not just visible ones)
+  groupFeatures.forEach(f => {
+    const coords = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+    if (!coords || coords.length < 4) return;
+    const latlngs = coords.map(([lng, lat]) => [lat, lng]);
+    const isHome = f.properties.contains;
+    const lyr = L.polygon(latlngs, {
+      color: '#005bb5',
+      weight: 2,
+      fillColor: '#005bb5',
+      fillOpacity: 0.04,
+      dashArray: null,
+    }).addTo(map).bindTooltip(
+      (isHome ? '🏠 ' : '') + (f.properties.nameshort || 'Group'),
+      { sticky: true }
+    );
+    groupLayers.push(lyr);
+  });
+
+  // List only in-viewport groups with green/red indicator
+  sorted.forEach(f => {
+    const isHome = f.properties.contains;
+    const postShows = isHome || reached.has(f.properties.id);
+    // Green = post reaches this group; red = not yet; blue = home group
+    const dotColor = isHome ? '#005bb5' : (postShows ? '#27ae60' : '#e74c3c');
+    const item = document.createElement('div');
+    item.style.cssText = 'display:flex;align-items:center;gap:5px;padding:1px 0';
+    item.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block"></span>` +
+      `<span>${isHome ? '<b>' : ''}${f.properties.nameshort || '(unnamed)'}${isHome ? '</b>' : ''}</span>` +
+      (isHome ? ' <span style="color:#888;font-size:10px">(home)</span>' : '');
+    listEl.appendChild(item);
+  });
+
+  if (sorted.length === 0) {
+    listEl.innerHTML = '<span style="color:#aaa;font-style:italic">None visible in current view</span>';
+  }
+}
+
+// Returns the first adjacent (non-home) group that the given isochrone ring
+// overlaps, or null if no overlap. Uses vertex-in-polygon test.
+function checkCrossPosting(isoRing) {
+  if (!isoRing || groupFeatures.length === 0) return null;
+  for (const f of groupFeatures) {
+    if (f.properties.contains) continue; // skip home group
+    const gRing = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+    if (!gRing) continue;
+    for (const [lng, lat] of isoRing) {
+      if (pointInRing(lng, lat, gRing)) return f;
+    }
+    // Also check the reverse: any group vertex inside the isochrone
+    for (const [lng, lat] of gRing) {
+      if (pointInRing(lng, lat, isoRing)) return f;
+    }
+  }
+  return null;
+}
+
+// Stamp the timeline with a cross-posting marker and briefly pause animation.
+function markCrossPosting(hours, groupName, hitFeature) {
+  const pct = hoursToLogPct(hours);
+  const layer = document.getElementById('tl-tick-layer');
+
+  const mark = document.createElement('div');
+  mark.className = 'tl-tick-mark';
+  mark.style.cssText = `left:${pct}%;background:#e07000;height:10px;top:-8px;width:2px`;
+  layer.appendChild(mark);
+
+  const label = document.createElement('div');
+  // Place above the slider track so it doesn't clash with the expansion tick labels below.
+  // Edge-aware: left-align if near left, right-align if near right.
+  const xform = pct < 15 ? 'translateX(0)' : pct > 80 ? 'translateX(-100%)' : 'translateX(-50%)';
+  label.style.cssText = `position:absolute;left:${pct}%;top:-22px;color:#e07000;font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`;
+  label.textContent = '⚡';
+  layer.appendChild(label);
+
+  document.getElementById('tl-elapsed').textContent =
+    formatElapsed(hours) + ' — cross-posting begins (' + (groupName || 'adjacent group') + ')';
+
+  // Flash the hit group boundary orange for 2 seconds so the user sees which group
+  if (hitFeature) {
+    const coords = hitFeature.geometry && hitFeature.geometry.coordinates && hitFeature.geometry.coordinates[0];
+    if (coords) {
+      const flashLyr = L.polygon(coords.map(([lng, lat]) => [lat, lng]), {
+        color: '#e07000', weight: 3, fillColor: '#e07000', fillOpacity: 0.18,
+      }).addTo(map);
+      setTimeout(() => { if (map.hasLayer(flashLyr)) map.removeLayer(flashLyr); drawGroupsOverlay(); }, 2500);
+    }
+  }
+
+  // Pause animation for 2 seconds so the user can read the marker
+  if (ripplePlaying) {
+    clearTimeout(rippleTimer);
+    rippleTimer = setTimeout(stepRipple, 2000);
+  }
+}
+
+// ── Timeline helpers ──────────────────────────────────────────────────────────
+// Empirical expansion schedule: h0-h48 from hazard analysis (303,491 messages).
+// After h48 hazard is flat ~0.65%/hr; expansion continues in the flat regime
+// until the item is taken or the group-boundary ceiling is reached.
+const EXPANSION_HOURS = [0, 1, 3, 6, 12, 24, 48, 72, 120, 168, 336, 720];
+const MAX_HOURS = 720; // 30 days
+let timelineBuilt = false;
+
+function frameToHours(frameIdx, totalFrames) {
+  return (frameIdx / (totalFrames - 1)) * MAX_HOURS;
+}
+
+// Log10 scale: spreads early hours (1h, 3h, 6h) across visible width.
+// Returns 0–100 percentage position on the scrubber track.
+function hoursToLogPct(hours) {
+  return Math.log10(hours + 1) / Math.log10(MAX_HOURS + 1) * 100;
+}
+
+// Inverse: log-scale percentage → hours (used by scrubber drag).
+function logPctToHours(pct) {
+  return Math.pow(10, pct / 100 * Math.log10(MAX_HOURS + 1)) - 1;
+}
+
+function formatElapsed(hours) {
+  if (hours < 0.083) return 'Just posted';
+  if (hours < 1) return Math.round(hours * 60) + 'm elapsed';
+  const h = Math.floor(hours);
+  if (h < 24) return h + 'h elapsed';
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  return d + 'd' + (hr ? ' ' + hr + 'h' : '') + ' elapsed';
+}
+
+function buildTimeline(totalFrames) {
+  if (timelineBuilt) return;
+  timelineBuilt = true;
+  const slider = document.getElementById('tl-slider');
+  slider.max = totalFrames - 1;
+  const layer = document.getElementById('tl-tick-layer');
+  layer.innerHTML = '';
+  const n = EXPANSION_HOURS.length;
+  EXPANSION_HOURS.forEach((h, idx) => {
+    const pct = hoursToLogPct(h);
+    const isFirst = idx === 0;
+    const isLast  = idx === n - 1;
+
+    const mark = document.createElement('div');
+    mark.className = 'tl-tick-mark' + (h > 0 ? ' expansion' : '');
+    mark.style.left = pct + '%';
+    layer.appendChild(mark);
+
+    // No label for h=0 (no need for "Post" text at the start)
+    if (h === 0) return;
+
+    const label = document.createElement('div');
+    let cls = 'tl-tick expansion';
+    if (isLast) cls += ' tl-edge-right';
+    label.className = cls;
+    label.style.left = pct + '%';
+    label.textContent = h < 24 ? h + 'h' : (h % 24 === 0 ? (h/24) + 'd' : h + 'h');
+    layer.appendChild(label);
+  });
+}
+
+function updateTimeline(frameIdx, totalFrames) {
+  const hours = frameToHours(frameIdx, totalFrames);
+  const pct = hoursToLogPct(hours);
+  const slider = document.getElementById('tl-slider');
+  slider.value = frameIdx;
+  slider.style.setProperty('--tl-pct', pct.toFixed(2) + '%');
+  document.getElementById('tl-elapsed').textContent = formatElapsed(hours);
+}
+
+// Jump to a specific frame (used by scrubber drag during/after animation).
+function jumpToFrame(frameIdx) {
+  if (!rippleFrames.length) return;
+  frameIdx = Math.max(0, Math.min(frameIdx, rippleFrames.length - 1));
+  rippleStep = frameIdx;
+  const data = rippleFrames[frameIdx];
+  updateTimeline(frameIdx, rippleFrames.length);
+  if (data) {
+    drawPolygons(data, 0);
+    updateStats(data);
+    updateFreeglersInside(data);
+  }
+}
+
+// ── Ripple animation ──────────────────────────────────────────────────────────
+let rippleFrames = [];
+let rippleStep = 0;
+let rippleTimer = null;
+let ripplePlaying = false;
+let crossPostingDetected = false; // true once we've marked the first overlap
+
+document.getElementById('ripple-btn').addEventListener('click', () => {
+  if (ripplePlaying) stopRipple(); else startRipple();
+});
+
+const speedSlider = document.getElementById('speed-slider');
+
+// Timeline scrubber: dragging pauses auto-play and jumps to the chosen frame.
+document.getElementById('tl-slider').addEventListener('input', function() {
+  const frameIdx = parseInt(this.value);
+  if (ripplePlaying) {
+    clearTimeout(rippleTimer);
+    ripplePlaying = false;
+    const btn = document.getElementById('ripple-btn');
+    btn.textContent = '▶ Resume';
+    btn.classList.remove('stop');
+  }
+  jumpToFrame(frameIdx);
+});
+
+
+async function startRipple() {
+  if (currentLat === null) { showStatus('Click a location first', false); return; }
+
+  const btn = document.getElementById('ripple-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Loading…';
+  document.getElementById('ripple-info').textContent = `Fetching 30 frames (${currentMode})…`;
+
+  // Clear previous animation state, timeline, and zoom back to origin
+  clearLayers();
+  timelineBuilt = false;
+  document.getElementById('tl-tick-layer').innerHTML = '';
+  document.getElementById('tl-slider').value = 0;
+  document.getElementById('tl-slider').style.setProperty('--tl-pct', '0%');
+  map.setView([currentLat, currentLng], 13, { animate: false });
+
+  const fairness = parseInt(fairnessSlider.value) / 100;
+  const promises = Array.from({ length: 30 }, (_, i) => {
+    const m = i + 1;
+    const url = `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${m}&mode=${currentMode}&fairness=${fairness}`;
+    return fetch(url).then(r => r.json()).catch(() => null);
+  });
+  rippleFrames = await Promise.all(promises);
+
+  // Pre-fetch Freeglers for the maximum extent of all frames so dots
+  // are always available as the animation expands.
+  let maxBounds = null;
+  for (const frame of rippleFrames) {
+    if (frame && hasRing(frame.standard)) {
+      const ring = frame.standard.geometry.coordinates[0];
+      const b = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]));
+      maxBounds = maxBounds ? maxBounds.extend(b) : b;
+    }
+  }
+  await fetchFreeglers(maxBounds ? maxBounds.pad(0.1) : null);
+  drawFreeglersLayer();
+
+  rippleStep = 0;
+  ripplePlaying = true;
+  crossPostingDetected = false;
+  btn.disabled = false;
+  btn.textContent = '⏹ Stop';
+  btn.classList.add('stop');
+  document.getElementById('freegler-bar').classList.remove('hidden');
+  buildTimeline(rippleFrames.length);
+  document.getElementById('timeline').classList.remove('hidden');
+
+  stepRipple();
+}
+
+function stopRipple() {
+  ripplePlaying = false;
+  crossPostingDetected = false;
+  rippleFrames = [];
+  timelineBuilt = false;
+  clearTimeout(rippleTimer);
+  const btn = document.getElementById('ripple-btn');
+  btn.textContent = '▶ Animate ripple';
+  btn.classList.remove('stop');
+  document.getElementById('ripple-info').textContent = `by ${currentMode} · 1–30 min`;
+  document.getElementById('freegler-bar').classList.add('hidden');
+  document.getElementById('timeline').classList.add('hidden');
+  // Refresh group list now that animation has ended and viewport may have changed.
+  if (currentLat !== null) fetchAndDrawGroups(currentLat, currentLng);
+  else drawGroupsOverlay();
+}
+
+function stepRipple() {
+  if (rippleStep >= rippleFrames.length) {
+    ripplePlaying = false;
+    const btn = document.getElementById('ripple-btn');
+    btn.textContent = '▶ Replay';
+    btn.classList.remove('stop');
+    document.getElementById('ripple-info').textContent = `${currentMode} · done`;
+    return;
+  }
+
+  const data = rippleFrames[rippleStep];
+  const minute = rippleStep + 1;
+  document.getElementById('ripple-info').textContent = `${currentMode} · ${minute} min`;
+  document.getElementById('time-val').textContent = minute;
+  updateTimeline(rippleStep, rippleFrames.length);
+  timeSlider.value = minute;
+
+  // Slider 1=slowest (2s/frame) → 10=fastest (100ms/frame), exponential feel
+  const spd = parseInt(document.getElementById('speed-slider').value) || 3;
+  const delay = Math.round(20000 / Math.pow(spd, 1.4));
+
+  if (data) {
+    // Cross-fade transition takes 80% of the frame interval
+    drawPolygons(data, Math.round(delay * 0.8));
+    updateStats(data);
+    updateFreeglersInside(data);
+
+    // Cross-posting detection: check if the standard isochrone ring has
+    // reached into any adjacent (non-home) group polygon.
+    const hours = frameToHours(rippleStep, rippleFrames.length);
+    if (!crossPostingDetected && hours >= 24 && groupFeatures.length > 0 &&
+        data.standard && hasRing(data.standard)) {
+      const isoRing = data.standard.geometry.coordinates[0];
+      const hit = checkCrossPosting(isoRing);
+      if (hit) {
+        crossPostingDetected = true;
+        markCrossPosting(hours, hit.properties.nameshort, hit);
+      }
+    }
+
+    // Every 2 frames: zoom to a lookahead frame so the map stays ahead of the polygon
+    if (rippleStep % 2 === 0) {
+      const ahead = Math.min(rippleStep + 5, rippleFrames.length - 1);
+      const lookahead = rippleFrames[ahead];
+      const zoomData = (lookahead && hasRing(lookahead.standard)) ? lookahead : data;
+      if (hasRing(zoomData.standard)) {
+        try {
+          const ring = zoomData.standard.geometry.coordinates[0];
+          const bounds = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]));
+          if (bounds.isValid()) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 13, animate: false });
+        } catch (e) {}
+      }
+    }
+  }
+
+  rippleStep++;
+  if (ripplePlaying) rippleTimer = setTimeout(stepRipple, delay);
+}
+</script>
+</body>
+</html>

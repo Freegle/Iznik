@@ -47,6 +47,14 @@ export default defineEventHandler(async (event) => {
     docker exec ${prefix}-batch mysql -h percona -u root -piznik --skip-ssl -e "CREATE DATABASE IF NOT EXISTS iznik_batch_test" 2>&1
     docker exec -e DB_DATABASE=iznik_batch_test ${prefix}-batch php artisan migrate:fresh --database=mysql --force 2>&1
 
+    # Recompile Blade views from the working tree. Without this, a previously
+    # compiled view (e.g. an old email template referencing a now-removed
+    # variable) is rendered instead of the current source, causing spurious
+    # MJML "Undefined variable" render errors in the mail tests.
+    echo "Clearing compiled views/config..."
+    docker exec ${prefix}-batch php artisan view:clear 2>&1 || true
+    docker exec ${prefix}-batch php artisan config:clear 2>&1 || true
+
     echo "Running Laravel tests with coverage..."
     docker exec -e VIA_STATUS_CONTAINER=1 -e DB_DATABASE=iznik_batch_test ${prefix}-batch vendor/bin/phpunit --testsuite=${testsuite}${filter ? ` --filter="${filter}"` : ''} --coverage-clover=/tmp/laravel-coverage.xml 2>&1
   `], { stdio: 'pipe' })
