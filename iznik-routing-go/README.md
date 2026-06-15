@@ -9,20 +9,35 @@ A single Go HTTP server providing geographic intelligence for Freegle. It expose
 
 This means the same spatial capabilities (isochrones, nearby freeglers, group boundaries) are available to both internal services and authenticated moderators, without duplicating code or deploying two containers.
 
+> This is the **"travel-time mapper"** half of Freegle's spatial system. The
+> **"finder"** half — the nearest-neighbour / within-area index it calls for
+> nearby-freegler queries — is a separate service,
+> [`iznik-spatial-go`](../iznik-spatial-go/README.md).
+>
+> **New here / not a developer?** Read the plain-English overview first:
+> [`../SPATIAL-SERVERS.md`](../SPATIAL-SERVERS.md).
+
 ---
 
 ## API endpoints
 
-All endpoints are available on both ports. The external port (8196) requires a valid JWT passed as `?jwt=<token>` or an `Authorization` header.
+All endpoints are available on both ports. On the external port (8196) every `/v1/*` endpoint requires a valid JWT passed as `?jwt=<token>` or an `Authorization` header; `/health` and `/demo` are always open.
 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /health` | Node count, deprivation status — `{"status":"ok","nodes":N,"deprivation":"loaded"}` |
 | `GET /demo` | Interactive Leaflet demo UI |
-| `GET /v1/isochrone?lat=&lng=&minutes=` | Walk/cycle/drive isochrone polygons (GeoJSON) |
-| `GET /v1/fairness?lat=&lng=&minutes=&mode=&fairness=` | Fairness-adjusted isochrone |
-| `GET /v1/nearby-freeglers?lat=&lng=` | Approximate freegler locations near a point |
+| `GET /v1/isochrone?lat=&lng=&minutes=&mode=` | Walk/cycle/drive isochrone polygon (GeoJSON) |
+| `GET /v1/fairness?lat=&lng=&minutes=&mode=&fairness=` | Fairness-adjusted isochrone (see below) |
+| `GET /v1/nearby-freeglers?lat=&lng=` | Approximate freegler locations within the isochrone around a point (avoids the centre-distance bias of a plain KNN query) |
 | `GET /v1/groups/nearby?lat=&lng=` | Freegle group boundaries near a point (GeoJSON FeatureCollection) |
+| `GET /v1/ripple-schedule?lat=&lng=&mode=&ticks=&max_minutes=` | The "rippling out" schedule: the expanding sequence of reachable areas over time used to introduce a post gradually. Steps are smaller in dense regions and larger across empty voids. Powers the Rippling Explorer |
+| `POST /v1/ripple-eval` | Evaluate a rippling scenario for a post (JSON body) — who would be reached at each tick |
+| `GET /v1/posts-for-member?lat=&lng=&date=&max_minutes=` | The posts a member at this location would be shown (`date` defaults to today, `max_minutes` to 30) |
+| `GET /v1/digest-simulator?lat=&lng=&max_minutes=&w_closeness=&w_freshness=&w_budget=&w_anchor=&cap=&group_by_poster=` | Simulate a member's ranked digest with tunable scoring weights and a result cap |
+| `GET /swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |
+
+See [`plans/rippling-out-algorithm.md`](../plans/rippling-out-algorithm.md) for the thinking behind the ripple / digest endpoints.
 
 ---
 
@@ -45,6 +60,7 @@ Multiplier: `1 + W × (5 − q) / 4` where q is the IMD quintile (1 = most depri
 | `SPATIAL_PORT` | `8196` | External (authenticated) port |
 | `SPATIAL_INTERNAL_PORT` | `8194` | Internal (unauthenticated) port |
 | `SPATIAL_KNN_URL` | `http://localhost:8194` | URL of the `iznik-spatial-go` KNN index service |
+| `ROUTING_DRIVE_SPEED_FACTOR` | `1.0` | Global multiplier on drive speeds, applied at graph **build** time (e.g. `0.7` ≈ OSRM, `0.6` ≈ Google with UK traffic). Changing it takes effect on the next graph build/restart |
 | `JWT_SECRET` | *(required for external port)* | HMAC secret for JWT validation |
 | `MYSQL_HOST` | `localhost` | MySQL host (for group boundaries and session validation) |
 | `MYSQL_PORT` | `3306` | MySQL port |
@@ -107,7 +123,7 @@ Traefik routes `spatial.localhost` and `spatial-live.localhost` to port 8196 (ex
 
 ## Related: KNN index service (`iznik-spatial-go`)
 
-The `iznik-spatial-go` service (`spatial-knn` in Docker Compose) maintains R-tree KNN indexes over six Freegle datasets (locations, groups, messages, newsfeed, jobs, userapproxlocs). The spatial server calls it via `SPATIAL_KNN_URL` for nearby-freegler queries. It runs on port 8194 internally with no authentication.
+The `iznik-spatial-go` service (`spatial-knn` in Docker Compose) maintains KNN / within-area indexes over six Freegle datasets (locations, groups, messages, newsfeed, jobs, userapproxlocs). This server calls it via `SPATIAL_KNN_URL` for nearby-freegler queries. It runs on port 8194 internally with no authentication. See [`iznik-spatial-go/README.md`](../iznik-spatial-go/README.md).
 
 ---
 
