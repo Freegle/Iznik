@@ -62,11 +62,9 @@
           <p class="invalid-feedback">
             Please provide either a description or a photo.
           </p>
-          <NoticeMessage v-if="invalidBody" variant="danger" class="mt-1">
-            <p class="mb-0">
-              {{ bodyMessage }}
-            </p>
-          </NoticeMessage>
+          <p v-if="invalidBody" class="invalid-feedback d-block mt-1">
+            {{ bodyMessage }}
+          </p>
         </div>
 
         <!-- Quantity and Deadline row -->
