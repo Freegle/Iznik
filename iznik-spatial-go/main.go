@@ -375,6 +375,70 @@ func main() {
 		return c.JSON(fiber.Map{"removed": removed})
 	})
 
+	// POST /v1/:dataset/upsert — insert/replace specific items by WKT geometry.
+	// Intended for integration tests, which seed a known geometry into the live
+	// index (decoupled from the nightly MySQL rebuild) and remove it afterwards.
+	admin.Post("/v1/:dataset/upsert", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+
+		var req struct {
+			Items []struct {
+				ID    int64          `json:"id"`
+				WKT   string         `json:"wkt"`
+				Extra map[string]any `json:"extra"`
+			} `json:"items"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		}
+
+		items := make([]Item, 0, len(req.Items))
+		for _, in := range req.Items {
+			g, err := geom.UnmarshalWKT(in.WKT, geom.NoValidate{})
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "bad wkt for id " + fmt.Sprint(in.ID) + ": " + err.Error()})
+			}
+			min, max, okEnv := g.Envelope().MinMaxXYs()
+			if !okEnv {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty geometry for id " + fmt.Sprint(in.ID)})
+			}
+			it := Item{
+				ExtID:  in.ID,
+				MinLng: min.X,
+				MaxLng: max.X,
+				MinLat: min.Y,
+				MaxLat: max.Y,
+				Extra:  in.Extra,
+			}
+			// Polygon (non-degenerate envelope) → keep WKB + area so the polygon
+			// nearest/within queries work; point → leave WKB nil.
+			if min.X != max.X || min.Y != max.Y {
+				it.WKB = g.AsBinary()
+				it.Area = g.Area()
+			}
+			items = append(items, it)
+		}
+
+		if len(items) == 0 {
+			return c.JSON(fiber.Map{"upserted": 0})
+		}
+
+		err := state.withIndex(func(idx *Index) error {
+			return InsertItems(idx, items, nil)
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"upserted": len(items)})
+	})
+
 	port := getenv("SPATIAL_PORT", "8194")
 	adminPort := getenv("SPATIAL_ADMIN_PORT", "8195")
 
