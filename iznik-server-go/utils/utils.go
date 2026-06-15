@@ -101,8 +101,10 @@ const COLLECTION_BANNED = "Banned"
 const COLLECTION_DRAFT = "Draft"
 
 // MESSAGE_CHECK_WINDOW_DAYS is how long an auto-published post stays in the
-// ModTools Checked/Trusted oversight queues (and their work-count badges) before
-// it is treated as auto-checked, so the queue cannot pile up indefinitely.
+// ModTools Checked/Trusted oversight queues (and their work-count badges). Once a
+// post is older than this it simply drops off the queue — no checkedat is written,
+// so it is NOT counted as moderator-checked — which bounds the queue without
+// inflating the "a mod checked this" moderation-stats metric.
 const MESSAGE_CHECK_WINDOW_DAYS = 7
 
 const POSTING_STATUS_MODERATED = "MODERATED"

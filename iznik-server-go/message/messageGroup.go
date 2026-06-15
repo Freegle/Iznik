@@ -54,6 +54,20 @@ type MessageGroup struct {
 	// only while the home copy exists and is not Approved, so ModTools can say the home
 	// community is reviewing the post and that this copy cannot be approved yet.
 	LockedByHome uint8 `json:"locked_by_home"`
+
+	// QualitySample is set by AutoApproveCleanService when a clean post is held back
+	// for a manual quality check. Scanned for the autoapproveat estimate; not serialised.
+	QualitySample int `json:"-" gorm:"column:quality_sample"`
+
+	// AutoapproveHoldUntil is the server-side extend-only hold set when the Pending
+	// queue is viewed (see ListMessagesMT). Scanned but not serialised — the frontend
+	// uses the computed Autoapproveat below.
+	AutoapproveHoldUntil *time.Time `json:"-" gorm:"column:autoapprove_hold_until"`
+
+	// Autoapproveat is the earliest time this post may be auto-approved, exposed only
+	// on Pending messages viewed by a group moderator. nil = no auto-approval expected
+	// (held / spam / danger-signalled, or not on any auto-approve path).
+	Autoapproveat *time.Time `json:"autoapproveat,omitempty" gorm:"-"`
 }
 
 // effectiveHomeLocks clears LockedByHome on every row that is not actually blocked: a lock
