@@ -750,7 +750,7 @@ class UnifiedDigestService
         // withdrawn/expired (has_outcome && !has_success) appear in neither.
         $posts = $allPosts->filter(fn ($p) => !$p->has_outcome)->values();
         $completedPosts = $mode === self::MODE_DAILY
-            ? $allPosts->filter(fn ($p) => $p->has_success)->unique('id')->values()
+            ? $this->deduplicateCompletedPosts($allPosts->filter(fn ($p) => $p->has_success)->values())
             : collect();
 
         if ($posts->isEmpty()) {
@@ -991,6 +991,53 @@ class UnifiedDigestService
         }
 
         return $deduplicated;
+    }
+
+    /**
+     * Deduplicate the "came and went" (Taken/Received) posts.
+     *
+     * The greyed daily came-and-went section renders Message objects, but it
+     * must collapse cross-posted items exactly the way the live section does.
+     * The previous ->unique('id') only caught the *same* msgid (one message on
+     * several groups); it left an item that was cross-posted as separate
+     * messages (different msgids, but the same tnpostid or
+     * fromuser+subject+location) showing once per group. Reuse deduplicatePosts()
+     * so the decision is identical, then take the representative message of each
+     * deduplicated group.
+     *
+     * @param Collection $posts Message objects (each with a ->groupid).
+     * @return Collection of Message
+     */
+    public function deduplicateCompletedPosts(Collection $posts): Collection
+    {
+        // Resolve groupid -> Group from the loaded ->groups of the input posts so
+        // we can reflect the merged cross-post groups back onto each
+        // representative — the came-and-went card reads ->groups for its byline.
+        $groupModels = [];
+        foreach ($posts as $post) {
+            if ($post->relationLoaded('groups')) {
+                foreach ($post->groups as $group) {
+                    $groupModels[$group->id] = $group;
+                }
+            }
+        }
+
+        return $this->deduplicatePosts($posts)->map(function ($deduped) use ($groupModels) {
+            $message = $deduped['message'];
+
+            // Show every group the item was posted to — parity with the live
+            // section's merged "Posted to: A, B" — by overriding the
+            // representative's ->groups with the union deduplicatePosts() built.
+            $merged = collect($deduped['postedToGroups'])->unique()
+                ->map(fn ($gid) => $groupModels[$gid] ?? null)
+                ->filter()
+                ->values();
+            if ($merged->isNotEmpty()) {
+                $message->setRelation('groups', $merged);
+            }
+
+            return $message;
+        })->values();
     }
 
     /**

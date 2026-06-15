@@ -49,6 +49,47 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertCount(2, $deduplicated->first()['postedToGroups']);
     }
 
+    public function test_completed_came_and_went_posts_are_deduplicated_like_live(): void
+    {
+        // The same item, cross-posted to two groups as two separate messages
+        // (distinct ids, shared tnpostid) — and both Taken/Received, so they
+        // land in the greyed daily "came and went" section.
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $message1 = $this->createTestMessage($user, $group1, [
+            'tnpostid' => 'TN54321',
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'tnpostid' => 'TN54321',
+            'subject' => $message1->subject,
+        ]);
+        $message1->load('groups');
+        $message2->load('groups');
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $completed = collect([$message1, $message2]);
+
+        // The old came-and-went path used ->unique('id'), which keeps both
+        // because the msgids differ — that's the duplication we're fixing.
+        $this->assertCount(2, $completed->unique('id')->values());
+
+        // The fix collapses the cross-post to a single card, exactly like the
+        // live section's deduplicatePosts().
+        $deduped = $this->service->deduplicateCompletedPosts($completed);
+        $this->assertCount(1, $deduped);
+        $this->assertEquals($message1->id, $deduped->first()->id);
+
+        // Both groups are folded into the surviving card, so the byline reads
+        // "Posted to: A, B" just like the live section — not a single group.
+        $this->assertEqualsCanonicalizing(
+            [$group1->id, $group2->id],
+            $deduped->first()->groups->pluck('id')->all()
+        );
+    }
+
     public function test_deduplication_without_tnpostid(): void
     {
         $user = $this->createTestUser();
