@@ -59,7 +59,7 @@ class ModWelfareService
                 $subject = $groupName . ' does not have an active owner';
                 $body = "We don't think there is an active mod with owner status on this group. Can you check it?";
                 if (!$dryRun) {
-                    Mail::send(new ModWelfareAlertMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new ModWelfareAlertMail(
                         recipientEmail: $mentorsAddr,
                         fromEmail: $supportAddr,
                         emailSubject: $subject,
@@ -261,7 +261,7 @@ class ModWelfareService
 
         if (is_string($notify)) {
             // Fallback: notify mentors directly
-            Mail::send(new ModWelfareAlertMail(
+            app(\App\Services\EmailSpoolerService::class)->spool(new ModWelfareAlertMail(
                 recipientEmail: $notify,
                 fromEmail: $fromAddr,
                 emailSubject: $subject,
@@ -273,7 +273,7 @@ class ModWelfareService
         foreach ($notify as $userId) {
             $email = $this->getPreferredEmail($userId);
             if ($email) {
-                Mail::send(new ModWelfareAlertMail(
+                app(\App\Services\EmailSpoolerService::class)->spool(new ModWelfareAlertMail(
                     recipientEmail: $email,
                     fromEmail: $fromAddr,
                     emailSubject: $subject,

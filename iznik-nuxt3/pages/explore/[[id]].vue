@@ -11,17 +11,25 @@
       <b-row v-else class="m-0">
         <b-col cols="12" md="6" lg="6" class="p-0" offset-md="3" offset-lg="3">
           <ExploreGroup v-if="group?.id" :id="group.id" />
-          <PostMapAndList
-            v-else
-            class="mt-2"
-            show-start-message
-            :initial-bounds="[
-              [49.959999905, -7.57216793459],
-              [58.6350001085, 1.68153079591],
-            ]"
-            start-on-groups
-            show-many
-          />
+          <template v-else>
+            <!-- On mobile a full-UK map is fiddly to pan/zoom, so offer a
+                 search-first list instead. Desktop keeps the map. -->
+            <VisibleWhen :at="['xs', 'sm']">
+              <ExploreNearby />
+            </VisibleWhen>
+            <VisibleWhen :not="['xs', 'sm']">
+              <PostMapAndList
+                class="mt-2"
+                show-start-message
+                :initial-bounds="[
+                  [49.959999905, -7.57216793459],
+                  [58.6350001085, 1.68153079591],
+                ]"
+                start-on-groups
+                show-many
+              />
+            </VisibleWhen>
+          </template>
         </b-col>
       </b-row>
     </div>
@@ -33,6 +41,8 @@ import PostMapAndList from '~/components/PostMapAndList'
 import { computed, useHead, useRuntimeConfig, useRoute } from '#imports'
 import NoticeMessage from '~/components/NoticeMessage'
 import ExploreGroup from '~/components/ExploreGroup'
+import ExploreNearby from '~/components/ExploreNearby'
+import VisibleWhen from '~/components/VisibleWhen'
 import { useGroupStore } from '~/stores/group'
 
 const runtimeConfig = useRuntimeConfig()

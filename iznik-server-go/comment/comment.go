@@ -7,8 +7,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -53,7 +53,7 @@ func Get(c *fiber.Ctx) error {
 
 	// List comments for moderated groups.
 	groupid, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
-	contextReviewed := c.Query("context[reviewed]", "")
+	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
 	// Get groups where user is moderator + admin/support check in parallel.
 	var wg sync.WaitGroup
@@ -78,7 +78,7 @@ func Get(c *fiber.Ctx) error {
 		})
 	}
 
-	// Build query.
+	// Build query using keyset pagination on id (never null, unique).
 	query := "SELECT * FROM users_comments WHERE "
 	var args []interface{}
 
@@ -87,9 +87,9 @@ func Get(c *fiber.Ctx) error {
 		args = append(args, groupid)
 	}
 
-	if contextReviewed != "" {
-		query += "users_comments.reviewed < ? AND "
-		args = append(args, contextReviewed)
+	if contextID > 0 {
+		query += "users_comments.id < ? AND "
+		args = append(args, contextID)
 	}
 
 	if isAdmin {
@@ -99,7 +99,7 @@ func Get(c *fiber.Ctx) error {
 		args = append(args, modGroupIDs, myid)
 	}
 
-	query += "1=1 ORDER BY reviewed DESC LIMIT 10"
+	query += "1=1 ORDER BY users_comments.id DESC LIMIT 10"
 
 	var rows []CommentItem
 	db.Raw(query, args...).Scan(&rows)
@@ -116,11 +116,9 @@ func Get(c *fiber.Ctx) error {
 		rows[i].Flagged = rows[i].Flag
 	}
 
-	var ctx interface{}
-	lastReviewed := rows[len(rows)-1].Reviewed
-	if lastReviewed != nil {
-		ctx = fiber.Map{"reviewed": lastReviewed.Format(time.RFC3339)}
-	}
+	// Context is the ID of the last row; always set when rows are non-empty
+	// so the frontend can request the next page. Returns nil only when zero rows.
+	ctx := fiber.Map{"id": rows[len(rows)-1].ID}
 
 	return c.JSON(fiber.Map{
 		"comments": rows,

@@ -62,7 +62,7 @@ class LoveJunkInvoiceService
         $treasurerAddr = config('freegle.mail.treasurer_addr');
 
         if (!$dryRun && $tnAddr) {
-            Mail::send(new TnInvoiceMail(
+            app(\App\Services\EmailSpoolerService::class)->spool(new TnInvoiceMail(
                 recipientEmail: $tnAddr,
                 tnAmount: (string) $tnAmount,
                 start: $start,

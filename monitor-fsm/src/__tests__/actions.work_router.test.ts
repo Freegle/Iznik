@@ -35,7 +35,7 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
 
@@ -48,7 +48,7 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [{ topic: 102, post: 3 }],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
     expect(result.reason).toContain('1 unfixed bug(s)')
   })
 
@@ -75,12 +75,15 @@ describe('work_router_decide action', () => {
       classifications: [{ topic: 106, post: 7, type: 'retest', user: 'grace' }],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 
-  it('escalates bugs with 1+ rejected PRs to deferred without queuing a Discourse draft', async () => {
+  it('escalates bugs with 2+ rejected PRs to deferred without queuing a Discourse draft', async () => {
+    // ESCALATION_THRESHOLD is 2: escalate only after a re-diagnosed SECOND attempt
+    // still failed (commit 0266fd6f9 — abandoning after a single rejection dropped
+    // ~7 genuinely-actionable bugs in the 2026-05-31 sweep).
     upsertDiscourseBug(db, { topic: 107, post: 8, state: 'open' })
-    db.prepare('UPDATE discourse_bug SET pr_rejections = 1 WHERE topic = 107 AND post = 8').run()
+    db.prepare('UPDATE discourse_bug SET pr_rejections = 2 WHERE topic = 107 AND post = 8').run()
 
     await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
 
@@ -92,13 +95,24 @@ describe('work_router_decide action', () => {
     expect(drafts).toHaveLength(0)
   })
 
+  it('does NOT escalate a bug with only 1 rejected PR — it is re-dispatched', async () => {
+    // Below threshold (1 < 2): the bug should be retried, not abandoned.
+    upsertDiscourseBug(db, { topic: 117, post: 18, state: 'open' })
+    db.prepare('UPDATE discourse_bug SET pr_rejections = 1 WHERE topic = 117 AND post = 18').run()
+
+    const result = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+
+    expect(getDiscourseBug(db, 117, 18)?.state).toBe('open')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+  })
+
   it('does not escalate bugs with zero rejections', async () => {
     upsertDiscourseBug(db, { topic: 108, post: 9, state: 'open' })
 
     const result = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
 
     expect(getDiscourseBug(db, 108, 9)?.state).toBe('open')
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 
   it('defers to COVERAGE_GATE during peak phase when no DB backlog', async () => {
@@ -118,7 +132,7 @@ describe('work_router_decide action', () => {
       classifications: [{ topic: 111, post: 12, type: 'bug', user: 'iris' }],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 
   it('excludes topics with active PRs from in-memory classifications dispatch', async () => {
@@ -140,7 +154,7 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
 
@@ -183,7 +197,7 @@ describe('work_router_decide action', () => {
       classifications: [{ topic: 117, post: 20, type: 'bug', user: 'nancy' }],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
 
@@ -211,8 +225,40 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
     expect(result.singleBug?.topic).toBe(9999)
+  })
+
+  it('dispatches only ONE bug per topic — no duplicate PRs for the same topic', async () => {
+    // Regression: topic 9692 ("Bad links in emails") was classified as two posts and
+    // both dispatched, producing duplicate PRs #661 and #662 for the same donate link.
+    // The dispatch batch must be deduped by topic.
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [
+        { topic: 9692, post: 11, type: 'bug', user: 'reporterA' },
+        { topic: 9692, post: 12, type: 'bug', user: 'reporterB' },
+      ],
+      bugsFixed: [],
+    })
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+    // Two posts queued, but only one dispatched (one per topic).
+    expect(result.reason).toContain('dispatching 1 in parallel')
+    expect(result.reason).toContain('9692.11') // oldest/first post kept
+    expect(result.reason).not.toContain('9692.12')
+  })
+
+  it('still dispatches both when two bugs are on DIFFERENT topics', async () => {
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [
+        { topic: 9801, post: 1, type: 'bug', user: 'a' },
+        { topic: 9802, post: 1, type: 'bug', user: 'b' },
+      ],
+      bugsFixed: [],
+    })
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+    expect(result.reason).toContain('dispatching 2 in parallel')
   })
 })
 
@@ -240,7 +286,7 @@ describe('recent merged PR dedup in work_router_decide', () => {
       recentlyMergedPRs: [{ number: 999, title: 'fix: delete stdmsg in modtools' }],
     })
 
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 
   it('skips bug when merged PR title matches a symptom tag', async () => {
@@ -265,7 +311,7 @@ describe('recent merged PR dedup in work_router_decide', () => {
       bugsFixed: [],
     })
 
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 
   it('dispatches bug when recentlyMergedPRs is empty', async () => {
@@ -278,7 +324,7 @@ describe('recent merged PR dedup in work_router_decide', () => {
       recentlyMergedPRs: [],
     })
 
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 
   it('bug with no featureArea or symptomTags is not skipped by merged PR', async () => {
@@ -291,6 +337,6 @@ describe('recent merged PR dedup in work_router_decide', () => {
       recentlyMergedPRs: [{ number: 997, title: 'fix everything' }],
     })
 
-    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 })

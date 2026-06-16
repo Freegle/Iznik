@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Mail;
 
+use App\Services\EmailSpoolerService;
 use App\Services\ModNotifService;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -68,5 +69,47 @@ class SendModNotifsCommandTest extends TestCase
         $this->artisan('mail:mod-notifs', ['--force' => true])
             ->expectsOutputToContain('Sent: 1')
             ->assertExitCode(0);
+    }
+
+    public function test_spool_failure_for_one_mod_does_not_abort_run(): void
+    {
+        // Two mods to notify. The spooler throws on the FIRST (e.g. a
+        // transient MJML render error, which spool() re-throws because it is
+        // not a permanent address failure). The command must skip that mod
+        // and still notify the second — not abort the whole run.
+        $notifications = [
+            [
+                'user_id' => 1, 'email' => 'mod1@example.com', 'name' => 'Mod One',
+                'text_summary' => 'sum1', 'html_summary' => '<p>1</p>', 'total' => 1,
+                'subject' => 'MODERATE: 1',
+            ],
+            [
+                'user_id' => 2, 'email' => 'mod2@example.com', 'name' => 'Mod Two',
+                'text_summary' => 'sum2', 'html_summary' => '<p>2</p>', 'total' => 1,
+                'subject' => 'MODERATE: 2',
+            ],
+        ];
+
+        $service = $this->createMock(ModNotifService::class);
+        $service->method('getNotificationsToSend')->willReturn($notifications);
+        // recordSent must fire only for the second mod (the first failed).
+        $service->expects($this->once())->method('recordSent')->with(2, 'sum2');
+        $this->app->instance(ModNotifService::class, $service);
+
+        $calls = 0;
+        $spooler = \Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andReturnUsing(function () use (&$calls) {
+            $calls++;
+            if ($calls === 1) {
+                throw new \RuntimeException('simulated transient MJML render failure');
+            }
+            return 'spooled-id';
+        });
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $this->artisan('mail:mod-notifs', ['--force' => true])
+            ->assertExitCode(0);
+
+        $this->assertSame(2, $calls, 'Both mods should have been attempted');
     }
 }

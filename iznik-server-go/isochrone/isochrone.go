@@ -106,36 +106,41 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		return 0
 	}
 
-	// Fetch real isochrone polygon from Mapbox.
-	wkt := FetchIsochroneWKT(transport, loc.Lng, loc.Lat, minutes)
+	// Try the internal routing server first; fall back to Mapbox.
+	source := "RoutingServer"
+	wkt := FetchIsochroneWKTFromRoutingServer(transport, loc.Lat, loc.Lng, minutes)
+	if wkt == "" {
+		source = "Mapbox"
+		wkt = FetchIsochroneWKT(transport, loc.Lng, loc.Lat, minutes)
+	}
 
 	if wkt != "" {
 		// Check if there's an existing POINT isochrone with the same key — update it
 		// rather than INSERT IGNORE (which would silently skip due to unique key).
 		var existingPointID uint64
-		db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? AND source = 'Mapbox' AND ST_GeometryType(polygon) = 'POINT' ORDER BY id DESC LIMIT 1",
+		db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) = 'POINT' ORDER BY id DESC LIMIT 1",
 			locationid, transport, minutes).Scan(&existingPointID)
 
 		if existingPointID > 0 {
 			// Update the existing broken POINT isochrone with the real polygon.
-			db.Exec("UPDATE isochrones SET polygon = "+
+			db.Exec("UPDATE isochrones SET source = ?, polygon = "+
 				"CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END "+
 				"WHERE id = ?",
-				wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID, existingPointID)
+				source, wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID, existingPointID)
 			return existingPointID
 		}
 
 		// No existing row — insert fresh.
-		result := db.Exec("INSERT IGNORE INTO isochrones (locationid, transport, minutes, source, polygon) VALUES (?, ?, ?, 'Mapbox', "+
+		result := db.Exec("INSERT IGNORE INTO isochrones (locationid, transport, minutes, source, polygon) VALUES (?, ?, ?, ?, "+
 			"CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END)",
-			locationid, transport, minutes, wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID)
+			locationid, transport, minutes, source, wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID)
 		if result.Error != nil {
-			log.Printf("Failed to insert isochrone with Mapbox polygon for location %d: %v", locationid, result.Error)
+			log.Printf("Failed to insert isochrone from %s for location %d: %v", source, locationid, result.Error)
 			return 0
 		}
 	} else {
-		// Mapbox unavailable — fall back to location geometry as placeholder.
-		log.Printf("Mapbox fetch failed for location %d, using location geometry as fallback", locationid)
+		// Both providers unavailable — fall back to location geometry as placeholder.
+		log.Printf("All isochrone providers failed for location %d, using location geometry as fallback", locationid)
 		result := db.Exec("INSERT IGNORE INTO isochrones (locationid, transport, minutes, polygon) "+
 			"SELECT ?, ?, ?, COALESCE(geometry, ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
 			locationid, transport, minutes, utils.SRID, locationid)

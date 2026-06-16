@@ -201,7 +201,7 @@ class StoriesNewsletterService
                 ?? trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
                 ?: 'Freegle Member';
 
-            Mail::send(new StoriesNewsletterMail(
+            app(\App\Services\EmailSpoolerService::class)->spool(new StoriesNewsletterMail(
                 userId: $userId,
                 recipientName: $name,
                 recipientEmail: $email,

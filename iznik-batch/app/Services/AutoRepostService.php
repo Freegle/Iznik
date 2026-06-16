@@ -204,7 +204,7 @@ class AutoRepostService
                         // V1: "Will Repost: {subject}" with links to mark completed/withdraw/promise.
                         $user = User::find($msg->fromuser);
                         if ($user && $user->email_preferred) {
-                            Mail::send(new AutoRepostWarning(
+                            app(\App\Services\EmailSpoolerService::class)->spool(new AutoRepostWarning(
                                 messageId: $msg->msgid,
                                 messageSubject: $msg->subject ?? '',
                                 messageType: $msg->type,

@@ -155,7 +155,7 @@ class SendPendingWelcomeMailsCommand extends Command
                     $spooler->spool($mailable, $email->email, 'welcome');
                     $this->line("Spooled welcome mail for: {$email->email}");
                 } else {
-                    Mail::to($email->email)->send($mailable);
+                    app(\App\Services\EmailSpoolerService::class)->spool($mailable, $email->email);
                     $this->line("Sent welcome mail to: {$email->email}");
                 }
 

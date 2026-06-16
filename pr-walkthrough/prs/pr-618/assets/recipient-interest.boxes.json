@@ -1,0 +1,52 @@
+{
+  "A browsable catalogue in one offer": {
+    "label": "A browsable catalogue in one offer",
+    "arrow": "up",
+    "box": {
+      "x": 0.2588,
+      "y": 0.2126,
+      "w": 0.4715,
+      "h": 0.0134
+    }
+  },
+  "A clear toggle: “I'd like this”": {
+    "label": "A clear toggle: “I'd like this”",
+    "arrow": "left",
+    "box": {
+      "x": 0.6281,
+      "y": 0.2978,
+      "w": 0.0231,
+      "h": 0.0102
+    }
+  },
+  "Choose how many": {
+    "label": "Choose how many",
+    "arrow": "left",
+    "box": {
+      "x": 0.6812,
+      "y": 0.3143,
+      "w": 0.0491,
+      "h": 0.0197
+    }
+  },
+  "Pick a collection time": {
+    "label": "Pick a collection time",
+    "arrow": "up",
+    "box": {
+      "x": 0.2588,
+      "y": 0.4318,
+      "w": 0.4715,
+      "h": 0.0317
+    }
+  },
+  "Send the giver your picks": {
+    "label": "Send the giver your picks",
+    "arrow": "right",
+    "box": {
+      "x": 0.278,
+      "y": 0.5861,
+      "w": 0.4332,
+      "h": 0.0305
+    }
+  }
+}

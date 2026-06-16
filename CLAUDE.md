@@ -5,7 +5,7 @@
 - **NEVER merge PRs.** Only humans merge PRs. Stop at "PR is ready for merge".
 - **NEVER skip or make coverage optional in tests.** Fix the root cause if coverage upload fails.
 - **NEVER dismiss test failures as "pre-existing" or "unrelated".** Investigate and fix all failures.
-- **NEVER push unless explicitly told to** by the user.
+- **You may push the current branch and open a PR without being asked first, provided you have run the full relevant test suite locally and it passes.** If tests have not been run locally, or any are failing, do not push — run and fix them first. (Merging is still humans-only; see above.)
   - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR.
 
 ## Container Quick Reference

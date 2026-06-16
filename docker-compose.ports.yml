@@ -94,3 +94,11 @@ services:
   embedding-sidecar:
     ports:
       - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"
+
+  spatial:
+    ports:
+      - "0.0.0.0:${PORT_SPATIAL:-8196}:8196"
+
+  spatial-live:
+    ports:
+      - "0.0.0.0:${PORT_SPATIAL_LIVE:-8197}:8196"

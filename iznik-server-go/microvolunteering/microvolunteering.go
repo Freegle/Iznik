@@ -562,23 +562,23 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 }
 
 // getEEELabelChallenge returns a Freegle attachment for the user to label
-// for EEE (Electrical / Electronic Equipment) classification. Picks the most
-// recent OFFER attachments that the user has not yet labelled and that have
-// not yet reached EEELabelQuorum.
+// for EEE (Electrical / Electronic Equipment) classification. Restricts to
+// attachments the model classifier has already processed (joined via the
+// `eee_classified_attachments` pointer table), so volunteer labels can be
+// scored directly against model output.
 //
-// Per-message dedup: a message with multiple photos must only contribute
-// ONE attachment per challenge, otherwise the same item gets re-labelled
-// once per photo and the labels can't be joined back to the model's
-// classifications (the EEE classifier processes one attachment per message).
-// The chosen attachment uses the same canonical rule as message_list.go:255
-// — `primary` DESC, id ASC — so volunteers see the same photo that other
-// surfaces show.
+// Previously this picked any recent OFFER with a photo, which produced lots
+// of "wasted" labels on items the classifier never saw (confirmed
+// 2026-05-30: 161 MV-labelled msgids ∩ eee_classifications = 0). Now the
+// candidate set is the intersection of recent OFFER attachments and the
+// classifier's pointer set, so every label can be paired with a model
+// prediction.
 //
-// Performance: the query is driven off `messages.arrival` (index `arrival_2`)
-// with a 30-day window, so the planner does a backward range scan over ~100k
-// recent messages instead of a full scan of `messages_attachments` (8.6M
-// rows). The original join-from-attachments form took 20s+ on prod and tripped
-// the 5s API timeout — see commit message for full EXPLAIN comparison.
+// Performance: drives off `eee_classified_attachments` PRIMARY KEY by
+// joining each pointer to its messages_attachments row. The pointer set
+// is bounded (currently ~5k rows) so the join is cheap, no full scan of
+// messages_attachments. Ordering by classified_at DESC surfaces the most
+// recently classified items first.
 func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 	type AttachmentResult struct {
 		Attid       uint64 `json:"attid"`
@@ -591,18 +591,12 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	err := db.Raw(`
 		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
-		FROM messages m
-		INNER JOIN messages_attachments ma_att ON ma_att.id = (
-			SELECT id FROM messages_attachments
-			WHERE msgid = m.id
-			  AND externaluid IS NOT NULL
-			  AND externaluid != ''
-			ORDER BY `+"`primary`"+` DESC, id ASC
-			LIMIT 1
-		)
-		WHERE m.arrival > DATE_SUB(NOW(), INTERVAL 30 DAY)
-			AND m.type = 'Offer'
-			AND m.deleted IS NULL
+		FROM eee_classified_attachments ec
+		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
+		INNER JOIN messages m ON m.id = ec.messageid
+		WHERE m.deleted IS NULL
+			AND ma_att.externaluid IS NOT NULL
+			AND ma_att.externaluid != ''
 			AND NOT EXISTS (
 				SELECT 1 FROM microactions ma
 				WHERE ma.eee_attachment_id = ma_att.id
@@ -610,7 +604,7 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 				  AND ma.actiontype = ?
 			)
 			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
-		ORDER BY m.arrival DESC
+		ORDER BY ec.classified_at DESC
 		LIMIT 1
 	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
 
@@ -780,7 +774,7 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to an AIImageReview challenge.
 		response := *req.Response
 
-		if response == "Approve" || response == "Reject" {
+		if response == "Approve" || response == "Reject" || response == "Suppress" {
 			var containsPeople interface{}
 			if req.ContainsPeople != nil {
 				if *req.ContainsPeople {
@@ -796,7 +790,10 @@ func PostResponse(c *fiber.Ctx) error {
 				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
 				response, containsPeople, Version)
 
-			// After recording the vote, check if reject quorum is reached.
+			// After recording the vote, check the quorums. 'Suppress' ("this item
+			// should never have an AI image") is terminal, so check it first; 'Reject'
+			// ("this image is bad") leaves the name open to regeneration.
+			checkAIImageSuppressQuorum(db, req.AIImageID)
 			checkAIImageRejectQuorum(db, req.AIImageID)
 		}
 
@@ -1017,5 +1014,22 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
 		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	}
+}
+
+// checkAIImageSuppressQuorum checks whether an AI image has reached the suppress
+// quorum (≥ AIImageReviewQuorum votes with a majority being Suppress). If so, sets
+// status='suppressed' — a TERMINAL state meaning this item name should never have an
+// AI image: the Pollinations generator skips the name, the image is never shown, and
+// Regenerate refuses. Suppress overrides a prior 'rejected' state.
+func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
+	var totalVotes, suppressVotes int64
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
+		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Suppress'`,
+		aiImageID, ChallengeAIImageReview).Scan(&suppressVotes)
+
+	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
+		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)
 	}
 }

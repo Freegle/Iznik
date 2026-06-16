@@ -64,6 +64,20 @@
         </div>
       </NoticeMessage>
       <NoticeMessage
+        v-else-if="needToReloadHard"
+        variant="danger"
+        class="posit text-center"
+        show
+      >
+        <p>
+          This version of Freegle is more than a week out of date. It will
+          refresh to get the latest fixes in {{ hardCountdown }}s.
+        </p>
+        <div class="d-flex justify-content-around">
+          <b-button variant="primary" @click="reload"> Reload now </b-button>
+        </div>
+      </NoticeMessage>
+      <NoticeMessage
         v-else-if="showReload && !snoozeReload"
         variant="info"
         class="posit text-center"
@@ -87,15 +101,25 @@ import NoticeMessage from './NoticeMessage'
 import { ref, watch, onBeforeUnmount } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import SupportLink from '~/components/SupportLink'
+import { HARD_RELOAD_COUNTDOWN_SECS, TYPING_TIME_INVERVAL } from '~/constants'
 
 const showError = ref(false)
 const showReload = ref(false)
 const snoozeReload = ref(false)
 const snoozeTimer = ref(null)
+const hardCountdown = ref(HARD_RELOAD_COUNTDOWN_SECS)
+const hardReloadTimer = ref(null)
 
 const miscStore = useMiscStore()
-const { somethingWentWrong, needToReload, offline, unloading, errorDetails } =
-  storeToRefs(miscStore)
+const {
+  somethingWentWrong,
+  needToReload,
+  needToReloadHard,
+  offline,
+  unloading,
+  errorDetails,
+  lastTyping,
+} = storeToRefs(miscStore)
 
 const showStackTrace = ref(false)
 
@@ -116,8 +140,53 @@ watch(needToReload, (newVal) => {
   }
 })
 
+// When the build is a week-plus stale we force a reload after a short, visible
+// countdown. immediate:true so it also fires if the flag is already set on mount.
+watch(
+  needToReloadHard,
+  (newVal) => {
+    if (newVal) {
+      hardCountdown.value = HARD_RELOAD_COUNTDOWN_SECS
+      scheduleHardTick()
+    }
+  },
+  { immediate: true }
+)
+
 function reload() {
   window.location.reload()
+}
+
+// Reload unless the user is mid-message — we never want to throw away something
+// they're typing. Returns true if it reloaded, false if it deferred.
+function maybeReload() {
+  if (
+    lastTyping.value &&
+    Date.now() - lastTyping.value < TYPING_TIME_INVERVAL
+  ) {
+    return false
+  }
+  reload()
+  return true
+}
+
+function scheduleHardTick() {
+  if (hardReloadTimer.value) {
+    clearTimeout(hardReloadTimer.value)
+  }
+  hardReloadTimer.value = setTimeout(() => {
+    if (hardCountdown.value <= 1) {
+      // Countdown done: reload unless they're still typing, in which case wait
+      // another cycle rather than destroy their in-progress message.
+      if (!maybeReload()) {
+        hardCountdown.value = HARD_RELOAD_COUNTDOWN_SECS
+        scheduleHardTick()
+      }
+    } else {
+      hardCountdown.value -= 1
+      scheduleHardTick()
+    }
+  }, 1000)
 }
 
 function snooze() {
@@ -139,6 +208,9 @@ function formatTimestamp(timestamp) {
 onBeforeUnmount(() => {
   if (snoozeTimer.value) {
     clearTimeout(snoozeTimer.value)
+  }
+  if (hardReloadTimer.value) {
+    clearTimeout(hardReloadTimer.value)
   }
 })
 </script>

@@ -124,7 +124,15 @@ do {
         }
 
         # Check if we already have a cached image for this item name.
-        $cached = $dbhr->preQuery("SELECT externaluid FROM ai_images WHERE name = ?", [$itemName]);
+        $cached = $dbhr->preQuery("SELECT externaluid, status FROM ai_images WHERE name = ?", [$itemName]);
+
+        # Suppressed: this item name has been deliberately marked as unsuitable for an
+        # AI image (quorum of 'Suppress' votes). Never attach one and never regenerate —
+        # the row already exists so it is skipped by the no-row generation path anyway,
+        # but we must not attach its (now-suppressed) cached image.
+        if (count($cached) > 0 && ($cached[0]['status'] ?? '') === 'suppressed') {
+            continue;
+        }
 
         if (count($cached) > 0 && $cached[0]['externaluid']) {
             $cachedMessages[] = [

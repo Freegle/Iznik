@@ -4,7 +4,7 @@
  * These tests cover edge cases for state machine robustness:
  * - State persistence (page refresh, browser back)
  * - Navigation between messages
- * - Race conditions (double-click, navbar login during compose)
+ * - Race conditions (double-click, login during compose)
  *
  * Each test creates unique users - can run in PARALLEL.
  */
@@ -309,7 +309,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Click send multiple times rapidly
       const sendButton = page
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       await sendButton.waitFor({
         state: 'visible',
@@ -346,7 +346,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       await withdrawPost({ item: result.item })
     })
 
-    test('handles login via navbar while composing reply', async ({
+    test('handles login while composing reply', async ({
       page,
       postMessage,
       testEmail,
@@ -379,28 +379,41 @@ test.describe('Reply Flow - Edge Cases', () => {
       await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
-      // Start typing reply (not logged in)
-      const replyText = 'Started typing before logging in via navbar'
+      // Start typing reply (not logged in), and supply the existing user's
+      // email + collection time so Send can trigger the forced-login flow.
+      const replyText = 'Started typing before the forced login'
       const replyTextarea = page
         .locator('textarea[name="reply"]')
         .filter({ visible: true })
       await replyTextarea.fill(replyText)
-      console.log('[Test] Started typing reply without being logged in')
-
-      // Login via navbar (click on Sign in button in header)
-      const navbarLoginLink = page
-        .locator(
-          '.navbar button:has-text("Sign in"), .navbar .btn:has-text("Sign in")'
-        )
-        .first()
-      await navbarLoginLink.waitFor({
+      const replyEmailInput = page
+        .locator('.test-email-reply-validator input[type="email"]')
+        .filter({ visible: true })
+      await replyEmailInput.fill(loginEmail)
+      const replyCollect = page
+        .locator('textarea[name="collect"]')
+        .filter({ visible: true })
+      await replyCollect.waitFor({
         state: 'visible',
         timeout: timeouts.ui.appearance,
       })
-      await navbarLoginLink.click()
-      console.log('[Test] Clicked navbar sign in')
+      await replyCollect.fill('Can collect anytime')
+      console.log('[Test] Filled reply form without being logged in')
 
-      // Complete login via modal
+      // The reply pane is a full-screen overlay covering the navbar, so login
+      // happens through the forced-login modal that Send raises, not the navbar.
+      await waitForNuxtHydration(page)
+      const sendButton = page
+        .locator('.composer-send-btn')
+        .filter({ visible: true })
+      await sendButton.waitFor({
+        state: 'visible',
+        timeout: timeouts.ui.appearance,
+      })
+      await sendButton.click()
+      console.log('[Test] Clicked Send — forced login expected')
+
+      // Complete login via the forced-login modal
       const loginModal = page
         .locator('.modal-content')
         .filter({ hasText: 'Log in' })
@@ -432,13 +445,13 @@ test.describe('Reply Flow - Edge Cases', () => {
             return false
           },
           {
-            message: 'Waiting for navbar login modal to be in login mode',
+            message: 'Waiting for login modal to be in login mode',
             timeout: timeouts.ui.appearance,
             intervals: [500, 500, 500, 1000, 1000, 2000],
           }
         )
         .toBe(true)
-      console.log('[Test] Navbar login modal is in login mode')
+      console.log('[Test] Login modal is in login mode')
 
       // Wait for email input to be fully rendered and interactive
       const emailInput = loginModal.locator('input[type="email"]')
@@ -457,7 +470,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Click the submit button (already confirmed to say "Log in")
       await loginSubmitButton.first().click()
-      console.log('[Test] Completed navbar login')
+      console.log('[Test] Completed login')
 
       // Wait for login modal to close
       await loginModal.waitFor({
@@ -466,54 +479,41 @@ test.describe('Reply Flow - Edge Cases', () => {
       })
       console.log('[Test] Login modal closed')
 
-      // Check that the reply section is accessible after login
-      // Note: Reply text persistence across navbar login is not guaranteed
-      // The key test is that the reply flow works after navbar login
-      const restoredTextarea = page
-        .locator('textarea[name="reply"]')
-        .filter({ visible: true })
-
-      // May need to click reply button again if section collapsed
-      if (!(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))) {
-        await clickReplyButton(page)
-      }
-
-      await restoredTextarea.waitFor({
-        state: 'visible',
-        timeout: timeouts.ui.appearance,
-      })
-      const restoredText = await restoredTextarea.inputValue()
-
-      console.log(`[Test] Reply text after navbar login: "${restoredText}"`)
-      // Reply text persistence after login may not be preserved
-      // The key test is that we can continue the reply flow after login
-
-      // If text is empty, fill in some text so we can complete the reply
-      if (!restoredText) {
-        await restoredTextarea.fill('Reply after navbar login')
-        console.log('[Test] Refilled reply text after navbar login')
-      }
-
-      // Also fill in collection time if it's visible and empty (required field)
-      const collectTextarea = page
-        .locator('textarea[name="collect"]')
-        .filter({ visible: true })
+      // After forced login the state machine resumes automatically and sends
+      // the reply we composed. Fall back to re-sending only if it genuinely
+      // didn't resume (e.g. the page refreshed during login).
       try {
-        await collectTextarea.waitFor({ state: 'visible', timeout: 3000 })
-        const collectText = await collectTextarea.inputValue()
-        if (!collectText) {
-          await collectTextarea.fill('Can collect anytime')
-          console.log('[Test] Filled collect time')
-        }
+        await page.waitForURL(/\/chats\//, {
+          timeout: timeouts.navigation.default,
+        })
       } catch {
-        // Collect field might not be visible (e.g., WANTED message)
+        console.log(
+          '[Test] State machine did not auto-resume, completing reply manually'
+        )
+        const restoredTextarea = page
+          .locator('textarea[name="reply"]')
+          .filter({ visible: true })
+        if (
+          !(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))
+        ) {
+          await clickReplyButton(page)
+        }
+        if (!(await restoredTextarea.inputValue().catch(() => ''))) {
+          await restoredTextarea.fill('Reply after forced login')
+        }
+        const collectAgain = page
+          .locator('textarea[name="collect"]')
+          .filter({ visible: true })
+        if (await collectAgain.isVisible({ timeout: 3000 }).catch(() => false)) {
+          if (!(await collectAgain.inputValue())) {
+            await collectAgain.fill('Can collect anytime')
+          }
+        }
+        await clickSendAndWait(page)
       }
-
-      // Now click Send - should work because we're logged in
-      await clickSendAndWait(page)
 
       expect(page.url()).toContain('/chats/')
-      console.log('[Test] Navbar login during compose successful')
+      console.log('[Test] Login during compose successful — reply sent')
 
       // Cleanup
       await logoutIfLoggedIn(page)

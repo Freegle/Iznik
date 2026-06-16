@@ -31,7 +31,6 @@ class EventsDigestMailTest extends TestCase
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             events:         [$this->makeEvent(42)],
             unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
@@ -57,7 +56,6 @@ class EventsDigestMailTest extends TestCase
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             events:         [$this->makeEvent()],
             unsubscribeUrl: $unsubscribeUrl,
         );

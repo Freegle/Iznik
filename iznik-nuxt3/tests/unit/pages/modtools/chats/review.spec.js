@@ -169,9 +169,24 @@ describe('chats/review.vue page', () => {
       await wrapper.vm.clearAndLoad()
 
       expect(mockChatStore.clear).toHaveBeenCalled()
-      expect(mockChatStore.fetchReviewChatsMT).toHaveBeenCalledWith(null, {
-        limit: 5,
-      })
+      expect(mockChatStore.fetchReviewChatsMT).toHaveBeenCalledWith(null, {})
+    })
+
+    it('clearAndLoad fetches without a hard 5-item limit so all pending items are reachable', async () => {
+      // Regression: clearAndLoad was passing limit: 5 to fetchReviewChatsMT,
+      // so the server returned at most 5 messages even when the badge showed more.
+      // loadMore would call $state.complete() after the 5, making further items
+      // unreachable. Fix: remove the hard limit so the server default (100) applies.
+      const wrapper = mountComponent()
+      await flushPromises()
+      vi.clearAllMocks()
+
+      await wrapper.vm.clearAndLoad()
+
+      // Must NOT pass limit: 5 — that was capping the review list
+      const calls = mockChatStore.fetchReviewChatsMT.mock.calls
+      expect(calls.length).toBe(1)
+      expect(calls[0][1]?.limit).not.toBe(5)
     })
 
     it('clearAndLoad increments bump', async () => {

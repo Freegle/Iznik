@@ -187,7 +187,7 @@ services:
       start_period: 10s
 
   spamassassin-app:
-    image: tiredofit/spamassassin
+    image: instantlinux/spamassassin
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin
     profiles:
       - backend
@@ -197,9 +197,10 @@ services:
     ports:
       - ${PORT_SPAMASSASSIN:-783}:783
     volumes:
-      - ./logs/spamassassin:/logs
-      - ./conf:/config
+      - ./logs/spamassassin:/var/log
+      - ./conf:/etc/mail/spamassassin
       - ./data:/data
+      - spamassassin_home:/var/lib/spamassassin
     environment:
       - CONTAINER_NAME=spamassassin-app
     restart: "no"
@@ -416,6 +417,8 @@ services:
     environment:
       # Anthropic API key for Claude API calls
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Go API base URL used to verify the caller is an authenticated moderator
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
@@ -433,6 +436,8 @@ services:
     build:
       context: ./docker/embedding-sidecar
     restart: unless-stopped
+    ports:
+      - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3200/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -701,6 +706,11 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
       # Allowed domains for email tracking redirects
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
@@ -715,11 +725,10 @@ services:
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
       - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
-      - KNN_INDEX_PATH=/data/knn-locations.db
-      - KNN_ADMIN_PORT=8195
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      - SPATIAL_SERVER_URL=http://spatial:8196
     volumes:
       - apiv2_logs:/var/log/freegle
-      - knn_data:/data
       - embedding_model_cache:/app/model-cache
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8192/apiv2/online || exit 1"]
@@ -742,6 +751,86 @@ services:
       # Retry middleware for connection resilience
       - "traefik.http.middlewares.retry-api.retry.attempts=3"
       - "traefik.http.middlewares.retry-api.retry.initialinterval=100ms"
+
+  spatial-knn:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - spatial-knn.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - SPATIAL_INDEX_DIR=/data
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+    volumes:
+      - spatial_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  spatial:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - spatial.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      spatial-knn:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8196
+      - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      # Override (e.g. in CI) to boot on the small committed Bristol extract so
+      # the container stays up for routing-go tests without the 2.5GB UK graph.
+      - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
+      - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.spatial.rule=Host(`spatial.localhost`)"
+      - "traefik.http.routers.spatial.entrypoints=web"
+      - "traefik.http.services.spatial.loadbalancer.server.port=8196"
 
   # V2 API with LIVE production database via tunnel
   # Start with: docker compose --profile prod-live up -d apiv2-live
@@ -784,6 +873,11 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
       - GROUP_DOMAIN=groups.ilovefreegle.org
@@ -794,6 +888,7 @@ services:
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
+      - SPATIAL_SERVER_URL=${SPATIAL_SERVER_URL:-http://spatial:8196}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:
@@ -816,6 +911,98 @@ services:
       - "traefik.http.middlewares.apiv2-live-retry.retry.attempts=3"
       - "traefik.http.middlewares.apiv2-live-retry.retry.initialinterval=100ms"
       - "traefik.http.services.apiv2-live.loadbalancer.server.port=8192"
+
+  # KNN spatial index server with LIVE production database via tunnel.
+  # Provides user approx-locations and other spatial indices from production data.
+  # Start with: docker compose --profile prod-live up -d spatial-knn-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-knn-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-knn-live.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+      - SPATIAL_INDEX_DIR=/data
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+    volumes:
+      - spatial_knn_live_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  # Spatial server with LIVE production database via tunnel
+  # Start with: docker compose --profile prod-live up -d spatial-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-live.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+      spatial-knn-live:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8196
+      - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn-live:8194
+      - OSM_PBF_PATH=/data/uk-latest.osm.pbf
+      - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.spatial-live.rule=Host(`spatial-live.localhost`)"
+      - "traefik.http.routers.spatial-live.entrypoints=web"
+      - "traefik.http.services.spatial-live.loadbalancer.server.port=8196"
 
   # Development build with local APIs - standard dev workflow
   freegle-dev-local:
@@ -1053,6 +1240,7 @@ services:
       - NUXT_SSR_LOG=false
       - NODE_ENV=development
       - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://spatial.localhost:${PORT_TRAEFIK_HTTP:-80}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.modtools-dev-local.rule=Host(`modtools-dev-local.localhost`)"
@@ -1089,6 +1277,7 @@ services:
       - "0.0.0.0:${PORT_MODTOOLS_DEV_LIVE:-3006}:3000"
     extra_hosts:
       - "apiv2-live.localhost:host-gateway"
+      - "spatial-live.localhost:host-gateway"
     build:
       context: .
       dockerfile: ./iznik-nuxt3/modtools/Dockerfile
@@ -1113,6 +1302,7 @@ services:
       - NUXT_SSR_LOG=false
       - NODE_ENV=development
       - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://spatial-live.localhost:${PORT_TRAEFIK_HTTP:-80}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.modtools-dev-live.rule=Host(`modtools-dev-live.localhost`)"
@@ -1334,6 +1524,9 @@ services:
       dockerfile: docker/Dockerfile
     volumes:
       - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
       - ./iznik-server:/var/www/iznik:ro
       - apiv2_logs:/var/log/freegle
     depends_on:
@@ -1395,6 +1588,7 @@ services:
       - MJML_URL=http://mjml/
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
@@ -1425,9 +1619,18 @@ services:
         required: false
     volumes:
       - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
       - ./iznik-server:/var/www/iznik:ro
       - /var/log/freegle:/var/log/freegle
-      - ${FIREBASE_CREDENTIALS_PATH:-/dev/null}:/etc/firebase.json:ro
+      # Bind source uses FIREBASE_HOST_PATH (HOST path). Distinct from
+      # FIREBASE_CREDENTIALS_PATH (CONTAINER path read by Laravel — always
+      # /etc/firebase.json, so we DON'T set it; sharing one var leaked the
+      # host path into the container's env via env_file and Laravel then
+      # tried to open it inside the container — memory
+      # project_push_dropped_devnull_firebase.
+      - ${FIREBASE_HOST_PATH:-/dev/null}:/etc/firebase.json:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       - "mail-host:${MAIL_HOST_IP:-127.0.0.1}"
@@ -1689,11 +1892,17 @@ volumes:
     driver: local
   rspamd_data:
     driver: local
+  spamassassin_home:
+    driver: local
   postfix_spool:
     driver: local
   loki-data:
     name: ${LOKI_VOLUME:-loki-data}
-  knn_data:
+  spatial_data:
+    driver: local
+  spatial_knn_live_data:
+    driver: local
+  routing_data:
     driver: local
   apiv2_logs:
     driver: local

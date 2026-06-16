@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Jobs\SpoolMail;
+use App\Mail\Contracts\RetryableMailable;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\BounceService;
 use App\Services\Mail\SmtpFailureClassifier;
@@ -55,7 +57,7 @@ class EmailSpoolerService
      * mail pipeline, ensuring all withSymfonyMessage callbacks execute and all
      * headers are captured.
      */
-    public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null): string
+    public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null, bool $autoRetry = true): string
     {
         $id = $this->generateId();
         $filename = $id . '.json';
@@ -96,25 +98,45 @@ class EmailSpoolerService
         try {
             $email = $this->captureBuiltMessage($mailable);
         } catch (\Throwable $e) {
-            if (!$this->isPermanentSmtpFailure($e->getMessage())) {
-                throw $e;
+            if ($this->isPermanentSmtpFailure($e->getMessage())) {
+                $recipient = $this->extractOffendingRecipient($e->getMessage(), $normalizedTo);
+                if ($recipient !== null) {
+                    app(SmtpFailureClassifier::class)
+                        ->recordPermanentBounce($recipient, $e->getMessage());
+                }
+
+                Log::warning('Skipped permanent-failure recipient while spooling and marked as bouncing', [
+                    'mailable' => get_class($mailable),
+                    'recipient' => $recipient,
+                    'to' => array_column($normalizedTo, 'address'),
+                    'type' => $emailType,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return '';
             }
 
-            $recipient = $this->extractOffendingRecipient($e->getMessage(), $normalizedTo);
-            if ($recipient !== null) {
-                app(SmtpFailureClassifier::class)
-                    ->recordPermanentBounce($recipient, $e->getMessage());
+            // Transient / render / build failure (an MJML-server blip, a DB
+            // hiccup, or a code bug like an undefined template key). The
+            // message never reached the spool, so the send-time retry can't
+            // help — and historically this silently DROPPED the recipient
+            // (the failure mode that lost ~1,100 immediate digests during a
+            // deploy window). If the mailable has opted into durable retry,
+            // hand it to the queue instead: SpoolMail re-renders from fresh
+            // DB state on a backoff schedule and only dead-letters to
+            // failed_jobs after 24h, so a deployed fix drains it
+            // automatically.
+            //
+            // autoRetry is false when SpoolMail itself calls spool(), so a
+            // still-broken render rethrows into the queue's own retry
+            // machinery rather than dispatching another job.
+            if ($autoRetry && $mailable instanceof RetryableMailable) {
+                $this->dispatchRetry($mailable, $normalizedTo, $emailType, $e);
+
+                return '';
             }
 
-            Log::warning('Skipped permanent-failure recipient while spooling and marked as bouncing', [
-                'mailable' => get_class($mailable),
-                'recipient' => $recipient,
-                'to' => array_column($normalizedTo, 'address'),
-                'type' => $emailType,
-                'error' => $e->getMessage(),
-            ]);
-
-            return '';
+            throw $e;
         }
 
         // Extract all data from the captured message.
@@ -156,7 +178,26 @@ class EmailSpoolerService
         // path is either absent or a complete file — never partial.
         $path = $this->pendingDir . '/' . $filename;
         $tmp  = $path . '.tmp';
-        file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT));
+        // JSON_INVALID_UTF8_SUBSTITUTE: without it, a single malformed byte
+        // anywhere in $data (a post subject/body with bad UTF-8) makes
+        // json_encode() return FALSE; file_put_contents($tmp, false) then
+        // writes a 0-byte file, which renames into pending/, fails to decode
+        // ("Invalid spool file","bytes":0) and is dropped to failed/ with no
+        // retry — a silent ~0.05% digest loss seen on the 2026-06-11 bulk run.
+        // Substituting bad bytes with U+FFFD keeps the email deliverable.
+        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($json === false) {
+            // Should be unreachable now (SUBSTITUTE handles bad UTF-8), but if
+            // encoding still fails for another reason, fail loudly instead of
+            // writing a poison 0-byte spool file that dies undecodable.
+            Log::error('EmailSpoolerService: json_encode failed, email not spooled', [
+                'id' => $id,
+                'to' => array_column($data['to'] ?? [], 'address'),
+                'json_error' => json_last_error_msg(),
+            ]);
+            throw new \RuntimeException('Failed to encode spool payload: ' . json_last_error_msg());
+        }
+        file_put_contents($tmp, $json);
         rename($tmp, $path);
 
         Log::info('Email spooled', [
@@ -173,6 +214,34 @@ class EmailSpoolerService
         ]);
 
         return $id;
+    }
+
+    /**
+     * Hand a failed render/build off to the queue for durable retry.
+     *
+     * Captures the mailable's scalar descriptor (IDs only) and dispatches a
+     * SpoolMail job; the job rebuilds a fresh mailable from current DB state
+     * and re-renders it. Storing IDs rather than the built message is what lets
+     * a fix deployed after a render bug drain the backlog automatically.
+     */
+    protected function dispatchRetry(Mailable $mailable, array $normalizedTo, ?string $emailType, \Throwable $e): void
+    {
+        /** @var RetryableMailable $mailable */
+        $recipient = $normalizedTo[0]['address'] ?? null;
+
+        SpoolMail::dispatch(
+            get_class($mailable),
+            $mailable->mailDescriptor(),
+            $recipient,
+            $emailType,
+        );
+
+        Log::warning('Spool render/build failed; dispatched durable retry job', [
+            'mailable' => get_class($mailable),
+            'recipient' => $recipient,
+            'type' => $emailType,
+            'error' => $e->getMessage(),
+        ]);
     }
 
     /**
@@ -373,6 +442,7 @@ class EmailSpoolerService
             'sent' => 0,
             'retried' => 0,
             'stuck_alerts' => 0,
+            'invalid' => 0,
         ];
 
         $files = glob($this->pendingDir . '/*.json');
@@ -382,17 +452,42 @@ class EmailSpoolerService
             $filename = basename($pendingPath);
             $sendingPath = $this->sendingDir . '/' . $filename;
 
-            // Move to sending directory.
-            if (!rename($pendingPath, $sendingPath)) {
+            // Move to sending directory. Another processor (a second
+            // mail:spool:process run or a supervisor worker) may claim this file
+            // between the glob() above and here, in which case rename() fails on
+            // a now-missing source. Suppress the warning so the source-missing
+            // case takes this graceful skip instead of bubbling up as an
+            // ErrorException via Laravel's error handler.
+            if (!@rename($pendingPath, $sendingPath)) {
                 Log::warning('Could not move spool file to sending', ['file' => $filename]);
                 continue;
             }
 
             $stats['processed']++;
 
-            $data = json_decode(file_get_contents($sendingPath), true);
+            // A spool file is written atomically (temp file + rename), so a
+            // complete file in pending/ is always valid JSON. A decode failure
+            // here is therefore almost always a transient read (interrupted or
+            // partial filesystem read) rather than real corruption — observed
+            // from welcome emails that landed in failed/ with attempts:0 yet
+            // were perfectly valid JSON afterwards. Re-read once before
+            // condemning, and if it still fails record WHY (json error + byte
+            // count) so the failure is diagnosable instead of a silent discard.
+            $raw = file_get_contents($sendingPath);
+            $data = json_decode($raw, true);
             if (!$data) {
-                Log::error('Invalid spool file', ['file' => $filename]);
+                clearstatcache(true, $sendingPath);
+                usleep(50000);
+                $raw = file_get_contents($sendingPath);
+                $data = json_decode($raw, true);
+            }
+            if (!$data) {
+                $stats['invalid']++;
+                Log::error('Invalid spool file', [
+                    'file' => $filename,
+                    'json_error' => json_last_error_msg(),
+                    'bytes' => strlen($raw),
+                ]);
                 // Move invalid files to failed - these can't be retried.
                 rename($sendingPath, $this->failedDir . '/' . $filename);
                 continue;
@@ -452,8 +547,23 @@ class EmailSpoolerService
                     // If text is empty, Mail::html() has already set HTML-only body.
                 });
 
-                // Move to sent directory.
-                rename($sendingPath, $this->sentDir . '/' . $filename);
+                // Compress into the sent directory instead of a plain move.
+                // Nothing ever reads sent/ back programmatically — it is
+                // write-only and pruned after 7 days (see cleanupSent()) — so
+                // each message is stored gzipped: JSON wrapping HTML/AMP/text
+                // compresses ~85-90%, turning a ~52G/7-day archive into ~6-8G.
+                // A human debugging a send can still `zcat` the file. The .gz
+                // is created fresh here so its mtime drives retention exactly as
+                // the plain .json did. On any read/gzip/write error we fall back
+                // to an uncompressed move so a sent record is never lost nor
+                // stranded in sending/.
+                $raw = @file_get_contents($sendingPath);
+                $gz = $raw === false ? false : gzencode($raw, 6);
+                if ($gz !== false && @file_put_contents($this->sentDir . '/' . $filename . '.gz', $gz) !== false) {
+                    @unlink($sendingPath);
+                } else {
+                    rename($sendingPath, $this->sentDir . '/' . $filename);
+                }
                 $stats['sent']++;
 
                 // Extract tracking data from headers.
@@ -500,7 +610,7 @@ class EmailSpoolerService
                     $this->recordSmtpBounce($data, $e->getMessage());
 
                     // Move to failed - no point retrying.
-                    file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT));
+                    file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
                     rename($sendingPath, $this->failedDir . '/' . $filename);
                     $stats['bounced'] = ($stats['bounced'] ?? 0) + 1;
 
@@ -541,7 +651,7 @@ class EmailSpoolerService
                 }
 
                 // Move back to pending for retry.
-                file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT));
+                file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
                 rename($sendingPath, $pendingPath);
                 $stats['retried']++;
             }
@@ -607,7 +717,9 @@ class EmailSpoolerService
         $iterator = new \DirectoryIterator($this->sentDir);
 
         foreach ($iterator as $fileInfo) {
-            if ($fileInfo->isDot() || $fileInfo->getExtension() !== 'json') {
+            // Sent records are stored gzipped (.gz); accept legacy plain .json
+            // too so a mixed directory during rollout is still pruned.
+            if ($fileInfo->isDot() || !in_array($fileInfo->getExtension(), ['json', 'gz'], true)) {
                 continue;
             }
 
@@ -640,7 +752,7 @@ class EmailSpoolerService
         if ($data) {
             $data['attempts'] = 0;
             $data['last_error'] = null;
-            file_put_contents($failedPath, json_encode($data, JSON_PRETTY_PRINT));
+            file_put_contents($failedPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
         }
 
         return rename($failedPath, $this->pendingDir . '/' . $filename);
@@ -657,7 +769,7 @@ class EmailSpoolerService
             if ($data) {
                 $data['attempts'] = 0;
                 $data['last_error'] = null;
-                file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
+                file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
                 rename($file, $this->pendingDir . '/' . basename($file));
                 $count++;
             }

@@ -61,6 +61,14 @@ export const GROUP_REPOSTS = { offer: 3, wanted: 14, max: 10, chaseups: 2 }
 
 export const TYPING_TIME_INVERVAL = 10000
 
+// Stale-build warning thresholds. When a newer production deploy exists we either
+// softly nag (newer deploy older than SOFT, so we don't pester right after a
+// release) or, once the bundle we're actually running is older than HARD, escalate
+// to a forced auto-reload. HARD_RELOAD_COUNTDOWN_SECS is the grace before that reload.
+export const STALE_BUILD_SOFT_MS = 12 * 60 * 60 * 1000 // 12 hours
+export const STALE_BUILD_HARD_MS = 7 * 24 * 60 * 60 * 1000 // 1 week
+export const HARD_RELOAD_COUNTDOWN_SECS = 20
+
 // The 37 miles figure comes from research from someone we shall call Clement.
 export const FAR_AWAY = 37
 

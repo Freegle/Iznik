@@ -337,12 +337,30 @@ describe('ci_router_decide — onlyFixPR gate', () => {
     expect(result.focusPRNumber).toBeNull()
   })
 
-  it('transitions to WRAP_UP when there are pending PRs (drain mode)', async () => {
+  it('proceeds (no drain) when pending PRs are below cloud-runner capacity', async () => {
+    // We run on ~5 Katapult cloud runners, not a single self-hosted runner.
+    // A single pending PR must NOT halt the FSM — it should proceed to bug work
+    // rather than draining (which used to block ALL Discourse work on one pending PR).
     const result = await ciRouterDecideHandler({}, {
       _action_check_master_ci: { failing: false },
       _action_check_my_open_pr_ci: {
         redPRs: [],
         pendingPRs: [{ number: 55 }],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+    })
+
+    expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
+    expect(result.drainMode).toBeUndefined()
+  })
+
+  it('drains only when pending PRs saturate the cloud runners', async () => {
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: false },
+      _action_check_my_open_pr_ci: {
+        redPRs: [],
+        pendingPRs: [1, 2, 3, 4, 5].map((number) => ({ number })),
       },
       _action_discover_active_topics: { topics: [] },
       phase: 'analysis',

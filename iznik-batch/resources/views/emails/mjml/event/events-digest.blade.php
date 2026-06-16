@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Community events in ' . $groupName])
+  @include('emails.mjml.partials.head', ['preview' => 'Upcoming community events near you'])
 
   <mj-body background-color="#f4f4f4">
 
@@ -11,7 +11,7 @@
           Community Event Roundup
         </mj-text>
         <mj-text font-size="14px" color="#555555">
-          Here are upcoming community events for {{ $groupName }}.
+          Here are upcoming community events from your Freegle communities.
           If you'd like to add one, <a href="{{ $userSite }}/communityevents">click here</a>.
         </mj-text>
       </mj-column>
@@ -44,6 +44,17 @@
           {{ $event['description'] }}
         </mj-text>
         @endif
+        @if (!empty($event['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $event['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
+        </mj-text>
+        @endif
       </mj-column>
       <mj-column width="40%">
         <mj-image src="{{ $event['imageUrl'] }}" alt="{{ $event['title'] }}"
@@ -69,6 +80,17 @@
         @if (!empty($event['description']))
         <mj-text font-size="13px" color="#333333" padding="0 0 6px" line-height="1.5">
           {{ $event['description'] }}
+        </mj-text>
+        @endif
+        @if (!empty($event['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $event['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
         </mj-text>
         @endif
       </mj-column>

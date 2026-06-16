@@ -8,13 +8,15 @@ the variation is driven by item mix or by genuine local demand differences.
 Uses the same temp-table indexed-join strategy as item_desirability.py.
 """
 
+import os
+
 import pymysql
 import pandas as pd
 import numpy as np
 from scipy import stats
 
 DB = dict(host='127.0.0.1', port=11234, user='root',
-          password='F5432f12azfvds', db='iznik', charset='utf8mb4',
+          password=os.environ.get('LIVE_DB_PASSWORD', ''), db='iznik', charset='utf8mb4',
           autocommit=True)
 
 PERIOD_START = '2023-01-01'

@@ -74,7 +74,7 @@ class MembershipsProcessingService
 
             if ($wouldSendWelcome) {
                 try {
-                    Mail::send(new GroupWelcomeMail($user, $group));
+                    app(\App\Services\EmailSpoolerService::class)->spool(new GroupWelcomeMail($user, $group));
                     Log::info("MembershipsProcessing: sent group welcome", [
                         'user' => $userId,
                         'group' => $groupId,

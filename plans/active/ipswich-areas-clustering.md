@@ -156,7 +156,7 @@ cd /tmp/ipswich-areas
 ./fetch_barriers.sh       # → osm_barriers.json
 
 # PAF delivery-point counts per postcode:
-docker exec freegle-apiv2-live mysql -h db-live -P 11234 -u root -pF5432f12azfvds iznik <<'SQL'
+docker exec freegle-apiv2-live mysql -h db-live -P 11234 -u root -p"$LIVE_DB_PASSWORD" iznik <<'SQL'
   SELECT l.name AS postcode, l.lat, l.lng, COUNT(pa.id) AS dp_count
   FROM locations l LEFT JOIN paf_addresses pa ON l.id = pa.postcodeid
   WHERE l.type = 'Postcode'

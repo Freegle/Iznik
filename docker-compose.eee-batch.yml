@@ -13,6 +13,9 @@ services:
       - "db-live:host-gateway"
     volumes:
       - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
     restart: "no"
     environment:
       - APP_NAME=Freegle EEE Batch

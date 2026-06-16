@@ -201,10 +201,11 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []heldCountRow
-		db.Raw("SELECT groupid, COUNT(*) as count, (heldby IS NOT NULL) as held FROM memberships "+
-			"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
-			"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
-			"GROUP BY groupid, held", allGroupIDs).Scan(&rows)
+		db.Raw("SELECT m.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held FROM memberships m "+
+			"INNER JOIN users u ON u.id = m.userid "+
+			"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
+			"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
+			"GROUP BY m.groupid, held", allGroupIDs).Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			w := workMap[r.Groupid]

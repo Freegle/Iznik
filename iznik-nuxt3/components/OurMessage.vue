@@ -58,12 +58,20 @@
 </template>
 
 <script setup>
-import { ref, computed, defineAsyncComponent, nextTick, onMounted } from 'vue'
+import {
+  ref,
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
+import { useDwellView } from '~/composables/useDwellView'
 
 const MessageExpanded = defineAsyncComponent(() =>
   import('~/components/MessageExpanded')
@@ -205,11 +213,12 @@ async function view() {
   }
 }
 
-function visibilityChanged(isVisible) {
-  if (isVisible) {
-    view()
-  }
-}
+// Only count a passive in-list view once the post has actually dwelled on
+// screen — a fast scroll-past shouldn't register as a view. Genuine opens go
+// through expand() -> view() directly and aren't gated by the dwell.
+const { onVisibilityChange: visibilityChanged, cancel: cancelDwellView } =
+  useDwellView(view)
+onBeforeUnmount(cancelDwellView)
 
 // Initial fetch
 try {

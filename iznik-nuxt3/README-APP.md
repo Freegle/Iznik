@@ -123,6 +123,17 @@ Custom implementation using Freegle's fork:
   - Sound and vibration control
   - Notification permissions handling
 
+#### Notification types
+
+- **Chat messages** (`CHAT_MESSAGE`, `chat_messages` channel) — reply/mark-read actions.
+- **Daily new posts** (`NEW_POSTS`, `new_posts` channel) — one push per day summarising new
+  OFFER/WANTED posts near the user (the push analogue of the daily email digest). Rendered
+  richly: Android `InboxStyle` (a few items + "+N more") for several posts or `BigPictureStyle`
+  (item photo) for a single post; iOS uses a Notification Service Extension to attach the photo.
+  Sent **data-only** on Android so the native builder renders it. Opt-out via
+  `settings.notifications.dailypostspush` (app-only toggle in Settings). Tapping opens `/browse`.
+  Server side is `push:daily-posts` in iznik-batch, gated by `FREEGLE_POSTS_PUSH_ALLOWLIST`.
+
 ### Camera & Photo Management
 
 - **Native camera access** for taking photos

@@ -546,4 +546,28 @@ describe('useModMessages collection filter (approve-race defence)', () => {
 
     expect(messages.value.map((m) => m.id)).toEqual([1])
   })
+
+  it('includes Spam-collection messages when listing Pending (Discourse #9723)', async () => {
+    // Spam messages are shown in the Pending review list (PR #638 / server
+    // query includes Spam collection). But the client-side collection filter
+    // only allowed ['Pending', 'PendingOther'], so spam messages were silently
+    // stripped before rendering — causing badge=1 but list=0.
+    const msgSpam = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Spam' }],
+    }
+
+    mockAll.value = [msgSpam]
+    mockFetchMessagesMT.mockResolvedValue([1])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, messages } = setupModMessages(true)
+    collection.value = 'Pending'
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toContain(1)
+  })
 })

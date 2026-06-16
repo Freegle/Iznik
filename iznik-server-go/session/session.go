@@ -64,6 +64,50 @@ func FetchEmailHealth(db *gorm.DB, hour int) (emailin, emailout int64) {
 	return emailin, emailout
 }
 
+// discourseTopicWindowDays is the look-back window applied when counting new/unread
+// Discourse topics for the modtools badge. Without this filter a newly-promoted
+// moderator sees every historical topic they have never read as "new", producing
+// badge values in the hundreds (e.g. 466+793 as reported in Discourse topic 9654
+// post 10). Thirty days is long enough to catch genuinely active threads while
+// suppressing the one-time flood for new mods.
+const discourseTopicWindowDays = 30
+
+// TopicActiveWithin reports whether a Discourse topic has had activity within the
+// given window. Exported so it can be unit-tested without an HTTP server.
+//
+// The three string parameters map to Discourse's topic_list JSON fields:
+//   - createdAt  → created_at
+//   - bumpedAt   → bumped_at   (updated on every reply — preferred signal)
+//   - lastPosted → last_posted_at
+//
+// The most-recent-activity timestamp (bumpedAt → lastPosted → createdAt) is
+// tried in order; the topic counts if that timestamp parses and falls after
+// `since`. A missing or malformed timestamp is treated as inactive (false).
+func TopicActiveWithin(createdAt, bumpedAt, lastPosted string, since time.Time) bool {
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05Z",
+	}
+	parse := func(s string) (time.Time, bool) {
+		if s == "" {
+			return time.Time{}, false
+		}
+		for _, f := range formats {
+			if t, err := time.Parse(f, s); err == nil {
+				return t, true
+			}
+		}
+		return time.Time{}, false
+	}
+	for _, candidate := range []string{bumpedAt, lastPosted, createdAt} {
+		if t, ok := parse(candidate); ok {
+			return t.After(since)
+		}
+	}
+	return false
+}
+
 // fetchDiscourseStats fetches notification and topic counts from the Discourse API.
 // Returns nil if Discourse is not configured or the API call fails.
 func fetchDiscourseStats(myid uint64) fiber.Map {
@@ -136,6 +180,19 @@ func fetchDiscourseStats(myid uint64) fiber.Map {
 		notifications = sr.CurrentUser.UnreadNotifications
 	}()
 
+	since := time.Now().AddDate(0, 0, -discourseTopicWindowDays)
+
+	type topicEntry struct {
+		CreatedAt  string `json:"created_at"`
+		BumpedAt   string `json:"bumped_at"`
+		LastPosted string `json:"last_posted_at"`
+	}
+	type topicListResp struct {
+		TopicList struct {
+			Topics []topicEntry `json:"topics"`
+		} `json:"topic_list"`
+	}
+
 	go func() {
 		defer wg.Done()
 		req, err := http.NewRequest("GET", discourseAPI+"/new.json", nil)
@@ -153,13 +210,13 @@ func fetchDiscourseStats(myid uint64) fiber.Map {
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		var tr struct {
-			TopicList struct {
-				Topics []interface{} `json:"topics"`
-			} `json:"topic_list"`
-		}
+		var tr topicListResp
 		_ = json.Unmarshal(body, &tr)
-		newtopics = int64(len(tr.TopicList.Topics))
+		for _, t := range tr.TopicList.Topics {
+			if TopicActiveWithin(t.CreatedAt, t.BumpedAt, t.LastPosted, since) {
+				newtopics++
+			}
+		}
 	}()
 
 	go func() {
@@ -179,13 +236,13 @@ func fetchDiscourseStats(myid uint64) fiber.Map {
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		var tr struct {
-			TopicList struct {
-				Topics []interface{} `json:"topics"`
-			} `json:"topic_list"`
-		}
+		var tr topicListResp
 		_ = json.Unmarshal(body, &tr)
-		unreadtopics = int64(len(tr.TopicList.Topics))
+		for _, t := range tr.TopicList.Topics {
+			if TopicActiveWithin(t.CreatedAt, t.BumpedAt, t.LastPosted, since) {
+				unreadtopics++
+			}
+		}
 	}()
 
 	wg.Wait()
@@ -573,7 +630,10 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		}
 
 		// V1 parity (User::delete): drop approved memberships so the user immediately
-		// disappears from group member lists.
+		// disappears from group member lists. Emit the per-group (Group, Left) audit
+		// log first (byuser NULL — no acting Freegle user in the partner flow), since
+		// the eager delete leaves nothing for the later cleanup cron to log.
+		user.LogGroupLeftForApprovedMemberships(db, targetID, 0)
 		db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
 
 		db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
@@ -624,7 +684,10 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	c.Locals("skipPostAuthCheck", true)
 
 	// V1 parity (User::delete): drop approved memberships so the user no longer appears
-	// in group member lists during the grace period.
+	// in group member lists during the grace period. Emit the per-group (Group, Left)
+	// audit log first (byuser = the user themselves), since the eager delete leaves
+	// nothing for the later cleanup cron to log.
+	user.LogGroupLeftForApprovedMemberships(db, myid, myid)
 	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED)
 
 	// Soft-delete: user can recover by logging back in within ~14 days.
@@ -789,13 +852,35 @@ func GetSession(c *fiber.Ctx) error {
 
 	type SessionRow struct {
 		ID     uint64 `json:"id"`
-		Series string `json:"series"`
+		Series uint64 `json:"series"`
 		Token  string `json:"token"`
 	}
 
 	type AboutmeRow struct {
 		Text      string    `json:"text"`
 		Timestamp time.Time `json:"timestamp"`
+	}
+
+	// Identify which session authenticated this request so we return its
+	// credentials in the response, not an arbitrary session row.
+	// Without this, "WHERE userid = ? LIMIT 1" returns the oldest session for
+	// the user (InnoDB primary-key order). A user with two active sessions —
+	// one for ModTools, one for ilovefreegle.org — gets the other app's
+	// session credentials back, causing the client to overwrite its stored
+	// JWT/persistent token with the wrong session. (Discourse #9748)
+	var currentSessionID uint64
+	if _, sessID, _ := user.GetJWTFromRequest(c); sessID > 0 {
+		currentSessionID = sessID
+	} else if ptHeader := c.Get("Authorization2"); ptHeader != "" {
+		// Use a minimal struct (no Series field) so that old persistent tokens
+		// whose Series was serialised as a JSON string don't cause Unmarshal to
+		// zero out the parsed ID.
+		var minPT struct {
+			ID uint64 `json:"id"`
+		}
+		if json.Unmarshal([]byte(ptHeader), &minPT) == nil && minPT.ID > 0 {
+			currentSessionID = minPT.ID
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -829,7 +914,11 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		if currentSessionID > 0 {
+			db.Raw("SELECT id, series, token FROM sessions WHERE id = ? AND userid = ?", currentSessionID, myid).Scan(&sessionRow)
+		} else {
+			db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -918,6 +1007,11 @@ func GetSession(c *fiber.Ctx) error {
 		var wg2 sync.WaitGroup
 
 		// --- Pending messages: active groups split by held, inactive all → pendingother ---
+		// Only count messages where contentcheck_checked_at IS NOT NULL: the content
+		// check has run and left the message pending (moderated user/group or flagged
+		// content). Messages that have not yet been content-checked may still be
+		// auto-approved and must not trigger a phantom notification or inflate the
+		// badge count. Discourse #9481 post 563.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
@@ -927,7 +1021,8 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NULL "+
+					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&pending)
 				// Held pending in active groups → pendingother (blue).
 				var heldActive int64
@@ -935,7 +1030,8 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NOT NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NOT NULL "+
+					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&heldActive)
 				pendingother += heldActive
 			}
@@ -946,7 +1042,8 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL "+
+					"AND mg.contentcheck_checked_at IS NOT NULL",
 					inactiveGroupIDs, utils.COLLECTION_PENDING).Scan(&inact)
 				pendingother += inact
 			}
@@ -957,10 +1054,16 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
+				// Match the Pending review list (message_list.go): Spam-collection
+				// messages older than 30 days are aged out of the queue, so they
+				// must not be counted in the badge either — otherwise the badge
+				// shows a total with no visible, clickable home (an inflated
+				// hamburger count and no red left-menu count).
 				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
-					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL",
+					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
+					"AND mg.arrival >= (NOW() - INTERVAL 30 DAY)",
 					activeGroupIDs, utils.COLLECTION_SPAM).Scan(&spam)
 			}
 		}()
@@ -1070,11 +1173,16 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Spammer pending counts (system-wide, Admin/Support only) ---
+		// --- Spammer pending counts (SpamAdmin permission only) ---
+		// Gated by the SpamAdmin permission (granted via the teams table), to
+		// match the Spammers page (spammers.go) and the frontend's
+		// hasPermissionSpamAdmin. Systemrole=Support is too broad: a Support
+		// user not on the spam team can't see the Spammers menu, so counting
+		// these would inflate the badge with no visible, clickable home.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if userRow.Systemrole == utils.SYSTEMROLE_ADMIN || userRow.Systemrole == utils.SYSTEMROLE_SUPPORT {
+			if auth.HasPermission(myid, auth.PERM_SPAM_ADMIN) {
 				db.Raw("SELECT COUNT(*) FROM spam_users WHERE collection = ?", utils.SPAM_COLLECTION_PENDING_ADD).Scan(&spammerpendingadd)
 				db.Raw("SELECT COUNT(*) FROM spam_users WHERE collection = ?", utils.SPAM_COLLECTION_PENDING_REMOVE).Scan(&spammerpendingremove)
 			}
@@ -1247,8 +1355,11 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Housekeeping tasks: overdue or failed (admin/support) ---
-		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN || userRow.Systemrole == utils.SYSTEMROLE_SUPPORT {
+		// --- Housekeeping tasks: overdue or failed (Admin only) ---
+		// Housekeeping is a SysAdmin function — Admin systemrole only. Support
+		// users don't see the SysAdmin housekeeping list, so counting it for
+		// them inflates the badge with no visible, clickable home.
+		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
@@ -1538,7 +1649,7 @@ func PatchSession(c *fiber.Ctx) error {
 		Email              *string             `json:"email,omitempty"`
 		Source             *string             `json:"source,omitempty"`
 		Deleted            json.RawMessage     `json:"deleted,omitempty"`
-		Marketingconsent   *bool               `json:"marketingconsent,omitempty"`
+		Marketingconsent   *FlexBool           `json:"marketingconsent,omitempty"`
 		Key                *string             `json:"key,omitempty"`
 		Modtools           FlexBool            `json:"modtools,omitempty"`
 	}
@@ -1547,6 +1658,7 @@ func PatchSession(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
+
 
 	db := database.DBConn
 
@@ -1678,7 +1790,7 @@ func PatchSession(c *fiber.Ctx) error {
 
 	if req.Marketingconsent != nil {
 		mc := 0
-		if *req.Marketingconsent {
+		if req.Marketingconsent.Bool() {
 			mc = 1
 		}
 		setClauses = append(setClauses, "marketingconsent = ?")
@@ -1731,9 +1843,16 @@ func PatchSession(c *fiber.Ctx) error {
 			}
 			var pushSub PushSub
 			if err := json.Unmarshal(*req.Notifications.Push, &pushSub); err == nil && pushSub.Type != "" {
+				// subscription has a UNIQUE constraint and a push token (FCM/APNs)
+				// identifies a device install, not a user. When a device switches
+				// accounts the same token re-registers, so we MUST reassign userid
+				// on conflict — otherwise the row stays bound to whoever logged in
+				// first and the current user gets no push (and pushes for the old
+				// user are delivered to this device). Reassign userid/type/apptype
+				// to the currently-logged-in user.
 				db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
-					"ON DUPLICATE KEY UPDATE type = ?, apptype = ?",
-					myid, pushSub.Type, pushSub.Subscription, apptype, pushSub.Type, apptype)
+					"ON DUPLICATE KEY UPDATE userid = ?, type = ?, apptype = ?",
+					myid, pushSub.Type, pushSub.Subscription, apptype, myid, pushSub.Type, apptype)
 			}
 		}()
 	}
@@ -1780,7 +1899,52 @@ func DeleteSession(c *fiber.Ctx) error {
 
 	if myid > 0 {
 		db := database.DBConn
-		db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
+
+		// Log out the current login SERIES only (Discourse #9748: logout was
+		// clearing every session, so logging out of Freegle also logged you out
+		// of ModTools and every other device). Freegle and ModTools each get
+		// their own random series at login, so deleting by series closes only the
+		// current app and leaves the other app logged in.
+		//
+		// Identify the current session ROW authoritatively, then resolve its
+		// series SERVER-SIDE. Do NOT trust a series value supplied by the client:
+		// a persistent token minted before the 53-bit series mask (or otherwise
+		// stale) can carry a 0 / wrong series, which previously dropped logout
+		// into a "delete everything" fallback — the actual cause of #9748 still
+		// failing. The session row id, by contrast, is a small stable integer
+		// that survives a JSON round-trip through the browser intact.
+		var sessionId uint64
+
+		// Prefer the JWT (server-verified). It carries the session row id.
+		if _, sid, _ := user.GetJWTFromRequest(c); sid > 0 {
+			sessionId = sid
+		}
+
+		// Fall back to the persistent token's id (NOT its series).
+		if sessionId == 0 {
+			if persistent := c.Get("Authorization2"); persistent != "" {
+				var pt auth.PersistentToken
+				if json.Unmarshal([]byte(persistent), &pt) == nil {
+					sessionId = pt.ID
+				}
+			}
+		}
+
+		var series uint64
+		if sessionId > 0 {
+			db.Raw("SELECT series FROM sessions WHERE id = ? AND userid = ?", sessionId, myid).Scan(&series)
+		}
+
+		if series > 0 {
+			// Close the whole current login series (all its tabs/token rotations).
+			db.Exec("DELETE FROM sessions WHERE userid = ? AND series = ?", myid, series)
+		} else if sessionId > 0 {
+			// Series unavailable but the row is known — delete just that row.
+			db.Exec("DELETE FROM sessions WHERE id = ? AND userid = ?", sessionId, myid)
+		}
+		// If the current session cannot be identified at all, do NOT delete every
+		// session for the user. A logout that can't scope itself must no-op rather
+		// than evict the user from every device and app (Discourse #9748).
 	}
 
 	return c.JSON(fiber.Map{

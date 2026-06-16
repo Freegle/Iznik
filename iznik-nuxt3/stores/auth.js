@@ -71,6 +71,7 @@ export const useAuthStore = defineStore({
             push: true,
             facebook: true,
             app: true,
+            dailypostspush: true,
           }
         }
 
@@ -252,12 +253,16 @@ export const useAuthStore = defineStore({
       let worked = false
 
       try {
-        await this.$api.session.lostPassword(email)
-        worked = true
+        const ret = await this.$api.session.lostPassword(email)
+        // Only report success when the backend actually queued a reset email.
+        // ret:0 = email queued. ret:1 = social-login-only account (returned as
+        // HTTP 200 with socialSignin:true) — no reset email is sent, so we must
+        // not claim one was.
+        worked = ret?.ret === 0
       } catch (e) {
         if (e.response?.status === 404) {
+          // Unknown email (ret:2): no email sent, so worked stays false.
           unknown = true
-          worked = true
         } else {
           console.log('Lost password error', e)
         }
@@ -495,28 +500,74 @@ export const useAuthStore = defineStore({
     },
     async savePushId() {
       const mobileStore = useMobileStore()
-      if (mobileStore.mobilePushId === null)
-        console.log('******************* mobileStore.mobilePushId===null')
-      // Tell server our push notification id if logged in
+      let dbg = null
+      try {
+        dbg = useDebugStore()
+      } catch (e) {}
+      // Detailed instrumentation: we had iOS devices obtain an FCM token but no
+      // FCMIOS row ever appear server-side. Log every guard decision, the
+      // outgoing PATCH, and any thrown error (the save() call below was
+      // previously un-try/catch'd, so on the un-awaited registration-listener
+      // path a rejection was swallowed silently).
+      dbg?.info('savePushId called', {
+        userPresent: this.user !== null,
+        userId: this.user?.id ?? null,
+        mobilePushIdType: typeof mobileStore.mobilePushId,
+        mobilePushIdLen:
+          typeof mobileStore.mobilePushId === 'string'
+            ? mobileStore.mobilePushId.length
+            : 0,
+        isiOS: mobileStore.isiOS,
+        alreadyAccepted:
+          mobileStore.acceptedMobilePushId === mobileStore.mobilePushId,
+      })
+      // Tell server our push notification id if logged in.
+      //
+      // We deliberately do NOT suppress on acceptedMobilePushId any more. The old
+      // optimisation only sent the token to the server the first time it saw a
+      // given token, then never again. That left no way to recover if the row
+      // never persisted, or was later deleted server-side (e.g. a push send hit a
+      // transiently-invalid token and pruned the subscription): the client kept
+      // thinking it was registered and never re-asserted it. Re-sending on every
+      // launch/resume is a cheap idempotent upsert (INSERT ... ON DUPLICATE KEY
+      // UPDATE keyed on subscription) and makes registration self-healing — which
+      // is also the behaviour reRegisterPush-on-resume was added to provide.
       if (
         this.user !== null &&
         typeof mobileStore.mobilePushId === 'string' &&
         mobileStore.mobilePushId.length > 0
       ) {
-        if (mobileStore.acceptedMobilePushId !== mobileStore.mobilePushId) {
-          const params = {
-            notifications: {
-              push: {
-                type: mobileStore.isiOS ? 'FCMIOS' : 'FCMAndroid',
-                subscription: mobileStore.mobilePushId,
-                deviceuserinfo: mobileStore.deviceuserinfo,
-              },
+        const params = {
+          notifications: {
+            push: {
+              type: mobileStore.isiOS ? 'FCMIOS' : 'FCMAndroid',
+              subscription: mobileStore.mobilePushId,
+              deviceuserinfo: mobileStore.deviceuserinfo,
             },
-          }
-          await this.$api.session.save(params)
-          mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
-          console.log('savePushId: saved OK')
+          },
         }
+        dbg?.info('savePushId: sending PATCH /session', {
+          type: params.notifications.push.type,
+          subLen: params.notifications.push.subscription.length,
+        })
+        try {
+          const resp = await this.$api.session.save(params)
+          mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
+          dbg?.info('savePushId: saved OK', {
+            resp:
+              typeof resp === 'object'
+                ? JSON.stringify(resp).slice(0, 200)
+                : String(resp),
+          })
+          console.log('savePushId: saved OK', resp)
+        } catch (e) {
+          dbg?.info('savePushId: save FAILED', {
+            error: e?.message ?? String(e),
+          })
+          console.log('savePushId: save FAILED', e)
+        }
+      } else {
+        dbg?.info('savePushId: skipped — not logged in or no token')
       }
     },
     // Remember that we've logged out

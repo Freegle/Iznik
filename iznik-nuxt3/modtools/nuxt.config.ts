@@ -50,6 +50,7 @@ export default defineNuxtConfig({
       // the right value regardless of build env.
       TUS_UPLOADER: 'https://uploads.ilovefreegle.org:8080',
       IMAGE_DELIVERY: 'https://delivery.ilovefreegle.org',
+      SPATIAL_SERVER_URL: process.env.SPATIAL_SERVER_URL || 'http://localhost:8196',
     },
   },
   vite: {

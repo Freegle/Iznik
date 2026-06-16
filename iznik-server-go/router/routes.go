@@ -73,6 +73,7 @@ import (
 	"github.com/freegle/iznik-server-go/team"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/userdump"
 	"github.com/freegle/iznik-server-go/visualise"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
@@ -208,6 +209,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/admin/ai-images/:id/regenerate", aiimage.Regenerate)
 		rg.Post("/admin/ai-images/:id/accept", aiimage.Accept)
 		rg.Post("/admin/ai-images/:id/keep", aiimage.KeepCurrent)
+		rg.Post("/admin/ai-images/:id/suppress", aiimage.Suppress)
 
 		// Authority Search
 		// @Router /authority [get]
@@ -1263,6 +1265,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/clicks", emailtracking.TopClickedLinks)
 
+		// Digest Click Positions (authenticated, admin only)
+		// @Router /email/stats/digestpositions [get]
+		// @Summary Get digest click-through rate by post position
+		// @Description Returns click-through rate per post position within unified digests, for analysing how position affects engagement
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Param type query string false "Email type filter (default: all UnifiedDigest* types)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
+
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
 		// @Summary Get email tracking for a user
@@ -1636,6 +1653,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} systemlogs.CountsResponse
 		systemLogsGroup.Get("/counts", systemlogs.GetLogCounts)
+
+		// User support data dump (Support/Admin only) — streams a per-user SQLite
+		// database of every user-linked table plus their Loki logs and Sentry issues.
+		rg.Get("/modtools/user/:id/dump", userdump.GetUserDump)
 	}
 
 	// Delivery routes (public - no auth required for email client access)
@@ -1675,6 +1696,33 @@ func SetupRoutes(app *fiber.App) {
 	// @Param s query integer false "Scroll percentage"
 	// @Success 302 {string} string "Redirect"
 	delivery.Get("/i/:id", emailtracking.Image)
+
+	// Compact redirect — reconstructs an internal destination from type+id.
+	// MORE path segments than /r/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/r/{ref}/{type}/{idenc}/{pos} [get]
+	// @Summary Compact delivery redirect
+	// @Description Reconstructs an internal destination URL from type+id and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (m, s, g)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect"
+	delivery.Get("/r/:ref/:type/:idenc/:pos", emailtracking.ClickCompact)
+
+	// Compact image — reconstructs a delivery URL from type+id+preset.
+	// MORE path segments than /i/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} [get]
+	// @Summary Compact delivery image
+	// @Description Reconstructs an image delivery URL from type+id+preset and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (t, u)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param preset path int true "Dimension preset (0,1,2)"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect to image"
+	delivery.Get("/i/:ref/:type/:idenc/:preset/:pos", emailtracking.ImageCompact)
 
 	// Note: MDN read receipts come as emails and are processed by the incoming mail handler.
 	// The emailtracking.RecordMDNOpen() function can be called via internal API.
@@ -1772,4 +1820,22 @@ func SetupRoutes(app *fiber.App) {
 	// @Param body body object true "Message body with 'message' field"
 	// @Success 200 {object} amp.ReplyResponse
 	ampGroup.Post("/digest/:id/reply", amp.PostDigestReply)
+
+	// Shared digest reply — identity (mid/rt/exp/uid) and message come from the
+	// FORM BODY, so one <amp-form> in the digest template replies to any post.
+	// Fewer path segments than /digest/:id/reply, so it's a distinct route.
+	// @Router /amp/digest/reply [post]
+	// @Summary Post reply to digest email post (shared form)
+	// @Description Submits an inline reply to a digest-email post; identity in the body
+	// @Tags AMP
+	// @Accept x-www-form-urlencoded
+	// @Produce json
+	// @Param mid formData int true "Message ID (the post being replied to)"
+	// @Param rt formData string true "Token (HMAC)"
+	// @Param uid formData int true "User ID"
+	// @Param exp formData int true "Token expiry timestamp"
+	// @Param tid formData int false "Email tracking ID for analytics"
+	// @Param message formData string true "Reply text"
+	// @Success 200 {object} amp.ReplyResponse
+	ampGroup.Post("/digest/reply", amp.PostDigestReplyShared)
 }

@@ -8,12 +8,13 @@ import {
   upsertDiscourseBug,
   getDiscourseBug,
   queueDiscourseDraft,
+  recordPostedReply,
   listPendingDrafts,
   cancelDraftsForBug,
   reopenBugAfterRejection,
   markDiscourseBugFixed,
 } from '../db/index'
-import { SCHEMA_SQL, MIGRATION_V2_SQL, MIGRATION_V3_SQL } from '../db/schema'
+import { SCHEMA_SQL, MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V5_SQL } from '../db/schema'
 
 describe('Database Helpers', () => {
   let testDb: Database.Database
@@ -41,6 +42,44 @@ describe('Database Helpers', () => {
       kvSet(testDb, 'test_key', 'test_value')
       const result = kvGet(testDb, 'test_key')
       expect(result).toBe('test_value')
+    })
+  })
+
+  describe('MIGRATION_V5_SQL — feature-request state', () => {
+    // Reproduce a DB stuck at schema_version 4: discourse_bug with the OLD
+    // CHECK constraint that does NOT allow 'feature-request'.
+    const OLD_DISCOURSE_BUG = `
+      CREATE TABLE discourse_bug (
+        topic INTEGER NOT NULL, post INTEGER NOT NULL, topic_title TEXT, reporter TEXT,
+        excerpt TEXT,
+        state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','investigating','fix-queued','deferred','fixed','confirmed','off-topic','duplicate')),
+        pr_number INTEGER, reason TEXT,
+        first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        feature_area TEXT, fixed_at TEXT, deployed_at TEXT,
+        pr_rejections INTEGER NOT NULL DEFAULT 0, symptom_tags TEXT, code_area TEXT,
+        PRIMARY KEY (topic, post)
+      );`
+
+    it('a v4-era table rejects feature-request before migration, accepts it after', () => {
+      const v4 = new Database(':memory:')
+      v4.exec(OLD_DISCOURSE_BUG)
+      // Pre-migration: feature-request violates the CHECK constraint.
+      expect(() =>
+        v4.prepare("INSERT INTO discourse_bug (topic, post, state) VALUES (1, 1, 'feature-request')").run()
+      ).toThrow(/CHECK constraint/)
+      // A normal row survives the rebuild.
+      v4.prepare("INSERT INTO discourse_bug (topic, post, state) VALUES (2, 2, 'open')").run()
+
+      v4.exec(MIGRATION_V5_SQL)
+
+      // Post-migration: feature-request is accepted, existing data preserved.
+      expect(() =>
+        v4.prepare("INSERT INTO discourse_bug (topic, post, state) VALUES (1, 1, 'feature-request')").run()
+      ).not.toThrow()
+      const kept = v4.prepare('SELECT state FROM discourse_bug WHERE topic = 2 AND post = 2').get() as { state: string }
+      expect(kept.state).toBe('open')
+      v4.close()
     })
 
     it('should return null for non-existent key', () => {
@@ -216,6 +255,46 @@ describe('Database Helpers', () => {
       expect(id2).not.toBe(id1)
       const pendingCount = (testDb.prepare('SELECT COUNT(*) AS c FROM discourse_draft WHERE posted_at IS NULL AND rejected_at IS NULL').get() as { c: number }).c
       expect(pendingCount).toBe(1)
+    })
+  })
+
+  describe('recordPostedReply', () => {
+    it('records an auto-posted reply as already posted (not pending)', () => {
+      const id = recordPostedReply(testDb, {
+        topic: 500,
+        post: 4,
+        username: 'edward',
+        quote: 'original report',
+        body: 'AI Edward: possible fix applied, please retest and report back',
+        prNumber: 999,
+        prUrl: 'https://github.com/Freegle/Iznik/pull/999',
+      })
+      expect(id).toBeGreaterThan(0)
+
+      // It must NOT appear in the pending-drafts queue (it's already posted).
+      expect(listPendingDrafts(testDb).length).toBe(0)
+
+      const row = testDb.prepare('SELECT * FROM discourse_draft WHERE id = ?').get(id) as {
+        posted_at: string | null; approved_at: string | null; pr_number: number | null; body: string
+      }
+      expect(row.posted_at).not.toBeNull()
+      expect(row.approved_at).not.toBeNull()
+      expect(row.pr_number).toBe(999)
+      expect(row.body).toContain('possible fix applied')
+    })
+
+    it('acts as a dedup record so queueDiscourseDraft skips an already-posted bug', () => {
+      recordPostedReply(testDb, {
+        topic: 501, post: 5, username: 'alice', quote: 'q',
+        body: 'AI Edward: possible fix applied, please retest and report back',
+      })
+      // A subsequent queue attempt for the same topic/post should not add a
+      // pending draft — but note the auto-poster's own guard checks ANY existing
+      // row (posted or pending), which this row satisfies.
+      const anyExisting = testDb.prepare(
+        'SELECT id FROM discourse_draft WHERE topic = ? AND post = ?'
+      ).get(501, 5)
+      expect(anyExisting).toBeTruthy()
     })
   })
 

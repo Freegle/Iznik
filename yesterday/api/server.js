@@ -87,6 +87,14 @@ app.get('/api/backups', async (req, res) => {
     // Get list of backups with size and date
     const { stdout } = await execAsync(`gsutil ls -l "${bucket}/iznik-*.xbstream"`);
 
+    // Dates that have an LVM thin snapshot are instantly switchable (~1 min)
+    // rather than a full restore (~1-2h). The host writes this manifest after
+    // each prime/refresh; absent file => no LVM, everything is a full restore.
+    let instantDates = [];
+    try {
+      instantDates = (JSON.parse(require('fs').readFileSync('/data/lvm-snapshots.json', 'utf8')).dates) || [];
+    } catch (e) { /* no manifest yet */ }
+
     const backups = [];
     const lines = stdout.trim().split('\n');
 
@@ -109,7 +117,8 @@ app.get('/api/backups', async (req, res) => {
             size: size,
             size_human: formatSize(size),
             timestamp: dateStr,
-            loaded: await isBackupLoaded(backupDate)
+            loaded: await isBackupLoaded(backupDate),
+            instant: instantDates.includes(backupDate)
           });
         }
       }

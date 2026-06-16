@@ -65,7 +65,7 @@ class WelcomeReviewService
                 $sent++;
 
                 if (!$dryRun) {
-                    Mail::send(new WelcomeReviewMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new WelcomeReviewMail(
                         recipientEmail: $email,
                         groupName: $groupName,
                         welcomeContent: $group->welcomemail,

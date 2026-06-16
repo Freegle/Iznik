@@ -27,6 +27,37 @@ class ChatProcessService
     private const REVIEW_SPAM = 'Spam';
     private const REVIEW_LAST = 'Last';
 
+    /**
+     * Map a ContentCheckService check identifier to the specific chat_messages
+     * `reportreason` enum value, so the modtools review UI can tell the moderator
+     * WHY a message was held instead of the unhelpful "failed spam checks, but we
+     * don't have any more information about why". Every value here is a member of
+     * the reportreason enum and is already rendered with friendly text by
+     * ModChatReview.vue. Anything unmapped falls back to the generic 'Spam'.
+     */
+    private const CHECK_TO_REPORTREASON = [
+        ContentCheckService::CHECK_CONCERN_KEYWORD => 'WorryWord',
+        ContentCheckService::CHECK_PER_GROUP_WORRY => 'WorryWord',
+        ContentCheckService::CHECK_MONEY           => 'Money',
+        ContentCheckService::CHECK_URL             => 'Link',
+        ContentCheckService::CHECK_MESSAGING_LINK  => 'Link',
+        ContentCheckService::CHECK_SPAMHAUS_DBL    => 'URL on DBL',
+        ContentCheckService::CHECK_EMAIL_ADDRESS   => 'Email',
+        ContentCheckService::CHECK_LANGUAGE        => 'Language',
+        ContentCheckService::CHECK_KNOWN_SPAMMER   => 'Referenced known spammer',
+        ContentCheckService::CHECK_GREETING_SPAM   => 'Greetings spam',
+    ];
+
+    /**
+     * Resolve the specific reportreason for a checkChatMessage() result.
+     * Returns the generic 'Spam' for a null result or an unmapped check.
+     */
+    private function reportReasonForCheck(?array $result): string
+    {
+        $check = $result['check'] ?? null;
+        return self::CHECK_TO_REPORTREASON[$check] ?? self::REVIEW_SPAM;
+    }
+
     private ContentCheckService $contentCheck;
 
     public function __construct(?ContentCheckService $contentCheck = null)
@@ -131,19 +162,31 @@ class ChatProcessService
                 // Moderated members' user-text messages and held any that matched
                 // a concern keyword / link / phone number etc. That scan was lost
                 // when chat_process.php was migrated to this service, so restore it.
-                // Any hit maps to reportreason 'Spam'; the review UI re-derives the
-                // specific reason from the message text.
-                if ($this->contentCheck->checkChatMessage((string) ($message->message ?? '')) !== null) {
+                // Map the specific check that fired to its reportreason enum
+                // value, so the review UI tells the moderator WHY (e.g. "It looks
+                // like it refers to money.") rather than "...no more information
+                // about why". Unmapped checks fall back to the generic 'Spam'.
+                $checkResult = $this->contentCheck->checkChatMessage((string) ($message->message ?? ''));
+                if ($checkResult !== null) {
                     $review = 1;
-                    $reviewreason = self::REVIEW_SPAM;
+                    $reviewreason = $this->reportReasonForCheck($checkResult);
                 }
             }
 
-            // If the previous message in this chat is held for review, hold this one too.
+            // If the PREVIOUS message in this chat is held for review, hold this
+            // one too. Use id < $id, not id != $id: V1's chat_process.php was a
+            // continuous daemon that processed each message as it arrived, so the
+            // newest other row WAS the previous one. This service processes in
+            // batches (processIncoming orders by id asc), so when a burst of
+            // messages is pending, "newest other row" is a LATER, not-yet-processed
+            // message (reviewrequired defaults to 0) and the hold chain silently
+            // breaks — subsequent messages from a member already under review get
+            // delivered (Discourse #9656). Looking strictly backwards at the
+            // immediately preceding (already-processed) message restores the chain.
             if (!$review) {
                 $lastReview = DB::table('chat_messages')
                     ->where('chatid', $chatid)
-                    ->where('id', '!=', $id)
+                    ->where('id', '<', $id)
                     ->orderByDesc('id')
                     ->value('reviewrequired');
 

@@ -8,6 +8,7 @@ const mockVolunteeringById = vi.fn()
 const mockVolunteeringFetch = vi.fn()
 const mockVolunteeringAdd = vi.fn()
 const mockVolunteeringEdit = vi.fn()
+const mockVolunteeringDelete = vi.fn()
 
 vi.mock('~/stores/volunteering', () => ({
   useVolunteeringStore: () => ({
@@ -15,6 +16,7 @@ vi.mock('~/stores/volunteering', () => ({
     fetch: mockVolunteeringFetch,
     add: mockVolunteeringAdd,
     edit: mockVolunteeringEdit,
+    delete: mockVolunteeringDelete,
   }),
 }))
 
@@ -302,6 +304,13 @@ describe('VolunteerOpportunityModal', () => {
             template: '<img class="our-uploaded-image" :src="src" />',
             props: ['src', 'modifiers', 'alt', 'width', 'height', 'class'],
           },
+          ConfirmModal: {
+            name: 'ConfirmModal',
+            template:
+              '<div class="confirm-modal"><button class="confirm-btn" @click="$emit(\'confirm\')">Confirm</button></div>',
+            props: ['title', 'message'],
+            emits: ['confirm', 'hidden'],
+          },
         },
       },
     })
@@ -310,6 +319,7 @@ describe('VolunteerOpportunityModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockAuthUser.value = { id: 1 }
+    mockVolunteeringDelete.mockResolvedValue()
   })
 
   describe('rendering', () => {
@@ -461,6 +471,44 @@ describe('VolunteerOpportunityModal', () => {
       createWrapper()
       await flushPromises()
       expect(mockVolunteeringFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('delete flow', () => {
+    // AssertFlip 3b: clicking Delete must show a confirm modal, not delete immediately.
+    // This test FAILS on buggy code (no confirm modal, delete fired at once)
+    // and PASSES after the fix (confirm modal shown, delete not called yet).
+    it('clicking Delete shows a confirmation modal before deleting', async () => {
+      const wrapper = createWrapper({ id: 123 })
+      await flushPromises()
+
+      const deleteButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Delete'))
+      expect(deleteButton).toBeDefined()
+      await deleteButton.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.confirm-modal').exists()).toBe(true)
+      expect(mockVolunteeringDelete).not.toHaveBeenCalled()
+    })
+
+    it('confirming the dialog calls store delete and hides the modal', async () => {
+      const wrapper = createWrapper({ id: 123 })
+      await flushPromises()
+
+      const deleteButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Delete'))
+      await deleteButton.trigger('click')
+      await flushPromises()
+
+      const confirmBtn = wrapper.find('.confirm-btn')
+      await confirmBtn.trigger('click')
+      await flushPromises()
+
+      expect(mockVolunteeringDelete).toHaveBeenCalledWith(123)
+      expect(mockHide).toHaveBeenCalled()
     })
   })
 })

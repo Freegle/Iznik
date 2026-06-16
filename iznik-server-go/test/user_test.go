@@ -1814,6 +1814,129 @@ func TestPostUserUnbounceNotAdmin(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// TestPostUserUnsubscribeBySupportRemovesMembership verifies that a Support user clicking
+// "Unsubscribe" in the Support tools removes the target user's memberships and marks their
+// account as deleted (limbo). Regression: POST /user action=Unsubscribe was missing from
+// PostUser's switch, returning "Unknown action" so nothing happened (Discourse #9738 post 1).
+func TestPostUserUnsubscribeBySupportRemovesMembership(t *testing.T) {
+	prefix := uniquePrefix("unsub_support")
+	db := database.DBConn
+
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Verify member exists before unsubscribe.
+	var memberBefore int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		targetID, groupID).Scan(&memberBefore)
+	assert.Equal(t, int64(1), memberBefore, "setup: target must be a member before unsubscribe")
+
+	payload := map[string]interface{}{
+		"action": "Unsubscribe",
+		"id":     targetID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+supportToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Membership must be removed.
+	var memberAfter int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		targetID, groupID).Scan(&memberAfter)
+	assert.Equal(t, int64(0), memberAfter, "Unsubscribe must remove the approved membership")
+
+	// User account must be in limbo (deleted set).
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", targetID).Scan(&deleted)
+	assert.NotNil(t, deleted, "Unsubscribe must mark the user account as deleted (limbo)")
+
+	// A log entry must exist for the unsubscribe.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'User' AND subtype = 'Deleted' AND user = ? AND byuser = ?",
+		targetID, supportID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Unsubscribe must create a User/Deleted log entry")
+}
+
+// TestLimboUserLogsGroupLeft verifies that self-deleting an account (DELETE /user)
+// writes a Group/Left log entry for each group the user belonged to.
+// Regression guard for Discourse #9678 post 2: V1 parity requires per-group Left logs.
+func TestLimboUserLogsGroupLeft(t *testing.T) {
+	prefix := uniquePrefix("limbo_grplft")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	req := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Group' AND subtype = 'Left' AND user = ? AND groupid = ?",
+		userID, groupID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "account deletion must log Group/Left for each group the user belonged to (V1 parity)")
+}
+
+// TestUnsubscribeLogsGroupLeft verifies that the Support-tools Unsubscribe action
+// also writes a Group/Left log entry per group (same softLimboUser path).
+// Regression guard for Discourse #9678 post 2.
+func TestUnsubscribeLogsGroupLeft(t *testing.T) {
+	prefix := uniquePrefix("unsub_grplft")
+	db := database.DBConn
+
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	payload := map[string]interface{}{"action": "Unsubscribe", "id": targetID}
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/user?jwt="+supportToken, bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Group' AND subtype = 'Left' AND user = ? AND groupid = ?",
+		targetID, groupID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Unsubscribe must log Group/Left for each group the user belonged to (V1 parity)")
+}
+
+// TestPostUserUnsubscribeNonSupportForbidden verifies that a regular user cannot unsubscribe
+// another user via POST /user action=Unsubscribe.
+func TestPostUserUnsubscribeNonSupportForbidden(t *testing.T) {
+	prefix := uniquePrefix("unsub_noperm")
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, callerToken := CreateTestSession(t, callerID)
+
+	payload := map[string]interface{}{
+		"action": "Unsubscribe",
+		"id":     targetID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+callerToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
 func TestPostUserMerge(t *testing.T) {
 	prefix := uniquePrefix("merge")
 	db := database.DBConn

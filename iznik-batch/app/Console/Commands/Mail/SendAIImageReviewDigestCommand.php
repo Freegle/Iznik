@@ -69,7 +69,7 @@ class SendAIImageReviewDigestCommand extends Command
             $topProblems,
         );
 
-        Mail::send($mail);
+        app(\App\Services\EmailSpoolerService::class)->spool($mail);
 
         $this->info('Digest email sent.');
 

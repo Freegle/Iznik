@@ -96,6 +96,30 @@ func TestGetWords_OFFERtype(t *testing.T) {
 	assert.NotContains(t, result, "offer")
 }
 
+func TestGetWords_SingleRetained(t *testing.T) {
+	// "single" must NOT be filtered — "single bed" and "double bed" are different
+	// items; dropping size qualifiers makes searches ambiguous.
+	result := GetWords("single bed")
+	assert.Contains(t, result, "single")
+	assert.Contains(t, result, "bed")
+}
+
+func TestGetWords_DoubleRetained(t *testing.T) {
+	// "double" must NOT be filtered — same reason as "single".
+	result := GetWords("double mattress")
+	assert.Contains(t, result, "double")
+	assert.Contains(t, result, "mattress")
+}
+
+func TestGetWords_DoubleBed_BothWords(t *testing.T) {
+	// "double bed" → both words retained so the index can rank double beds
+	// above single beds when wordmatch=2 vs wordmatch=1.
+	result := GetWords("double bed")
+	assert.Equal(t, 2, len(result), "expected exactly [double bed], got %v", result)
+	assert.Contains(t, result, "double")
+	assert.Contains(t, result, "bed")
+}
+
 func TestGetWords_Tabs_And_Newlines(t *testing.T) {
 	result := GetWords("sofa\tchair\ndesk")
 	assert.Contains(t, result, "sofa")

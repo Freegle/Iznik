@@ -559,6 +559,39 @@ class ChatNotificationTest extends TestCase
         $this->assertStringContainsString('Previous message', $html);
     }
 
+    public function test_chat_notification_formats_dates_in_uk_local_time(): void
+    {
+        // Regression: chat notification timestamps were rendered in UTC, so a message
+        // sent at 10:32 BST showed as 9:32. Dates are stored in UTC and must be
+        // converted to Europe/London (which honours BST) before formatting.
+        ['user1' => $user1, 'user2' => $user2, 'room' => $room] = $this->createUser2UserChatSetup();
+
+        // 09:32 UTC on a summer date is 10:32 BST (UTC+1).
+        $prevMessage = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Summer time message',
+            'date' => \Carbon\Carbon::create(2026, 6, 15, 9, 32, 0, 'UTC'),
+        ]);
+
+        $message = $this->createTestChatMessage($room, $user2, [
+            'message' => 'Latest message',
+        ]);
+
+        $mail = new ChatNotification(
+            $user1,
+            $user2,
+            $room,
+            $message,
+            ChatRoom::TYPE_USER2USER,
+            collect([$prevMessage])
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // Must show UK local time (10:32), not the stored UTC time (9:32).
+        $this->assertStringContainsString('10:32 am', $html, 'Chat notification dates should be shown in UK local time (BST), not UTC');
+    }
+
     public function test_chat_notification_uses_regarding_instead_of_re(): void
     {
         $user1 = $this->createTestUser();

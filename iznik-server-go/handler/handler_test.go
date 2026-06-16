@@ -192,23 +192,26 @@ func TestGeoLocation_FailStatus(t *testing.T) {
 	assert.Equal(t, "enter an ip", got["message"])
 }
 
+// errNetworkTransport always returns a connection-refused error, giving
+// TestGeoLocation_NetworkError a deterministic failure without relying on
+// a short timeout that may expire before or after the dial completes.
+type errNetworkTransport struct{}
+
+func (errNetworkTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
+}
+
 // ---------------------------------------------------------------------------
 // GeoLocation — network error (cannot reach upstream)
 // ---------------------------------------------------------------------------
 
 func TestGeoLocation_NetworkError(t *testing.T) {
-	// Use a client that always refuses connections.
-	geoClient = &http.Client{
-		Transport: &http.Transport{
-			// Dial to an address that immediately refuses.
-		},
-		Timeout: 1 * time.Millisecond,
-	}
+	// Use a transport that deterministically fails — a short timeout is flaky
+	// because on a fast CI network ip-api.com can respond within 1ms.
+	geoClient = &http.Client{Transport: errNetworkTransport{}}
 	t.Cleanup(func() { geoClient = &http.Client{Timeout: 5 * time.Second} })
 
-	app := fiber.New()
-	app.Get("/:ip", GeoLocation)
-
+	app := newGeoApp()
 	req := httptest.NewRequest("GET", "/1.2.3.4", nil)
 	resp, err := app.Test(req, 2000) // 2s test timeout
 	assert.NoError(t, err)

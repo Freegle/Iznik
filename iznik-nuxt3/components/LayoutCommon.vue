@@ -15,10 +15,12 @@
       <client-only>
         <div v-if="allowAd">
           <div
-            class="sticky w-100 d-flex flex-column"
+            class="sticky w-100 flex-column"
             :class="{
+              'd-flex': !replyOverlayOpen,
+              'd-none': replyOverlayOpen,
               allowClicks: !stickyAdRendered,
-              'bg-white': stickyAdRendered,
+              'sticky-ad-zone': stickyAdRendered,
             }"
           >
             <div
@@ -186,6 +188,9 @@ const route = useRoute()
 
 // Computed properties
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+// Hide the sticky ad/jobs banner while the chat-style reply pane is open so it
+// doesn't overlap the full-screen overlay.
+const replyOverlayOpen = computed(() => miscStore.replyOverlayOpen)
 const routePath = computed(() => route?.path)
 const allowAd = computed(() => {
   // We don't want to show the ad on the landing page when logged out - looks tacky.
@@ -421,6 +426,14 @@ onBeforeUnmount(() => {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/sticky-banner.scss';
+
+/* Light-grey background behind the sticky bottom ad (the "drop ads" / job ads)
+   so the advertising zone reads as visually distinct from the white bottom nav
+   bar sitting above it — otherwise both are white and the bar doesn't stand out.
+   #E9ECEF is $color-gray-3 (used by hex to avoid a colour-var import here). */
+.sticky-ad-zone {
+  background-color: #e9ecef;
+}
 
 html {
   box-sizing: border-box;

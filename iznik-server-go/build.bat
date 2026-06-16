@@ -86,7 +86,11 @@ echo ✅ Swagger specification validation passed
 :BUILD
 echo Building application...
 set GOBIN=%CD%\functions
-go install main.go
+REM Bake the git commit into the binary so /api/version reports the live deploy.
+REM Import path must match the go.mod replace directive, not the bare module name.
+for /f %%i in ('git rev-parse --short HEAD 2^>nul') do set BUILD_COMMIT=%%i
+if "%BUILD_COMMIT%"=="" set BUILD_COMMIT=unknown
+go install -ldflags "-X 'github.com/freegle/iznik-server-go/status.GitCommit=%BUILD_COMMIT%'" main.go
 
 if %ERRORLEVEL% EQU 0 (
     echo ✅ Build completed successfully

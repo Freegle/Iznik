@@ -138,9 +138,14 @@ func extractTNImageURLsFromPage(pageURL string) []string {
 	return found
 }
 
-// TNPhotoScrapeRunner launches TN photo scraping.  Swappable in tests to run synchronously.
+// TNPhotoScrapeRunner scrapes TN photos and stores them as attachments.  It runs
+// SYNCHRONOUSLY so the photos are fully in place before the caller writes the edit's
+// change signal (the messages_edits row).  TN polls /api/changes — which reports a
+// message as "Edited" via messages_edits — and then fetches the message to read its
+// attachments; if the signal were visible before the photos landed, TN would get a
+// partial photo set.  Swappable in tests.
 var TNPhotoScrapeRunner = func(db *gorm.DB, msgID uint64, picPageURLs []string) {
-	go scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
+	scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
 }
 
 // scrapeTNPhotosToAttachments downloads TN images from pic-page URLs and inserts
@@ -456,7 +461,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
-				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating')
+				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')
 				WHERE ma.msgid = ?
 				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
 			}()
@@ -962,7 +967,7 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 		if err1 == nil && err2 == nil {
 			msgs := []MessageSummary{}
 
-			sql := "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, " +
+			sql := "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, " +
 				"messages_spatial.id AS spatialid, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, " +
@@ -1125,7 +1130,17 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 			expireTime = maxReposts
 		}
 
-		daysAgo := int(now.Sub(m.Arrival).Hours() / 24)
+		// Age the post against the same expireTime V1 uses (maxagetoshow /
+		// EXPIRE_TIME = 90 days, or the repost window). For Rejected posts age by
+		// the ORIGINAL date (messages.date) rather than arrival: a rejected post's
+		// arrival can be recent while the post itself is years old, which would
+		// otherwise keep a long-dead rejected message in the member's active posts
+		// (Discourse topic 9481/561). V1 capped a member's own posts by age too.
+		ageBasis := m.Arrival
+		if m.Collection == utils.COLLECTION_REJECTED && !m.Date.IsZero() {
+			ageBasis = m.Date
+		}
+		daysAgo := int(now.Sub(ageBasis).Hours() / 24)
 		if daysAgo > expireTime {
 			candidateIDs = append(candidateIDs, m.ID)
 			candidateIndices[m.ID] = append(candidateIndices[m.ID], i)
@@ -1290,29 +1305,55 @@ func Search(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "No search term")
 		}
 
-		// When searchmode=vector is explicitly requested and vector succeeds,
-		// respect the result (even if empty) instead of falling back to keyword.
-		// Silently switching match models makes repeat queries return different
-		// result sets — the non-determinism Dee reported (Discourse 9594).
+		// Hybrid search: vector + keyword run in parallel, merged so that exact
+		// lexical matches always appear even when the embedding model misses them
+		// (e.g. short titles, UK retail terms like "white goods").
 		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			vectorResults, stats, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
-				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			fallbackTaken := err != nil
+			expandedWords := ExpandQuery(term)
 
-			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, stats)
+			var vectorResults []SearchResult
+			var vectorStats VectorStats
+			var vectorErr error
+			var keyExact, keyStarts []SearchResult
 
-			if err != nil {
-				fmt.Printf("Vector search failed, falling back to keyword: %v\n", err)
-			} else {
-				filtered := []SearchResult{}
-				for _, r := range vectorResults {
-					if r.Msgid != 0 {
-						filtered = append(filtered, r)
-					}
+			var hybridWg sync.WaitGroup
+			hybridWg.Add(2)
+
+			go func() {
+				defer hybridWg.Done()
+				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			}()
+
+			go func() {
+				defer hybridWg.Done()
+				if len(expandedWords) > 0 {
+					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 				}
-				wg.Wait()
-				return c.JSON(filtered)
+			}()
+
+			hybridWg.Wait()
+
+			fallbackTaken := vectorErr != nil
+			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, vectorStats)
+
+			if vectorErr != nil {
+				fmt.Printf("Vector search failed: %v\n", vectorErr)
 			}
+
+			// Merge: vector results first (semantic ranking), then keyword-only
+			// results the embedding missed (exact-match guarantee).
+			merged := mergeHybrid(vectorResults, append(keyExact, keyStarts...))
+
+			if len(merged) > 0 {
+				wg.Wait()
+				return c.JSON(merged)
+			}
+			// Both vector and keyword exact/starts returned nothing; fall through to
+			// typo and soundex cascade.
 		}
 
 		if len(res) == 0 {
@@ -2524,8 +2565,8 @@ type patchMessageRequest struct {
 	Location     *string  `json:"location"`
 	Locationid   *uint64  `json:"locationid"`
 	Groupid      *uint64  `json:"groupid"`
-	Attachments  []uint64 `json:"attachments"`
-	BadAIImages  []uint64 `json:"badAIImages"`
+	Attachments  AttachmentIDs `json:"attachments"`
+	BadAIImages  []uint64      `json:"badAIImages"`
 	Deadline     *string  `json:"deadline"`
 }
 
@@ -2736,9 +2777,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
-	// Reconstruct subject from type + item + location when item/type/location changed
-	//.
-	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil {
+	// Reconstruct subject from type + item + location when item/type/location changed,
+	// but ONLY when the caller did not supply an explicit subject.  An explicit subject
+	// always wins — passing msgtype alongside a new subject must not silently clobber it.
+	if req.Subject == nil && (req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil) {
 		var msgType string
 		var itemName *string
 		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
@@ -3074,25 +3116,35 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			}
 		}
 
-		if err := applyPatchMessageCore(c, myid, req); err != nil {
-			return err
-		}
-
-		// Remove any AI attachment whenever textbody is updated (both cases).
+		// Attachments must reach their final state BEFORE the edit's change signal is
+		// written.  applyPatchMessageCore writes the messages_edits row that /api/changes
+		// reports as "Edited"; TN then fetches the message to read its attachments.  If we
+		// scraped after the signal (or asynchronously), TN could poll in the gap and get a
+		// partial photo set — the "only 1 photo back, all of them on a forced re-fetch" bug.
+		// So we delete the old attachments and synchronously scrape the new ones first, then
+		// call the core.  This matches V1, which scrapes + saves attachments before edit()
+		// (http/api/message.php).
+		//
+		// TN's textbody is the authoritative photo set for its posts.  Whenever TN sends a
+		// textbody (even an empty one) we delete ALL existing attachments and then let the
+		// scraper add the new set (if pic links were present).  This fixes two further bugs:
+		//   #2 — textbody with no pic links: old non-AI photos were left behind.
+		//   #3 — textbody with new pic links: old non-AI photos coexisted with the new ones.
+		//
+		// recordAIDeletions is called with an empty keep-list so any AI attachment is
+		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
-			var aiCount int64
-			db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-				msgID, `%"ai":true%`).Scan(&aiCount)
-			if aiCount > 0 {
-				recordAIDeletions(db, myid, msgID, []uint64{}, nil)
-				db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-					msgID, `%"ai":true%`)
-			}
+			recordAIDeletions(db, myid, msgID, []uint64{}, nil)
+			db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 		}
 
-		// If TN photos were present, scrape them and store as attachments.
+		// If TN photos were present, scrape them and store as attachments (synchronously).
 		if len(picPageURLs) > 0 {
 			TNPhotoScrapeRunner(db, msgID, picPageURLs)
+		}
+
+		if err := applyPatchMessageCore(c, myid, req); err != nil {
+			return err
 		}
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3261,8 +3313,8 @@ func PutMessage(c *fiber.Ctx) error {
 		Locationid         *uint64  `json:"locationid"`
 		Availableinitially *int     `json:"availableinitially"`
 		Availablenow       *int     `json:"availablenow"`
-		Attachments        []uint64 `json:"attachments"`
-		Email              string   `json:"email"`
+		Attachments        AttachmentIDs `json:"attachments"`
+		Email              string        `json:"email"`
 	}
 
 	var req PutMessageRequest
@@ -3486,6 +3538,8 @@ func PostMessage(c *fiber.Ctx) error {
 	// Partner auth: if partner query param is present, authenticate via partner key
 	// instead of JWT. The partner acts on behalf of the identified user.
 	partnerKey := c.Query("partner")
+	var partnerDomain string
+	partnerOwnerMode := false
 	if partnerKey != "" {
 		db := database.DBConn
 		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
@@ -3509,13 +3563,23 @@ func PostMessage(c *fiber.Ctx) error {
 			}
 		}
 
-		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
-		if myid == 0 {
-			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+		if email == "" && tnuseridStr == "" {
+			// Partner-key-only auth (e.g. Trash Nothing): the partner acts as the
+			// message's owner, provided the message fromaddr is in the partner
+			// domain. Resolved per message id below. This mirrors V1
+			// getRolesForMessages, where a partner with a valid key acquires owner
+			// rights on a message from its domain and then acts as its fromuser.
+			partnerDomain = domain
+			partnerOwnerMode = true
+		} else {
+			myid = user.FindByTNIdOrEmail(db, tnuserid, email)
+			if myid == 0 {
+				return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+			}
 		}
 	}
 
-	if myid == 0 {
+	if myid == 0 && !partnerOwnerMode {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
@@ -3534,7 +3598,19 @@ func PostMessage(c *fiber.Ctx) error {
 		}
 		for i, msgID := range msgIDs {
 			req.ID = msgID
-			if err := dispatchPostMessageAction(c, myid, req); err != nil {
+			actingid := myid
+			if partnerOwnerMode {
+				// Act as each message's owner, but only for messages whose
+				// fromaddr is in the partner domain.
+				actingid = user.FindPartnerOwnerForMessage(db, partnerDomain, msgID)
+				if actingid == 0 {
+					if i == 0 {
+						return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
+					}
+					continue
+				}
+			}
+			if err := dispatchPostMessageAction(c, actingid, req); err != nil {
 				if i == 0 {
 					return err
 				}
@@ -3546,6 +3622,15 @@ func PostMessage(c *fiber.Ctx) error {
 
 	if req.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	// In partner-key-only mode, act as the message owner if its fromaddr is in the
+	// partner domain; otherwise the partner has no rights to this message.
+	if partnerOwnerMode {
+		myid = user.FindPartnerOwnerForMessage(database.DBConn, partnerDomain, req.ID)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
+		}
 	}
 
 	return dispatchPostMessageAction(c, myid, req)

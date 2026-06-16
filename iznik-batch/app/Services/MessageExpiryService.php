@@ -117,7 +117,7 @@ class MessageExpiryService
             return false;
         }
 
-        Mail::send(new DeadlineReached($message, $user));
+        app(\App\Services\EmailSpoolerService::class)->spool(new DeadlineReached($message, $user));
         return true;
     }
 

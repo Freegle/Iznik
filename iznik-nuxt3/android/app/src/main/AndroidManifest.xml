@@ -80,9 +80,14 @@
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.READ_CALENDAR"/>
   <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
-  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+  <!--
+    Photo upload uses the permission-free Android Photo Picker (Capacitor Camera
+    pickImages / getPhoto source Photos -> PickVisualMedia) and the system camera
+    intent, so none of the restricted media / legacy storage permissions are
+    needed. READ_MEDIA_IMAGES in particular is a Google Play restricted permission
+    that caused a ModTools review rejection ("permission not related to core
+    purpose"). Removed for both Freegle and ModTools.
+  -->
   <uses-permission android:name="android.permission.READ_CONTACTS" />
   <queries>
     <intent>

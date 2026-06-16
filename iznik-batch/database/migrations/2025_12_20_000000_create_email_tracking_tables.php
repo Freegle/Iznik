@@ -14,14 +14,14 @@ return new class extends Migration
         if (!Schema::hasTable('email_tracking')) {
             Schema::create('email_tracking', function (Blueprint $table) {
                 $table->bigIncrements('id');
-                $table->string('tracking_id', 32)->unique();
-                $table->string('email_type', 50)->index();
-                $table->unsignedBigInteger('userid')->nullable()->index();
-                $table->unsignedBigInteger('groupid')->nullable()->index();
-                $table->string('recipient_email', 255)->index();
+                $table->string('tracking_id', 32);
+                $table->string('email_type', 50);
+                $table->unsignedBigInteger('userid')->nullable();
+                $table->unsignedBigInteger('groupid')->nullable();
+                $table->string('recipient_email', 255);
                 $table->string('subject', 255)->nullable();
                 $table->json('metadata')->nullable();
-                $table->timestamp('sent_at')->nullable()->index();
+                $table->timestamp('sent_at')->nullable();
                 $table->timestamp('delivered_at')->nullable();
                 $table->timestamp('bounced_at')->nullable();
                 $table->timestamp('opened_at')->nullable();
@@ -29,8 +29,17 @@ return new class extends Migration
                 $table->timestamp('unsubscribed_at')->nullable();
                 $table->timestamps();
 
-                $table->index(['email_type', 'sent_at']);
-                $table->index(['userid', 'sent_at']);
+                // Index names mirror production exactly (the table predates this
+                // migration there, with short column-named indexes). Identical
+                // names mean query hints like FORCE INDEX(sent_at) resolve in
+                // every environment, not just production.
+                $table->unique('tracking_id', 'tracking_id');
+                $table->index('email_type', 'email_type');
+                $table->index('userid', 'userid');
+                $table->index('groupid', 'groupid');
+                $table->index('sent_at', 'sent_at');
+                $table->index('opened_at', 'opened_at');
+                $table->index('created_at', 'created_at');
             });
         }
 

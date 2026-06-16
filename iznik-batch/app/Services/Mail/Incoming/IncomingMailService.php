@@ -12,6 +12,8 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Services\ItemService;
+use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -45,6 +47,8 @@ class IncomingMailService
 
     private BounceService $bounceService;
 
+    private ItemService $itemService;
+
     /**
      * Context from the last routing decision (group name, user id, etc.).
      * Set during route() and read by controllers for logging.
@@ -54,11 +58,13 @@ class IncomingMailService
     public function __construct(
         ?SpamCheckService $spamCheck = null,
         ?StripQuotedService $stripQuoted = null,
-        ?BounceService $bounceService = null
+        ?BounceService $bounceService = null,
+        ?ItemService $itemService = null
     ) {
         $this->spamCheck = $spamCheck ?? app(SpamCheckService::class);
         $this->stripQuoted = $stripQuoted ?? new StripQuotedService;
         $this->bounceService = $bounceService ?? new BounceService;
+        $this->itemService = $itemService ?? new ItemService;
     }
 
     /**
@@ -1876,12 +1882,30 @@ class IncomingMailService
             $body = $prependSubject . "\r\n\r\n" . $body;
         }
 
+        // Detect digest-reply patterns before stripping so we can append the label after.
+        // V1 parity: MailRouter.php detected "On ... -auto@GROUP_DOMAIN> wrote:" and
+        // "-----Original Message-----" to identify replies that include the full digest,
+        // then stripped the quoted content and appended the label text.
+        $isDigestReply = false;
+        if (! $skipStripQuoted) {
+            $groupDomain = preg_quote(config('freegle.mail.group_domain', 'groups.ilovefreegle.org'), '/');
+            if (preg_match('/^\s*On.*?-auto@' . $groupDomain . '>\s*wrote\s*:/ms', $body) ||
+                preg_match('/-----Original Message-----/', $body)) {
+                $isDigestReply = true;
+            }
+        }
+
         // Strip quoted reply text and signatures before storing.
         // For volunteer messages, the quoted text (conversation transcript, reported post)
         // is the useful content - don't strip it. Matches legacy iznik-server behavior:
         // "Don't strip quoted as it might be useful."
         if (! $skipStripQuoted) {
             $body = $this->stripQuoted->strip($body);
+        }
+
+        // Append digest-reply label so moderators know to check the original email.
+        if ($isDigestReply) {
+            $body = rtrim($body) . "\r\n\r\n(Probably replied to digest - check View original email)";
         }
 
         // Determine if this chat message needs review.
@@ -2720,6 +2744,12 @@ class IncomingMailService
                 'arrival' => now(),
             ]);
 
+            // Record the item from a well-formed "TYPE: item (location)" subject,
+            // exactly as V1 Message::save() did. The messages_items link is what
+            // the Weight stat's INNER JOIN relies on — without it, items given
+            // away via email (e.g. TrashNothing posts) contribute zero weight.
+            $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
+
             // Add to message history for spam checking
             DB::table('messages_history')->insert([
                 'groupid' => $group->id,
@@ -3434,41 +3464,9 @@ class IncomingMailService
      */
     private function findClosestPostcodeId(float $lat, float $lng): ?int
     {
-        $srid = config('freegle.srid', 3857);
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
 
-        // Start with a small search radius and expand if needed
-        $scan = 0.00001953125;
-
-        while ($scan <= 0.2) {
-            $swlat = $lat - $scan;
-            $nelat = $lat + $scan;
-            $swlng = $lng - $scan;
-            $nelng = $lng + $scan;
-
-            $poly = "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
-
-            $sql = "SELECT locations.id,
-                           ST_distance(locations_spatial.geometry, ST_GeomFromText('POINT($lng $lat)', $srid)) AS dist
-                    FROM locations_spatial
-                    INNER JOIN locations ON locations.id = locations_spatial.locationid
-                    WHERE MBRContains(ST_Envelope(ST_GeomFromText('$poly', $srid)), locations_spatial.geometry)
-                      AND locations.type = 'Postcode'
-                      AND LOCATE(' ', locations.name) > 0
-                    ORDER BY dist ASC,
-                             CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0
-                                  ELSE ST_AREA(locations_spatial.geometry) END ASC
-                    LIMIT 1";
-
-            $result = DB::selectOne($sql);
-
-            if ($result) {
-                return (int) $result->id;
-            }
-
-            $scan *= 2;
-        }
-
-        return null;
+        return $ids[0] ?? null;
     }
 
     /**
@@ -3537,7 +3535,41 @@ class IncomingMailService
      */
     private function parseSubject(string $subj): array
     {
-        return \App\Support\SubjectParser::parse($subj);
+        $type = null;
+        $item = null;
+        $location = null;
+
+        $p = strpos($subj, ':');
+
+        if ($p !== false) {
+            $startp = $p;
+            $rest = trim(substr($subj, $p + 1));
+            $p = strlen($rest) - 1;
+
+            if (substr($rest, -1) == ')') {
+                $count = 0;
+
+                do {
+                    $curr = substr($rest, $p, 1);
+
+                    if ($curr == '(') {
+                        $count--;
+                    } elseif ($curr == ')') {
+                        $count++;
+                    }
+
+                    $p--;
+                } while ($count > 0 && $p > 0);
+
+                if ($count == 0) {
+                    $type = trim(substr($subj, 0, $startp));
+                    $location = trim(substr($rest, $p + 2, strlen($rest) - $p - 3));
+                    $item = trim(substr($rest, 0, $p));
+                }
+            }
+        }
+
+        return [$type, $item, $location];
     }
 
     /**
@@ -3769,17 +3801,11 @@ class IncomingMailService
      */
     private function addEmailToUser(int $userId, ?string $email): void
     {
-        $email = trim((string) $email);
-
-        if ($email === '') {
+        if (empty($email)) {
             return;
         }
 
-        // Reject anything that isn't a syntactically valid address — bounce
-        // envelope-froms like `MAILER-DAEMON` or `<>` reach this code path.
-        if (!preg_match(Message::EMAIL_REGEXP, $email)) {
-            return;
-        }
+        $email = trim($email);
 
         // Don't add system addresses
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');

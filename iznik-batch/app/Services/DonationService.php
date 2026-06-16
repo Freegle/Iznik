@@ -64,7 +64,7 @@ class DonationService
                 }
 
                 if (!$dryRun) {
-                    Mail::send(new DonationThankYou($user));
+                    app(\App\Services\EmailSpoolerService::class)->spool(new DonationThankYou($user));
                     $this->markAsThanked($donor->userid);
                 }
 
@@ -163,7 +163,7 @@ class DonationService
 
                 if ($recentMessage) {
                     if (!$dryRun) {
-                        Mail::send(new AskForDonation($user, $recentMessage->subject));
+                        app(\App\Services\EmailSpoolerService::class)->spool(new AskForDonation($user, $recentMessage->subject));
                         $this->recordAsk($recipient->userid);
                     }
                     $stats['emails_sent']++;

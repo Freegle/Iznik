@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class NearbyOffersService
 {
@@ -62,18 +64,12 @@ class NearbyOffersService
             ->limit($limit)
             ->get();
 
-        return $offers->map(function ($offer) {
-            return [
-                'id' => $offer->id,
-                'subject' => $this->truncateSubject($offer->subject),
-                'thumbnail_url' => $this->getThumbnailUrl($offer),
-                'url' => $this->getOfferUrl($offer),
-            ];
-        });
+        return $offers->map(fn ($o) => $this->formatOffer($o));
     }
 
     /**
      * Get offers near a specific lat/lng.
+     * Uses the spatial server KNN endpoint when available; falls back to bounding-box query.
      */
     public function getOffersNearLocation(
         float $lat,
@@ -81,7 +77,78 @@ class NearbyOffersService
         int $limit = self::OFFER_LIMIT,
         int $radiusKm = self::DEFAULT_RADIUS_KM
     ): Collection {
-        // Convert radius to approximate degrees (1 degree ~ 111km at equator).
+        $nearbyIds = $this->nearbyMessageIds($lat, $lng, $limit * 5);
+
+        if ($nearbyIds !== null) {
+            // Spatial server returned IDs — filter to approved offers with attachments.
+            $offers = Message::query()
+                ->whereIn('id', $nearbyIds)
+                ->offers()
+                ->approved()
+                ->notDeleted()
+                ->recent(7)
+                ->whereHas('attachments')
+                ->with(['attachments' => function ($query) {
+                    $query->orderByDesc('primary')->limit(1);
+                }])
+                ->orderByDesc('arrival')
+                ->limit($limit)
+                ->get();
+
+            if ($offers->count() >= $limit) {
+                return $offers->map(fn ($o) => $this->formatOffer($o));
+            }
+            // Fewer than limit after DB filtering (e.g. all pending/deleted) — fall through to legacy.
+        }
+
+        // Legacy fallback: expanding bounding-box on messages table.
+        return $this->getOffersNearLocationFallback($lat, $lng, $limit, $radiusKm);
+    }
+
+    /**
+     * Query the spatial server for the nearest message IDs.
+     * Returns null if the server is unavailable.
+     */
+    private function nearbyMessageIds(float $lat, float $lng, int $limit): ?array
+    {
+        $spatialUrl = config('freegle.spatial_server_url', 'http://localhost:8194');
+
+        try {
+            $response = Http::timeout(3)->get("{$spatialUrl}/v1/messages/knn", [
+                'lat'   => $lat,
+                'lng'   => $lng,
+                'limit' => $limit,
+            ]);
+
+            if ($response->successful()) {
+                // A 2xx with a missing/non-array "results" is a malformed response,
+                // not a legitimate "no results". Treat it as unavailable (null) so the
+                // caller falls back to the MySQL bounding-box query rather than
+                // silently proceeding with an empty id list.
+                $results = $response->json('results');
+                if (!is_array($results)) {
+                    Log::warning('NearbyOffersService spatial server returned malformed response, falling back to MySQL');
+
+                    return null;
+                }
+
+                return array_column($results, 'id');
+            }
+        } catch (\Throwable $e) {
+            Log::warning('NearbyOffersService spatial server unavailable, falling back to MySQL', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return null;
+    }
+
+    private function getOffersNearLocationFallback(
+        float $lat,
+        float $lng,
+        int $limit,
+        int $radiusKm
+    ): Collection {
         $radiusDegrees = $radiusKm / 111.0;
 
         $offers = Message::query()
@@ -100,19 +167,21 @@ class NearbyOffersService
             ->limit($limit)
             ->get();
 
-        // If we didn't find enough, expand the radius.
         if ($offers->count() < $limit && $radiusKm < self::MAX_RADIUS_KM) {
-            return $this->getOffersNearLocation($lat, $lng, $limit, $radiusKm * 2);
+            return $this->getOffersNearLocationFallback($lat, $lng, $limit, $radiusKm * 2);
         }
 
-        return $offers->map(function ($offer) {
-            return [
-                'id' => $offer->id,
-                'subject' => $this->truncateSubject($offer->subject),
-                'thumbnail_url' => $this->getThumbnailUrl($offer),
-                'url' => $this->getOfferUrl($offer),
-            ];
-        });
+        return $offers->map(fn ($o) => $this->formatOffer($o));
+    }
+
+    private function formatOffer(Message $offer): array
+    {
+        return [
+            'id'            => $offer->id,
+            'subject'       => $this->truncateSubject($offer->subject),
+            'thumbnail_url' => $this->getThumbnailUrl($offer),
+            'url'           => $this->getOfferUrl($offer),
+        ];
     }
 
     /**

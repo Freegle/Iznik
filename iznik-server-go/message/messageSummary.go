@@ -12,6 +12,7 @@ type MessageSummary struct {
 	SpatialID  *uint64   `json:"spatialid,omitempty" gorm:"column:spatialid"`
 	Type       string    `json:"type"`
 	Arrival    time.Time `json:"arrival"`
+	Date       time.Time `json:"date"`
 	Lat        float64   `json:"lat"`
 	Lng        float64   `json:"lng"`
 	Unseen     bool      `json:"unseen"`

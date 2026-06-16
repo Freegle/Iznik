@@ -26,7 +26,7 @@
           :to="
             modinfo && group.groupid
               ? '/messages/' +
-                (group.collection || 'approved').toLowerCase() +
+                (['Pending', 'PendingOther', 'Spam'].includes(group.collection) ? 'pending' : 'approved') +
                 '/' +
                 group.groupid +
                 '/' +

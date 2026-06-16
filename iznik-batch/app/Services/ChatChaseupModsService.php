@@ -107,7 +107,7 @@ class ChatChaseupModsService
             $textSummary = $messages->map(fn ($m) => $m->message)->implode("\r\n");
 
             $replyTo = "notify-{$room->room_id}-{$memberId}@{$userDomain}";
-            $chatUrl = "{$modSite}/modtools/chats/{$room->room_id}";
+            $chatUrl = "{$modSite}/chats/{$room->room_id}";
 
             // Get all group mods to notify
             $mods = DB::table('memberships')
@@ -129,7 +129,7 @@ class ChatChaseupModsService
                 $notified++;
 
                 if (!$dryRun) {
-                    Mail::send(new ChaseupModsMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new ChaseupModsMail(
                         recipientEmail: $modEmail,
                         groupName: $group->nameshort,
                         memberName: $memberName,

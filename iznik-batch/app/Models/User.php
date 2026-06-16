@@ -841,7 +841,10 @@ class User extends Model implements Auditable
     {
         [$lat, $lng] = $this->getLatLng();
 
-        if (!$lat || !$lng) {
+        // Suppress job ads for recent donors, matching the website (recentDonor
+        // in useMe.js / ADFREE_PERIOD in iznik-server-go): ad-free for 31 days
+        // after a donation, 41 for External (bank-transfer) ones that arrive late.
+        if (!$lat || !$lng || $this->isAdFree()) {
             return [
                 'jobs' => collect(),
                 'location' => NULL,
@@ -854,6 +857,27 @@ class User extends Model implements Auditable
             'jobs' => $jobs,
             'location' => NULL,  // Not currently used.
         ];
+    }
+
+    /**
+     * True when the user is within their ad-free period after a donation,
+     * mirroring iznik-server-go ADFREE_PERIOD (31 days) + ADFREE_GRACE_PERIOD
+     * (10 extra days for External / bank-transfer donations).
+     */
+    public function isAdFree(): bool
+    {
+        $latest = DB::table('users_donations')
+            ->where('userid', $this->id)
+            ->orderByDesc('timestamp')
+            ->first(['timestamp', 'type']);
+
+        if (!$latest || !$latest->timestamp) {
+            return false;
+        }
+
+        $days = ($latest->type === 'External') ? 41 : 31;
+
+        return strtotime($latest->timestamp) > (time() - $days * 86400);
     }
 
     /**
@@ -921,6 +945,32 @@ class User extends Model implements Auditable
         ]);
 
         return $key;
+    }
+
+    /**
+     * Build an auto-login link, mirroring iznik-server User::loginLink($auto=TRUE).
+     *
+     * Produces `https://{userSite}{url}?u={id}&k={key}&src={src}` using the same
+     * users_logins (type='Link') 32-char key the Go API validates for ?u=&k= links.
+     *
+     * @param  string  $url   Path on the user site (may already contain a query string).
+     * @param  string|null  $src  Optional source tag (V1 src= param).
+     * @param  bool  $auto  When true (default) include the login key for passwordless login.
+     */
+    public function loginLink(string $url = '/', ?string $src = NULL, bool $auto = TRUE): string
+    {
+        $userSite = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $sep = str_contains($url, '?') ? '&' : '?';
+
+        $query = 'u=' . $this->id;
+        if ($auto) {
+            $query .= '&k=' . $this->getUserKey();
+        }
+        if ($src) {
+            $query .= '&src=' . $src;
+        }
+
+        return $userSite . $url . $sep . $query;
     }
 
     /**

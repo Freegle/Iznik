@@ -365,6 +365,12 @@
               timeago(membershiphistory.timestamp || membershiphistory.added)
             }}
           </span>
+          <span
+            v-if="membershiphistory.type === 'Joined' && membershiphistory.text"
+            class="text-muted small ms-1 join-method"
+          >
+            ({{ membershiphistory.text }})
+          </span>
         </div>
         <b-button
           v-if="!showAllMembershipHistories && membershipHistoriesUnshown"

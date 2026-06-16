@@ -148,7 +148,9 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 	// Build the query - don't return messages:
 	// - held for review unless we sent them or we have mod access
-	// - for deleted users unless that's us
+	// - for deleted users unless that's us (or we have mod access — mods must
+	//   see all messages including from accounts deleted after the fact, e.g.
+	//   a phisher who deletes their account immediately after sending spam)
 	var reviewFilter string
 	if modAccess {
 		// Mods can see all messages including those held for review.
@@ -157,13 +159,25 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1))"
 	}
 
+	// Mods reviewing a chat must see messages from soft-deleted users (V1 parity:
+	// the PHP GetMessages query had no users.deleted filter). Regular users only
+	// see their own messages when the sender has been deleted.
+	var deletedFilter string
+	if !modAccess {
+		deletedFilter = " AND (users.deleted IS NULL OR users.id = ?)"
+	}
+
 	query := "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages " +
 		"LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id " +
 		"INNER JOIN users ON users.id = chat_messages.userid " +
-		"WHERE chatid = ? AND " + reviewFilter + " " +
-		"AND (users.deleted IS NULL OR users.id = ?)"
+		"WHERE chatid = ? AND " + reviewFilter + deletedFilter
 
-	args := []interface{}{chatID, userID, userID}
+	var args []interface{}
+	if modAccess {
+		args = []interface{}{chatID, userID}
+	} else {
+		args = []interface{}{chatID, userID, userID}
+	}
 
 	if excludeID > 0 {
 		query += " AND chat_messages.id != ?"
@@ -765,6 +779,17 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		reviewFilter = "(chat_messages.reviewrejected = 0 OR chat_messages.userid = ?)"
 	}
 
+	// Mods reviewing a chat must see messages from soft-deleted users.
+	// Participants only see their own messages when the sender is deleted.
+	var deletedFilterRoom string
+	var roomArgs []interface{}
+	if isParticipant {
+		deletedFilterRoom = " AND (users.deleted IS NULL OR users.id = ?)"
+		roomArgs = []interface{}{roomid, myid, myid, limit}
+	} else {
+		roomArgs = []interface{}{roomid, myid, limit}
+	}
+
 	var msgs []msgRow
 	db.Raw("SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, "+
 		"chat_messages.type, chat_messages.message, chat_messages.date, "+
@@ -772,10 +797,9 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		"FROM chat_messages "+
 		"INNER JOIN users ON users.id = chat_messages.userid "+
 		"WHERE chat_messages.chatid = ? "+
-		"AND "+reviewFilter+" "+
-		"AND users.deleted IS NULL"+ctxq+
+		"AND "+reviewFilter+deletedFilterRoom+ctxq+
 		" ORDER BY chat_messages.id DESC LIMIT ?",
-		roomid, myid, limit).Scan(&msgs)
+		roomArgs...).Scan(&msgs)
 
 	if msgs == nil {
 		msgs = []msgRow{}

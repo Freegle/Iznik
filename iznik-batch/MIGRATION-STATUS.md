@@ -22,8 +22,11 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `mail:chat:user2user` | Send user-to-user chat notifications |
 | `mail:chat:user2mod` | Send user-to-moderator chat notifications |
 | `mail:chat:mod2mod` | Send moderator-to-moderator chat notifications |
-| `mail:digest` | Send message digests (per-group, legacy) |
-| `mail:digest:unified` | Send unified Freegle digests (user-centric, replaces mail:digest) |
+| `mail:digest:unified` | Send unified Freegle "What's New" digests (immediate + daily, user-centric) |
+| `mail:newsfeed:digest` | Send the newsfeed (chitchat) digest of recent nearby posts |
+| `mail:alerts:send` | Send system alerts to group mods/owners and group contact addresses |
+| `chats:chaseup-expected` | Email users expected to reply in a User2User chat but who have not |
+| `notifications:exhort` | Send onsite Exhort notifications to recently-active established users |
 | `mail:donations:thank` | Send donation thank-you emails |
 | `mail:donations:ask` | Send donation request emails |
 | `mail:bounced` | Process bounced emails |
@@ -174,6 +177,8 @@ These commands are active in `routes/console.php` and running in production:
 | `lovejunk_tn_invoice.php` | `lovejunk:send-tn-invoice` | Monthly 1st 15:00 | LoveJunk TN/FD split invoice — PR #417 |
 | `chat_review.php` | `chats:review-pending` | Daily 09:00 | Auto-reject stale + notify mods — PR #418 |
 | `engage.php` | `mail:engage` | Daily 16:00 | At-risk and inactive user engagement — PR #419 |
+| `donations_email.php` | `mail:donations:summary` | Hourly 06:00–22:00 | Donation status table to fundraising — PR #428 |
+| - | `mail:donations:thank-prep` | Daily 20:30 | Card-per-donation digest for composing thank-yous — PR #571 |
 
 ## Code Written (Scheduler Disabled)
 
@@ -181,9 +186,8 @@ These have code implemented but the scheduler entry is commented out in `routes/
 
 | Original Script | Artisan Command | Email Type in .env | Notes |
 |-----------------|-----------------|-------------------|-------|
-| `digest.php` | `mail:digest` | - | Message digests (per-group, legacy) |
-| `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle digests (user-centric) |
-| `donations_email.php` | `mail:donations:ask` | - | Donation reminders |
+| `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle "What's New" digests (immediate + daily, user-centric) |
+| - | `mail:donations:ask` | - | Ask users who received items for donations (no direct V1 origin) |
 | `donations_thank.php` | `mail:donations:thank` | - | Donation thank-you emails |
 | `bounce.php` + `bounce_users.php` | `mail:bounced` | - | Bounced email handling + user suspension (PR #390) |
 | `messages_expired.php` | `messages:process-expired` | - | Deadline expiry handling |
@@ -263,7 +267,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`tryst.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Meeting coordination~~ — **Migrated: `chats:send-tryst-reminders`** |
 | ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
 | ~~`donations_ads_target.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Donation ad targeting~~ — **Migrated: `donations:update-ads-target`** |
-| `user_exhort.php` | Every 1 min | Medium | User encouragement — **Needs migration**: actively scheduled in V1 crontab with fixed args (`-u "https://www.ilovefreegle.org/stories" -l "Tell us your Freegle story!" -x "We love to hear why people Freegle..." -s "5 minutes ago" -t "1 week ago"`). Sends onsite notifications to users active in the last week. Earlier "Skip" classification was incorrect — V1 cron line is live. |
+| ~~`user_exhort.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~User encouragement~~ — **Migrated: `notifications:exhort`** (onsite Exhort notifications + Freegle-app push to recently-active established users) |
 | ~~`lovejunk.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~LoveJunk integration~~ — **Migrated: `integrations:sync-lovejunk`** |
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
@@ -287,7 +291,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | Script | Frequency | Priority | Description |
 |--------|-----------|----------|-------------|
 | ~~`donations_giftaid.php`~~ | ~~Every 10 min~~ | ~~Medium~~ | ~~Gift Aid processing~~ — **Migrated: `donations:update-giftaid` — PR #394** |
-| `alerts.php` | Every 10 min | Medium | System alerts |
+| ~~`alerts.php`~~ | ~~Every 10 min~~ | ~~Medium~~ | ~~System alerts~~ — **Migrated: `mail:alerts:send`** (mod/owner + group-contact alert emails; single-group targeting + contact-email parity fixes) |
 | ~~`user_ratings.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~User ratings~~ — **Migrated: `users:update-ratings`** |
 | `eximlogs.php` | Every 10 min | Low | Exim mail logs — **Skip: external (mail server logs)** |
 | `paypal_download.php` | Every 4 hrs (30 min past) | Low | Fallback PayPal transaction downloader — donateipn catches them normally; this is the safety net. Needs PayPal API SDK in Laravel. **TODO: consider whether we also need an equivalent Stripe-side safety net (a periodic fetch of recent Stripe charges/payment intents to reconcile against `users_donations`) in case the Stripe webhook ever misses an event.** |
@@ -311,11 +315,11 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Script | Time | Priority | Description |
 |--------|------|----------|-------------|
-| `chat_chaseup_expected.php` | 06:00 | Medium | Chat expected response chase-up |
+| ~~`chat_chaseup_expected.php`~~ | ~~06:00~~ | ~~Medium~~ | ~~Chat expected response chase-up~~ — **Migrated: `chats:chaseup-expected`** (WAITING FOR REPLY user2user notification; scheduler disabled pending go-live) |
 | ~~`birthday.php`~~ | ~~12:00~~ | ~~Low~~ | ~~Birthday notifications~~ — **Migrated: `birthday:send-emails`** |
 | `relevant.php` | 14:30 | Medium | Relevant message matching |
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
-| `newsfeed_digest.php` | 15:30 | Low | Newsfeed digest |
+| ~~`newsfeed_digest.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Newsfeed digest~~ — **Migrated: `mail:newsfeed:digest`** (nearby chitchat digest with per-user spatial bounding box; scheduler disabled pending go-live) |
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |
 | ~~`noticeboards.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Noticeboards~~ — **Migrated: `noticeboards:thank-users`** |
 | `group_welcomereview.php` | 01:00, 15:00 | Low | Group welcome review |
@@ -367,7 +371,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `paypal_download.php` | Fallback for PayPal IPN handler; uses deprecated PayPal NVP/SOAP SDK (PayPal-PHP-SDK). Script comment: "This is a fallback - donateipn catches them normally." Not in Docker crontab. If PayPal integration is still needed a modern SDK would be required. |
 | `sa_train` | SpamAssassin training - external |
 | `cron_checker_iznik.php` | Monitoring - external tool |
-| `discourse_checkusers.php` | Discourse integration - separate system |
+| `discourse_checkusers.php` | Migrated then **retired** (2026-06): the per-mod "NOT A MOD"/"not getting any mails" report had no actionable value — mods routinely stand down. |
 | `discourse_not_signed_up.php` | Discourse integration - separate system |
 | ~~`locations_pgsql`~~ | ~~PostgreSQL locations~~ — **Migrated: `locations:sync-pgsql`** |
 | `doogal` | External data import script |

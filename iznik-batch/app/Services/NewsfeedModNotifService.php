@@ -157,7 +157,7 @@ class NewsfeedModNotifService
             }
 
             if (!$dryRun) {
-                Mail::send(new NewsfeedModNotifMail($mod->email, $postsData));
+                app(\App\Services\EmailSpoolerService::class)->spool(new NewsfeedModNotifMail($mod->email, $postsData));
 
                 // Update the last seen marker for this mod.
                 DB::table('newsfeed_users')->updateOrInsert(

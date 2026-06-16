@@ -70,7 +70,7 @@ class StoriesService
 
         if (!$dryRun) {
             $subject = now()->format('d-M-Y') . ' Recent stories from freeglers - please vote';
-            Mail::send(new StoriesToCentralMail($storyData, $previewText, $voteUrl, $subject));
+            app(\App\Services\EmailSpoolerService::class)->spool(new StoriesToCentralMail($storyData, $previewText, $voteUrl, $subject));
         }
 
         return count($storyData);

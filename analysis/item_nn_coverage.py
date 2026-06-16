@@ -8,6 +8,8 @@ single best matching training item. If similarity >= threshold, we use
 that training item's desirability score rather than falling back to the mean.
 """
 
+import os
+
 import pymysql
 import pandas as pd
 import numpy as np
@@ -15,7 +17,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 DB = dict(host='127.0.0.1', port=11234, user='root',
-          password='F5432f12azfvds', db='iznik', charset='utf8mb4',
+          password=os.environ.get('LIVE_DB_PASSWORD', ''), db='iznik', charset='utf8mb4',
           autocommit=True)
 
 TRAIN_START = '2023-01-01'; TRAIN_END = '2024-06-30'

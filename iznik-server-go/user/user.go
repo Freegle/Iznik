@@ -521,6 +521,27 @@ func ApplySettingsDefaultsToJSON(settings json.RawMessage, systemrole string) js
 		changed = true
 	}
 
+	// settings.notifications is a nested object; create it when absent.
+	// Inject per-key defaults for any key absent from that sub-object.
+	{
+		var notifs map[string]interface{}
+		if raw, ok := m["notifications"]; ok {
+			notifs, _ = raw.(map[string]interface{})
+		}
+		if notifs == nil {
+			notifs = make(map[string]interface{})
+		}
+		notifChanged := false
+		if _, ok := notifs["dailypostspush"]; !ok {
+			notifs["dailypostspush"] = true
+			notifChanged = true
+		}
+		if notifChanged {
+			m["notifications"] = notifs
+			changed = true
+		}
+	}
+
 	// Mod-specific defaults only for users with a moderator+ systemrole.
 	// Injecting these for regular users caused settings contamination when
 	// the frontend echoed the full settings blob back via PATCH.
@@ -1547,6 +1568,8 @@ func PostUser(c *fiber.Ctx) error {
 		return handleRemoveEmail(c, db, myid, req)
 	case "Unbounce":
 		return handleUnbounce(c, myid, req)
+	case "Unsubscribe":
+		return handleUserUnsubscribe(c, myid, req)
 	case "Merge":
 		return handleMerge(c, myid, req)
 	default:
@@ -1905,6 +1928,15 @@ func PutUser(c *fiber.Ctx) error {
 		if result.RowsAffected > 0 {
 			db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
 				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_JOINED, req.GroupID, newUserID, newUserID)
+
+			// V1 parity (User::addMembership, User.php:911-916): record the join in
+			// memberships_history with processingrequired=1 so the background
+			// member-review / welcome / abuse-detection consumer (memberships:process)
+			// treats this as a brand-new joiner. AddMembership() writes this row, but
+			// the website-signup path inserts the membership inline and never calls it,
+			// so without this the new member bypasses new-joiner scrutiny.
+			db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired, added) VALUES (?, ?, ?, 1, NOW())",
+				newUserID, req.GroupID, utils.COLLECTION_APPROVED)
 		}
 	}
 
@@ -2301,14 +2333,8 @@ func LimboUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Remove memberships so the user no longer appears in group member lists.
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
-
-	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
-
-	// Log the deletion (type='User', subtype='Deleted').
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
-		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, myid)
+	// Soft, recoverable limbo (shared with the Unsubscribe action).
+	softLimboUser(db, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2327,6 +2353,72 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", req.ID)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// LogGroupLeftForApprovedMemberships writes a per-group (Group, Left) audit log
+// for every Approved membership the user currently holds. V1 emits one such log
+// per group when the user actually leaves: at grace-period expiry the
+// processForgets cron calls User::forget(), which iterates the memberships and
+// calls User::removeMembership() per group, each writing a Left log
+// (User.php:1087-1095). V2 instead bulk-deletes approved memberships eagerly at
+// delete time, so by the time the cleanup cron runs there is nothing left to
+// iterate and the Left logs would never be written — at any point. We therefore
+// emit them here, immediately before the bulk delete. byUser is the actor recorded
+// in the log; pass 0 to record byuser as NULL (e.g. the partner flow, which has no
+// acting Freegle user).
+func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uint64) {
+	var groupids []uint64
+	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?",
+		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
+	for _, groupid := range groupids {
+		if byUser == 0 {
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, NULL, ?)",
+				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, groupid)
+		} else {
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, ?, ?)",
+				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, byUser, groupid)
+		}
+	}
+}
+
+// softLimboUser puts a user into a recoverable "limbo": it removes their approved
+// memberships (so they drop out of group member lists), marks the account deleted
+// (a 14-day grace period before users:cleanup runs forgetUser), and logs a
+// User/Deleted entry. The user can recover by logging back in within the grace
+// period. Shared by self-delete (DELETE /user) and the Support-tools Unsubscribe
+// action (POST /user action=Unsubscribe) so both behave identically. byUser is the
+// actor recorded in the log (the user themselves, or the support volunteer).
+func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
+	// V1 parity: record a per-group (Group, Left) audit log before the eager bulk
+	// delete drops the memberships (see LogGroupLeftForApprovedMemberships).
+	LogGroupLeftForApprovedMemberships(db, targetID, byUser)
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
+		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, byUser)
+}
+
+// handleUserUnsubscribe puts a target user into a recoverable limbo (soft-delete)
+// via the Support-tools "Unsubscribe" action. V1 parity: POST /user action=Unsubscribe
+// maps to a recoverable removal (User::limbo) — NOT the hard GDPR purge that
+// DELETE /user performs for support-on-another-user — so a user who unsubscribed
+// by mistake (e.g. one-click email unsubscribe) can recover by logging back in.
+// A regular user may unsubscribe only themselves; admin/support may unsubscribe
+// anyone. (Discourse #9738.)
+func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	targetID := req.ID
+
+	if targetID != myid && !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only admin/support can unsubscribe other users")
+	}
+
+	softLimboUser(database.DBConn, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2976,11 +3068,13 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 		Nameshort   string     `json:"nameshort"`
 		Namefull    string     `json:"namefull"`
 		Namedisplay string     `json:"namedisplay" gorm:"column:namedisplay"`
+		Text        string     `json:"text"`
 	}
 
 	var history []MembershipHistoryRow
 	db.Raw("SELECT l.timestamp, l.subtype AS type, l.groupid, "+
-		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay "+
+		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, "+
+		"COALESCE(l.text,'') AS text "+
 		"FROM logs l "+
 		"INNER JOIN `groups` g ON g.id = l.groupid "+
 		"WHERE l.user = ? AND l.type = 'Group' "+

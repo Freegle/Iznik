@@ -41,6 +41,10 @@ export function useAIImages() {
     return $api.aiimages.keep(id)
   }
 
+  async function suppress(id) {
+    return $api.aiimages.suppress(id)
+  }
+
   return {
     count: readonly(count),
     images: readonly(images),
@@ -50,5 +54,6 @@ export function useAIImages() {
     regenerate,
     accept,
     keep,
+    suppress,
   }
 }

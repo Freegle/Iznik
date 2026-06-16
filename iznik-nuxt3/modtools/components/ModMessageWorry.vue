@@ -105,6 +105,11 @@
           Group IDs posted to from this IP: {{ reason.groups.join(', ') }}
         </span>
       </span>
+      <span v-else-if="reason.check === 'NotAnItem'">
+        <strong>Possibly not an item:</strong> {{ reason.detail }}. This may be a
+        service, rental, job, or help/advice request rather than a physical item
+        — please check before approving.
+      </span>
       <span v-else>
         <strong>Flagged:</strong> {{ reason.detail }}
       </span>

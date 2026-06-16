@@ -70,11 +70,22 @@ const groupOptions = computed(() => {
   }
 
   // Add any other groups we are a member of and might want to select.
+  // The V2 /session endpoint returns membership stubs that carry only groupid
+  // (no nameshort/namedisplay) — the group names live in the group store,
+  // populated by fetchUser() -> groupStore.fetchBatch(). So resolve the label
+  // from the store when the membership object itself has no name; otherwise the
+  // option renders blank and the member group can't be selected.
   for (const group of myGroups.value) {
     if (!ids[group.groupid]) {
+      const cached = groupStore.get(group.groupid)
       ret.push({
         value: group.groupid,
-        text: group.namedisplay ? group.namedisplay : group.nameshort,
+        text:
+          group.namedisplay ||
+          group.nameshort ||
+          cached?.namedisplay ||
+          cached?.nameshort ||
+          String(group.groupid),
       })
 
       ids[group.groupid] = true

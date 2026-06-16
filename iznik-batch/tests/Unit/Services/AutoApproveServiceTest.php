@@ -78,6 +78,52 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    public function test_does_not_auto_approve_message_marked_spam_on_another_group(): void
+    {
+        // A message that is Pending (and otherwise eligible) on one group but
+        // marked Spam on another must NOT be auto-approved on its Pending group
+        // (Discourse #9654: spam surfaces in the Pending queue but is never
+        // auto-sent by the 48h fallback).
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupA, ['added' => now()->subHours(72)]);
+        $this->createMembership($user, $groupB, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $groupA);
+
+        // Pending on group A — would be eligible on its own.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $groupA->id)
+            ->update([
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
+            ]);
+
+        // Same message marked Spam on group B.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_SPAM,
+            'arrival' => now()->subHours(49),
+        ]);
+
+        $this->service->process();
+
+        // The Pending row on group A must remain Pending — not auto-approved.
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $groupA->id)
+            ->first();
+        $this->assertEquals(
+            MessageGroup::COLLECTION_PENDING,
+            $mg->collection,
+            'A message marked Spam on any group must not be auto-approved on its Pending groups'
+        );
+    }
+
     public function test_dry_run_does_not_modify_database(): void
     {
         $user = $this->createTestUser();

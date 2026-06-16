@@ -105,7 +105,7 @@ class StoriesAskService
                     ?: 'Freegle User';
 
                 if ($email) {
-                    Mail::send(new AskMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new AskMail(
                         recipientName: $name,
                         recipientEmail: $email,
                         storiesUrl: config('freegle.sites.user') . '/stories',

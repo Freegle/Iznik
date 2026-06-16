@@ -35,11 +35,7 @@
       </b-button>
       <template v-else-if="showMailto">
         <b-button variant="white" @click="hide"> Cancel </b-button>
-        <a
-          :href="mailtoHref"
-          class="btn btn-primary"
-          @click="hide"
-        >
+        <a :href="mailtoHref" class="btn btn-primary" @click="hide">
           <v-icon icon="envelope" />
           <span class="ms-1">Contact us to delete your account</span>
         </a>
@@ -66,7 +62,9 @@ import SpinButton from '~/components/SpinButton.vue'
 import NoticeMessage from '~/components/NoticeMessage.vue'
 
 const authStore = useAuthStore()
-const { modal, show: showmodal, hide } = useOurModal()
+// Always mounted on the /unsubscribe page, so it must NOT auto-show on mount —
+// it opens only when the user clicks "Contact us" (parent calls show()).
+const { modal, show: showmodal, hide } = useOurModal({ autoShow: false })
 
 const email = ref('')
 const emailValid = ref(false)

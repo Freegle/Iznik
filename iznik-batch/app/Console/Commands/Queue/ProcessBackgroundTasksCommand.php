@@ -300,12 +300,8 @@ class ProcessBackgroundTasksCommand extends Command
             reason: $data['reason'],
         );
 
-        if ($shouldSpool) {
-            $recipients = array_map('trim', explode(',', config('freegle.mail.chitchat_support_addr')));
-            $spooler->spool($mail, $recipients);
-        } else {
-            Mail::send($mail);
-        }
+        $recipients = array_map('trim', explode(',', config('freegle.mail.chitchat_support_addr')));
+        $spooler->spool($mail, $recipients);
 
         Log::info('Sent ChitChat report email', [
             'reporter_id' => $data['user_id'],
@@ -336,11 +332,7 @@ class ProcessBackgroundTasksCommand extends Command
             source: $data['source'] ?? DonateExternalMail::SOURCE_EXTERNAL,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, config('freegle.mail.info_addr'));
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, config('freegle.mail.info_addr'));
 
         Log::info('Sent external donation email', [
             'user_id' => $data['user_id'],
@@ -371,11 +363,7 @@ class ProcessBackgroundTasksCommand extends Command
             description: $data['description'] ?? null,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, config('freegle.mail.partnerships_addr'));
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, config('freegle.mail.partnerships_addr'));
 
         Log::info('Sent charity signup notification', [
             'charity_id' => $data['charity_id'],
@@ -404,11 +392,7 @@ class ProcessBackgroundTasksCommand extends Command
             resetUrl: $data['reset_url'],
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $data['email']);
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, $data['email']);
 
         Log::info('Sent forgot password email', [
             'user_id' => $data['user_id'],
@@ -436,15 +420,27 @@ class ProcessBackgroundTasksCommand extends Command
             unsubUrl: $data['unsub_url'],
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $data['email']);
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, $data['email']);
 
         Log::info('Sent unsubscribe confirmation email', [
             'user_id' => $data['user_id'],
         ]);
+    }
+
+    /**
+     * Reopen any 'Closed' chat rosters for a chat so it reappears in the
+     * recipient's chat list after a new message. The ModTools chat list filters
+     * out rooms whose roster status is 'Closed' (iznik-server-go
+     * chat/chatroom.go), so a mod who had previously closed a User2Mod chat would
+     * not see it again even after sending a modmail to it (Discourse #9481/541).
+     * Mirrors the reopen in V2 CreateChatMessage; 'Blocked' rosters are left as-is.
+     */
+    protected function reopenClosedRosters(int $chatId): void
+    {
+        DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('status', 'Closed')
+            ->update(['status' => 'Offline']);
     }
 
     /**
@@ -565,11 +561,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $posterEmail);
-        } else {
-            Mail::to($posterEmail)->send($mail);
-        }
+        $spooler->spool($mail, $posterEmail);
 
         // V1 parity: send BCC copy if configured in mod's ModConfig.
         $this->sendBccIfConfigured(
@@ -606,6 +598,13 @@ class ProcessBackgroundTasksCommand extends Command
                     'processingrequired' => 0,
                     'processingsuccessful' => 1,
                 ]);
+
+                // Reopen any closed rosters so the chat reappears in the acting
+                // mod's (and the member's) chat list, mirroring V2 CreateChatMessage
+                // (iznik-server-go chat/chatmessage.go). Without this, a chat the mod
+                // had previously closed stays hidden from their ModTools chats list
+                // even after they send this modmail (Discourse #9481/541).
+                $this->reopenClosedRosters((int) $chatRoom->id);
             }
         }
 
@@ -687,11 +686,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $memberEmail);
-        } else {
-            Mail::to($memberEmail)->send($mail);
-        }
+        $spooler->spool($mail, $memberEmail);
 
         // V1 parity: send BCC copy if configured in mod's ModConfig.
         $this->sendBccIfConfigured(
@@ -742,6 +737,10 @@ class ProcessBackgroundTasksCommand extends Command
                     ['chatid', 'userid'],
                     ['lastmsgemailed', 'lastemailed']
                 );
+
+                // Reopen any closed rosters so the chat reappears in the acting
+                // mod's (and the member's) chat list — see reopenClosedRosters().
+                $this->reopenClosedRosters((int) $chatRoom->id);
             }
 
             // Only create the User/Mailed log for email_mod_stdmsg (direct mod message to member).
@@ -915,11 +914,7 @@ class ProcessBackgroundTasksCommand extends Command
                 mergeUrl: $mergeUrl,
             );
 
-            if ($shouldSpool) {
-                $spooler->spool($mail, $recipientEmail);
-            } else {
-                Mail::to($recipientEmail)->send($mail);
-            }
+            $spooler->spool($mail, $recipientEmail);
         }
 
         Log::info('Sent merge offer emails', [
@@ -1007,11 +1002,7 @@ class ProcessBackgroundTasksCommand extends Command
             confirmUrl: $confirmUrl,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $email);
-        } else {
-            Mail::to($email)->send($mail);
-        }
+        $spooler->spool($mail, $email);
 
         Log::info('Sent email verification', [
             'user_id' => $userId,
@@ -1083,11 +1074,7 @@ class ProcessBackgroundTasksCommand extends Command
         $supportAddr = config('freegle.mail.support_addr', 'support@ilovefreegle.org');
         $recipients = array_map('trim', explode(',', $supportAddr));
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $recipients);
-        } else {
-            Mail::to($recipients)->send($mail);
-        }
+        $spooler->spool($mail, $recipients);
 
         Log::info('Sent refer to support email', [
             'chat_id' => $chatId,
@@ -1243,11 +1230,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($bccMail, $bccAddress);
-        } else {
-            Mail::to($bccAddress)->send($bccMail);
-        }
+        $spooler->spool($bccMail, $bccAddress);
 
         Log::info('Sent BCC copy of mod stdmsg', [
             'action' => $action,

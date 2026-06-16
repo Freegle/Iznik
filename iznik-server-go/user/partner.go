@@ -52,6 +52,38 @@ func FindByTNIdOrEmail(db *gorm.DB, tnuserid uint64, email string) uint64 {
 	return userid
 }
 
+// FindPartnerOwnerForMessage returns the fromuser of a message when its fromaddr
+// is in the given partner domain, or 0 otherwise. This mirrors V1's
+// getRolesForMessages, where a partner with a valid key acquires owner rights on
+// a message whose fromaddr is in the partner domain and then acts as its fromuser.
+// The host comparison is case-insensitive and exact (stricter than V1's loose
+// substring match, which would also accept prefix/suffix domains).
+func FindPartnerOwnerForMessage(db *gorm.DB, domain string, msgID uint64) uint64 {
+	if domain == "" || msgID == 0 {
+		return 0
+	}
+
+	var result struct {
+		Fromuser uint64 `gorm:"column:fromuser"`
+		Fromaddr string `gorm:"column:fromaddr"`
+	}
+	db.Raw("SELECT fromuser, fromaddr FROM messages WHERE id = ?", msgID).Scan(&result)
+	if result.Fromuser == 0 || result.Fromaddr == "" {
+		return 0
+	}
+
+	at := strings.LastIndex(result.Fromaddr, "@")
+	if at < 0 {
+		return 0
+	}
+	host := result.Fromaddr[at+1:]
+	if strings.EqualFold(host, domain) {
+		return result.Fromuser
+	}
+
+	return 0
+}
+
 // CreatePartnerUser creates a new user for a partner integration.
 // It extracts a display name from the email prefix (before -g or @),
 // sets the tnuserid, and adds the email to users_emails.

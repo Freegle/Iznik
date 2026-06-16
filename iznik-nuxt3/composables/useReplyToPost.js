@@ -47,7 +47,7 @@ export function useReplyToPost() {
     return null
   })
 
-  async function replyToPost(chatButtonRef) {
+  async function replyToPost(chatButtonRef, noNavigate = false) {
     // We have different buttons which display at different screen sizes. Which of those is visible and hence
     // clicked tells us whether we want to open this chat in a popup or not.
     console.log('Execute reply to post', JSON.stringify(replyToSend.value))
@@ -76,7 +76,9 @@ export function useReplyToPost() {
       await chatButtonRef.openChat(
         null,
         replyToSend.value.replyMessage,
-        replyToSend.value.replyMsgId
+        replyToSend.value.replyMsgId,
+        false,
+        noNavigate
       )
 
       // Clear the store of any message to avoid repeatedly sending it.

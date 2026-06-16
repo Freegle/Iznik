@@ -45,6 +45,7 @@
     "vue-mention": {
       "floating-vue": "^5.2.2"
     },
+    "sharp": "^0.33.5",
     "ignore": "4.0.6",
     "vite": "^8.0.12",
     "vue-demi": ">=0.14.6",
@@ -116,7 +117,7 @@
     "@fortawesome/free-brands-svg-icons": "^6.2.0",
     "@fortawesome/free-solid-svg-icons": "^6.1.1",
     "@fortawesome/vue-fontawesome": "^3.0.0-5",
-    "@freegle/capacitor-push-notifications-cap7": "https://github.com/Freegle/capacitor-push-notifications-cap7/archive/0fe0b8768f345a7efc3e0153b10360394308afbd.tar.gz",
+    "@freegle/capacitor-push-notifications-cap7": "https://github.com/Freegle/capacitor-push-notifications-cap7/archive/1846573c11648763ddfc893deaec5b35b3196275.tar.gz",
     "@google-pay/button-element": "^3.1.0",
     "@nuxtjs/sentry": "^5.1.7",
     "@pinia/nuxt": "0.9.0",
@@ -175,6 +176,7 @@
     "pluralize": "^8.0.0",
     "postcss": "^8.5.6",
     "postman-paf": "^1.0.1",
+    "qr-code-styling": "^1.9.2",
     "resize-observer-polyfill": "^1.5.1",
     "rollup": "^4.42.0",
     "save-file": "^2.3.1",

@@ -94,20 +94,27 @@ docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon did not start after 
 ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || \
 ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
 
-# Allocate a 2GB swap file so a transient memory spike (Playwright workers +
-# Laravel + Go all hitting peak together) doesn't OOM-kill the runner agent
-# and produce an infrastructure_fail / heartbeat-timeout. fallocate is
-# instant on ext4; if it fails (XFS without preallocation), fall back to dd.
-if ! swapon --show | grep -q '/swapfile'; then
-  if fallocate -l 2G /swapfile 2>/dev/null; then
-    :
-  else
-    dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+# Allocate a 20GB swap file so a transient memory spike (many Playwright workers
+# + Laravel + Go all hitting peak together) doesn't OOM-kill the runner agent and
+# produce an infrastructure_fail / heartbeat-timeout. fallocate is instant on ext4;
+# if it fails (XFS without preallocation), fall back to dd. Resizes a smaller
+# pre-existing swapfile (e.g. an older 2G one) instead of skipping it.
+# CRITICAL: this block runs inside the UNQUOTED SSHEOF heredoc, so every VM-side
+# shell variable is escaped as \$ (cf. \${_i} above) — it must be evaluated on the
+# VM, not by THIS script's local shell, which runs under set -euo pipefail and
+# would abort with "unbound variable" on an unescaped \$CUR_SWAP_GB.
+SWAP_TARGET_GB=20
+CUR_SWAP_GB=\$(( \$(awk '/SwapTotal/{print \$2}' /proc/meminfo) / 1024 / 1024 ))
+if [ "\$CUR_SWAP_GB" -lt "\$SWAP_TARGET_GB" ]; then
+  swapoff /swapfile 2>/dev/null || true
+  rm -f /swapfile 2>/dev/null || true
+  if ! fallocate -l \${SWAP_TARGET_GB}G /swapfile 2>/dev/null; then
+    dd if=/dev/zero of=/swapfile bs=1M count=\$(( SWAP_TARGET_GB * 1024 )) status=none
   fi
   chmod 600 /swapfile
   mkswap /swapfile >/dev/null
   swapon /swapfile
-  echo "/swapfile none swap sw 0 0" >> /etc/fstab
+  grep -q '/swapfile' /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
   # Discourage swap unless under real pressure. Default vm.swappiness=60 is
   # too eager and would push hot test caches out to disk under normal load.
   echo 'vm.swappiness=10' > /etc/sysctl.d/99-swap.conf
@@ -155,9 +162,9 @@ while true; do
   # The agent's heartbeat goroutine shares the same process as test driving,
   # so under CPU saturation (Playwright + Laravel + Go all peaking) it can
   # miss the heartbeat tick and trigger infrastructure_fail / heartbeat-timeout.
-  # Negative niceness needs root, which start.sh already has — nice -n -5
+  # Negative niceness needs root, which start.sh already has — nice -n -15
   # runs before sudo -u circleci so the renice applies to the process group.
-  nice -n -5 sudo -u circleci /opt/circleci-runner/circleci-runner machine \
+  nice -n -15 sudo -u circleci /opt/circleci-runner/circleci-runner machine \
     --config "\$CONFIG" >> "\$LOG" 2>&1 || true
   echo "\$(date): Runner exited, restarting in 5s" >> "\$LOG"
   sleep 5
@@ -218,6 +225,22 @@ fi
 # The CI job may not arrive until several minutes after VM provisioning,
 # so the timer must not start until the VM has had time to receive a job.
 if [ "\$UPTIME_SECONDS" -lt 1200 ]; then
+    exit 0
+fi
+
+# A CI job is executing whenever the task agent (circleci-agent) is alive. Unlike
+# the freegle-ci containers below — absent during checkout/install/build — the task
+# agent spans the WHOLE job, so this stops a short or mis-applied idle threshold from
+# destroying a VM that has just been handed work. That dispatch->container-up race
+# (a stale-template VM idle-aged past a 300/600s threshold self-DELETEs ~30 min after
+# boot, before the job's "Reset idle-check" step can run) caused the residual
+# ~30-min-uptime infrastructure_fails (root-caused 2026-06-13). The always-on launch
+# daemon is 'circleci-runner', so -x matches ONLY the per-task agent (never the
+# daemon, which would wrongly keep idle VMs alive). If the agent is named differently
+# on some runner version this is a harmless no-op, and the 9000s absolute-age cap
+# above bounds VM lifetime regardless.
+if pgrep -x circleci-agent >/dev/null 2>&1; then
+    rm -f "\$IDLE_MARKER"
     exit 0
 fi
 

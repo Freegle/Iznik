@@ -341,6 +341,29 @@ describe('ModMessageWorry', () => {
     })
   })
 
+  describe('NotAnItem check', () => {
+    it('shows Possibly not an item heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'NotAnItem', category: 'service', detail: 'Post may be a non-physical request (service) rather than an item — matched "cleaner wanted"' },
+      ])
+      expect(wrapper.text()).toContain('Possibly not an item')
+    })
+
+    it('shows the detail text (matched phrase)', () => {
+      const wrapper = mountWithReasons([
+        { check: 'NotAnItem', category: 'accommodation', detail: 'Post may be a non-physical request (accommodation) rather than an item — matched "to rent"' },
+      ])
+      expect(wrapper.text()).toContain('matched "to rent"')
+    })
+
+    it('explains it may not be a physical item', () => {
+      const wrapper = mountWithReasons([
+        { check: 'NotAnItem', category: 'work', detail: 'Post may be a non-physical request (work) rather than an item — matched "job vacancy"' },
+      ])
+      expect(wrapper.text()).toContain('rather than a physical item')
+    })
+  })
+
   describe('unknown check type', () => {
     it('shows generic Flagged heading', () => {
       const wrapper = mountWithReasons([

@@ -37,19 +37,32 @@
               />
             </div>
 
-            <NoticeMessage v-if="left" class="mb-3" variant="info">
+            <NoticeMessage
+              v-if="left"
+              class="mb-3 fs-4 fw-bold"
+              variant="success"
+            >
               We've removed you from {{ left }}.
             </NoticeMessage>
 
             <div v-if="!groupid" class="mobile-section">
               <p class="mobile-section__label">Or choose an option:</p>
               <div class="mobile-actions">
-                <NuxtLink to="/settings" class="mobile-btn mobile-btn--primary">
+                <NuxtLink
+                  to="/settings"
+                  :class="[
+                    'mobile-btn',
+                    left ? 'mobile-btn--white' : 'mobile-btn--primary',
+                  ]"
+                >
                   <v-icon icon="cog" class="me-2" />
                   Get fewer emails
                 </NuxtLink>
                 <button
-                  class="mobile-btn mobile-btn--danger"
+                  :class="[
+                    'mobile-btn',
+                    left ? 'mobile-btn--white' : 'mobile-btn--danger',
+                  ]"
                   @click="unsubscribe"
                 >
                   <v-icon icon="trash-alt" class="me-2" />
@@ -65,6 +78,7 @@
             <div class="mobile-section">
               <p class="mobile-section__label">Enter your email to continue:</p>
               <EmailValidator
+                ref="emailValidatorMobile"
                 v-model:email="email"
                 v-model:valid="emailValid"
                 label=""
@@ -149,7 +163,11 @@
                   />
                 </div>
               </div>
-              <NoticeMessage v-if="left" class="mt-2 mb-2" variant="info">
+              <NoticeMessage
+                v-if="left"
+                class="mt-2 mb-3 fs-4 fw-bold"
+                variant="success"
+              >
                 We've removed you from {{ left }}.
               </NoticeMessage>
               <template v-if="!groupid">
@@ -159,14 +177,18 @@
                 </p>
                 <div class="d-flex justify-content-between flex-wrap">
                   <nuxt-link to="/settings" no-prefetch>
-                    <b-button size="lg" variant="primary" class="mb-2 me-2">
+                    <b-button
+                      size="lg"
+                      :variant="left ? 'light' : 'primary'"
+                      class="mb-2 me-2"
+                    >
                       <v-icon icon="cog" />
                       <span class="ms-1"> Get fewer emails </span>
                     </b-button>
                   </nuxt-link>
                   <b-button
                     size="lg"
-                    variant="danger"
+                    :variant="left ? 'light' : 'danger'"
                     class="mb-2"
                     @click="unsubscribe"
                   >
@@ -179,8 +201,12 @@
             </div>
             <div v-else>
               <h4>Please enter your email address</h4>
-              <p>We'll email you to confirm that you want to delete your Freegle account.</p>
+              <p>
+                We'll email you to confirm that you want to delete your Freegle
+                account.
+              </p>
               <EmailValidator
+                ref="emailValidatorDesktop"
                 v-model:email="email"
                 v-model:valid="emailValid"
                 label=""
@@ -265,6 +291,7 @@ import {
   useRuntimeConfig,
 } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
+import { allValidatorsValid } from '~/composables/allValidatorsValid'
 import { useAuthStore } from '~/stores/auth'
 import SpinButton from '~/components/SpinButton.vue'
 import EmailValidator from '~/components/EmailValidator.vue'
@@ -321,6 +348,8 @@ const unknown = ref(false)
 const showForgetFailModal = ref(false)
 const showConfirmModal = ref(false)
 const contactSupportModal = ref(null)
+const emailValidatorMobile = ref(null)
+const emailValidatorDesktop = ref(null)
 
 function openContactSupport() {
   contactSupportModal.value?.show()
@@ -371,12 +400,25 @@ async function forget() {
 }
 
 async function emailConfirm(callback) {
-  if (emailValid.value) {
-    const ret = await authStore.unsubscribe(email.value.trim())
-    emailProblem.value = !ret.worked
-    unknown.value = ret.unknown
-    emailSent.value = ret.worked
+  // Trigger validation up front so an empty or invalid email shows the inline
+  // error and red border immediately — even if the user clicked the button
+  // without ever touching the field. Both the mobile and desktop validators are
+  // mounted (only one is visible per breakpoint), so validate whichever exist
+  // and don't proceed unless they all pass.
+  const valid = await allValidatorsValid([
+    emailValidatorMobile.value,
+    emailValidatorDesktop.value,
+  ])
+
+  if (!valid) {
+    callback()
+    return
   }
+
+  const ret = await authStore.unsubscribe(email.value.trim())
+  emailProblem.value = !ret.worked
+  unknown.value = ret.unknown
+  emailSent.value = ret.worked
 
   callback()
 }

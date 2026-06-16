@@ -510,7 +510,7 @@ class ChaseUpService
                         userEmail: $user->email_preferred,
                         groupId: $group->id,
                     );
-                Mail::send($mailable);
+                app(\App\Services\EmailSpoolerService::class)->spool($mailable);
             }
 
             Log::info("Chase-up sent for message #{$msg->msgid} on group #{$group->id}");

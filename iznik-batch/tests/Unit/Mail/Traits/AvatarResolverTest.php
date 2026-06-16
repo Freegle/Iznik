@@ -81,4 +81,21 @@ class AvatarResolverTest extends TestCase
         $this->assertStringStartsWith('https://www.ilovefreegle.org/', $url);
         $this->assertStringContainsString('user.png', $url);
     }
+
+    public function test_avatar_server_url_is_configured_so_avatars_resolve_to_real_endpoint(): void
+    {
+        // Regression: config/freegle.php had no avatar_server_url key, so config()
+        // returned an empty string and every poster without an uploaded photo
+        // resolved to https://www.ilovefreegle.org/{name}.png - a 404 that renders
+        // the broken-image icon in emails. The key must be populated (env + real
+        // default), and a no-photo user must resolve to the avatar server.
+        $this->assertNotEmpty(config('freegle.avatar_server_url'));
+
+        $user = new User();
+        $user->fullname = 'craigj1385';
+        $url = $this->host->resolveAvatarUrl($user, 36);
+
+        $this->assertStringStartsWith(rtrim((string) config('freegle.avatar_server_url'), '/'), $url);
+        $this->assertStringNotContainsString('ilovefreegle.org/craigj1385.png', $url);
+    }
 }
