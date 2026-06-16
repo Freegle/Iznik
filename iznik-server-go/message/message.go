@@ -1822,6 +1822,16 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // handleReject rejects a pending message.
+// MessageOriginGroup returns the group a message was first posted to — the earliest
+// messages_groups arrival (id as tiebreak). With rippling-out a post is added to nearby
+// groups over time; only the origin group's rejection should notify the poster (#6).
+// Returns 0 if the message has no group rows.
+func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
+	var gid uint64
+	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC, id ASC LIMIT 1", msgid).Scan(&gid)
+	return gid
+}
+
 func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
@@ -1888,8 +1898,7 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// showing in that group's area and must NOT be sent back to the poster (#6): they
 	// posted it on their origin group and it remains available there, so a secondary
 	// "out of area" rejection is not their concern.
-	var originGid uint64
-	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC, id ASC LIMIT 1", req.ID).Scan(&originGid)
+	originGid := MessageOriginGroup(db, req.ID)
 
 	// Queue the rejection email only for the origin group (the batch processor creates
 	// one log+push per group). Secondary-group rejections are silent to the poster and
