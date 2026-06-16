@@ -56,7 +56,7 @@ class NewsfeedModNotifCommandTest extends TestCase
         Mail::fake();
 
         $mod = $this->createTestUser();
-        $member = $this->createTestUser();
+        $member = $this->createTestUser(['fullname' => 'Bob Member']);
         $group = $this->createTestGroup();
 
         $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
@@ -69,6 +69,17 @@ class NewsfeedModNotifCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertSentCount(1);
+
+        // The notification carries the poster's resolved display name + avatar
+        // and the ChitChat action context, so the mod sees who posted.
+        $expectedName = \App\Models\User::find($member->id)->displayname;
+        Mail::assertSent(NewsfeedModNotifMail::class, function ($mail) use ($expectedName) {
+            $post = $mail->posts[0] ?? [];
+            return ($post['userName'] ?? null) === $expectedName
+                && $expectedName !== 'A freegler'
+                && !empty($post['userAvatar'])
+                && ($post['action'] ?? null) === 'posted on ChitChat';
+        });
     }
 
     public function test_skips_mod_with_no_unseen_posts(): void
