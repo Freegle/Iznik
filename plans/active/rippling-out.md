@@ -31,25 +31,38 @@
 | A7 | Code-quality review + validate against running worktree | ⬜ | |
 | A8 | Push branch, open PR (deps stated), get CI green, adversarial review + fixes | ⬜ | not merged |
 
-## PR B — immediate mails on expansion (next)
-Branch off `feature/rippling-reach-engine` (depends on A). Pattern to copy:
-`iznik-batch/app/Console/Commands/Push/SendDailyPostsPushCommand.php` — **dark by default +
-allowlist** (`FREEGLE_RIPPLE_MAIL_ALLOWLIST`, empty = nobody). Newly-reached members with
-`User::SIMPLE_MAIL_FULL` get an immediate "new post near you" mail.
+## PR B — immediate mails on expansion (RE-SCOPED — see discovery below)
+Branch `feature/rippling-immediate-mails` off A. **B1 done** (committed `a75c01ce5`):
+`messages_reach_notified` ledger + prod SQL.
 
-| # | Task | Status | Notes |
-|---|------|--------|-------|
-| B1 | `messages_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
-| B2 | Hook into `ExpandService`: on init/advance compute newly-reached members = users with a location inside the new reach polygon AND NOT already notified AND `SIMPLE_MAIL_FULL` | ⬜ | spatial query `ST_Contains(reach.polygon, ST_SRID(POINT(u.lng,u.lat),3857))`; user loc from `users.lastlocation`/`users_approxlocs` — confirm source |
-| B3 | Mail: reuse unified-digest single-post mailable / "new post near you" template | ⬜ | see `UnifiedDigestService` / daily-posts push payload |
-| B4 | Allowlist gate (dark) + per-expansion cap; record in ledger | ⬜ | |
-| B5 | #9 instrumentation: count immediate mails sent per expansion | ⬜ | |
-| B6 | Tests (Http+spatial seeded, allowlist on/off, no-double-mail) + push PR, CI, adversarial review | ⬜ | |
+**DISCOVERY (2026-06-16):** a standalone "ripple immediate mail" would **double-mail**.
+`UnifiedDigestService::processGroupImmediate` already mails a group's immediate-eligible members
+(`memberships.emailfrequency = IMMEDIATE`) when a post arrives on that group — and rippling adds
+the post to new groups (#6), so that existing path fires there too. So immediate-mail-by-reach is
+NOT additive; it is the **immediate digest's recipient selection becoming reach-gated** (only
+members whose `users_approxlocs` point is inside `messages_reach.polygon`, via
+`ST_Contains(mr.polygon, ST_SRID(POINT(uap.lng,uap.lat),3857))`), using the ledger for dedup.
+That is a **modification of live immediate email**, not a dark add-on, and it belongs WITH the
+digest reach-selection work (#5/F), not as a separate early PR.
 
-Remaining PRs after B: C held-replies (`chat_messages_rippling`), D mod-UI (#6 banner + #7 reach
-map + #4 modal carry-over), E browse (#1 + #2 reply-eligibility + #8 FAQ), F digest (#5), G
-observability/self-tuning (#9), #10 postcode-driven single-group posting + TN main-group-only.
-Then the two moderator-audience change docs.
+**Decision:** keep B1 (the ledger) as the committed foundation. Fold the immediate-mail-by-reach
+recipient change INTO the digest PR (now **PR F: reach-gated digest selection, immediate + daily
+modes**) so immediate and daily are changed together and can't double-send. The ledger serves the
+immediate-mode dedup there. Mark B "ledger only; mailing folded into F".
+
+Also note (member-vs-non-member): immediate mail stays **members-only** (don't cold-email
+non-members about groups they haven't joined); non-members within reach get the post via **browse
+(#1)** and the **daily digest (F)**, not an immediate cold email.
+
+## Re-sequenced remaining PRs
+- **C** — held external replies (`chat_messages_rippling`): self-contained backend; next buildable.
+- **D** — mod-UI: #6 ripple-in banner + secondary-rejection (no poster notify + clip + track) +
+  #7 reach map + #4 modal carry-over + multi-group edit warning.
+- **E** — browse: #1 filter/order/map + #2 reply-eligibility + #8 FAQ (consumer, late).
+- **F** — reach-gated digest selection (immediate + daily) + #5 ordering (email, late). Absorbs B's mailing.
+- **G** — observability/self-tuning (#9).
+- **#10** — postcode-driven single-group posting + TN main-group-only (latest, after rippling live).
+- Then the two moderator-audience change docs.
 
 ## Carry-over (deferred to PR D)
 Modal files built earlier on `fix/pending-url-spam-collection` (main checkout, uncommitted): `components/RipplingExplanation.vue`, `modtools/components/RipplingHelpModal.vue`, `modtools/components/RipplingExplorer.vue` (modified), + 2 specs. Re-create or copy into PR D.
