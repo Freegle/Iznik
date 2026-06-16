@@ -10,18 +10,47 @@ use Illuminate\Support\Facades\Log;
  *
  * In-app replies are gated by reply-eligibility (#2) so they never arrive early.
  * Email/TN bypass that gate, so a reply from a location the post hasn't yet
- * rippled to is HELD: the chat message's delivery is blocked via the existing
- * `reviewrequired` hold (subsequent messages inherit the hold, as today) and a
- * `chat_messages_rippling` row records WHY (distinct from a moderator's manual
- * hold). The ripple engine releases the reply once reach covers the replier.
+ * rippled to is HELD by recording a `chat_messages_rippling` row (status='held').
  *
- * Dark until wired in: the incoming-reply call site is gated behind
- * config('freegle.ripple.hold_replies').
+ * IMPORTANT (per adversarial review): this does NOT touch chat_messages.reviewrequired.
+ * That bit is shared with the spam/mod-review hold — clearing it on release could free
+ * a genuine mod/spam hold, and rippling-held messages would otherwise pollute the mod
+ * review queue and be auto-rejected after 7 days. Instead the rippling hold is enforced
+ * by GATING DELIVERY on the chat_messages_rippling row: the poster-notification queries
+ * skip a chat message while it has a non-'released' rippling row (see deliveryGateSql()).
+ * Releasing simply sets status='released', after which the normal notification pipeline
+ * delivers it (no reviewrequired / processingsuccessful changes needed).
+ *
+ * Dark until wired in: BOTH the incoming-reply hold call site AND the delivery-gate
+ * clauses are added behind config('freegle.ripple.hold_replies'), so with the flag off
+ * chat_messages_rippling is always empty and nothing changes.
  */
 class RippleReplyService
 {
     public function __construct(private ReachQueryService $reach)
     {
+    }
+
+    /**
+     * SQL gate for poster-notification queries: a chat message must NOT be delivered
+     * while it has a non-'released' rippling row. Add `AND <this>` to the WHERE of any
+     * query that decides whether to notify the poster of a chat message.
+     *
+     * @param string $cmAlias the chat_messages alias/column to match on (e.g. 'chat_messages.id')
+     */
+    public static function deliveryGateSql(string $cmAlias = 'chat_messages.id'): string
+    {
+        return "NOT EXISTS (SELECT 1 FROM chat_messages_rippling cmr
+                WHERE cmr.chatmsgid = {$cmAlias} AND cmr.status <> 'released')";
+    }
+
+    /** Is this chat message currently held by rippling (delivery blocked)? */
+    public function isDeliveryHeld(int $chatmsgid): bool
+    {
+        return DB::table('chat_messages_rippling')
+            ->where('chatmsgid', $chatmsgid)
+            ->where('status', '<>', 'released')
+            ->exists();
     }
 
     /**
@@ -43,13 +72,11 @@ class RippleReplyService
     }
 
     /**
-     * Record a hold: block the chat message's delivery (reviewrequired=1) and log a
-     * chat_messages_rippling row as the reason. Returns the new row id.
+     * Record a hold (delivery is blocked via deliveryGateSql, NOT reviewrequired).
+     * Returns the new chat_messages_rippling row id.
      */
     public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng): int
     {
-        DB::table('chat_messages')->where('id', $chatmsgid)->update(['reviewrequired' => 1]);
-
         return (int) DB::table('chat_messages_rippling')->insertGetId([
             'chatid' => $chatid,
             'chatmsgid' => $chatmsgid,
@@ -64,8 +91,8 @@ class RippleReplyService
 
     /**
      * Release every held reply for $msgid whose replier location is now inside the
-     * post's reach: mark released and clear the chat message's rippling hold so it
-     * is delivered. Returns the number released.
+     * post's reach (status→released; the notification pipeline then delivers it).
+     * Returns the number released.
      */
     public function releaseCovered(int $msgid): int
     {
@@ -82,7 +109,7 @@ class RippleReplyService
             if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng)) {
                 continue;
             }
-            $this->deliver($row->id, (int) $row->chatmsgid);
+            $this->release($row->id);
             $released++;
         }
 
@@ -106,7 +133,7 @@ class RippleReplyService
             ->get();
 
         foreach ($held as $row) {
-            $this->deliver($row->id, (int) $row->chatmsgid);
+            $this->release($row->id);
         }
 
         return $held->count();
@@ -114,8 +141,8 @@ class RippleReplyService
 
     /**
      * The post was taken/withdrawn before coverage: mark remaining held replies
-     * 'taken-gone' (NOT delivered — the replier is told separately it's gone).
-     * Returns the number affected.
+     * 'taken-gone' (NOT delivered — the delivery gate still blocks them; the replier
+     * is told separately it's gone). Returns the number affected.
      */
     public function markGone(int $msgid): int
     {
@@ -125,9 +152,8 @@ class RippleReplyService
             ->update(['status' => 'taken-gone', 'releasedat' => now()]);
     }
 
-    private function deliver(int $ripplingRowId, int $chatmsgid): void
+    private function release(int $ripplingRowId): void
     {
-        DB::table('chat_messages')->where('id', $chatmsgid)->update(['reviewrequired' => 0]);
         DB::table('chat_messages_rippling')->where('id', $ripplingRowId)->update([
             'status' => 'released',
             'releasedat' => now(),

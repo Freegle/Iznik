@@ -48,7 +48,8 @@ class RippleReplyServiceTest extends TestCase
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
         $room = $this->createTestChatRoom($u1, $u2);
-        $cm = $this->createTestChatMessage($room, $u1, ['reviewrequired' => 1]);
+        // Deliberately NOT reviewrequired — the rippling hold must not rely on it.
+        $cm = $this->createTestChatMessage($room, $u1);
         // hold() takes (lat, lng); $latLng is [lat, lng].
         $id = $this->service()->hold($room->id, $cm->id, $msgid, $u1->id, $latLng[0], $latLng[1]);
 
@@ -74,16 +75,18 @@ class RippleReplyServiceTest extends TestCase
         $this->assertFalse($this->service()->shouldHold($msgid, null, null));
     }
 
-    public function test_hold_blocks_delivery_and_records_reason(): void
+    public function test_hold_records_held_row_and_blocks_delivery_without_touching_reviewrequired(): void
     {
         $msgid = $this->seedReachedPost();
         [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
 
-        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
         $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        // Delivery is gated by the rippling row, NOT by reviewrequired (which stays 0).
+        $this->assertTrue($this->service()->isDeliveryHeld($cmid));
+        $this->assertSame(0, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
     }
 
-    public function test_release_covered_delivers_replies_now_inside_reach(): void
+    public function test_release_covered_releases_replies_now_inside_reach(): void
     {
         $msgid = $this->seedReachedPost();
         [$rowId, $cmid] = $this->seedHeldReply($msgid, self::INSIDE); // inside the reach box
@@ -92,7 +95,8 @@ class RippleReplyServiceTest extends TestCase
 
         $this->assertSame(1, $released);
         $this->assertSame('released', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
-        $this->assertSame(0, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+        // Gate now allows delivery; reviewrequired never touched.
+        $this->assertFalse($this->service()->isDeliveryHeld($cmid));
     }
 
     public function test_release_covered_keeps_replies_still_outside_held(): void
@@ -104,10 +108,10 @@ class RippleReplyServiceTest extends TestCase
 
         $this->assertSame(0, $released);
         $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
-        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+        $this->assertTrue($this->service()->isDeliveryHeld($cmid));
     }
 
-    public function test_mark_gone_does_not_deliver(): void
+    public function test_mark_gone_keeps_delivery_blocked(): void
     {
         $msgid = $this->seedReachedPost();
         [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
@@ -116,7 +120,7 @@ class RippleReplyServiceTest extends TestCase
 
         $this->assertSame(1, $affected);
         $this->assertSame('taken-gone', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
-        // Still not delivered.
-        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+        // taken-gone still blocks delivery (status <> released).
+        $this->assertTrue($this->service()->isDeliveryHeld($cmid));
     }
 }

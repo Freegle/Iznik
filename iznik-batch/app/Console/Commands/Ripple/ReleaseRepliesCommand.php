@@ -45,29 +45,77 @@ class ReleaseRepliesCommand extends Command
 
         $released = 0;
         $gone = 0;
+        $wouldRelease = 0;
+        $wouldGone = 0;
 
         foreach ($msgids as $msgid) {
             $msgid = (int) $msgid;
-            if ($dryRun) {
-                continue;
-            }
 
             $reach = DB::table('messages_reach')->where('msgid', $msgid)->first();
+
             if ($reach === null) {
-                $gone += $svc->markGone($msgid);
+                // No reach row. This is only terminal ("taken-gone") if the post is
+                // ACTUALLY gone — deleted, or with a Taken/Received outcome. A post can
+                // be transiently absent from messages_spatial (and so have its reach row
+                // removed) without being taken; in that case wait for reach to be
+                // re-initialised rather than wrongly telling repliers it's gone.
+                if (!$this->postIsGone($msgid)) {
+                    continue;
+                }
+                if ($dryRun) {
+                    $wouldGone += $this->heldCount($msgid);
+                } else {
+                    $gone += $svc->markGone($msgid);
+                }
             } elseif ($reach->status === 'done') {
-                $released += $svc->releaseAll($msgid);
+                if ($dryRun) {
+                    $wouldRelease += $this->heldCount($msgid);
+                } else {
+                    $released += $svc->releaseAll($msgid);
+                }
             } else {
-                $released += $svc->releaseCovered($msgid);
+                if ($dryRun) {
+                    $wouldRelease += $this->heldCount($msgid);
+                } else {
+                    $released += $svc->releaseCovered($msgid);
+                }
             }
         }
 
-        $this->info(($dryRun ? '[DRY RUN] ' : '') .
-            "Posts with held replies: {$msgids->count()}, Released: {$released}, Gone: {$gone}");
+        if ($dryRun) {
+            $this->info("[DRY RUN] Posts with held replies: {$msgids->count()}, " .
+                "would release ≤{$wouldRelease}, would mark gone {$wouldGone}");
+
+            return Command::SUCCESS;
+        }
+
+        $this->info("Posts with held replies: {$msgids->count()}, Released: {$released}, Gone: {$gone}");
         Log::info('ripple:release-replies complete', [
             'posts' => $msgids->count(), 'released' => $released, 'gone' => $gone,
         ]);
 
         return Command::SUCCESS;
+    }
+
+    /** A post is genuinely gone (terminal) if deleted or marked Taken/Received. */
+    private function postIsGone(int $msgid): bool
+    {
+        $deleted = DB::table('messages')->where('id', $msgid)->value('deleted');
+        if ($deleted !== null) {
+            return true;
+        }
+
+        return DB::table('messages_outcomes')
+            ->where('msgid', $msgid)
+            ->whereIn('outcome', ['Taken', 'Received', 'Withdrawn'])
+            ->exists();
+    }
+
+    private function heldCount(int $msgid): int
+    {
+        return (int) DB::table('chat_messages_rippling')
+            ->where('msgid', $msgid)
+            ->where('status', 'held')
+            ->count();
     }
 }
