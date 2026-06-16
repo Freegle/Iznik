@@ -9,7 +9,7 @@
 
 | PR | Branch | Contents | Depends on | Status |
 |----|--------|----------|-----------|--------|
-| A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | 🔄 Code done, 11/11 tests green, pushing |
+| A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | ✅ PR #768, 12/12 green, adversarial review done + fixed (blocker+2 major+minor), CI running. NOT merged. |
 | B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (flagged/allowlisted) | A | ⬜ Pending |
 | C | `feature/rippling-held-replies` | #3 `chat_messages_rippling` hold/release + mod chat-held reason | A | ⬜ Pending |
 | D | `feature/rippling-mod-ui` | #6 ripple-in mod banner + #7 reach map + #4 help modal (carry-over) | A | ⬜ Pending |
@@ -30,6 +30,26 @@
 | A6 | Production idempotent SQL (`*_migration.sql`) | ⬜ | per ralph §9 |
 | A7 | Code-quality review + validate against running worktree | ⬜ | |
 | A8 | Push branch, open PR (deps stated), get CI green, adversarial review + fixes | ⬜ | not merged |
+
+## PR B — immediate mails on expansion (next)
+Branch off `feature/rippling-reach-engine` (depends on A). Pattern to copy:
+`iznik-batch/app/Console/Commands/Push/SendDailyPostsPushCommand.php` — **dark by default +
+allowlist** (`FREEGLE_RIPPLE_MAIL_ALLOWLIST`, empty = nobody). Newly-reached members with
+`User::SIMPLE_MAIL_FULL` get an immediate "new post near you" mail.
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| B1 | `messages_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
+| B2 | Hook into `ExpandService`: on init/advance compute newly-reached members = users with a location inside the new reach polygon AND NOT already notified AND `SIMPLE_MAIL_FULL` | ⬜ | spatial query `ST_Contains(reach.polygon, ST_SRID(POINT(u.lng,u.lat),3857))`; user loc from `users.lastlocation`/`users_approxlocs` — confirm source |
+| B3 | Mail: reuse unified-digest single-post mailable / "new post near you" template | ⬜ | see `UnifiedDigestService` / daily-posts push payload |
+| B4 | Allowlist gate (dark) + per-expansion cap; record in ledger | ⬜ | |
+| B5 | #9 instrumentation: count immediate mails sent per expansion | ⬜ | |
+| B6 | Tests (Http+spatial seeded, allowlist on/off, no-double-mail) + push PR, CI, adversarial review | ⬜ | |
+
+Remaining PRs after B: C held-replies (`chat_messages_rippling`), D mod-UI (#6 banner + #7 reach
+map + #4 modal carry-over), E browse (#1 + #2 reply-eligibility + #8 FAQ), F digest (#5), G
+observability/self-tuning (#9), #10 postcode-driven single-group posting + TN main-group-only.
+Then the two moderator-audience change docs.
 
 ## Carry-over (deferred to PR D)
 Modal files built earlier on `fix/pending-url-spam-collection` (main checkout, uncommitted): `components/RipplingExplanation.vue`, `modtools/components/RipplingHelpModal.vue`, `modtools/components/RipplingExplorer.vue` (modified), + 2 specs. Re-create or copy into PR D.
