@@ -1,0 +1,177 @@
+<?php
+
+namespace Tests\Unit\Services\Ripple;
+
+use App\Models\Message;
+use App\Models\MessageGroup;
+use App\Services\Ripple\ExpandService;
+use App\Services\Ripple\ReachService;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Tests\TestCase;
+
+class ExpandServiceTest extends TestCase
+{
+    private const WKT = 'POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Short, deterministic hazard schedule (3 ticks) + always-active window.
+        config(['freegle.ripple.hazard_hours' => [1, 3, 6]]);
+        config(['freegle.ripple.active_start_hour' => 0]);
+        config(['freegle.ripple.active_end_hour' => 24]);
+        DB::statement('DELETE FROM messages_reach');
+        DB::statement('DELETE FROM messages_spatial');
+    }
+
+    private function service(): ExpandService
+    {
+        return new ExpandService(new ReachService());
+    }
+
+    /** Seed an approved OFFER present in messages_spatial; returns the message id. */
+    private function seedSpatialPost(Carbon $arrival): int
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: sofa (London)',
+            'textbody' => 'A sofa.',
+            'source' => 'Platform',
+            'date' => $arrival,
+            'arrival' => $arrival,
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => $arrival,
+        ]);
+        DB::insert(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $group->id, Message::TYPE_OFFER, $arrival]
+        );
+
+        return (int) $message->id;
+    }
+
+    private function fakeRouting(int $ticks = 3): void
+    {
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $schedule = [];
+        for ($k = 1; $k <= $ticks; $k++) {
+            $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
+        }
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
+        ], 200)]);
+    }
+
+    public function test_initialises_reach_for_new_spatial_post(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // 0.5h → tick 1
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized']);
+        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(1, (int) $row->tick);
+        $this->assertSame(3, (int) $row->total_ticks);
+        $this->assertSame('expanding', $row->status);
+        $this->assertNotNull($row->next_expansion_at);
+        $this->assertSame(
+            'POLYGON',
+            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM messages_reach WHERE msgid = ?', [$msgid])->t
+        );
+    }
+
+    public function test_backfilled_old_post_starts_at_correct_tick_and_completes(): void
+    {
+        $this->fakeRouting(3);
+        // 7h old → past the final hazard threshold (6h) → tick 3 → done.
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(3, (int) $row->tick);
+        $this->assertSame('done', $row->status);
+        $this->assertNull($row->next_expansion_at);
+    }
+
+    public function test_advances_due_reach_to_current_tick(): void
+    {
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        // Start the post stuck at tick 1 with an overdue expansion.
+        DB::statement(
+            "INSERT INTO messages_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+        );
+        Http::fake(); // no routing call expected on advance (uses cached schedule)
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['expanded']);
+        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(3, (int) $row->tick);  // 7h elapsed → final tick
+        $this->assertSame('done', $row->status);
+    }
+
+    public function test_removes_reach_for_post_no_longer_in_spatial(): void
+    {
+        Http::fake();
+        // A message that has a reach row but is NOT in messages_spatial (taken/withdrawn).
+        $user = $this->createTestUser();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: gone', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        DB::statement(
+            "INSERT INTO messages_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDays(1)]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
+        $this->assertSame(0, DB::table('messages_reach')->where('msgid', $message->id)->count());
+    }
+
+    public function test_dry_run_writes_nothing(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(true, 500);
+
+        $this->assertSame(1, $stats['initialized']); // counted
+        $this->assertSame(0, DB::table('messages_reach')->where('msgid', $msgid)->count()); // but not written
+    }
+}
