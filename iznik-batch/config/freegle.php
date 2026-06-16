@@ -271,6 +271,9 @@ return [
         'mode' => env('RIPPLE_MODE', 'drive'),
         // Maximum drive-time (minutes) the reach may grow to.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // DARK by default: hold external (email/TN) replies that arrive from outside
+        // the post's current reach, releasing them as reach grows (#3 / PR C).
+        'hold_replies' => (bool) env('RIPPLE_HOLD_REPLIES', false),
         // Wall-clock hazard schedule (hours since arrival) at which the reach
         // expands one tick. One schedule tick is requested per entry, so the
         // number of ticks equals the length of this array.

@@ -1,0 +1,122 @@
+<?php
+
+namespace Tests\Unit\Services\Ripple;
+
+use App\Services\Ripple\ReachQueryService;
+use App\Services\Ripple\RippleReplyService;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+class RippleReplyServiceTest extends TestCase
+{
+    // Box covering lng [-0.2, 0.0], lat [51.4, 51.6].
+    private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
+    private const INSIDE = [51.5, -0.1];   // [lat, lng]
+    private const OUTSIDE = [52.0, 1.0];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        DB::statement('DELETE FROM chat_messages_rippling');
+        DB::statement('DELETE FROM messages_reach');
+    }
+
+    private function service(): RippleReplyService
+    {
+        return new RippleReplyService(new ReachQueryService());
+    }
+
+    private function seedReachedPost(): int
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        DB::statement(
+            "INSERT INTO messages_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::POLY]
+        );
+
+        return (int) $message->id;
+    }
+
+    /** Returns [ripplingRowId, chatmsgid]. */
+    private function seedHeldReply(int $msgid, array $latLng): array
+    {
+        $u1 = $this->createTestUser();
+        $u2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($u1, $u2);
+        $cm = $this->createTestChatMessage($room, $u1, ['reviewrequired' => 1]);
+        // hold() takes (lat, lng); $latLng is [lat, lng].
+        $id = $this->service()->hold($room->id, $cm->id, $msgid, $u1->id, $latLng[0], $latLng[1]);
+
+        return [$id, $cm->id];
+    }
+
+    public function test_should_hold_when_post_is_rippling_and_replier_outside_reach(): void
+    {
+        $msgid = $this->seedReachedPost();
+        $svc = $this->service();
+        $this->assertTrue($svc->shouldHold($msgid, self::OUTSIDE[0], self::OUTSIDE[1]));
+        $this->assertFalse($svc->shouldHold($msgid, self::INSIDE[0], self::INSIDE[1]));
+    }
+
+    public function test_should_not_hold_when_post_has_no_reach(): void
+    {
+        $this->assertFalse($this->service()->shouldHold(999999999, self::OUTSIDE[0], self::OUTSIDE[1]));
+    }
+
+    public function test_should_not_hold_with_unknown_location(): void
+    {
+        $msgid = $this->seedReachedPost();
+        $this->assertFalse($this->service()->shouldHold($msgid, null, null));
+    }
+
+    public function test_hold_blocks_delivery_and_records_reason(): void
+    {
+        $msgid = $this->seedReachedPost();
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+        $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_covered_delivers_replies_now_inside_reach(): void
+    {
+        $msgid = $this->seedReachedPost();
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::INSIDE); // inside the reach box
+
+        $released = $this->service()->releaseCovered($msgid);
+
+        $this->assertSame(1, $released);
+        $this->assertSame('released', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame(0, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+    }
+
+    public function test_release_covered_keeps_replies_still_outside_held(): void
+    {
+        $msgid = $this->seedReachedPost();
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        $released = $this->service()->releaseCovered($msgid);
+
+        $this->assertSame(0, $released);
+        $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+    }
+
+    public function test_mark_gone_does_not_deliver(): void
+    {
+        $msgid = $this->seedReachedPost();
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        $affected = $this->service()->markGone($msgid);
+
+        $this->assertSame(1, $affected);
+        $this->assertSame('taken-gone', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        // Still not delivered.
+        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
+    }
+}

@@ -111,6 +111,14 @@ Schedule::command('ripple:expand')
     ->sendOutputTo(cronLog('ripple:expand'))
     ->runInBackground();
 
+// Release/expire held external (email/TN) replies as posts ripple out (#3).
+// Dark until RIPPLE_HOLD_REPLIES is set.
+Schedule::command('ripple:release-replies')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('ripple:release-replies'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
