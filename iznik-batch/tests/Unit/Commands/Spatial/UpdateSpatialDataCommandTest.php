@@ -20,6 +20,11 @@ class UpdateSpatialDataCommandTest extends TestCase
             mkdir($this->dataDir, 0755, true);
         }
         config(['freegle.spatial_data_dir' => $this->dataDir]);
+        // Pin the admin URL the reload signal targets so the test is deterministic
+        // regardless of the container's SPATIAL_KNN_URL env (from which
+        // spatial_admin_url is otherwise derived). The Http::fake() stubs and the
+        // reload-URL assertion below both expect localhost:8195.
+        config(['freegle.spatial_admin_url' => 'http://localhost:8195']);
     }
 
     protected function tearDown(): void
