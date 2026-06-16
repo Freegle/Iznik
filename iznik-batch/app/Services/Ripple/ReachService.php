@@ -132,11 +132,17 @@ class ReachService
     /**
      * When tick $tick should expand to the next one: arrival + hazardHours[$tick]
      * (hazardHours is 0-indexed and $tick is 1-based, so index $tick is the next
-     * threshold). Returns null when $tick is already the final tick.
+     * threshold). Returns null when $tick is already the post's final tick.
+     *
+     * $totalTicks is the post's own tick count (stored at init). Passing it makes the
+     * 'done' transition robust to the config hazard schedule changing while a post is
+     * mid-flight, and to routing ticks having been filtered out. Defaults to the
+     * current config length.
      */
-    public function nextExpansionAfter(Carbon $arrival, int $tick): ?Carbon
+    public function nextExpansionAfter(Carbon $arrival, int $tick, ?int $totalTicks = null): ?Carbon
     {
-        if ($tick >= $this->totalTicks()) {
+        $total = $totalTicks ?? $this->totalTicks();
+        if ($tick >= $total || !isset($this->hazardHours[$tick])) {
             return null;
         }
         return $arrival->copy()->addHours($this->hazardHours[$tick]);

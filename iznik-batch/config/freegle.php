@@ -257,14 +257,11 @@ return [
     // The routing server listens on TWO ports: the external port (SPATIAL_PORT,
     // 8196) requires a moderator JWT, while the internal port (SPATIAL_INTERNAL_PORT,
     // 8194) is unauthenticated and intended for trusted backend services — which is
-    // exactly this engine (it has no user JWT). So we target the internal port,
-    // derived from the batch container's existing SPATIAL_SERVER_URL by swapping the
-    // port, and overridable via ROUTING_SERVER_URL.
-    'routing_server_url' => env('ROUTING_SERVER_URL', str_replace(
-        ':8196',
-        ':8194',
-        env('SPATIAL_SERVER_URL', 'http://spatial:8196')
-    )),
+    // exactly this engine (it has no user JWT). So we target the internal port.
+    // Set ROUTING_SERVER_URL in any environment whose routing server is not reachable
+    // at the default below (it must point at the routing server's INTERNAL/no-auth
+    // port, NOT the KNN finder and NOT the JWT-guarded external port).
+    'routing_server_url' => env('ROUTING_SERVER_URL', 'http://spatial:8194'),
 
     // Rippling-out reach engine parameters (ripple:expand / ReachService).
     'ripple' => [

@@ -53,22 +53,25 @@ class ExpandService
 
     private function removeStale(bool $dryRun): int
     {
-        $count = (int) DB::table('messages_reach as mr')
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_spatial as ms')
-                    ->whereColumn('ms.msgid', 'mr.msgid');
-            })->count();
-
-        if (!$dryRun && $count > 0) {
-            DB::statement(
-                'DELETE mr FROM messages_reach mr
-                 LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
-                 WHERE ms.msgid IS NULL'
-            );
+        if ($dryRun) {
+            return (int) DB::table('messages_reach as mr')
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages_spatial as ms')
+                        ->whereColumn('ms.msgid', 'mr.msgid');
+                })->count();
         }
 
-        return $count;
+        // Single DELETE then ROW_COUNT() so the reported figure is exactly what was
+        // deleted (a separate COUNT then DELETE can drift — messages:update-spatial-index
+        // mutates messages_spatial concurrently).
+        DB::statement(
+            'DELETE mr FROM messages_reach mr
+             LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
+             WHERE ms.msgid IS NULL'
+        );
+
+        return (int) (DB::selectOne('SELECT ROW_COUNT() AS n')->n ?? 0);
     }
 
     private function initialiseNew(bool $dryRun, int $limit, array &$stats): void
@@ -88,6 +91,13 @@ class ExpandService
 
         foreach ($rows as $row) {
             try {
+                if ($row->arrival === null) {
+                    // Without arrival we cannot place the post on its hazard schedule.
+                    Log::warning("ripple: null arrival for msg {$row->msgid}, skipping");
+                    $stats['skipped']++;
+                    continue;
+                }
+
                 $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
                 if ($schedule === null) {
                     // Routing unreachable or origin off-graph — retry next run.
@@ -96,14 +106,20 @@ class ExpandService
                 }
 
                 $arrival = Carbon::parse($row->arrival);
-                $total = count($schedule['ticks']);
+                // total_ticks is the hazard-schedule length (the wall-clock plan), NOT the
+                // count of usable polygons — some routing ticks may have empty polygons and
+                // be filtered out. Keeping these aligned is what lets the 'done' check fire.
+                $total = $this->reach->totalTicks();
 
-                // Start at the tick appropriate for how long the post has already
-                // been live (so back-filled posts get their correct reach at once,
-                // not the tiny initial one).
+                // Start at the tick appropriate for how long the post has already been live
+                // (back-filled posts get their correct reach at once, not the tiny initial one).
                 $elapsedHours = $arrival->diffInMinutes(now()) / 60.0;
                 $tick = min($this->reach->tickForElapsedHours($elapsedHours), $total);
-                $entry = $schedule['ticks'][$tick - 1];
+                $entry = $this->entryForTick($schedule['ticks'], $tick);
+                if ($entry === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
                 $next = $this->reach->nextExpansionAfter($arrival, $tick);
                 $status = $next === null ? 'done' : 'expanding';
 
@@ -149,15 +165,21 @@ class ExpandService
                     continue;
                 }
 
+                if ($row->arrival === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
                 $arrival = Carbon::parse($row->arrival);
                 $elapsedHours = $arrival->diffInMinutes(now()) / 60.0;
-                $total = min((int) $row->total_ticks, count($ticks));
+                // The post's own hazard-schedule length (stored at init), used as the ceiling
+                // for both the target tick and the 'done' transition.
+                $total = (int) $row->total_ticks;
                 $target = min($this->reach->tickForElapsedHours($elapsedHours), $total);
 
                 if ($target <= (int) $row->tick) {
                     // Not actually due for a new tick yet — reschedule and move on.
                     if (!$dryRun) {
-                        $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick);
+                        $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
                         DB::table('messages_reach')->where('msgid', $row->msgid)->update([
                             'next_expansion_at' => $next,
                             'status' => $next === null ? 'done' : 'expanding',
@@ -168,8 +190,12 @@ class ExpandService
                     continue;
                 }
 
-                $entry = $ticks[$target - 1];
-                $next = $this->reach->nextExpansionAfter($arrival, $target);
+                $entry = $this->entryForTick($ticks, $target);
+                if ($entry === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
+                $next = $this->reach->nextExpansionAfter($arrival, $target, $total);
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
@@ -192,6 +218,26 @@ class ExpandService
                 Log::warning("ripple: advance failed for msg {$row->msgid}: {$e->getMessage()}");
             }
         }
+    }
+
+    /**
+     * The cached schedule entry for a target tick: the one with the largest `tick`
+     * number ≤ target (so a higher tick whose polygon was filtered out falls back to
+     * the most-grown reach available), or the first entry if none qualify. Indexing by
+     * tick number — not array position — survives filtered/empty-polygon ticks.
+     *
+     * @param array<int,array{tick:int,wkt:string}> $ticks
+     */
+    private function entryForTick(array $ticks, int $target): ?array
+    {
+        $best = null;
+        foreach ($ticks as $entry) {
+            if ((int) ($entry['tick'] ?? 0) <= $target) {
+                $best = $entry;
+            }
+        }
+
+        return $best ?? ($ticks[0] ?? null);
     }
 
     private function inActiveHours(): bool
