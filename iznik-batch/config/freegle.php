@@ -235,8 +235,18 @@ return [
 
     'srid' => env('FREEGLE_SRID', 3857),
 
-    'spatial_server_url' => env('SPATIAL_SERVER_URL', 'http://localhost:8194'),
-    'spatial_admin_url' => env('SPATIAL_ADMIN_URL', 'http://localhost:8195'),
+    // The spatial-knn "finder" service (iznik-spatial-go). SPATIAL_KNN_URL is the
+    // canonical name (also used by the Go client). NB: SPATIAL_SERVER_URL is taken
+    // by the routing/isochrone server elsewhere, so it must NOT be relied on here —
+    // it's only a last-resort legacy fallback. The admin (rebuild/remove/upsert)
+    // API is the same host on the next port; derive it from SPATIAL_KNN_URL so any
+    // container that sets SPATIAL_KNN_URL gets a working admin URL for free.
+    'spatial_server_url' => env('SPATIAL_KNN_URL', env('SPATIAL_SERVER_URL', 'http://localhost:8194')),
+    'spatial_admin_url' => env('SPATIAL_KNN_ADMIN_URL', env('SPATIAL_ADMIN_URL', str_replace(
+        ':8194',
+        ':8195',
+        env('SPATIAL_KNN_URL', 'http://localhost:8194')
+    ))),
     'spatial_data_dir' => env('SPATIAL_DATA_DIR', '/data'),
 
     /*

@@ -216,16 +216,6 @@ class DoogalService
             [$id]
         );
 
-        // Assign the containing grid square, if any.
-        $grid = DB::selectOne(
-            'SELECT locations_grids.id AS gridid FROM locations '
-            .'INNER JOIN locations_grids ON locations.id = ? AND MBRIntersects(locations.geometry, locations_grids.box) LIMIT 1',
-            [$id]
-        );
-        if ($grid && $grid->gridid) {
-            DB::update('UPDATE locations SET gridid = ? WHERE id = ?', [$grid->gridid, $id]);
-        }
-
         // Link a full postcode (e.g. "AB1 2CD") to its parent district ("AB1").
         $sp = strpos($name, ' ');
         if ($sp !== false) {

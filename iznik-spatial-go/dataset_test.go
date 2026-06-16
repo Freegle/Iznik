@@ -178,6 +178,32 @@ func TestMessagesDataset_Within(t *testing.T) {
 	assert.Contains(t, ids, int64(60))
 }
 
+func TestPostcodesDataset_Query(t *testing.T) {
+	idx, err := CreateIndex(":memory:")
+	require.NoError(t, err)
+	defer idx.Close()
+
+	// Two postcode points; the one at (0.01, 51.50) is nearest to (0, 51.5).
+	items := []Item{
+		{ExtID: 70, MinLng: 0.01, MaxLng: 0.01, MinLat: 51.50, MaxLat: 51.50},
+		{ExtID: 71, MinLng: 1.00, MaxLng: 1.00, MinLat: 51.50, MaxLat: 51.50},
+	}
+	require.NoError(t, InsertItems(idx, items, nil))
+
+	ds := &PostcodesDataset{}
+	results, err := ds.Query(idx, QueryParams{Lng: 0, Lat: 51.5, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, int64(70), results[0].ID, "nearest postcode should be returned")
+}
+
+func TestPostcodesDataset_Meta(t *testing.T) {
+	ds := &PostcodesDataset{}
+	assert.Equal(t, "postcodes", ds.Name())
+	// Postcodes use an incremental delta (not rebuild-only).
+	assert.Greater(t, ds.DeltaInterval(), time.Duration(0))
+}
+
 func TestUserApproxLocsDataset_ApplyDeltaNotSupported(t *testing.T) {
 	ds := &UserApproxLocsDataset{}
 	err := ds.ApplyDelta(nil, nil, zeroTime)

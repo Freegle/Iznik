@@ -2,10 +2,9 @@
 
 namespace App\Models;
 
+use App\Services\SpatialQueryService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use OwenIt\Auditing\Contracts\Auditable;
 
 class Location extends Model implements Auditable
@@ -13,7 +12,7 @@ class Location extends Model implements Auditable
     use \OwenIt\Auditing\Auditable;
 
     // Fields exposed by getPublic() - mirrors iznik-server Location::$publicatts.
-    private const PUBLIC_ATTS = ['id', 'osm_id', 'name', 'type', 'popularity', 'gridid', 'postcodeid', 'areaid', 'lat', 'lng', 'maxdimension'];
+    private const PUBLIC_ATTS = ['id', 'osm_id', 'name', 'type', 'popularity', 'postcodeid', 'areaid', 'lat', 'lng', 'maxdimension'];
 
     protected $table = 'locations';
     protected $guarded = ['id'];
@@ -27,65 +26,21 @@ class Location extends Model implements Auditable
         'osm_shop' => 'boolean',
     ];
 
+    /**
+     * Nearest full postcode to a point, via the spatial server's KNN index
+     * (the "postcodes" point dataset). Returns null if the spatial server has
+     * nothing nearby or is unreachable.
+     */
     public static function closestPostcode(float $lat, float $lng): ?object
     {
-        $spatialUrl = config('freegle.spatial_server_url', 'http://localhost:8194');
-
-        try {
-            $response = Http::timeout(3)->get("{$spatialUrl}/v1/locations/knn", [
-                'lat'   => $lat,
-                'lng'   => $lng,
-                'limit' => 1,
-                'type'  => 'Postcode',
-            ]);
-
-            if ($response->successful()) {
-                $results = $response->json('results', []);
-                if (!empty($results)) {
-                    $id = $results[0]['id'];
-                    return DB::table('locations')->where('id', $id)
-                        ->select('id', 'name', 'lat', 'lng')
-                        ->first();
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::warning('closestPostcode spatial server unavailable, falling back to MySQL', [
-                'error' => $e->getMessage(),
-            ]);
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
+        if (empty($ids)) {
+            return null;
         }
 
-        // Fallback: expanding BBox on locations_spatial.
-        $srid = config('freegle.srid', 3857);
-        $scan = 0.00001953125;
-
-        do {
-            $swlat = $lat - $scan;
-            $nelat = $lat + $scan;
-            $swlng = $lng - $scan;
-            $nelng = $lng + $scan;
-
-            $poly = "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
-
-            $locs = DB::select(
-                "SELECT locations.id, locations.name, locations.lat, locations.lng
-                 FROM locations_spatial
-                 INNER JOIN locations ON locations.id = locations_spatial.locationid
-                 WHERE MBRContains(ST_Envelope(ST_GeomFromText(?, ?)), locations_spatial.geometry)
-                   AND locations.type = 'Postcode'
-                   AND LOCATE(' ', locations.name) > 0
-                 ORDER BY ST_distance(locations_spatial.geometry, ST_GeomFromText(?, ?)) ASC
-                 LIMIT 1",
-                [$poly, $srid, "POINT($lng $lat)", $srid]
-            );
-
-            if (count($locs) === 1) {
-                return $locs[0];
-            }
-
-            $scan *= 2;
-        } while ($scan <= 0.2);
-
-        return null;
+        return DB::table('locations')->where('id', $ids[0])
+            ->select('id', 'name', 'lat', 'lng')
+            ->first();
     }
 
     public static function findByName(string $name): ?int

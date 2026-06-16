@@ -99,6 +99,13 @@ func (srv *server) rebuild(name string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("%s: load: %w", name, err)
 	}
+	// Flush the WAL into the main .db before close+rename — rename moves only the
+	// .db file, so anything still in the -wal would be lost (large indexes).
+	if err := newIdx.Checkpoint(); err != nil {
+		newIdx.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("%s: checkpoint: %w", name, err)
+	}
 	newIdx.Close()
 
 	if err := os.Rename(tmpPath, idxPath); err != nil {

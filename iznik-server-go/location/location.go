@@ -42,56 +42,33 @@ type Location struct {
 	Dist       float32        `json:"dist" gorm:"-"`
 }
 
+// ClosestPostcode returns the nearest full postcode to a point via the spatial
+// server's "postcodes" KNN dataset. Returns a zero Location if the spatial
+// server has nothing nearby or is unreachable.
 func ClosestPostcode(lat float32, lng float32) Location {
-	results, err := spatial.KNN("locations", float64(lng), float64(lat), 1, "Postcode")
-	if err == nil && len(results) > 0 {
-		id := results[0].ID
-		var loc Location
-		database.DBConn.Raw(
-			"SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname "+
-				"FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
-			id,
-		).Scan(&loc)
-		return loc
+	// (0,0) is the codebase-wide "location unknown" sentinel (e.g. GetLatLng
+	// returns it for a user with no derivable location). It sits in the Atlantic
+	// off Africa, so a UK KNN would still return *some* postcode (the nearest,
+	// however far) — the old expanding-bbox lookup returned empty here. Preserve
+	// that: no location in, no postcode out. (lng=0 alone is valid — the Greenwich
+	// meridian crosses the UK — so only the both-zero sentinel is excluded.)
+	if lat == 0 && lng == 0 {
+		return Location{}
 	}
 
-	// Fallback: spatial server unavailable or no polygon postcodes loaded (e.g. test environment).
-	// Use MySQL spatial query against locations_spatial which stores postcode point/polygon geometries.
-	return closestPostcodeMySQL(lat, lng)
-}
-
-func closestPostcodeMySQL(lat float32, lng float32) Location {
-	var scan = float32(0.00001953125)
-	db := database.DBConn
-
-	for {
-		swlat := lat - scan
-		swlng := lng - scan
-		nelat := lat + scan
-		nelng := lng + scan
-
-		var locs []Location
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, "+
-			"ST_distance(locations_spatial.geometry, ST_SRID(POINT(?, ?), ?)) AS dist "+
-			"FROM locations_spatial INNER JOIN locations l1 ON l1.id = locations_spatial.locationid "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE MBRContains(ST_Envelope(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)), locations_spatial.geometry) AND "+
-			"l1.type = ? "+
-			"ORDER BY dist ASC, CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0 ELSE ST_AREA(locations_spatial.geometry) END ASC LIMIT 1;",
-			lng, lat, utils.SRID,
-			swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat,
-			utils.SRID, utils.LOCATION_TYPE_POSTCODE,
-		).Scan(&locs)
-
-		if len(locs) > 0 {
-			return locs[0]
-		}
-		scan = scan * 2
-		if scan > 0.2 {
-			break
-		}
+	results, err := spatial.KNN("postcodes", float64(lng), float64(lat), 1, "")
+	if err != nil || len(results) == 0 {
+		return Location{}
 	}
-	return Location{}
+
+	id := results[0].ID
+	var loc Location
+	database.DBConn.Raw(
+		"SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname "+
+			"FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
+		id,
+	).Scan(&loc)
+	return loc
 }
 
 type ClosestGroup struct {

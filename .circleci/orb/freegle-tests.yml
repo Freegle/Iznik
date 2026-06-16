@@ -601,6 +601,14 @@ commands:
                 echo '    build:'
                 echo '      cache_from:'
                 echo '        - 185.44.254.6:5002/ci/status:latest'
+                echo '  spatial-knn:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/spatial-knn:latest'
+                echo '  spatial:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/spatial:latest'
               } > /tmp/docker-compose.cache.yml
 
               export COMPOSE_FILE="${COMPOSE_FILE}:/tmp/docker-compose.cache.yml"
@@ -648,8 +656,14 @@ commands:
               ) > "$NUXT_LOG" 2>&1 &
               NUXT_PID=$!
 
-              # Playwright + status (lightweight, finishes quickly)
-              docker-compose build $INLINE_CACHE_FLAG playwright status > "$OTHER_LOG" 2>&1 &
+              # Playwright + status + the two custom Go servers (spatial-knn / spatial).
+              # spatial-knn and spatial are NOT brought up from a registry image — they
+              # build from local source. They must be built explicitly here: otherwise
+              # `docker-compose up` reuses whatever image already exists on a pooled
+              # Katapult VM, which can be a stale build from before a source change (e.g.
+              # missing the admin /v1/:dataset/upsert route → integration-seed tests 404).
+              # The Dockerfile's COPY busts on source change, so cache_from keeps this fast.
+              docker-compose build $INLINE_CACHE_FLAG playwright status spatial-knn spatial > "$OTHER_LOG" 2>&1 &
               OTHER_PID=$!
 
               BUILD_FAILED=0
@@ -683,7 +697,7 @@ commands:
                 if docker-compose build $CACHE_FLAG \
                   apiv1 apiv1-phpunit apiv2 \
                   freegle-prod-local modtools-prod-local \
-                  playwright status; then
+                  playwright status spatial-knn spatial; then
                   echo "✅ Build succeeded on attempt $attempt"
                   break
                 else
@@ -726,6 +740,8 @@ commands:
                   ["playwright"]="${PROJECT}-playwright"
                   ["batch"]="${PROJECT}-batch"
                   ["status"]="${PROJECT}-status"
+                  ["spatial-knn"]="${PROJECT}-spatial-knn"
+                  ["spatial"]="${PROJECT}-spatial"
                 )
                 for svc in "${!SVC_IMAGES[@]}"; do
                   img="${SVC_IMAGES[$svc]}"

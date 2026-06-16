@@ -30,6 +30,10 @@ func CreateIndex(path string) (*Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", path, err)
 	}
+	// Build on a single connection so the loader and the pre-rename WAL
+	// checkpoint share one connection — the checkpoint must flush every page into
+	// the main .db file, because rebuild renames only the .db (not the -wal/-shm).
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
@@ -68,6 +72,15 @@ func OpenIndex(path string) (*Index, error) {
 // Close releases the SQLite connection.
 func (idx *Index) Close() error {
 	return idx.db.Close()
+}
+
+// Checkpoint flushes the WAL fully into the main .db file and truncates it, so
+// the .db is self-contained. rebuild() renames only the .db file, so without
+// this a large index keeps its newest pages (including the schema) in the
+// orphaned -wal and reopens as "no items table".
+func (idx *Index) Checkpoint() error {
+	_, err := idx.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
 }
 
 func initSchema(db *sql.DB) error {
