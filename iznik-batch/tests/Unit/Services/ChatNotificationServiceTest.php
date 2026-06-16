@@ -9,6 +9,7 @@ use App\Models\ChatRoster;
 use App\Models\Membership;
 use App\Models\User;
 use App\Services\ChatNotificationService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -267,6 +268,51 @@ class ChatNotificationServiceTest extends TestCase
         $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
 
         $this->assertEquals(0, $count);
+    }
+
+    public function test_get_unmailed_messages_applies_rippling_delivery_gate(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($sender, $group); // the post P (msgid FK)
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'date' => now()->subMinutes(5),
+        ]);
+
+        // Is our chat message returned by the selection query (i.e. would be emailed)?
+        $present = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        // Flag off (default): no gate is applied, so the message is selected normally.
+        $this->assertTrue($present(), 'message is selectable with the rippling flag off');
+
+        // Flag on + a non-released rippling row → the delivery gate excludes the message.
+        config(['freegle.ripple.hold_replies' => true]);
+        $rowId = (int) DB::table('chat_messages_rippling')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $msg->id,
+            'msgid' => $post->id,
+            'replieruserid' => $sender->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now(),
+        ]);
+        $this->assertFalse($present(), 'held reply is gated out of the email selection');
+
+        // Released → the gate no longer matches, so the message is selectable again.
+        DB::table('chat_messages_rippling')->where('id', $rowId)->update(['status' => 'released']);
+        $this->assertTrue($present(), 'released reply is delivered (selectable) again');
     }
 
     public function test_notify_by_email_skips_deleted_messages(): void

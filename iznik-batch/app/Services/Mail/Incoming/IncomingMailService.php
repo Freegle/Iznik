@@ -13,6 +13,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\ItemService;
+use App\Services\Ripple\RippleReplyService;
 use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -1625,13 +1626,22 @@ class IncomingMailService
         // Create the chat message as TYPE_INTERESTED with refmsgid.
         // Reply-to addresses are first replies to posts, so use TYPE_INTERESTED
         // (not TYPE_DEFAULT which is for ongoing chat notification replies).
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $fromUser->id,
             $email,
             refMsgId: $messageId,
             type: ChatMessage::TYPE_INTERESTED
         );
+
+        // Rippling-out held replies (#3, dark behind RIPPLE_HOLD_REPLIES): email/TN replies
+        // bypass the in-app reply-eligibility gate (#2), so re-apply the same reach test
+        // here. If the post is still rippling out and this replier's area isn't covered yet,
+        // hold the reply (record a chat_messages_rippling row) so the poster isn't notified
+        // until it reaches them. With the flag off this never runs.
+        if ($chatMsgId !== null && config('freegle.ripple.hold_replies')) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser);
+        }
 
         // #7: Check if message has outcome (TAKEN/RECEIVED) - don't email if so
         $hasOutcome = DB::table('messages_outcomes')
@@ -1678,6 +1688,40 @@ class IncomingMailService
         ]);
 
         return RoutingResult::TO_USER;
+    }
+
+    /**
+     * Rippling-out (#3): hold an external reply when the post is still rippling out and
+     * the replier's area isn't covered yet. The replier's location is their last known
+     * location (the same source the digest uses for distance). Records a
+     * chat_messages_rippling row (status='held'); the delivery gate then withholds the
+     * poster notification until the post ripples to them (status→'released'). Dark behind
+     * RIPPLE_HOLD_REPLIES — the caller only invokes this when the flag is on.
+     */
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
+    {
+        if ($replier->lastlocation === null) {
+            return;
+        }
+
+        $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
+        if ($loc === null || $loc->lat === null || $loc->lng === null) {
+            return;
+        }
+
+        $lat = (float) $loc->lat;
+        $lng = (float) $loc->lng;
+        $service = app(RippleReplyService::class);
+
+        if ($service->shouldHold($msgid, $lat, $lng)) {
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng);
+            Log::info('ripple:held-external-reply', [
+                'msgid' => $msgid,
+                'chatid' => $chatId,
+                'chatmsgid' => $chatMsgId,
+                'replieruserid' => $replier->id,
+            ]);
+        }
     }
 
     /**
@@ -1867,7 +1911,7 @@ class IncomingMailService
         ?float $spamScore = null,
         ?string $prependSubject = null,
         bool $skipStripQuoted = false
-    ): void {
+    ): ?int {
         // Get body text, converting HTML to plain text if no text part exists.
         // This handles email clients like Apple Mail that may send HTML-only emails.
         $body = $email->textBody;
@@ -2002,6 +2046,8 @@ class IncomingMailService
             'user_id' => $userId,
             'review_required' => $reviewRequired,
         ]);
+
+        return $chatMsg->id;
     }
 
     /**
