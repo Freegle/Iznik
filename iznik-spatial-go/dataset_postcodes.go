@@ -9,8 +9,11 @@ import (
 
 // PostcodesDataset implements Dataset for postcode locations (point geometry).
 //
-// Postcodes are by far the largest dataset (~2M rows) and are points, so each is
-// stored with a degenerate bbox and nil WKB, and queried with FindNearestPoints.
+// Postcodes are by far the largest dataset (~2M rows) and are essentially points,
+// so each is stored with a degenerate bbox and nil WKB, and queried with
+// FindNearestPoints. A few Postcode rows carry a non-point ourgeometry (a
+// LINESTRING/polygon override) which would make a bare ST_X error out, so we take
+// ST_Centroid first (a POINT is its own centroid) — matching compare.go.
 // Only full postcodes (name contains a space, e.g. "SW1A 2DU") are indexed —
 // outward-only districts are excluded, matching Location::closestPostcode in the
 // PHP batch which has always returned full postcodes.
@@ -62,8 +65,8 @@ func (d *PostcodesDataset) Within(idx *Index, params QueryParams) ([]int64, erro
 func loadPostcodes(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
 		SELECT locations.id,
-		       ST_X(COALESCE(ourgeometry, geometry)) AS lng,
-		       ST_Y(COALESCE(ourgeometry, geometry)) AS lat
+		       ST_X(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lng,
+		       ST_Y(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lat
 		FROM locations
 		LEFT JOIN locations_excluded le ON locations.id = le.locationid
 		WHERE le.locationid IS NULL
