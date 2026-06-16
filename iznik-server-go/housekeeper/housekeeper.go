@@ -399,7 +399,6 @@ var cronJobs = []CronJob{
 	{Command: "notifications:exhort", Name: "Exhort Active Users", Description: "On-site notification nudge (default \"Tell us your Freegle story!\") to recently-active established users; 90-day per-user cooldown", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
 	{Command: "locations:update-postcodes", Name: "Postcode Refresh", Description: "Downloads the Doogal UK postcode dataset and adds new postcodes / refreshes moved lat/lng in the locations table", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Locations", Active: true},
 	{Command: "donations:paypal-download", Name: "PayPal Download (fallback)", Description: "Fallback: scans the last 30 days of PayPal NVP TransactionSearch results and upserts donations the IPN missed", Schedule: "Every 4 hours (:30)", IntervalMinutes: 240, Category: "Data", Active: true},
-	{Command: "discourse:check-users", Name: "Discourse User Audit", Description: "Audits Discourse users against MT mods, fixes Announcements watching + bios, reports bounces/mail settings; emails geeks daily and central mods on issues/Saturdays", Schedule: "Daily at 3:08am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
 	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and mods with TrashNothing preferred emails", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
 }
 
