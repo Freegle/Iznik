@@ -1835,8 +1835,10 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 // Soft-deleted (deleted=1) origin rows from a plain-delete rejection still persist and
 // are matched correctly, so a later secondary rejection stays silent as intended.
 //
-// id tiebreak is insertion order (matches TN same-second import order; manual
-// cross-posting is retired by #10).
+// messages_groups has no surrogate id column (its key is the composite (msgid, groupid)),
+// so groupid is the tiebreak when two groups share the same arrival second: lowest groupid
+// wins, deterministically. Manual cross-posting is retired by #10, so same-second ties are
+// rare (TN same-second import order).
 func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
 	var res struct {
 		Groupid  uint64
@@ -1847,7 +1849,7 @@ func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
 	        FROM messages_groups mg
 	        JOIN messages m ON m.id = mg.msgid
 	        WHERE mg.msgid = ?
-	        ORDER BY mg.arrival ASC, mg.id ASC
+	        ORDER BY mg.arrival ASC, mg.groupid ASC
 	        LIMIT 1`, msgid).Scan(&res)
 	if !res.IsOrigin {
 		return 0
