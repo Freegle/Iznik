@@ -313,4 +313,33 @@ class NewsfeedModNotifCommandTest extends TestCase
 
         Mail::assertNothingSent();
     }
+
+    public function test_action_text_reflects_post_type(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+
+        // A Story and an AboutMe post each get a type-specific action line, so the
+        // mod understands what kind of ChitChat activity it was rather than seeing
+        // a generic "posted" for every newsfeed type.
+        $this->createNewsfeedPost($member->id, $group->id, ['type' => 'Story']);
+        $this->createNewsfeedPost($member->id, $group->id, ['type' => 'AboutMe']);
+
+        $this->artisan('mail:newsfeed-mod-notif')
+            ->expectsOutputToContain('Notified 1 mod(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSent(NewsfeedModNotifMail::class, function ($mail) {
+            $actions = array_map(fn ($p) => $p['action'] ?? null, $mail->posts);
+
+            return in_array('shared their Freegle story', $actions, true)
+                && in_array('updated their About Me', $actions, true);
+        });
+    }
 }
