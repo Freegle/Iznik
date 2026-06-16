@@ -208,6 +208,37 @@ In-app replies can't arrive early (#2 blocks them in UI + API). Email and TrashN
   group members,"* with a "Learn more" link opening `RipplingExplanation`. Trigger: context
   group's row is recent while the message has older rows on other groups.
 
+### Secondary-group rejection (non-origin group says "out of area")
+A post is *posted* to its **origin** group; rippling later adds it (Pending) to nearby groups.
+A rejection by a **secondary** (non-origin) group behaves differently from an origin rejection:
+- **No poster notification.** Only the **origin** group's rejection is sent to the poster.
+  A secondary group rejecting just means *"not on our patch"* — the poster already has it
+  posted and it stays visible elsewhere, so they don't care and must not be bothered. (Code:
+  the reject/notify path must check whether the rejecting group is the message's origin group;
+  suppress the poster-facing notification when it is not.)
+- **It stops showing in that group's area.** The post's **effective visible area** is its
+  reach **clipped to the groups where it is approved** (i.e. minus any secondary group that
+  rejected). So a user whose location is covered *only* by the rejecting group's CGA no longer
+  sees it; users covered by other approved groups still do.
+- **Track frequency** (→ #9): count secondary-group out-of-area rejections — a key signal of
+  how often rippling pushes posts somewhere a group doesn't want them.
+
+### Visibility model (ties reach to per-group moderation)
+A post **P** is visible to a user at location **L** iff:
+1. `messages_reach(P).polygon` contains **L** (reach gate), **and**
+2. P is **approved** on at least one group whose **CGA contains L**.
+This makes secondary rejection a clean subtractive veto, and means a rippled-in post becomes
+visible in a new group's area only once it is approved there. To keep visibility tracking the
+reach (rather than lagging up to 48h behind on the new group), **rippled-in posts auto-approve
+on a short window** (they were already vetted on the origin group) unless a secondary mod
+actively rejects (clip) or holds — the secondary Pending state is that mod's window to veto.
+
+### Moderator edits on multi-group posts
+Edits are **global** (the message content is shared across all groups). So when a moderator
+edits a post that is on more than one group, show a **warning**: *"This edit will apply to the
+post on all groups."* This is a general rule for mod edits on any multi-group post (alongside
+the existing global-edit behaviour from the multi-group design).
+
 ## 10. #7 — Post reach/visibility map
 
 - A button on **any** message in mod views (pending, approved, …) — label TBD at copy time
@@ -291,3 +322,94 @@ Surface in sysadmin (alongside existing `ripple_algorithm_metrics`):
 - **Held external replies** (#3) — counts by status (held / released / dropped / taken-gone)
   and hold duration, so we can monitor external-reply holding.
 - Immediate-mail volume per expansion (#0).
+
+The richer picture (is rippling actually *better*, for whom, and how to tune it) is #9.
+
+## 16. #9 — Observability & self-tuning ("not a black box")
+
+**Goal:** continuously answer *"is rippling better than the old group-membership system, for
+whom, and how should the parameters adjust?"* — and feed that back so the system tunes itself
+rather than shipping as a fixed black box.
+
+### Questions → live metrics (each user is their own control)
+The old system showed posts from a user's **member groups**. For the same window we can cheaply
+compute each user's *would-have-seen* set and compare to their *rippled* set — an A/B-free
+comparison (the method the ripple-thresholds cohort used, n≈2,378). Track:
+
+1. **Volume** — posts shown/digested per user/day, distribution + per-user **delta vs their own
+   old-system baseline**. Guard-rail target: within **−10%/+50%** (ripple-thresholds band).
+2. **Proximity** — drive-time (and crow-flies) of shown posts. Are posts more *collectible*
+   (closer) than before?
+3. **Cross-group reach** — fraction of shown / replied / taken posts from groups the user was
+   **not** a member of before. Quantifies what rippling newly unlocks.
+4. **Timing / capture** — of actual repliers, % who were **within reach at reply time**
+   (in-time vs reached-late); time-to-first-reply vs the expansion schedule; outcome rate +
+   time-to-taken + whether/when the taker was reached. (Live analogue of
+   `ripple_algorithm_metrics` `pairs_in_time`/`pairs_late`.)
+5. **Friction** — reply-blocked-by-reach (#2), held-external-reply stats (#3),
+   **secondary-group out-of-area rejection rate** (#6: how often rippling pushes a post into a
+   group that rejects it), notification volume per post/user, unsubscribe-rate delta.
+6. **Equity / demographics** — **stratify all of the above by ONS rural-urban category and IMD
+   deprivation quintile** (the fairness dimension), so we can see rippling is equitable, not
+   just better on average.
+
+### Instrumentation (threaded through the earlier PRs — so we collect from day one)
+- **Engine (PR A)** — emit a structured event per expansion: msgid, tick, drive_min, cumulative
+  reached, newly-reached count, timestamp. (Log line now; rolled up by #9.)
+- **Browse (PR E) / digest (PR F)** — record per-user-per-day aggregates of the selected set:
+  count, member-vs-non-member split, drive-time buckets (sampled if needed; Loki or rollup).
+- **Replies / outcomes** — on reply/take, record whether the actor was in reach and at which
+  tick (capture), joinable to demographics.
+- **#2 / #3** — the block and hold counters above.
+
+### Aggregation & storage
+Periodic rollup (daily + weekly) into metric tables in the `ripple_*_metrics` family (e.g.
+`ripple_live_metrics`: period × ONS category × deprivation quintile → volume p50/p90, proximity,
+cross-group %, capture rate, friction counts). Keeps per-request write cost low.
+
+### Self-tuning loop
+- A weekly **`ripple:tune`** job reads the live metrics + runs the existing simulator/Bayesian
+  optimiser (Rippling Out.md) and proposes parameter updates **per ONS category** (curve,
+  max_minutes, target density N, hazard schedule), subject to guard-rails (the −10%/+50% band;
+  never cut any user >10%).
+- Tuned params live in a **`ripple_params`** table the engine reads per category → closed loop,
+  no code deploy to retune.
+- **Starts in advisory mode** (computes + surfaces *proposed* changes for a human to accept);
+  graduates to automatic once trusted. Bounded deltas + drift alerting prevent runaway tuning.
+
+### Sysadmin dashboard
+Volume-delta/band-compliance, proximity, cross-group %, capture-rate trend, friction counts —
+all stratified by urban/rural + deprivation — plus current vs proposed params per category, and
+alerts (band breach, capture-rate drop, volume spike). Lives in the status/sysadmin surface
+beside `ripple_algorithm_metrics`.
+
+### PR placement
+Instrumentation hooks land **inside** PRs A/C/E/F (so data accrues immediately). The rollup
+tables, dashboard and `ripple:tune` loop are a **dedicated PR G**, after live data exists.
+
+## 17. #10 — Postcode-driven single-group posting (retire manual cross-posting)
+
+**Terminology — two different "cross-postings":**
+- **System rippling** (the engine adds a post to adjacent groups by reach): **always on**, the
+  whole point of this work. Unchanged.
+- **Manual cross-posting** (the *poster* — or TrashNothing — putting the same item on several
+  groups at once): **retired**, because rippling now does the spreading. This section is about
+  removing the manual kind.
+
+Once rippling is live there is never a reason to post the same item to multiple groups by hand
+— the post ripples out from wherever it starts. So:
+
+- **Posting flow becomes postcode-driven and single-group.** In the composer, the user no
+  longer picks a group; the origin group is derived from their **postcode/location** (the group
+  whose CGA contains it, else nearest). The post then ripples out from there. This is a change
+  to the user posting flow (composer UI in `iznik-nuxt3` + the submit API enforcing a single
+  group from location).
+- **TrashNothing cross-posts are restricted to the main group only.** TN currently fans an item
+  across several groups; instead it lands on the **main group** and rippling spreads it. (Aligns
+  with the multi-group design's TN handling, but now the *spread* is rippling's job, not TN's.)
+
+**Sequencing (important):** #10 must deploy **after** the reach engine (#0) and browse (#1) are
+live and actually spreading posts — disabling manual cross-posting *before* rippling spreads
+would shrink reach. So #10 is among the **last** consumer-facing changes (with/after E), and the
+TN restriction (backend) lands once rippling is proven. Removing manual cross-posting also
+simplifies the world the rest of this design operates in (fewer poster-created duplicates).

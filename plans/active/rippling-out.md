@@ -9,7 +9,7 @@
 
 | PR | Branch | Contents | Depends on | Status |
 |----|--------|----------|-----------|--------|
-| A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | ⬜ Pending |
+| A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | 🔄 Code done, 11/11 tests green, pushing |
 | B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (flagged/allowlisted) | A | ⬜ Pending |
 | C | `feature/rippling-held-replies` | #3 `chat_messages_rippling` hold/release + mod chat-held reason | A | ⬜ Pending |
 | D | `feature/rippling-mod-ui` | #6 ripple-in mod banner + #7 reach map + #4 help modal (carry-over) | A | ⬜ Pending |
@@ -34,5 +34,17 @@
 ## Carry-over (deferred to PR D)
 Modal files built earlier on `fix/pending-url-spam-collection` (main checkout, uncommitted): `components/RipplingExplanation.vue`, `modtools/components/RipplingHelpModal.vue`, `modtools/components/RipplingExplorer.vue` (modified), + 2 specs. Re-create or copy into PR D.
 
+## Documentation deliverables (after all PRs)
+Two plain-language MD files, **both aimed at a moderator audience** (Freegle-familiar, NOT
+technical, NOT geospatially aware — very simple language). Focus on *what they'll see that's
+different, what they can do differently, and what they should NOT do differently*:
+1. **What changes for moderators.**
+2. **What changes for members** (still written for mods to understand/relay).
+Must stress: **do not reject a post just for being "out of area"** — it's showing because it's
+close to a member and/or hasn't been taken elsewhere (rippling). Out-of-area rejection by a
+secondary group is a real veto we track (#9) and should be rare/intentional, not reflexive.
+
 ## Session notes
-- 2026-06-16: spec finalised + committed; worktree `rippling-out` created off origin/master (`48be8e973`); feature branch `feature/rippling-out`. Containers starting. Beginning PR A.
+- 2026-06-16: spec finalised + committed; worktree `rippling-out` created off origin/master (`48be8e973`); feature branch `feature/rippling-reach-engine`. Containers starting. Beginning PR A.
+- 2026-06-16: PR A built — `messages_reach` migration (+ idempotent prod SQL), `routing_server_url`/`ripple.*` config (internal no-auth routing port 8194), `ReachService` (drives `/v1/ripple-schedule`, WKT, tick timing), `ExpandService` (init/advance/remove, active-hours gate, #9 log), `ripple:expand` command + scheduler entry. 11/11 Ripple tests green via status API. Dev `spatial` has no UK graph → tests mock routing.
+- Design grew: #9 observability/self-tuning; #6 multi-group (secondary out-of-area rejection = clip + no poster notify + track; mod edit "applies to all groups" warning; visibility = reach ∩ approved-covering-group); #10 postcode-driven single-group posting + TN main-group-only (retire manual cross-posting; deploy LATE). Two moderator-audience change docs due after all PRs.

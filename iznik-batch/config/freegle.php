@@ -249,6 +249,41 @@ return [
     ))),
     'spatial_data_dir' => env('SPATIAL_DATA_DIR', '/data'),
 
+    // The routing/isochrone server (iznik-routing-go) — DISTINCT from the KNN
+    // finder above. Hosts GET /v1/ripple-schedule and /v1/fairness, called over
+    // HTTP by the ripple:expand reach engine from inside the existing batch
+    // container (no new container).
+    //
+    // The routing server listens on TWO ports: the external port (SPATIAL_PORT,
+    // 8196) requires a moderator JWT, while the internal port (SPATIAL_INTERNAL_PORT,
+    // 8194) is unauthenticated and intended for trusted backend services — which is
+    // exactly this engine (it has no user JWT). So we target the internal port,
+    // derived from the batch container's existing SPATIAL_SERVER_URL by swapping the
+    // port, and overridable via ROUTING_SERVER_URL.
+    'routing_server_url' => env('ROUTING_SERVER_URL', str_replace(
+        ':8196',
+        ':8194',
+        env('SPATIAL_SERVER_URL', 'http://spatial:8196')
+    )),
+
+    // Rippling-out reach engine parameters (ripple:expand / ReachService).
+    'ripple' => [
+        // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
+        'curve' => env('RIPPLE_CURVE', 'step-70'),
+        // Travel mode for the reach isochrone.
+        'mode' => env('RIPPLE_MODE', 'drive'),
+        // Maximum drive-time (minutes) the reach may grow to.
+        'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // Wall-clock hazard schedule (hours since arrival) at which the reach
+        // expands one tick. One schedule tick is requested per entry, so the
+        // number of ticks equals the length of this array.
+        'hazard_hours' => [1, 3, 6, 12, 24, 48, 72, 120, 168],
+        // Only expand during active hours (server local time): inclusive start,
+        // exclusive end. Outside this window, due expansions wait.
+        'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
+        'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Loki Logging

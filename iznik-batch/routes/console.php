@@ -102,6 +102,15 @@ Schedule::command('messages:contentcheck')
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
+// Maintain rippling-out reach (messages_reach) for active posts.
+// Computes per-post reach via the routing server and advances it over time per
+// the hazard schedule. Dark until browse/digest/reply-eligibility read it.
+Schedule::command('ripple:expand')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('ripple:expand'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
