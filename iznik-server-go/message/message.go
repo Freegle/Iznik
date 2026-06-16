@@ -1822,14 +1822,37 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // handleReject rejects a pending message.
-// MessageOriginGroup returns the group a message was first posted to — the earliest
-// messages_groups arrival (id as tiebreak). With rippling-out a post is added to nearby
-// groups over time; only the origin group's rejection should notify the poster (#6).
-// Returns 0 if the message has no group rows.
+// MessageOriginGroup returns the group a message was first posted to — the group whose
+// messages_groups.arrival matches the message's own arrival. With rippling-out a post is
+// added to nearby groups later (at ripple time), so the origin is the earliest-arriving
+// group AND its arrival must be at/near messages.arrival. Only that group's rejection
+// notifies the poster (#6); a secondary (rippled-in) group's rejection stays silent.
+//
+// Returns 0 when the origin cannot be determined — including when the origin group's row
+// was HARD-deleted (handleDeleteMessage / handleMove), leaving only later rippled-in
+// rows: those fail the arrival-match, so we return 0 and the caller falls back to
+// notifying all groups (the safe direction — notify rather than silently drop).
+// Soft-deleted (deleted=1) origin rows from a plain-delete rejection still persist and
+// are matched correctly, so a later secondary rejection stays silent as intended.
+//
+// id tiebreak is insertion order (matches TN same-second import order; manual
+// cross-posting is retired by #10).
 func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
-	var gid uint64
-	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC, id ASC LIMIT 1", msgid).Scan(&gid)
-	return gid
+	var res struct {
+		Groupid  uint64
+		IsOrigin bool
+	}
+	db.Raw(`SELECT mg.groupid AS groupid,
+	               (mg.arrival <= m.arrival + INTERVAL 10 MINUTE) AS is_origin
+	        FROM messages_groups mg
+	        JOIN messages m ON m.id = mg.msgid
+	        WHERE mg.msgid = ?
+	        ORDER BY mg.arrival ASC, mg.id ASC
+	        LIMIT 1`, msgid).Scan(&res)
+	if !res.IsOrigin {
+		return 0
+	}
+	return res.Groupid
 }
 
 func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
