@@ -1882,8 +1882,24 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Queue rejection email per authorised group (batch processor creates one log+push per group).
+	// Determine the message's ORIGIN group — the first group it was posted to (the
+	// earliest messages_groups arrival). With rippling-out, a post is added to nearby
+	// groups over time; a rejection by a SECONDARY (non-origin) group just stops it
+	// showing in that group's area and must NOT be sent back to the poster (#6): they
+	// posted it on their origin group and it remains available there, so a secondary
+	// "out of area" rejection is not their concern.
+	var originGid uint64
+	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC, id ASC LIMIT 1", req.ID).Scan(&originGid)
+
+	// Queue the rejection email only for the origin group (the batch processor creates
+	// one log+push per group). Secondary-group rejections are silent to the poster and
+	// logged for #9 observability (how often rippling pushes a post somewhere a group
+	// rejects it).
 	for _, gid := range authorizedGroups {
+		if originGid != 0 && gid != originGid {
+			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			continue
+		}
 		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
 			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Reject")
 	}
