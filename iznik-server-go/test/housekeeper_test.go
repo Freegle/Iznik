@@ -487,7 +487,6 @@ func TestFinalV1CronMigrationsRegistered(t *testing.T) {
 		"notifications:exhort":       false,
 		"locations:update-postcodes": false,
 		"donations:paypal-download":  false,
-		"discourse:check-users":      false,
 		"discourse:not-signed-up":    false,
 	}
 
