@@ -164,6 +164,35 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, DB::table('messages_reach')->where('msgid', $message->id)->count());
     }
 
+    public function test_handles_filtered_empty_polygon_tick_and_still_completes(): void
+    {
+        // Routing returns all 3 ticks, but tick 2's polygon is empty → it is filtered
+        // out by ReachService. total_ticks must remain the hazard count (3), the post
+        // must reach the final tick and transition to 'done' (regression: previously a
+        // filtered tick left total_ticks < hazard count and the post never completed).
+        $poly = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+            [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+        ]]]];
+        $empty = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[]]]];
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 90, 'max_drive_min' => 30,
+            'schedule' => [
+                ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'polygon' => $poly],
+                ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'polygon' => $empty],
+                ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'polygon' => $poly],
+            ],
+        ], 200)]);
+        $msgid = $this->seedSpatialPost(now()->subHours(7)); // 7h → final tick
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(3, (int) $row->total_ticks); // hazard count, not the 2 usable polygons
+        $this->assertSame(3, (int) $row->tick);
+        $this->assertSame('done', $row->status);
+        $this->assertNull($row->next_expansion_at);
+    }
+
     public function test_dry_run_writes_nothing(): void
     {
         $this->fakeRouting(3);
