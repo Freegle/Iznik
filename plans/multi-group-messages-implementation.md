@@ -24,7 +24,7 @@
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
 | 28 | Go | Re-label `getPrimaryGroupForMessage` as legacy fallback |
-| 29 | Laravel | `DeadlineReached` and other mailables track/render arbitrary group via `groups->first()` |
+| 29 | Laravel | ✅ `DeadlineReached` and `ChatNotification` now pick the recipient's group |
 
 **Also flagged (deviation from spec):** Task 7 soft-deletes the `messages_groups` row on spam instead of setting `collection='Spam'` + `spamtype`/`spamreason`. The new `spamtype`/`spamreason` columns are currently unwritten by Go handlers. Reconcile before Task 20.
 
@@ -1813,52 +1813,26 @@ Full Unit suite 3226/3226 ✓.
 
 ---
 
-## Task 29: Laravel — Mailable Tracking & Body Use Recipient's Group ❌ NOT DONE
+## Task 29: Laravel — Mailable Tracking & Body Use Recipient's Group ✅ DONE
 
-**Files:**
-- Modify: `iznik-batch/app/Mail/Message/DeadlineReached.php:51,69`
-- Audit/modify: `iznik-batch/app/Console/Commands/Mail/TestMailCommand.php:918`
-- Audit: any other mailable that passes `$message->groups->first()` to `TrackableEmail::initTracking()` or uses it to render group-specific copy
+**Files modified:**
+- `iznik-batch/app/Mail/Message/DeadlineReached.php` — new `recipientGroupForMessage()` helper used in both `__construct` (tracking) and `build()` (body group name)
+- `iznik-batch/app/Mail/Chat/ChatNotification.php:648` — inline recipient-group filter for the "showed interest in X on Y" snippet
+- `iznik-batch/tests/Unit/Mail/MessageMailTest.php` — two new tests: tracking uses recipient's group on cross-post, fallback to first when no membership overlap
 
-`DeadlineReached::__construct` calls `$message->groups->first()` to derive `$groupId` for `initTracking()`, and `build()` does the same to pick `$groupName`. For multi-group posts both pick an arbitrary group, which:
-1. Files the `EmailTracking` row against the wrong group — skewing per-group open/click stats.
-2. Renders an arbitrary group's name in the email body even when the recipient is on a different one.
+**What changed:**
 
-`TrackableEmail::initTracking()` itself is generic (takes `?int $groupId`) — the fix lives in the callers.
+`DeadlineReached::__construct` and `build()` both called `$message->groups->first()` to derive the group ID for `initTracking()` and the body `$groupName`. For multi-group posts this picked an arbitrary group, filing `EmailTracking` against the wrong group and potentially showing a group name the recipient isn't a member of.
 
-- [ ] **Step 1: Pick the right group**
+Added `recipientGroupForMessage(Message $message, User $user): ?object` which filters `$message->groups` to groups the recipient is a member of (sorted by most-recent pivot arrival), falling back to `groups->first()` only if there is no overlap.
 
-For the `DeadlineReached` email the recipient is `$user`. Filter `$message->groups` to groups the recipient is a member of, sorted by most-recent arrival; fall back to `groups->first()` only if the user has no overlap (defensive — shouldn't happen).
+`ChatNotification::getLastInterestedMessageInfo()` had the same issue at line 648 — the "you showed interest in X on Y" snippet picked an arbitrary group. Fixed with the same inline filter against `$this->recipient->memberships`. Tracking in `ChatNotification` passes `null` groupid (chat is global), so only the display snippet was affected.
 
-```php
-$userGroupIds = $user->memberships()->pluck('groupid')->all();
-$group = $message->groups
-    ->filter(fn ($g) => in_array($g->id, $userGroupIds, true))
-    ->sortByDesc(fn ($g) => $g->pivot->arrival ?? null)
-    ->first()
-    ?? $message->groups->first();
-```
+**Tests added:**
+- `MessageMailTest::test_deadline_reached_tracking_uses_recipients_group_for_cross_post` — message on A+B, recipient on B only → tracking groupid = B
+- `MessageMailTest::test_deadline_reached_falls_back_to_first_group_when_no_membership_overlap` — no membership overlap → not null (graceful fallback)
 
-Use the result for both `initTracking()` and the body `$groupName`.
-
-- [ ] **Step 2: Audit other mailables**
-
-Search `iznik-batch/app/Mail` for any other class that:
-- Passes a group ID into `initTracking()` derived from `groups->first()`, or
-- Renders a group-specific name/branding using `groups->first()`.
-
-Update each to use the recipient-shared-group rule from Step 1, or document why a single arbitrary group is acceptable (e.g. moderator-targeted emails where the moderator may be on only one of the message's groups — in which case use that group).
-
-- [ ] **Step 3: Test**
-
-Create a message on Groups A and B with a recipient who is only on Group B. Send `DeadlineReached`. Assert: `EmailTracking.group_id` = B, and the rendered body references Group B's `nameshort`.
-
-- [ ] **Step 4: Commit**
-
-```bash
-cd iznik-batch && git add app/Mail/Message/DeadlineReached.php tests/
-git commit -m "fix: multi-group mailables track and render the recipient's group"
-```
+Full Laravel suite 4236/4236 ✓.
 
 ---
 
