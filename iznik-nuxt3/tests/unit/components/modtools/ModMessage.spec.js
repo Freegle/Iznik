@@ -346,6 +346,9 @@ describe('ModMessage', () => {
             template: '<div class="mod-spammer-report"><slot /></div>',
             props: ['userid', 'safelist'],
           },
+          RipplingExplanationModal: {
+            template: '<div class="rippling-explanation-modal" />',
+          },
           SpinButton: {
             template:
               '<button class="spin-button" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',
