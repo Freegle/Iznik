@@ -172,6 +172,55 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    public function test_immediate_digest_excludes_banned_user(): void
+    {
+        // A user banned from a group must not be emailed about its posts, even if a
+        // membership row still exists (e.g. re-added by TN sync, or a stale row).
+        config(['freegle.digest.immediate_allowlist' => '']);
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+
+        DB::table('users_banned')->insert([
+            'userid' => $recipient->id,
+            'groupid' => $group->id,
+        ]);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // Without the ban both members get it (2). The banned recipient is excluded,
+        // so only the poster is emailed.
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    public function test_daily_digest_excludes_banned_user(): void
+    {
+        // A user banned from a group must not get its posts in their daily digest.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        DB::table('users_banned')->insert([
+            'userid' => $recipient->id,
+            'groupid' => $group->id,
+        ]);
+
+        $this->createTestMessage($poster, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent']);
+    }
+
     public function test_daily_digest_excludes_posts_with_an_outcome(): void
     {
         // V1 parity (Digest.php:218): a post that already has an outcome

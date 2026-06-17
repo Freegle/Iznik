@@ -233,6 +233,13 @@ class UnifiedDigestService
             ->where('memberships.groupid', $groupid)
             ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
+            // A user banned from the group must never be emailed about its posts,
+            // even if a membership row still exists (re-added by TN sync, or stale).
+            ->whereNotExists(function ($q) use ($groupid) {
+                $q->select(DB::raw(1))->from('users_banned')
+                    ->whereColumn('users_banned.userid', 'memberships.userid')
+                    ->where('users_banned.groupid', $groupid);
+            })
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 $q->whereNull('users.lastaccess')
@@ -901,7 +908,13 @@ class UnifiedDigestService
         // every group on a periodic cadence (hourly/2h/4h/8h/daily), folding
         // them all into the single daily roll-up. See applyDigestFrequency().
         $membershipQuery = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED);
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            // Exclude groups this user is banned from — they must not receive its posts.
+            ->whereNotExists(function ($q) use ($user) {
+                $q->select(DB::raw(1))->from('users_banned')
+                    ->whereColumn('users_banned.groupid', 'memberships.groupid')
+                    ->where('users_banned.userid', $user->id);
+            });
         $this->applyDigestFrequency($membershipQuery, $mode);
 
         $groupIds = $membershipQuery->pluck('groupid');
