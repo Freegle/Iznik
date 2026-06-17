@@ -452,6 +452,38 @@ describe('OurUploader', () => {
       expect(mockUppy.use).toHaveBeenCalled()
     })
 
+    // Regression test for Discourse 9749/post-5:
+    // Images from phone cameras (e.g. 1536×2048, 285 KB) were uploaded at full
+    // resolution because @uppy/compressor was called with no options, leaving
+    // compressorjs with its default maxWidth:Infinity / maxHeight:Infinity.
+    it('configures Compressor with maxWidth to prevent oversized uploads (Discourse 9749)', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      const Compressor = (await import('@uppy/compressor')).default
+      const compressorCall = mockUppy.use.mock.calls.find(
+        (c) => c[0] === Compressor
+      )
+      expect(compressorCall).toBeDefined()
+      const compressorOpts = compressorCall[1]
+      expect(compressorOpts).toBeDefined()
+      expect(typeof compressorOpts.maxWidth).toBe('number')
+      expect(compressorOpts.maxWidth).toBeLessThanOrEqual(1024)
+    })
+
+    it('configures Compressor with maxHeight to prevent oversized uploads (Discourse 9749)', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      const Compressor = (await import('@uppy/compressor')).default
+      const compressorCall = mockUppy.use.mock.calls.find(
+        (c) => c[0] === Compressor
+      )
+      expect(compressorCall).toBeDefined()
+      const compressorOpts = compressorCall[1]
+      expect(compressorOpts).toBeDefined()
+      expect(typeof compressorOpts.maxHeight).toBe('number')
+      expect(compressorOpts.maxHeight).toBeLessThanOrEqual(1024)
+    })
+
     it('registers event listeners on Uppy', async () => {
       mockIsApp.value = false
       await createWrapper()

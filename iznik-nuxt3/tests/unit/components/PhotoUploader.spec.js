@@ -1127,6 +1127,25 @@ describe('PhotoUploader', () => {
       expect(wrapper.vm.uppy).not.toBeNull()
     })
 
+    it('Compressor plugin has maxWidth and maxHeight dimension cap (fix for 9749/5)', async () => {
+      // AssertFlip step 3b: FAILS on buggy code (no options → no dimension cap),
+      // PASSES once .use(Compressor, { maxWidth: 1024, maxHeight: 1024 }) is added.
+      // Root cause: CompressorJS defaults to maxWidth/maxHeight=Infinity, so without
+      // explicit options images are quality-compressed but NOT dimension-capped.
+      createWrapper()
+      await flushPromises()
+
+      const Compressor = (await import('@uppy/compressor')).default
+      const compressorCall = mockUppyInstance.use.mock.calls.find(
+        (c) => c[0] === Compressor
+      )
+      expect(compressorCall).toBeDefined()
+      expect(compressorCall[1]).toMatchObject({
+        maxWidth: 1024,
+        maxHeight: 1024,
+      })
+    })
+
     // Regression guard for NUXT3-D2C (Sentry TypeError `'error' in undefined`).
     // Three consecutive per-file upload-error events fired concurrent retryAll
     // calls that raced inside Uppy's filterNonFailedFiles. Coalesce bursts into

@@ -707,7 +707,7 @@ onMounted(() => {
       endpoint: runtimeConfig.public.TUS_UPLOADER,
       uploadDataDuringCreation: true,
     })
-    .use(Compressor)
+    .use(Compressor, { maxWidth: 1024, maxHeight: 1024 })
 
   uppy.value.on('complete', handleUppySuccess)
   const scheduleRetry = createRetryCoalescer(() => uppy.value)

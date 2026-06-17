@@ -407,7 +407,7 @@ onMounted(() => {
       uploadDataDuringCreation: true,
       retryDelays: [0, 3000, 5000, 10000, 20000],
     })
-    .use(Compressor)
+    .use(Compressor, { maxWidth: 1024, maxHeight: 1024 })
   uppy.on('file-added', (file) => {
     console.log('Added file', file)
   })
