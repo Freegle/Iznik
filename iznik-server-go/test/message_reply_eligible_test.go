@@ -60,6 +60,15 @@ func TestReplyEligibleReach(t *testing.T) {
 	if assert.Len(t, msgs, 1) {
 		assert.Nil(t, msgs[0].ReplyEligible, "inside reach → eligible (omitted)")
 	}
-
 	db.Exec("DELETE FROM messages_reach WHERE msgid = ?", mid)
+
+	// 4) Viewer banned from the post's (only) group → reply-ineligible regardless of reach
+	//    (a banned user must not interact with that group's posts).
+	db.Exec("INSERT INTO users_banned (userid, groupid) VALUES (?, ?) "+
+		"ON DUPLICATE KEY UPDATE userid = VALUES(userid)", viewerID, group)
+	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
+	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "banned → replyeligible set") {
+		assert.False(t, *msgs[0].ReplyEligible, "banned from the post's group → replyeligible=false")
+	}
+	db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?", viewerID, group)
 }

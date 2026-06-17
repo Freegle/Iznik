@@ -775,38 +775,62 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		}
 	}
 
-	// Rippling-out reply-eligibility (#2): a post that has rippled out (has a
-	// messages_reach row) but not yet to the viewer's location is reply-eligible=false, so
-	// the UI shows it view-only. Posts with no reach row aren't rippling, so they stay
-	// eligible (the field is omitted). One batch query keeps this off the hot per-message
-	// path. Dark until messages_reach is populated (the engine, PR A, is live), since with
-	// no rows the query returns nothing.
+	// Reply-eligibility (#2): a post is view-only (replyeligible=false) when the viewer
+	// cannot reply to it yet. Two reasons:
+	//   - rippling-out: the post has rippled out (has a messages_reach row) but not yet to
+	//     the viewer's location; or
+	//   - the viewer is banned from every group the post is on, so they must not interact
+	//     with it (mirrors the digest ban exclusion, but for the location-based reach path).
+	// Posts with no reach row and no ban stay eligible (the field is omitted). The queries
+	// only run when there's something to find (a known location / an actual ban), keeping
+	// them off the hot path for the common case.
 	if myid > 0 && len(messages) > 0 {
+		ids := make([]uint64, 0, len(messages))
+		for _, m := range messages {
+			ids = append(ids, m.ID)
+		}
+		blockedSet := make(map[uint64]bool)
+
+		// Reach-blocked: rippled out but not yet to the viewer's location.
 		latlng := user.GetLatLng(myid)
 		if latlng.Lat != 0 || latlng.Lng != 0 {
-			ids := make([]uint64, 0, len(messages))
-			for _, m := range messages {
-				ids = append(ids, m.ID)
-			}
-			var blocked []struct {
+			var reachBlocked []struct {
 				Msgid uint64 `gorm:"column:msgid"`
 			}
 			// Ignore the error: until the reach engine (PR A) is deployed the
-			// messages_reach table may not exist, in which case every post stays
-			// eligible (the field is omitted) and nothing changes.
-			err := db.Raw("SELECT msgid FROM messages_reach WHERE msgid IN (?) "+
+			// messages_reach table may not exist, in which case nothing is reach-blocked.
+			if err := db.Raw("SELECT msgid FROM messages_reach WHERE msgid IN (?) "+
 				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error
-			if err == nil && len(blocked) > 0 {
-				blockedSet := make(map[uint64]bool, len(blocked))
-				for _, b := range blocked {
+				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error; err == nil {
+				for _, b := range reachBlocked {
 					blockedSet[b.Msgid] = true
 				}
-				notEligible := false
-				for ix := range messages {
-					if blockedSet[messages[ix].ID] {
-						messages[ix].ReplyEligible = &notEligible
-					}
+			}
+		}
+
+		// Banned-blocked: the viewer is banned from every group the post is on. Only run
+		// the per-message check when the viewer actually has a ban somewhere.
+		var banCount int64
+		db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ?", myid).Scan(&banCount)
+		if banCount > 0 {
+			var bannedBlocked []struct {
+				Msgid uint64 `gorm:"column:msgid"`
+			}
+			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+				"LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ? "+
+				"WHERE mg.msgid IN (?) "+
+				"GROUP BY mg.msgid HAVING COUNT(mg.groupid) = COUNT(ub.groupid)",
+				myid, ids).Scan(&bannedBlocked)
+			for _, b := range bannedBlocked {
+				blockedSet[b.Msgid] = true
+			}
+		}
+
+		if len(blockedSet) > 0 {
+			notEligible := false
+			for ix := range messages {
+				if blockedSet[messages[ix].ID] {
+					messages[ix].ReplyEligible = &notEligible
 				}
 			}
 		}

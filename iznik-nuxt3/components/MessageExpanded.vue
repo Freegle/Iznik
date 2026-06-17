@@ -412,13 +412,9 @@
                   message.promisedtome ? 'Promised to you' : 'Already promised'
                 }}
               </div>
-              <NoticeMessage
-                v-if="reachBlocked"
-                variant="info"
-                class="mb-0"
-              >
-                We're showing this to people closest to it first — you'll be able
-                to reply once it reaches your area.
+              <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
+                We're showing this to people closest to it first — you'll be
+                able to reply once it reaches your area.
                 <nuxt-link no-prefetch to="/help?topic=which-posts">
                   Learn more
                 </nuxt-link>
@@ -671,17 +667,13 @@ const {
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
-// Rippling-out reply-eligibility (#2): when the reach-browse flag is on and this post
-// hasn't yet rippled out to the viewer's area (replyeligible === false from the API), show
-// a view-only notice instead of the Reply button. Never blocks the poster's own post.
-// Dark by default — me.settings.reachBrowse is unset until the rollout enables it, and the
-// API returns replyeligible !== false while messages_reach is unpopulated, so nothing
-// changes until both the engine is live and the flag is on.
+// Reply-eligibility (#2): the API returns replyeligible === false when the viewer can't
+// reply yet — the post hasn't rippled out to their area, or they're banned from every
+// group it's on. Show a view-only notice instead of the Reply button. Never blocks the
+// poster's own post. The field is omitted (so this stays false) until the reach engine
+// populates messages_reach, so this is inert until then with no client-side flag.
 const reachBlocked = computed(
-  () =>
-    !!me.value?.settings?.reachBrowse &&
-    message.value?.replyeligible === false &&
-    !fromme.value
+  () => message.value?.replyeligible === false && !fromme.value
 )
 
 // State

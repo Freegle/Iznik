@@ -42,31 +42,9 @@
           </b-button>
         </div>
       </div>
-      <!-- Rippling-out (#1): with reach-browse on, the catchment is worked out
-           automatically (it ripples out over time), so the manual travel-time
-           slider is hidden. Dark until me.settings.reachBrowse is enabled. -->
-      <div
-        v-if="browseView === 'nearby' && !reachBrowse"
-        class="isochrones"
-      >
-        <IsoChrone
-          v-for="(isochrone, ix) in isochroneList"
-          :id="isochrone.id"
-          :key="'isochrone-' + isochrone.id"
-          :add-button="ix === 0"
-          :last="ix === isochroneList.length - 1"
-          @add="showAddIsochrone = true"
-        />
-        <IsoChrone v-if="showAddIsochrone" @added="added" @cancel="cancel" />
-        <p class="help-text d-none d-md-block">
-          Adjust the slider to show posts from nearer or further away.
-          <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
-        </p>
-      </div>
-      <div
-        v-else-if="browseView === 'nearby' && reachBrowse"
-        class="isochrones"
-      >
+      <!-- Rippling-out (#1): the catchment is worked out automatically and ripples
+           out over time, so there's no manual travel-time slider. -->
+      <div v-if="browseView === 'nearby'" class="isochrones">
         <p class="help-text d-none d-md-block mt-0">
           We show posts near you first, then gradually further away.
           <nuxt-link no-prefetch to="/help?topic=which-posts">
@@ -132,7 +110,6 @@
 import { useMiscStore } from '~/stores/misc'
 import { useMessageStore } from '~/stores/message'
 import { ref, watch } from '#imports'
-import { useIsochroneStore } from '~/stores/isochrone'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
@@ -195,22 +172,6 @@ watch(
 
 // User
 const { me } = useMe()
-
-// Isochrones
-const showAddIsochrone = ref(false)
-
-const isochroneList = computed(() => {
-  const store = useIsochroneStore()
-  return store.list
-})
-
-function added() {
-  showAddIsochrone.value = false
-}
-
-function cancel() {
-  showAddIsochrone.value = false
-}
 
 // Search
 const search = ref('')
@@ -310,25 +271,13 @@ watch(type, (newVal) => {
 
 // Sort
 
-// Rippling-out (#1): with reach-browse on, the default sort is "New to you"
-// (unseen and newly-visible first, then the rippling order), plus a "Nearby"
-// nearest-first option. Dark until me.settings.reachBrowse is enabled; the legacy
-// labels remain until then.
-const reachBrowse = computed(() => !!me.value?.settings?.reachBrowse)
-
-const sortOptions = computed(() => {
-  if (reachBrowse.value) {
-    return [
-      { value: 'Unseen', text: 'New to you', selected: true },
-      { value: 'Newest', text: 'Newest posted' },
-      { value: 'Nearby', text: 'Nearby' },
-    ]
-  }
-  return [
-    { value: 'Unseen', text: 'Unseen posts first', selected: true },
-    { value: 'Newest', text: 'Newest posts first' },
-  ]
-})
+// Rippling-out (#1): "New to you" (unseen and newly-visible first, then the rippling
+// order) is the default, plus a "Nearby" nearest-first option.
+const sortOptions = [
+  { value: 'Unseen', text: 'New to you', selected: true },
+  { value: 'Newest', text: 'Newest posted' },
+  { value: 'Nearby', text: 'Nearby' },
+]
 
 const authStore = useAuthStore()
 const sort = computed({
