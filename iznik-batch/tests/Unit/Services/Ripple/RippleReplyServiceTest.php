@@ -148,7 +148,10 @@ class RippleReplyServiceTest extends TestCase
         $this->assertNotNull($sys, 'replier is told the post is gone via a System chat message');
         $this->assertSame((int) $msgid, (int) $sys->refmsgid);
         $this->assertStringContainsStringIgnoringCase('taken', $sys->message);
-        $this->assertSame(1, (int) $sys->processingrequired);
+        // Inserted pre-processed so the spam/ban check (on the poster) and chain-holds can't
+        // suppress it — it's live immediately and delivered via the chat-notification path.
+        $this->assertSame(0, (int) $sys->processingrequired);
+        $this->assertSame(1, (int) $sys->processingsuccessful);
         $this->assertNotEquals($cmid, $sys->id, 'the notice is a new message, not the held reply');
     }
 }

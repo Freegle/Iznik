@@ -165,10 +165,11 @@ class RippleReplyService
 
     /**
      * Tell the replier their held reply can't be delivered because the post has been
-     * taken/withdrawn. Posts a System message into their chat authored by the poster (the
-     * other party in the DM) so the existing chat pipeline — processingrequired=1, handled
-     * by ChatProcessService — delivers it to and notifies the REPLIER. Best-effort: a
-     * missing chat or poster is skipped rather than aborting the batch.
+     * taken/withdrawn. Posts a System message into their chat, authored by the poster (the
+     * other party in the DM) so the chat-notification path notifies the REPLIER. The message
+     * is inserted pre-processed (processingrequired=0, processingsuccessful=1) to skip
+     * ChatProcessService, so a spammer/banned poster or a chain-hold cannot suppress it.
+     * Best-effort: a missing chat or poster is skipped rather than aborting the batch.
      */
     private function notifyReplierGone(object $row): void
     {
@@ -193,7 +194,12 @@ class RippleReplyService
                 'date' => now(),
                 'platform' => 0,
                 'reviewrequired' => 0,
-                'processingrequired' => 1,
+                // Insert pre-processed (skip ChatProcessService) so a spammer/banned poster, or
+                // a chain-hold on a preceding message, can't suppress this notice — it is a
+                // synthetic system message with no user text to spam-check, and reaches the
+                // replier via the normal chat-notification path (no rippling row → gate open).
+                'processingrequired' => 0,
+                'processingsuccessful' => 1,
                 'replyreceived' => 0,
             ]);
         } catch (\Throwable $e) {
