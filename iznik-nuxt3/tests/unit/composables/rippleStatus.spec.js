@@ -60,13 +60,23 @@ describe('isRippledInToContextGroup', () => {
     expect(isRippledInToContextGroup(groups, '2')).toBe(true)
   })
 
-  it('falls back to the first group when contextGroupid is not present', () => {
+  it('returns false when contextGroupid does not match any group (no groups[0] fallback)', () => {
     const groups = [
       { groupid: 1, arrival: at(0) },
       { groupid: 2, arrival: at(120) },
     ]
-    // Unknown context group → uses groups[0] (the origin) → not rippled in.
+    // No matching context group → no banner (we must not guess via array position,
+    // since message.groups has no guaranteed order).
     expect(isRippledInToContextGroup(groups, 999)).toBe(false)
+  })
+
+  it('returns false when contextGroupid is null/undefined (all-groups view)', () => {
+    const groups = [
+      { groupid: 1, arrival: at(0) },
+      { groupid: 2, arrival: at(120) },
+    ]
+    expect(isRippledInToContextGroup(groups, null)).toBe(false)
+    expect(isRippledInToContextGroup(groups, undefined)).toBe(false)
   })
 
   it('returns false when arrivals are unparseable', () => {

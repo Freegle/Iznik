@@ -849,9 +849,11 @@ const otherGroups = computed(() => {
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group we're viewing it under, so it is "starting to become available" to this group's
-// members. See isRippledInToContextGroup for the rule.
+// members. Use the EXPLICIT context group (props.contextGroupid) — not the groupid
+// fallback to groups[0] — so the banner only shows when moderating a specific group's
+// queue, never in the all-groups view. See isRippledInToContextGroup for the rule.
 const isRippledInToContextGroup = computed(() =>
-  isRippledIn(message.value?.groups, groupid.value)
+  isRippledIn(message.value?.groups, props.contextGroupid)
 )
 
 const messageHistory = computed(() => {

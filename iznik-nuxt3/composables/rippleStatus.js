@@ -23,9 +23,13 @@ export function isRippledInToContextGroup(
 ) {
   if (!Array.isArray(groups) || groups.length < 2) return false
 
+  // Require an explicit, matching context group. We deliberately do NOT fall back
+  // to groups[0]: message.groups has no guaranteed order, so guessing the context
+  // from position would false-positive the banner in the all-groups view (where no
+  // single group is being moderated). No context → no banner.
   const ctxId = parseInt(contextGroupid)
-  const ctx =
-    groups.find((g) => parseInt(g.groupid) === ctxId) || groups[0]
+  if (Number.isNaN(ctxId)) return false
+  const ctx = groups.find((g) => parseInt(g.groupid) === ctxId)
   if (!ctx || !ctx.arrival) return false
 
   const ctxArrival = new Date(ctx.arrival).getTime()
