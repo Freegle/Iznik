@@ -446,6 +446,21 @@ describe('ModSettingsModConfig', () => {
       await flushPromises()
       expect(wrapper.text()).toContain('You have locked this')
     })
+
+    it('shows the locker displayname in locked notice instead of bare user ID', async () => {
+      mockModConfigStore.current = {
+        ...defaultConfig,
+        protected: true,
+        createdby: 456,
+      }
+      mockUserStore.byId.mockImplementation((id) => {
+        if (id === 456) return { displayname: 'Alice Moderator' }
+        return null
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.text()).toContain('Alice Moderator')
+    })
   })
 
   describe('using notice', () => {

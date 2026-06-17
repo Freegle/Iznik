@@ -46,7 +46,12 @@
           change or delete it.
         </span>
         <span v-else>
-          This is locked by #{{ config.createdby }}. You can use, view or copy
+          This is locked by
+          <strong>{{
+            lockerUser?.displayname ||
+            lockerUser?.fullname ||
+            '#' + config.createdby
+          }}</strong>. You can use, view or copy
           it, but you can't change or delete it.
         </span>
       </NoticeMessage>
@@ -367,6 +372,12 @@ const config = computed(() => {
   return modConfigStore.current
 })
 
+const lockerUser = computed(() => {
+  return config.value?.createdby
+    ? userStore.byId(parseInt(config.value.createdby))
+    : null
+})
+
 const sharedbyUser = computed(() => {
   return config.value?.sharedbyid
     ? userStore.byId(config.value.sharedbyid)
@@ -403,6 +414,13 @@ watch(
         id: newval,
         configuring: true,
       })
+
+      if (
+        config.value?.protected &&
+        parseInt(config.value?.createdby) !== myid.value
+      ) {
+        await userStore.fetch(parseInt(config.value.createdby))
+      }
     }
 
     loading.value = false
