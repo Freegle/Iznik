@@ -834,6 +834,91 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(2, $stats['emails_sent']);
     }
 
+    public function test_mail_newly_reached_reach_gates_then_picks_up_later_reached_on_rerun(): void
+    {
+        // The expander-driven mailer (#0 step 4) mails the post to immediate members the reach
+        // NOW covers, ledgers them, and — crucially — on a LATER tick picks up members the reach
+        // reaches afterwards (the exact case the cursor-based approach silently dropped).
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $memberA = $this->createTestUser();
+        $this->createMembership($memberA, $group);
+        $memberB = $this->createTestUser();
+        $this->createMembership($memberB, $group);
+        $this->setMyLocation($memberA, 51.5, -0.1);  // inside reach v1
+        $this->setMyLocation($memberB, 51.5, 0.5);   // outside v1, inside v2
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach mail (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $ledgered = fn ($uid) => DB::table('messages_reach_notified')
+            ->where('msgid', $msg->id)->where('userid', $uid)->exists();
+        $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
+        $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
+
+        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
+        DB::statement('UPDATE messages_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        $before = DB::table('messages_reach_notified')->where('msgid', $msg->id)->count();
+        $this->service->mailNewlyReachedForPost($msg->id);
+        $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
+        $this->assertSame(
+            $before + 1,
+            DB::table('messages_reach_notified')->where('msgid', $msg->id)->count(),
+            'only B newly notified — A not re-mailed'
+        );
+    }
+
+    public function test_cursor_immediate_digest_excludes_posts_with_a_reach_row(): void
+    {
+        // A rippling post (has a messages_reach row) is mailed by the expander, NOT the cursor
+        // digest — so the cursor digest must skip it, or members get two immediate mails.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: rippling (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'cursor immediate digest skips a post that has a reach row');
+    }
+
+    /** Set a user's settings.mylocation point (the canonical first-choice location source). */
+    protected function setMyLocation(User $user, float $lat, float $lng): void
+    {
+        $settings = $user->settings ?? [];
+        $settings['mylocation'] = ['lat' => $lat, 'lng' => $lng];
+        $user->settings = $settings;
+        $user->save();
+    }
+
+    /** Seed a messages_reach row for a post with the given WKT polygon (SRID 3857). */
+    protected function seedReach(int $msgid, string $wkt): void
+    {
+        DB::statement(
+            "INSERT INTO messages_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$msgid, $wkt]
+        );
+    }
+
     /**
      * Helper: create a group, a poster, a recipient (both at
      * emailfrequency=-1) and seed the immediate cursor. Returns

@@ -34,7 +34,7 @@ class ExpandService
     {
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
-            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0,
+            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
         ];
 
         // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
@@ -138,6 +138,8 @@ class ExpandService
                         ]
                     );
                     $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
+                    $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
+                        ->mailNewlyReachedForPost((int) $row->msgid);
                 }
 
                 $stats['initialized']++;
@@ -208,6 +210,8 @@ class ExpandService
                         [$entry['wkt'], $target, $next, $status, $row->msgid]
                     );
                     $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
+                    $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
+                        ->mailNewlyReachedForPost((int) $row->msgid);
                 }
 
                 $stats['expanded']++;

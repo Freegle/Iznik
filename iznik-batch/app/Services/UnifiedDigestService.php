@@ -415,6 +415,114 @@ class UnifiedDigestService
      * messages with identical microsecond-precision arrival timestamps
      * can't both fall past the cursor and one of them be missed.
      */
+    /**
+     * Expander-driven rippling immediate mail (#0 step 4). Called by ExpandService after each
+     * reach write (init + every tick). Mails the post to every immediate-eligible member of a
+     * group it is APPROVED on whose location the reach NOW covers and who has not already been
+     * notified (messages_reach_notified), recording each so a later tick — or another rippled-in
+     * group — never re-mails them. Because it re-runs every tick (no cursor), members the reach
+     * reaches later are picked up; the cursor digest excludes reach-row posts so neither path
+     * double-mails. Member point = settings.mylocation (both coords) else lastlocation. Returns
+     * the number spooled. Best-effort: any failure is logged, never aborts the expander.
+     */
+    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false): int
+    {
+        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+            return 0;
+        }
+
+        try {
+            $msg = Message::find($msgid);
+            if ($msg === null) {
+                return 0;
+            }
+
+            $srid = (int) config('freegle.srid', 3857);
+            $recipientIds = collect(DB::select(
+                "SELECT DISTINCT u.id AS id
+                 FROM messages_groups mg
+                 JOIN messages_reach mr ON mr.msgid = mg.msgid
+                 JOIN memberships m ON m.groupid = mg.groupid
+                      AND m.emailfrequency = ? AND m.collection = 'Approved'
+                 JOIN users u ON u.id = m.userid
+                 LEFT JOIN locations l ON l.id = u.lastlocation
+                 WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0
+                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
+                   AND ST_Contains(mr.polygon, ST_SRID(POINT(
+                         CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                                   AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                              THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+                              ELSE l.lng END,
+                         CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                                   AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                              THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+                              ELSE l.lat END
+                       ), ?))
+                   AND NOT EXISTS (
+                         SELECT 1 FROM messages_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
+                       )",
+                [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
+            ))->pluck('id')->map(fn ($v) => (int) $v)->all();
+
+            if (empty($recipientIds)) {
+                return 0;
+            }
+
+            // Same allowlist gate as the cursor immediate digest.
+            $allowlist = $this->getImmediateAllowlist();
+            if ($allowlist !== ['*']) {
+                $lower = array_map('strtolower', $allowlist);
+                $recipientIds = DB::table('users_emails')
+                    ->whereIn('userid', $recipientIds)
+                    ->whereIn(DB::raw('LOWER(email)'), $lower)
+                    ->pluck('userid')->unique()->map(fn ($v) => (int) $v)->all();
+                if (empty($recipientIds)) {
+                    return 0;
+                }
+            }
+
+            $postedToGroups = DB::table('messages_groups')->where('msgid', $msgid)
+                ->where('collection', MessageGroup::COLLECTION_APPROVED)->where('deleted', 0)
+                ->pluck('groupid')->map(fn ($v) => (int) $v)->all();
+            $sponsorsCache = !empty($postedToGroups) ? $this->getSponsorsForGroup((int) $postedToGroups[0]) : null;
+
+            $users = User::whereIn('id', $recipientIds)->with(['emails', 'memberships'])->get();
+            $sent = 0;
+            foreach ($users as $user) {
+                if (!$user->email_preferred) {
+                    continue;
+                }
+                if ($dryRun) {
+                    $sent++;
+                    continue;
+                }
+                $deduped = collect([['message' => $msg, 'postedToGroups' => $postedToGroups]]);
+                try {
+                    app(\App\Services\EmailSpoolerService::class)->spool(
+                        new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                        $user->email_preferred,
+                        emailType: 'digest_immediate',
+                    );
+                    DB::table('messages_reach_notified')->insertOrIgnore([
+                        'msgid' => $msgid,
+                        'userid' => (int) $user->id,
+                        'notified_at' => now(),
+                    ]);
+                    $sent++;
+                } catch (\Throwable $e) {
+                    Log::warning('ripple: failed to spool reach immediate mail', [
+                        'msgid' => $msgid, 'user_id' => $user->id, 'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            return $sent;
+        } catch (\Throwable $e) {
+            Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            return 0;
+        }
+    }
+
     protected function getGroupMessagesSinceCursor(int $groupid, ?string $cursorMsgdate, int $cursorMsgid): Collection
     {
         $query = Message::select(
@@ -428,6 +536,14 @@ class UnifiedDigestService
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
+            // Rippling posts (those with a messages_reach row) are mailed by the
+            // expander-driven reach mailer (mailNewlyReachedForPost) — reach-gated and
+            // ledger-deduped — so exclude them here or the cursor digest would double-mail.
+            // Inert until the reach engine populates messages_reach (no rows → no exclusion).
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))->from('messages_reach')
+                    ->whereColumn('messages_reach.msgid', 'messages.id');
+            })
             // V1 parity (Digest.php:218): a post with any outcome
             // (Taken/Received/Withdrawn/...) is no longer available, so it
             // must not appear in the immediate digest either.
