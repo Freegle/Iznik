@@ -1540,7 +1540,14 @@ func logMessageReceived(db *gorm.DB, groupid uint64, fromuser uint64, msgid uint
 	}
 }
 
-// getPrimaryGroupForMessage returns the first groupid for a message.
+// getPrimaryGroupForMessage returns one groupid for a message.
+//
+// Deprecated: use a request-supplied groupid when available. Multi-group
+// messages have N groups; this function picks one arbitrarily. For per-group
+// moderation actions (hold/release/spam/delete) always use the groupid the
+// mod is acting on. Remaining legitimate callers are owner-initiated global
+// paths (draft conversion, JoinAndPost), mod context bootstrap, and submit
+// subject reconstruction — contexts where no explicit group is available.
 func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 	var groupid uint64
 	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? LIMIT 1", msgid).Scan(&groupid)

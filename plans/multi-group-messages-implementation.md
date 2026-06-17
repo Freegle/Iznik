@@ -23,7 +23,7 @@
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
-| 28 | Go | Re-label `getPrimaryGroupForMessage` as legacy fallback |
+| 28 | Go | ✅ `getPrimaryGroupForMessage` re-labelled as legacy fallback |
 | 29 | Laravel | ✅ `DeadlineReached` and `ChatNotification` now pick the recipient's group |
 
 **Also flagged (deviation from spec):** Task 7 soft-deletes the `messages_groups` row on spam instead of setting `collection='Spam'` + `spamtype`/`spamreason`. The new `spamtype`/`spamreason` columns are currently unwritten by Go handlers. Reconcile before Task 20.
@@ -1813,6 +1813,14 @@ Full Unit suite 3226/3226 ✓.
 
 ---
 
+## Task 28: Comment Cleanup — `getPrimaryGroupForMessage` ✅ DONE
+
+Updated comment at [message.go:1543](iznik-server-go/message/message.go#L1543).
+
+**What changed:** Replaced the original one-line comment with a multi-line doc comment marking the function as a legacy fallback, explaining that multi-group messages have N groups so this picks arbitrarily, and listing the remaining legitimate callers (owner-initiated global paths: draft conversion, JoinAndPost, mod context bootstrap, submit subject reconstruction).
+
+---
+
 ## Task 29: Laravel — Mailable Tracking & Body Use Recipient's Group ✅ DONE
 
 **Files modified:**
@@ -1833,36 +1841,6 @@ Added `recipientGroupForMessage(Message $message, User $user): ?object` which fi
 - `MessageMailTest::test_deadline_reached_falls_back_to_first_group_when_no_membership_overlap` — no membership overlap → not null (graceful fallback)
 
 Full Laravel suite 4236/4236 ✓.
-
----
-
-## Task 28: Comment Cleanup — `getPrimaryGroupForMessage` ❌ NOT DONE
-
-[message.go:1478-1479](iznik-server-go/message/message.go#L1478-L1479) still has the original one-line comment.
-
-**Files:**
-- Modify: `iznik-server-go/message/message.go:1478-1479`
-
-Update the comment on `getPrimaryGroupForMessage` to make clear it is a legacy fallback, not the canonical lookup. After Tasks 4-11 and 23-25, the remaining callers should be: legacy owner-initiated paths that have no group context, and ModBot/audit fallbacks. Document this.
-
-- [ ] **Step 1: Update the comment**
-
-```go
-// getPrimaryGroupForMessage returns one groupid for a message.
-//
-// LEGACY FALLBACK ONLY — use a request-supplied groupid when available.
-// Multi-group messages have N groups; this function picks one arbitrarily.
-// For per-group moderation actions (hold/release/spam/delete) always use the
-// groupid the mod is acting on, not this fallback.
-func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-cd iznik-server-go && git add message/message.go
-git commit -m "docs: clarify getPrimaryGroupForMessage is a legacy fallback for multi-group"
-```
 
 ---
 
