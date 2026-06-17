@@ -239,6 +239,10 @@ type Message struct {
 	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
 	Tnpostid         *string          `json:"tnpostid"`
 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
+	// i.e. has no messages_reach row, or eligibility wasn't computed). false = the post
+	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
+	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -768,6 +772,43 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&modCount)
 		if modCount > 0 || auth.IsAdminOrSupport(myid) {
 			checkWorryWords(db, messages)
+		}
+	}
+
+	// Rippling-out reply-eligibility (#2): a post that has rippled out (has a
+	// messages_reach row) but not yet to the viewer's location is reply-eligible=false, so
+	// the UI shows it view-only. Posts with no reach row aren't rippling, so they stay
+	// eligible (the field is omitted). One batch query keeps this off the hot per-message
+	// path. Dark until messages_reach is populated (the engine, PR A, is live), since with
+	// no rows the query returns nothing.
+	if myid > 0 && len(messages) > 0 {
+		latlng := user.GetLatLng(myid)
+		if latlng.Lat != 0 || latlng.Lng != 0 {
+			ids := make([]uint64, 0, len(messages))
+			for _, m := range messages {
+				ids = append(ids, m.ID)
+			}
+			var blocked []struct {
+				Msgid uint64 `gorm:"column:msgid"`
+			}
+			// Ignore the error: until the reach engine (PR A) is deployed the
+			// messages_reach table may not exist, in which case every post stays
+			// eligible (the field is omitted) and nothing changes.
+			err := db.Raw("SELECT msgid FROM messages_reach WHERE msgid IN (?) "+
+				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error
+			if err == nil && len(blocked) > 0 {
+				blockedSet := make(map[uint64]bool, len(blocked))
+				for _, b := range blocked {
+					blockedSet[b.Msgid] = true
+				}
+				notEligible := false
+				for ix := range messages {
+					if blockedSet[messages[ix].ID] {
+						messages[ix].ReplyEligible = &notEligible
+					}
+				}
+			}
 		}
 	}
 
