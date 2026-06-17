@@ -401,6 +401,14 @@ class UnifiedDigestService
             }
         }
 
+        // Only OFFERs get AI-generated illustrations, so only an OFFER is worth
+        // holding back while an image is generated. A WANTED (or any non-OFFER)
+        // will never gain an attachment — send it immediately rather than
+        // needlessly deferring it for the whole attachment-wait deadline.
+        if ((string) $message->type !== Message::TYPE_OFFER) {
+            return true;
+        }
+
         $arrival = $message->mg_arrival
             ?? ($message->arrival instanceof \Carbon\Carbon ? $message->arrival : \Carbon\Carbon::parse($message->arrival ?? $message->date));
         $arrival = $arrival instanceof \Carbon\Carbon ? $arrival : \Carbon\Carbon::parse($arrival);

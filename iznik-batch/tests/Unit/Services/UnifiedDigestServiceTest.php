@@ -1242,6 +1242,32 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotNull($cursor->msgdate, 'Cursor must advance after we give up waiting');
     }
 
+    public function test_immediate_sends_recent_wanted_without_attachment(): void
+    {
+        // A WANTED never gets an AI-generated illustration, so there is nothing
+        // to wait for — it must be sent immediately even when freshly posted
+        // with no attachment, not held back for the OFFER image-wait deadline.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, [
+            'type' => Message::TYPE_WANTED,
+            'subject' => 'WANTED: Recent no-image (TestLocation)',
+        ]);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // recipient + poster both receive immediately (own post included) — no defer.
+        $this->assertEquals(2, $stats['emails_sent']);
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertNotNull($cursor->msgdate, 'Cursor must advance for a WANTED with no attachment');
+    }
+
     public function test_immediate_shard_partitions_groups_by_modulo(): void
     {
         // Each shard must own a disjoint slice of groups (MOD(groupid, N)
