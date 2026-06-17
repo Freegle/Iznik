@@ -3,14 +3,14 @@
 **Spec**: `plans/rippling-out-rollout/design.md` (read it before working — it is the source of truth).
 **Worktree**: `/home/edward/FreegleDocker-rippling-out` · **Branch base**: `origin/master` · **Feature branch**: `feature/rippling-out`
 **Goal**: all PRs pushed → through CI → adversarial-review fixes applied. **Not merged** (humans merge).
-**Rule**: PRs split by deployability — reach infra first (dark), **browse & email last**. Each UI PR carries screenshots. Inter-PR dependencies stated explicitly in each PR body.
+**Rule**: PRs split by deployability — reach infra first (no consumer reads reach yet), **browse & email last**. Each UI PR carries screenshots. Inter-PR dependencies stated explicitly in each PR body.
 
 ## PR / deployability plan
 
 | PR | Branch | Contents | Depends on | Status |
 |----|--------|----------|-----------|--------|
 | A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | ✅ PR #768, 12/12 green, adversarial review done + fixed (blocker+2 major+minor), CI running. NOT merged. |
-| B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (flagged/allowlisted) | A | ⬜ Pending |
+| B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (to all newly-reached members, no flag) | A | ⬜ Pending |
 | C | `feature/rippling-held-replies` | #3 `chat_messages_rippling` hold/release + mod chat-held reason | A | ⬜ Pending |
 | D | `feature/rippling-mod-ui` | #6 ripple-in mod banner + #7 reach map + #4 help modal (carry-over) | A | ⬜ Pending |
 | E | `feature/rippling-browse` | #1 browse UI (filter/order/map) + #2 reply-eligibility + #8 FAQ | A | ⬜ Pending |
