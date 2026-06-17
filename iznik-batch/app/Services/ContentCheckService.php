@@ -385,6 +385,13 @@ class ContentCheckService
             return false;
         }
 
+        // Multi-word phrases: token-by-token matching can never match a phrase
+        // like "discounted price" against individual haystack tokens. Use a
+        // word-boundary-anchored phrase match instead (Discourse #9620/283).
+        if (str_contains($kwLower, ' ')) {
+            return (bool) preg_match('/\b' . preg_quote($kwLower, '/') . '\b/', $haystack);
+        }
+
         $variants = $this->inflectionVariants($kwLower);
 
         foreach (preg_split('/\s+/', $haystack, -1, PREG_SPLIT_NO_EMPTY) as $token) {

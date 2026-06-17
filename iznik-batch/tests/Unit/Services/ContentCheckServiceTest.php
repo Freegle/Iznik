@@ -921,6 +921,56 @@ class ContentCheckServiceTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_check_per_group_worry_words_multiword_phrase_matches(): void
+    {
+        // Discourse #9620 post 283: "free or at a discounted price" bypassed the
+        // content filter. Mods configured "discounted price" as a two-word worry
+        // word. matchesFuzzy() compared individual whitespace tokens against the
+        // full phrase, so "discounted" ≠ "discounted price" → no match.
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'discounted price']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords(
+            '',
+            'I can give it away free or at a discounted price if needed',
+            $group->id
+        );
+        $this->assertNotNull($result, 'Multi-word worry word "discounted price" must flag text containing that phrase');
+        $this->assertSame(ContentCheckService::CHECK_PER_GROUP_WORRY, $result['check']);
+    }
+
+    public function test_check_per_group_worry_words_multiword_phrase_no_partial_match(): void
+    {
+        // "discounted price" as a phrase must NOT match text that only contains
+        // "discounted" (one word) or "price" (one word) separately.
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'discounted price']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords(
+            '',
+            'Collection any time, discounted delivery not available, just free',
+            $group->id
+        );
+        $this->assertNull($result, '"discounted price" phrase must not fire when only "discounted" appears alone');
+    }
+
+    public function test_matches_fuzzy_multiword_phrase_matches_in_haystack(): void
+    {
+        // matchesFuzzy() must handle multi-word keywords — the root cause of #9620.
+        $result = $this->callPrivate('matchesFuzzy', 'free or at a discounted price today', 'discounted price');
+        $this->assertTrue($result, 'matchesFuzzy must match a two-word keyword phrase found in the haystack');
+    }
+
+    public function test_matches_fuzzy_multiword_phrase_no_match_when_absent(): void
+    {
+        $result = $this->callPrivate('matchesFuzzy', 'free sofa in good condition', 'discounted price');
+        $this->assertFalse($result);
+    }
+
     // =========================================================================
     // checkKnownSpammer — needs DB
     // =========================================================================
