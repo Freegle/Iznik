@@ -1403,7 +1403,9 @@ func GetSession(c *fiber.Ctx) error {
 
 		// Total only includes actionable work items (primary/red badge counts),
 		// not informational ones (other/blue badge counts like chatreviewother, happiness, giftaid, pendingother).
-		total := pending + spam + pendingmembers + spammembers + pendingevents +
+		// pendingmembers is intentionally excluded: the frontend has no left-menu red badge for it,
+		// so including it inflates the hamburger count beyond the sum of visible items (bug 9654).
+		total := pending + spam + spammembers + pendingevents +
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +

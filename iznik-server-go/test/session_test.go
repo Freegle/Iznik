@@ -2234,9 +2234,9 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 
 	// Compute expected total from all actionable fields.
 	// giftaid is excluded from total to match PHP API behaviour (commit df11b11).
+	// pendingmembers is excluded: no left-menu red badge exists for it (bug 9654).
 	actionable := work["pending"].(float64) +
 		work["spam"].(float64) +
-		work["pendingmembers"].(float64) +
 		work["spammembers"].(float64) +
 		work["pendingevents"].(float64) +
 		work["pendingadmins"].(float64) +
@@ -2253,6 +2253,56 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	_ = chatreviewother
 	_ = happiness
 	_ = giftaid
+}
+
+// ---------------------------------------------------------------------------
+// Work Counts: Pending members excluded from total (bug 9654)
+// ---------------------------------------------------------------------------
+
+// TestWorkCountPendingMembersExcludedFromTotal verifies that pendingmembers
+// (group join requests awaiting approval) do NOT inflate work.total.
+// The frontend has no left-menu red badge for pendingmembers, so including it
+// in total causes the hamburger to show one more than the sum of visible items —
+// the symptom reported by newly-promoted moderators.
+func TestWorkCountPendingMembersExcludedFromTotal(t *testing.T) {
+	prefix := uniquePrefix("wc_pendmem")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create a user with a pending membership (someone who applied to join the group).
+	applicantID := CreateTestUser(t, prefix+"_applicant", "User")
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
+		applicantID, groupID, "Member", "Pending")
+
+	work := getSessionWork(t, token)
+
+	total := work["total"].(float64)
+	pendingmembers := work["pendingmembers"].(float64)
+
+	assert.Equal(t, float64(1), pendingmembers, "Setup: should have one pending member application")
+
+	// Compute expected total: sum of all actionable items excluding pendingmembers.
+	// pendingmembers has no corresponding left-menu red badge in the frontend,
+	// so it must not inflate total (which drives the hamburger badge count).
+	expected := work["pending"].(float64) +
+		work["spam"].(float64) +
+		work["spammembers"].(float64) +
+		work["pendingevents"].(float64) +
+		work["pendingadmins"].(float64) +
+		work["editreview"].(float64) +
+		work["pendingvolunteering"].(float64) +
+		work["stories"].(float64) +
+		work["spammerpendingadd"].(float64) +
+		work["spammerpendingremove"].(float64) +
+		work["chatreview"].(float64) +
+		work["newsletterstories"].(float64) +
+		work["relatedmembers"].(float64)
+
+	assert.Equal(t, expected, total,
+		"pendingmembers must not be included in total: hamburger would exceed visible left-menu badge sum")
 }
 
 // ---------------------------------------------------------------------------
