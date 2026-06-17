@@ -23,16 +23,23 @@ class ReachQueryService
      */
     public function isWithinReach(int $msgid, float $lat, float $lng): bool
     {
-        $row = DB::selectOne(
-            'SELECT EXISTS(
-                SELECT 1 FROM messages_reach
-                WHERE msgid = ?
-                  AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
-             ) AS within',
-            [$msgid, $lng, $lat]
-        );
+        try {
+            $row = DB::selectOne(
+                'SELECT EXISTS(
+                    SELECT 1 FROM messages_reach
+                    WHERE msgid = ?
+                      AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
+                 ) AS within',
+                [$msgid, $lng, $lat]
+            );
 
-        return (bool) ($row->within ?? 0);
+            return (bool) ($row->within ?? 0);
+        } catch (\Throwable $e) {
+            // messages_reach is created by the reach engine (PR A). Until that is
+            // deployed the table may be absent — fail open ("not within reach") so
+            // callers degrade safely instead of throwing.
+            return false;
+        }
     }
 
     /**

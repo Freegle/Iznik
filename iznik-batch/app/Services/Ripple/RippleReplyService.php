@@ -162,6 +162,19 @@ class RippleReplyService
 
     private function hasReach(int $msgid): bool
     {
-        return DB::table('messages_reach')->where('msgid', $msgid)->exists();
+        try {
+            return DB::table('messages_reach')->where('msgid', $msgid)->exists();
+        } catch (\Throwable $e) {
+            // messages_reach is created by the reach engine (PR A). Until that's
+            // deployed the table may not exist — fail open ("not rippling") so an
+            // external reply is delivered normally rather than crashing incoming-mail
+            // processing. With the hold_replies flag off this never runs anyway.
+            Log::warning('ripple:hasReach query failed (messages_reach missing?)', [
+                'msgid' => $msgid,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 }
