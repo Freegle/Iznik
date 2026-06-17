@@ -40,11 +40,11 @@
 | 2312 | `if pg := getPrimaryGroupForMessage(db, req.ID); pg > 0` | Draft-conversion fallback (owner-global path, Task 24). | 🟡 |
 | 2425 | `groupid = getPrimaryGroupForMessage(db, req.ID)` | Submit/edit fallback when no contextual groupid. | 🟡 |
 | 2815 | `groupid = getPrimaryGroupForMessage(db, req.ID)` | Convert-to-draft fallback (Task 24). | 🟡 |
-| 3202 | `groupid = getPrimaryGroupForMessage(db, msgid)` | Outcome/withdraw path fallback. | 🔵 verify each is genuinely owner-global |
+| 3202 | `groupid = getPrimaryGroupForMessage(db, msgid)` | Mod-delete audit log: uses `?groupid=` when supplied, else owner-global fallback. | 🟡 acceptable (G6) |
 | 3497 | `groupid = getPrimaryGroupForMessage(db, newMsgID)` | JoinAndPost fallback (owner just posted). | 🟡 |
 | 1786, 1885, 1943 | `ctx.Groupid = authorizedGroups[0]` | "Primary acted-on group for logging" after resolving the authorized set. Per-group loop runs separately; this is just the log anchor. | 🟡 |
-| 1754 | `SELECT … FROM messages_groups … ORDER BY messages_groups.arrival DESC LIMIT 1` | Picks newest group row for spatial/notify context. | 🔵 verify |
-| 1812 | `SELECT spamtype FROM messages_groups WHERE msgid = ? AND groupid IN ? AND spamtype IS NOT NULL LIMIT 1` | Reads any one group's spamtype across the authorized set. | 🔵 verify intent |
+| 1754 | `SELECT … FROM messages_groups … ORDER BY messages_groups.arrival DESC LIMIT 1` | This is `addApprovedMessageToSpatialIndex` — picks ONE group → single-group spatial/browse/search index. | 🔴 G1 → H2 |
+| 1812 | `SELECT spamtype FROM messages_groups WHERE msgid = ? AND groupid IN ? AND spamtype IS NOT NULL LIMIT 1` | Existence check across authorized groups to mark ham (global). Correct. | ✅ (G5) |
 
 ### A2. Backwards-compat dual-writes to global `messages` columns (`message/message.go`)
 
@@ -71,15 +71,15 @@ removal in Task 20** but still present today.
 
 | Line | Code | Assessment | Status |
 |------|------|-----------|--------|
-| 392 | `… WHERE messages_groups.groupid IN (…) ORDER BY messages_groups.arrival ASC LIMIT 1` (approved-message challenge) | Picks one (msg, group) row from the volunteer's groups. Each challenge is inherently single-group-scoped (volunteer reviews within their groups). Likely fine, but if the same message is on two of the volunteer's groups it could be offered twice over time. | 🔵 verify |
-| 446 | same pattern for photo-rotate challenge | same | 🔵 verify |
+| 392 | `… WHERE messages_groups.groupid IN (…) ORDER BY messages_groups.arrival ASC LIMIT 1` (approved-message challenge) | Picks one (msg, group) row. `microactions` dedup is by `msgid`, so a reviewed item is excluded on all groups — no double-offer. | ✅ no change (G7c) |
+| 446 | same pattern for photo-rotate challenge | same | ✅ no change (G7c) |
 | 875–892 | `sendForReview(db, msgid, groupid, reason)` | Per-group already (Task 10). | ✅ |
 
 ### A5. Freebie-alerts fanout (`message/message.go`)
 
 | Line | Code | Assessment | Status |
 |------|------|-----------|--------|
-| 1843–1849 | On approve of an Offer: `QueueTask(TaskFreebieAlertsAdd, {msgid})` — **no groupid passed** | The freebie-alerts worker resolves location/group itself. Need to confirm that resolution doesn't just take the first group's arrival/location (cf. V1 `FreebieAlerts.php:81` which used `groups[0]['arrival']`). | 🔵 verify worker side |
+| 1843–1849 | On approve of an Offer: `QueueTask(TaskFreebieAlertsAdd, {msgid})` — **no groupid passed** | Worker posts one location-based record per msgid; not group-partitioned. Only `created_at` uses an arbitrary group's arrival (cosmetic). | ✅ no change (G7b) |
 | 1908, 1959, 2020, 3208, 3855, 3929 | `TaskFreebieAlertsRemove` on delete/spam/outcome | Removal is keyed by msgid (global) — correct, item gone everywhere. | ✅ |
 
 ### A6. List / search dedup (`message/message_list.go`, `search.go`)
@@ -88,7 +88,7 @@ removal in Task 20** but still present today.
 |------|------|--------|
 | 131,143,157,168,181,509 | `SELECT DISTINCT mg.msgid …` | ✅ deduped (Task 11) |
 | 266–273 | `msg.Groups = groups` built from all `messages_groups` rows | ✅ multi-group array |
-| 570 | `SELECT arrival FROM messages_groups WHERE msgid = ? … LIMIT 1` (pagination cursor) | 🔵 verify — last-arrival cursor picks one group's arrival; fine if list is ordered by contextual group arrival |
+| 570 | `SELECT arrival FROM messages_groups WHERE msgid = ? … LIMIT 1` (pagination cursor) | 🔴 (low) G4 → H11 — reads an arbitrary group's arrival; list orders by the contextual group's, so a page boundary can skip/repeat |
 
 ### A7. Repost scheduling (`message/message.go:702–748`)
 
@@ -111,7 +111,7 @@ these are correct multi-group handling. Listed here only to record they were ins
 | 71 (constructor) | now `preferredGroupForPost($this->posts->first())` for `$trackingGroupId` | ✅ recipient's group (Task 27) |
 | 257 (`rebuildFromDescriptor`) | inline preferred-group for sponsors | ✅ (Task 27) |
 | 304, 313 | `return $groups[0];` inside `preferredGroupForPost()` | Final fallback when recipient shares no group with the post. | 🟡 |
-| 787 | `$primaryGroupId = $postedToGroups[0] ?? null;` (in `renderPostCard`/sponsors helper) | Picks first group for the per-post card's group context. **Not** the recipient-preferred group like the header. Verify whether the card should use the recipient's group too. | 🔵 verify |
+| 787 | `$primaryGroupId = $postedToGroups[0] ?? null;` (per-post card byline + `/explore` link) | First-group pick; can name a group the recipient isn't in. Should use the recipient-preferred group (matches Task-27 header fix). | 🔴 (low) G3 → H9 |
 | 933 | `$groupNames = collect($postedToGroups)…` | Renders ALL group names. ✅ |
 
 ### B2. Digest service (`app/Services/UnifiedDigestService.php`)
@@ -119,7 +119,7 @@ these are correct multi-group handling. Listed here only to record they were ins
 | Line | Code | Assessment | Status |
 |------|------|-----------|--------|
 | 972/979/987 | `postedToGroups[] = $post->groupid` / `'postedToGroups' => [$post->groupid]` | dedup aggregates groups into the array. ✅ (Task 18) |
-| 795 | `$postGroupId = (int) ($deduped['postedToGroups'][0] ?? 0);` | First-group pick for some per-post context. | 🔵 verify (same question as UnifiedDigest:787) |
+| 795 | `$postGroupId = (int) ($deduped['postedToGroups'][0] ?? 0);` | Immediate-mode sponsors fetched for the first group; cross-post may show the wrong group's sponsors. | 🔴 (low) G3 → H10 |
 | 1013–1031 | resolves `groupid -> Group` from loaded `->groups`, merges union | ✅ |
 
 ### B3. Mailables
@@ -128,7 +128,7 @@ these are correct multi-group handling. Listed here only to record they were ins
 |-----------|------|-----------|--------|
 | `app/Mail/Message/DeadlineReached.php:72–76` | `recipientGroupForMessage()` → `?? $message->groups->first()` | ✅ recipient's group w/ first-group fallback (Task 29) |
 | `app/Mail/Chat/ChatNotification.php:649–653` | `$refMessage->groups…->first()` recipient filter w/ fallback | ✅ (Task 29) |
-| `app/Mail/Message/ChaseUp.php`, `ChaseUpPromised.php`, `AutoRepostWarning.php`, `ModStdMessageMail.php` | not yet inspected for group selection | 🔵 verify — chase-up / repost-warning mailables may pick a group for tracking or body group-name |
+| `app/Mail/Message/ChaseUp.php`, `ChaseUpPromised.php`, `AutoRepostWarning.php`, `ModStdMessageMail.php` | `groupId` received from caller; services iterate per group | ✅ per-group (G5). **But** the chase-up *email* double-sends for cross-posts → 🔴 G7a → H12 |
 | `app/Console/Commands/Mail/TestMailCommand.php:913` | `$group = $message->groups->first();` | Test/dev tooling only. | 🟡 |
 
 ### B4. Other batch services
@@ -136,7 +136,7 @@ these are correct multi-group handling. Listed here only to record they were ins
 | File:Line | Code | Assessment | Status |
 |-----------|------|-----------|--------|
 | `app/Services/AutoApproveService.php` | per-group, checks `mg.heldby`, excludes spam on any group | ✅ (V1 audit §3) |
-| `app/Services/PushNotificationService.php:1155,1249` | operates on `postedToGroups` arrays | 🔵 verify it fans out / dedups per group correctly |
+| `app/Services/PushNotificationService.php:1155,1249` | operates on the already-deduped post list (one entry per msgid); refs are doc comments | ✅ no change (G5) |
 | `app/Services/StatsGenerationService.php`, `GroupStatsService.php`, `Models/Group.php` | DISTINCT / GROUP BY groupid | ✅ (stats audit) |
 | `app/Console/Commands/Dedup/TnDedupCommand.php` | merges duplicate tnpostid posts into one multi-group message | ✅ (Task 12) |
 
@@ -154,7 +154,7 @@ these are correct multi-group handling. Listed here only to record they were ins
 | `modtools/components/ModStdMessageModal.vue:359` | `return message.value.groups[0].groupid` | Prop fallback (Task 14). | 🟡 |
 | `modtools/components/ModMessageDuplicate.vue:59` | `ret = message.value.groups[0].groupid` | Prop fallback (Task 14). | 🟡 |
 | `modtools/components/ModMessageCrosspost.vue:47` | `if (groups?.length) return groups[0].groupid` | Prop fallback (Task 14). | 🟡 |
-| `modtools/components/ModMessageCrosspost.vue:75` | `… return groups[0].collection` | **Shows the first group's collection, not the contextual group's.** A crosspost held/pending on group A but approved on B may display the wrong status. | 🔵 verify |
+| `modtools/components/ModMessageCrosspost.vue:75` | `… return groups[0].collection` | Display-only awareness card for a *separate* related message; legacy separate-crosspost model is being phased out by TN dedup. | 🟡 no change (G7d) |
 | `modtools/components/ModLogGroup.vue:98` | `return log.value.message.groups[0]` | Documented last-resort after `log.group`/`log.groupid` (Task 26). | 🟡 |
 
 ### C2. ModTools composables
@@ -193,9 +193,9 @@ V1 is being retired. These are documented so V2 coverage can be confirmed; **no 
 |------|------|------------------|-------------|
 | 3045 | `UPDATE messages_groups SET collection = ? WHERE msgid = ?` (reject, subject branch) | rejects on ALL groups | ✅ `handleReject` per-group |
 | 3051 | `UPDATE … collection = 'Rejected' … WHERE msgid = ?` / `SET deleted = 1 WHERE msgid = ?` | rejects/deletes ALL groups | ✅ |
-| 3804 | `UPDATE messages_groups SET collection = ? WHERE msgid = ?` | ALL groups | 🔵 confirm which action; check V2 |
+| 3804 | `UPDATE messages_groups SET collection = ? WHERE msgid = ?` | ALL groups | ⚪ V1 retired; V2 mod actions are per-group (V1 audit) |
 | 4553 | `DELETE FROM messages_groups WHERE msgid = ?` | deletes ALL groups | ✅ `handleDeleteMessage` per-group |
-| 4591 | `UPDATE messages_groups SET collection = ? WHERE msgid = ?` | ALL groups | 🔵 confirm |
+| 4591 | `UPDATE messages_groups SET collection = ? WHERE msgid = ?` | ALL groups | ⚪ V1 retired; V2 mod actions are per-group (V1 audit) |
 | 5190, 5196 | `UPDATE … arrival/collection … WHERE msgid = ?` (repost) | ALL groups | ✅ per-group repost (Task 23) |
 | 5233 | `UPDATE … autoreposts = autoreposts + 1 WHERE msgid = ?` | ALL groups | ✅ |
 | 5403–5408 | `DELETE FROM messages_groups WHERE msgid = ?` then INSERT one (move) | move wipes all groups | ✅ no move op in V2 |
@@ -205,8 +205,8 @@ V1 is being retired. These are documented so V2 coverage can be confirmed; **no 
 
 | Line | Code | Assessment | V2 coverage |
 |------|------|-----------|-------------|
-| 1750 | `$groupid = … $msg['groups'][0]['groupid'] : NULL` | first-group for some single-group context | 🔵 confirm |
-| 5398 | `if ($me->isModOrOwner($groups[0]) && …)` | mod check against first group only | 🔵 confirm V2 `isModForMessage` checks any group |
+| 1750 | `$groupid = … $msg['groups'][0]['groupid'] : NULL` | first-group for some single-group context | ⚪ V1 retired; no action |
+| 5398 | `if ($me->isModOrOwner($groups[0]) && …)` | mod check against first group only | ⚪ V1 retired; V2 `isModForMessage` checks **any** group |
 
 ### D3. `include/ai/ModBot.php`
 
@@ -219,7 +219,7 @@ V1 is being retired. These are documented so V2 coverage can be confirmed; **no 
 | Line | Code | Status |
 |------|------|--------|
 | 1645 `getActiveCountss()` | `COUNT(*) … JOIN messages_groups … GROUP BY fromuser,type,outcome` — no DISTINCT, inflates per-user post counts on multi-group | ⚪ V1 retiring, noted in stats audit |
-| 5585–5586 | `$thisone['groups'][0]['groupid']` / sets `groups[0]['namedisplay']` | first-group display only | 🔵 |
+| 5585–5586 | `$thisone['groups'][0]['groupid']` / sets `groups[0]['namedisplay']` | first-group display only | ⚪ V1 retired; no action |
 | 3527 | `$groupids = count(...)==0 ? [0] : $groupids` | sentinel for "no groups", not a message group-pick | ⚪ false positive |
 
 ### D5. V1 integrations (single-group by nature, but listed)
@@ -240,34 +240,53 @@ inflate; ⚪ V1 only. `include/misc/Stats.php` all DISTINCT — ✅.
 
 ## E. Summary of genuinely outstanding items (the short list)
 
-Everything else above is either already handled (✅), an intentional/legacy fallback (🟡),
-or V1-retired (⚪). The items that look like they still need action:
+After the deep-dive (§G), everything not listed below is either already handled (✅), an
+intentional/legacy fallback (🟡), or V1-retired (⚪). The genuinely-outstanding work, by
+priority (full tasks in §H):
 
-1. **🔴 `session/session.go:1024` & `:1033`** — mod-queue badge held/unheld split reads
-   global `m.heldby`. Switch to `mg.heldby`. (Stats audit flagged 1033; 1024 is its pair.)
-2. **🔴 `group/groupWork.go:135`** — pending held/unheld split reads global `m.heldby`
+**Critical — user-visible correctness**
+1. **🔴 Spatial index is single-group (G1).** `messages_spatial` has `UNIQUE(msgid)`, so a
+   cross-posted message is indexed under only one group and is invisible in browse/map/
+   search on the others; the bulk reconciler also flip-flops it between groups. Needs schema
+   + both writers + reconciler + read-side dedup. **Not covered by any prior task.** → H1–H5.
+2. **🔴 Chase-up emails double-send for cross-posts (G7a).** `ChaseUpService` evaluates
+   chase-up eligibility per group, so a cross-posted item emails the poster once per group
+   for the same physical outcome. → H12.
+
+**Pre-Task-20 (must precede dropping `messages.heldby`)**
+3. **🔴 `session/session.go:1024` & `:1033`** — mod-queue badge held/unheld split reads
+   global `m.heldby`. Switch to `mg.heldby`. (Stats audit flagged 1033; 1024 is its pair.) → H6.
+4. **🔴 `group/groupWork.go:135`** — pending held/unheld split reads global `m.heldby`
    (joined `messages`), not `mg.heldby`. Per-group hold is invisible here and it breaks at
-   Task 20. **This was under-flagged by the stats audit** (marked SAFE for the GROUP BY but
-   the held expression uses the global column).
-3. **🟡→remove `message/message.go:1799,2051,2084,2121`** — `messages.heldby` dual-writes,
-   to be removed with Task 20.
+   Task 20. **Under-flagged by the stats audit** (marked SAFE for the GROUP BY, but the held
+   expression uses the global column). → H7.
+5. **🟡→remove `message/message.go:1799,2051,2084,2121`** — `messages.heldby` dual-writes,
+   to be removed with Task 20. → H8.
 
-## F. Items to verify before migrating (the 🔵 list)
+**Should-fix — consistency (low stakes)**
+6. **🔴 Digest per-post byline / immediate sponsors use `postedToGroups[0]` (G3)** — should
+   use the recipient-preferred group, matching the Task-27 header fix. → H9, H10.
+7. **🔴 Pagination cursor `message_list.go:570` (G4)** — reads an arbitrary group's arrival
+   instead of the contextual group's; page boundaries can skip/repeat. → H11.
 
-- `message/message.go:1754, 1812, 3202, 570` — first/any-group reads in spatial-notify,
-  spamtype probe, outcome fallback, pagination cursor.
-- `microvolunteering.go:392, 446` — single-group challenge selection (double-offer risk).
-- Freebie-alerts worker (queued from `message.go:1843`, cf. V1 `FreebieAlerts.php:81`) —
-  does it take the first group's arrival/location?
-- `UnifiedDigest.php:787` & `UnifiedDigestService.php:795` — per-post card uses
-  `postedToGroups[0]` rather than the recipient-preferred group (header already fixed).
-- `PushNotificationService.php:1155,1249` — confirm per-group fanout/dedup.
-- `ModMessageCrosspost.vue:75` — displays `groups[0].collection`; may show wrong status.
-- Batch mailables not yet inspected: `ChaseUp.php`, `ChaseUpPromised.php`,
-  `AutoRepostWarning.php`, `ModStdMessageMail.php` — check group selection for tracking/body.
-- V1 reads at `Message.php:1750, 3804, 4591, 5398` and `User.php:5585` — confirm V2 covers.
+## F. Items that were flagged for verification (now all resolved)
 
----
+Every item originally flagged 🔵 has been investigated; see **§G** for the full trace and
+**§H** for the resulting tasks. Outcome at a glance:
+
+| Flagged item | Outcome | Where |
+|--------------|---------|-------|
+| `message.go:1754` spatial-index writer | 🔴 Change — spatial index is single-group | G1 → H1–H5 |
+| `message.go:1812` spamtype probe | ✅ Correct (existence check) | G5 |
+| `message.go:3202` mod-delete audit log | 🟡 Acceptable fallback | G6 |
+| `message_list.go:570` pagination cursor | 🔴 Change (low) | G4 → H11 |
+| `microvolunteering.go:392,446` challenge selection | ✅ No change (`microactions` dedup by msgid) | G7c |
+| Freebie-alerts worker | ✅ No change (location-based, one post/msgid) | G7b |
+| `UnifiedDigest.php:787` / `UnifiedDigestService.php:795` | 🔴 Change (low) | G3 → H9, H10 |
+| `PushNotificationService.php:1155,1249` | ✅ No change (operates on deduped list) | G5 |
+| `ModMessageCrosspost.vue:75` | 🟡 No change (display-only, legacy) | G7d |
+| Chase-up / auto-repost mailables | 🔴 Chase-up email double-sends; repost is fine | G7a → H12 |
+| V1 `Message.php` / `User.php` reads | ⚪ No action (V1 retired; V2 covers) | §H |
 
 ---
 
@@ -344,7 +363,8 @@ selecting the arrival for the same group the ORDER BY used.
   iterate `messages_groups` per group and pass `groupId: $group->id`; comments explicitly
   document the multi-group fix. The mailables (`ChaseUp.php`, `ChaseUpPromised.php`,
   `AutoRepostWarning.php`, `ModStdMessageMail.php`) receive `groupId` from the caller, not
-  via `groups->first()`. ✅ *(One minor open question — G7 below.)*
+  via `groups->first()`. ✅ **Caveat:** the chase-up *email* (not the repost) double-sends
+  for cross-posts — see G7a / H12.
 - **`PushNotificationService::notifyDailyNewPosts` / `buildDailyNewPostsPayload`**: operate
   on the already-deduped post list (one entry per msgid with a `postedToGroups` array);
   `postedToGroups` references are doc comments only. No double-send. ✅
@@ -363,15 +383,59 @@ selecting the arrival for the same group the ORDER BY used.
   and collection. Display-only; for a multi-group related message it shows just the first
   group. Low priority.
 
-### G7. 🔵 Still to verify
+### G7. Verify items — investigated and resolved
 
-- **Freebie-alerts worker.** Go queues `TaskFreebieAlertsAdd {msgid}` with no groupid
-  (`message/message.go:1843`). The worker (and/or freebiealerts.app feed) resolves
-  location/group itself; V1's `FreebieAlerts.php:81` used `groups[0]['arrival']`. Confirm
-  the worker doesn't assume a single group's arrival/location for a cross-post.
-- **Duplicate chase-up emails.** `ChaseUpService` now iterates per group; confirm the
-  poster doesn't receive N chase-up emails for the *same item* on N groups (outcome is
-  global). The `languishing`/per-user dedup logic may already cover this — verify.
+All four 🔵 items have been traced to a firm decision.
+
+**G7a. 🔴 Duplicate chase-up emails — CHANGE NEEDED.**
+`ChaseUpService::process()` (`app/Services/ChaseUpService.php:398–421`) iterates **every**
+Freegle group and calls `getCandidates($group->id, …)`, which returns the message's
+`messages_groups` row **for that group** (filtered `WHERE messages_groups.groupid = ?`,
+line 554). For a message cross-posted to groups A and B it is therefore a candidate in both
+iterations. `canChaseup()` (lines 584–609) is *explicitly per-group* — it reads the
+per-group `lastchaseup` and `autoreposts` and the code comment states "we check only the
+current group … each group is evaluated independently." So once both groups have hit max
+reposts and have a reply, the poster receives **two** "What happened to: X?" emails for the
+**same physical item**. The per-group behaviour is correct for *reposting* (each group has
+its own schedule) but wrong for the *chase-up email*, which asks the poster to record a
+**global** outcome. `ChaseUpPromised` has the same path.
+**Fix:** gate the chase-up email on the item, not the group — send at most one chase-up per
+`(fromuser, msgid)` within the chaseup interval. Recommended: before sending, check the
+**most recent `lastchaseup` across all of the message's `messages_groups` rows** (not just
+the current group); when one is sent, stamp `lastchaseup` on **all** of the message's rows
+(or record an item-level marker). A per-run "already chased msgids" set alone is
+insufficient because eligibility on the second group can arrive on a *later* cron run.
+
+**G7b. ✅ Freebie-alerts worker — NO CHANGE NEEDED.**
+The Go API queues `freebie_alerts_add {msgid}`; the processor is
+`ProcessBackgroundTasksCommand::handlelnsAdd()`
+(`app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php:1240–1341`). It posts **one**
+record to freebiealerts.app keyed by `id => $msgId`, with `latitude`/`longitude` from the
+`messages` row (a single, global location — correct for a physical item). freebiealerts.app
+is a **location-based** external feed and does **not** partition by Freegle group, so there
+is no multi-group visibility problem. The only group-dependent field is
+`created_at => $group->arrival`, where `$group` is the first Approved `messages_groups` row
+(`->first()` with no ordering, line 1278–1281) — a *cosmetic* approval-timestamp
+inaccuracy. Optional tidy-up: order by earliest arrival for determinism; not required.
+
+**G7c. ✅ Microvolunteering challenge offers — NO CHANGE NEEDED.**
+The challenge queries (`microvolunteering.go:382, 433`) `LEFT JOIN microactions ON
+microactions.msgid = messages_groups.msgid AND microactions.userid = ?` and require
+`microactions.id IS NULL`. Because `microactions` is keyed by **`msgid`** (not
+`(msgid, groupid)`), once a volunteer reviews a message on *any* group's challenge it is
+excluded from *all* future challenges for that volunteer. The `LIMIT 1` picks a single
+(msg, group) row to scope the review to one group (correct for per-group `sendForReview`),
+and there is no double-offer of the same item.
+
+**G7d. 🟡 ModMessageCrosspost card — NO CHANGE NEEDED (optional polish).**
+`ModMessageCrosspost.vue` renders a one-line awareness note about a **separate, related**
+message (a detected duplicate/crosspost — `messages_related`), not the message being
+moderated. Under the new model TN duplicates collapse into one multi-group message
+(Task 12 dedup), so separate-crosspost rows are a shrinking legacy set. The card shows
+`groups[0]`'s name (line 47) and collection (line 75); for a related message that is itself
+multi-group it would show only the first group. Display-only, secondary, and on the
+declining path — **leave as-is.** Optional polish: show all group names / contextual
+collection.
 
 ---
 
@@ -404,41 +468,45 @@ Ordered by priority. Check off as completed.
 - [ ] **H8.** Remove the `messages.heldby` dual-writes in `message/message.go:1799, 2051,
   2084, 2121` as part of Task 20, after H6/H7 land and V1 is retired.
 
-### Should-fix (consistency / minor visibility)
+### Should-fix (consistency / correctness)
 
 - [ ] **H9.** Digest per-post byline `UnifiedDigest.php:787` — use the recipient-preferred
-  group instead of `postedToGroups[0]`.
+  group instead of `postedToGroups[0]` (reuse `preferredGroupForPost()`). Add a test for a
+  cross-post where the recipient is in only one of the groups.
 - [ ] **H10.** Immediate-digest sponsors `UnifiedDigestService.php:795` — pick the
   recipient-preferred group instead of `postedToGroups[0]`.
 - [ ] **H11.** Pagination cursor `message_list.go:570` — read the arrival of the same group
-  the list ORDER BY used.
+  the list ORDER BY used (the contextual group), not an arbitrary `LIMIT 1` group row.
+- [ ] **H12. Deduplicate chase-up emails per item (G7a).** In `ChaseUpService` (and the
+  `ChaseUpPromised` path), gate the chase-up email on `(fromuser, msgid)` so a cross-posted
+  item triggers at most one chase-up per chaseup interval. Recommended: check the most
+  recent `lastchaseup` across **all** the message's `messages_groups` rows before sending,
+  and stamp `lastchaseup` on **all** of them when sent. Add a test for a message on two
+  groups both past max reposts → exactly one email. (Reposting stays per-group — unchanged.)
 
-### Verify (decide whether action is needed)
+### Investigated — NO change needed (resolved 🔵 items; recorded for the reviewer)
 
-- [ ] **H12.** Freebie-alerts worker / feed — confirm no single-group arrival/location
-  assumption for cross-posts (cf. V1 `FreebieAlerts.php:81`).
-- [ ] **H13.** Chase-up emails — confirm a cross-posted item doesn't trigger duplicate
-  chase-ups to the poster across its groups.
-- [ ] **H14.** `ModMessageCrosspost.vue:75` — decide whether the crosspost card should show
-  all groups / the contextual group's collection rather than `groups[0]`.
-- [ ] **H15.** `microvolunteering.go:392,446` — decide whether to dedup challenge offers by
-  msgid so a cross-post isn't offered once per group.
-
-### Already-handled — confirm coverage holds (no code expected)
-
-- [ ] **H16.** Re-confirm the `getPrimaryGroupForMessage` callers
-  (`message.go:1710, 2312, 2425, 2815, 3497`) are all genuinely owner-global / legacy
-  fallbacks (Task 28 labelled them so).
-- [ ] **H17.** Re-confirm V1 `Message.php` reads at `1750, 3804, 4591, 5398` and
-  `User.php:5585` have V2 equivalents that handle multiple groups (V1 is audit-only).
+- **Freebie-alerts worker (G7b).** One location-based post per msgid; not group-partitioned.
+  Only `created_at` uses an arbitrary group's arrival — cosmetic. *Optional* determinism
+  tidy-up (`ProcessBackgroundTasksCommand.php:1278`: order by earliest arrival); not
+  required.
+- **Microvolunteering challenge offers (G7c).** `microactions` dedup is by `msgid`, so a
+  reviewed item is excluded on all groups. No double-offer.
+- **`ModMessageCrosspost.vue` (G7d).** Display-only awareness card for a separate related
+  message; legacy separate-crosspost model is being phased out by TN dedup. Leave as-is.
+- **`getPrimaryGroupForMessage` callers** (`message.go:1710, 2312, 2425, 2815, 3497`) —
+  all owner-global / legacy fallbacks; Task 28 labelled them. No change.
+- **V1 `Message.php` reads** (`1750, 3804, 4591, 5398`) and **`User.php:5585`** — V1 is
+  retired (audit-only). V2 destructive writes are confirmed per-group (V1 audit results);
+  V2 mod-permission checks use `isModForMessage` which checks **any** group. No action.
 
 ### Documentation
 
-- [ ] **H18.** Fold the spatial-index finding (G1) into
+- [ ] **H13.** Fold the spatial-index finding (G1) into
   `multi-group-messages-design.md` — it currently lists `messages_spatial` under
   "Tables already per-group (no changes needed)", which is **incorrect** (unique key is
   `msgid`, not `(msgid, groupid)`).
-- [ ] **H19.** Correct `multi-group-stats-audit.md` — it marked `groupWork.go:135` SAFE but
+- [ ] **H14.** Correct `multi-group-stats-audit.md` — it marked `groupWork.go:135` SAFE but
   the held split reads the global column (H7).
 
 ---
