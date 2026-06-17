@@ -319,23 +319,14 @@ class UnifiedDigestService
                     // whole batch — exactly the bug that gave Penny Langley 27
                     // copies of the same post in 13 min. Catch it, skip the one
                     // recipient, and let the message still count as processed.
+                    $spooled = false;
                     try {
                         app(\App\Services\EmailSpoolerService::class)->spool(
                             new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
                             $user->email_preferred,
                             emailType: 'digest_immediate',
                         );
-                        // Coordinate with the expander-driven reach mailer: record this send so
-                        // mailNewlyReachedForPost never re-mails the same member once the post's
-                        // reach row appears. A post is cursor-mailed on arrival (no reach row yet);
-                        // the reach engine creates messages_reach minutes later — without this the
-                        // origin group's members would get a second copy. Harmless for non-rippling
-                        // posts (the ledger row is simply never read).
-                        DB::table('messages_reach_notified')->insertOrIgnore([
-                            'msgid' => (int) $message->mg_msgid,
-                            'userid' => (int) $uid,
-                            'notified_at' => now(),
-                        ]);
+                        $spooled = true;
                     } catch (\Throwable $e) {
                         Log::warning('Skipping immediate digest recipient after spool failure; continuing loop', [
                             'user_id' => $uid,
@@ -344,6 +335,27 @@ class UnifiedDigestService
                             'msgid' => (int) $message->mg_msgid,
                             'error' => $e->getMessage(),
                         ]);
+                    }
+                    if ($spooled) {
+                        // Coordinate with the expander-driven reach mailer: record this send so
+                        // mailNewlyReachedForPost never re-mails the same member once the post's
+                        // reach row appears (the post is cursor-mailed on arrival, before the reach
+                        // engine creates messages_reach minutes later). Kept OUTSIDE the spool try so
+                        // a ledger-write failure can't masquerade as a spool failure or abort the
+                        // loop; harmless for non-rippling posts (the row is simply never read).
+                        try {
+                            DB::table('messages_reach_notified')->insertOrIgnore([
+                                'msgid' => (int) $message->mg_msgid,
+                                'userid' => (int) $uid,
+                                'notified_at' => now(),
+                            ]);
+                        } catch (\Throwable $e) {
+                            Log::warning('Immediate digest: reach-ledger write failed (expander may re-notify)', [
+                                'user_id' => $uid,
+                                'msgid' => (int) $message->mg_msgid,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                     }
                 }
                 $emailsSent++;
