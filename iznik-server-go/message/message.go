@@ -818,7 +818,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			}
 			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
 				"LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ? "+
-				"WHERE mg.msgid IN (?) "+
+				"WHERE mg.msgid IN (?) AND mg.deleted = 0 "+
 				"GROUP BY mg.msgid HAVING COUNT(mg.groupid) = COUNT(ub.groupid)",
 				myid, ids).Scan(&bannedBlocked)
 			for _, b := range bannedBlocked {

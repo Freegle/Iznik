@@ -205,6 +205,20 @@ func isochroneCount(myid uint64) uint64 {
 
 	latlng := user.GetLatLng(myid)
 
+	// Reach-gate the count to match the browse list (FilterReachBlocked) so the nav badge
+	// doesn't over-count. Only when the reach engine's table exists (ships in PR A) and the
+	// viewer has a known location — otherwise count everything (inert/pre-engine behaviour).
+	applyReach := false
+	if latlng.Lng != 0 || latlng.Lat != 0 {
+		var n int
+		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'messages_reach'").Scan(&n)
+		applyReach = n > 0
+	}
+	reachClause := ""
+	if applyReach {
+		reachClause = "AND NOT EXISTS (SELECT 1 FROM messages_reach mr WHERE mr.msgid = messages_spatial.msgid AND ST_Contains(mr.polygon, ST_SRID(POINT(?, ?), ?)) = 0) "
+	}
+
 	db.Where("userid = ?", myid).Find(&isochrones)
 
 	if len(isochrones) > 0 {
@@ -220,6 +234,10 @@ func isochroneCount(myid uint64) uint64 {
 
 				thiscount := uint64(0)
 
+				args := []any{utils.SRID, myid, utils.MESSAGE_LIKES_VIEW, isochrone.Isochroneid, latlng.Lng, latlng.Lat, utils.SRID}
+				if applyReach {
+					args = append(args, latlng.Lng, latlng.Lat, utils.SRID)
+				}
 				db.Raw("SELECT COUNT(DISTINCT(messages_spatial.msgid)) "+
 					"FROM messages_spatial "+
 					"INNER JOIN isochrones ON ST_Contains(isochrones.polygon, ST_SRID(point, ?)) "+
@@ -227,7 +245,8 @@ func isochroneCount(myid uint64) uint64 {
 					"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
 					"WHERE isochrones.id = ? AND messages_spatial.successful = 0 "+
 					"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
-					"AND messages_likes.msgid IS NULL;", utils.SRID, myid, utils.MESSAGE_LIKES_VIEW, isochrone.Isochroneid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&thiscount)
+					reachClause+
+					"AND messages_likes.msgid IS NULL;", args...).Scan(&thiscount)
 
 				mu.Lock()
 				defer mu.Unlock()
