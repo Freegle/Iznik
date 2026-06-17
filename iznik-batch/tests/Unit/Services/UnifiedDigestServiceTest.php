@@ -899,6 +899,45 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'cursor immediate digest skips a post that has a reach row');
     }
 
+    public function test_cursor_and_expander_do_not_double_mail_via_shared_ledger(): void
+    {
+        // A post is cursor-mailed on arrival (no reach row yet) and the reach row appears minutes
+        // later. The cursor send records the ledger, so the expander must NOT re-mail those members.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: window (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('c', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedImmediateCursor($group);
+
+        // No reach row yet → the cursor immediate digest mails the group and records the ledger.
+        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertTrue(
+            DB::table('messages_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            'cursor immediate send is recorded in the ledger'
+        );
+
+        // Reach row appears afterwards; the expander must not re-mail the already-mailed member.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        $before = DB::table('messages_reach_notified')->where('msgid', $msg->id)->count();
+        $sent = $this->service->mailNewlyReachedForPost($msg->id);
+        $this->assertSame(0, $sent, 'expander does not re-mail members the cursor digest already mailed');
+        $this->assertSame(
+            $before,
+            DB::table('messages_reach_notified')->where('msgid', $msg->id)->count(),
+            'no new ledger rows — the shared ledger prevents the double-mail'
+        );
+    }
+
     /** Set a user's settings.mylocation point (the canonical first-choice location source). */
     protected function setMyLocation(User $user, float $lat, float $lng): void
     {

@@ -325,6 +325,17 @@ class UnifiedDigestService
                             $user->email_preferred,
                             emailType: 'digest_immediate',
                         );
+                        // Coordinate with the expander-driven reach mailer: record this send so
+                        // mailNewlyReachedForPost never re-mails the same member once the post's
+                        // reach row appears. A post is cursor-mailed on arrival (no reach row yet);
+                        // the reach engine creates messages_reach minutes later — without this the
+                        // origin group's members would get a second copy. Harmless for non-rippling
+                        // posts (the ledger row is simply never read).
+                        DB::table('messages_reach_notified')->insertOrIgnore([
+                            'msgid' => (int) $message->mg_msgid,
+                            'userid' => (int) $uid,
+                            'notified_at' => now(),
+                        ]);
                     } catch (\Throwable $e) {
                         Log::warning('Skipping immediate digest recipient after spool failure; continuing loop', [
                             'user_id' => $uid,
@@ -432,7 +443,7 @@ class UnifiedDigestService
         }
 
         try {
-            $msg = Message::find($msgid);
+            $msg = Message::with(['attachments', 'fromUser', 'groups'])->find($msgid);
             if ($msg === null) {
                 return 0;
             }
