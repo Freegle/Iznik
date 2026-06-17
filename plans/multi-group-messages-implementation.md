@@ -14,7 +14,7 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14 (+ hold/release/backToPending client plumbing), 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24, 25, 26 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, per-group edit-subject keyword + mod-delete audit log, remaining `groups[0]` client sites, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14 (+ hold/release/backToPending client plumbing), 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24, 25, 26, 27 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, per-group edit-subject keyword + mod-delete audit log, remaining `groups[0]` client sites, store/ModTools client changes, digest header group selection.
 
 **Open work (❌):**
 
@@ -23,7 +23,6 @@
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
-| 27 | Laravel | `UnifiedDigest.php` header group selection |
 | 28 | Go | Re-label `getPrimaryGroupForMessage` as legacy fallback |
 | 29 | Laravel | `DeadlineReached` and other mailables track/render arbitrary group via `groups->first()` |
 
@@ -1798,35 +1797,19 @@ Both sites now prefer the contextual group, falling back to the primary group on
 
 ---
 
-## Task 27: Laravel — Digest Header Group Selection ❌ NOT DONE
+## Task 27: Laravel — Digest Header Group Selection ✅ DONE
 
-[UnifiedDigest.php:123,264](iznik-batch/app/Mail/Digest/UnifiedDigest.php) still reads `$firstPost['postedToGroups'][0]`.
+`UnifiedDigest.__construct` and `rebuildFromDescriptor` both now use `preferredGroupForPost()` (which picks the recipient's member group) rather than `[0]` for choosing the tracking group ID and the sponsors-lookup group ID. The method already existed and was used by `build()` and `getSubject()`.
 
-**Files:**
-- Modify: `iznik-batch/app/Mail/Digest/UnifiedDigest.php:123,264`
+**What changed:**
+- Constructor (was line 71): `$this->posts->first()['postedToGroups'][0]` → `$this->preferredGroupForPost($this->posts->first())` for `$trackingGroupId`
+- `rebuildFromDescriptor()` (was line 257): inline preferred-group logic using `$user->memberships` instead of `$descriptor['posts'][0]['groups'][0]` for the sponsors group ID
 
-Both sites read `$firstPost['postedToGroups'][0]` to choose the header group for a digest section. For multi-group posts the `postedToGroups` array is non-deterministic; this should pick the group whose digest this is (the recipient's group for that section) or the most-recently-arrived group.
+**Tests added:**
+- `UnifiedDigestTest::test_immediate_tracking_groupid_uses_recipients_group_for_cross_post` — recipient on groupB only, post on A+B → tracking `groupid` = B
+- `UnifiedDigestRetryTest::test_rebuild_uses_recipients_group_for_sponsors_on_cross_post` — rebuild picks groupB sponsor (recipient's group) over groupA
 
-- [ ] **Step 1: Identify the right group**
-
-The digest is built per recipient, who has a primary group context. Thread that group ID through `deduplicatePosts()` output and use it here. If not available, fall back to the most recent arrival.
-
-- [ ] **Step 2: Update both sites**
-
-```php
-$groupId = $this->preferredGroupForPost($firstPost, $this->recipientGroupId);
-```
-
-- [ ] **Step 3: Test**
-
-Build a digest for a user where a multi-group post appears. Verify the header references the user's group, not an arbitrary one.
-
-- [ ] **Step 4: Commit**
-
-```bash
-cd iznik-batch && git add app/Mail/Digest/UnifiedDigest.php tests/
-git commit -m "feat: digest header uses recipient's group for multi-group posts"
-```
+Full Unit suite 3226/3226 ✓.
 
 ---
 

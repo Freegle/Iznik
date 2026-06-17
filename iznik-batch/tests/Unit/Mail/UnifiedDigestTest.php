@@ -105,6 +105,35 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals("What's New (1 post) - Sofa", $envelope->subject);
     }
 
+    public function test_immediate_subject_prefers_recipients_group_for_cross_post(): void
+    {
+        // A post on groups A and B; the recipient is a member of B only. The
+        // immediate-digest subject prefix must name B (the recipient's group),
+        // not an arbitrary first group.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $groupBName = $groupB->namefull ?: $groupB->nameshort;
+        $groupAName = $groupA->namefull ?: $groupA->nameshort;
+        $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
+        $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
+    }
+
     public function test_subject_with_multiple_posts(): void
     {
         $user = $this->createTestUser();
@@ -388,6 +417,32 @@ class UnifiedDigestTest extends TestCase
         // A daily digest spans the member's groups → not tied to one.
         $dailyMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $this->assertNull($dailyMail->getTracking()->groupid);
+    }
+
+    public function test_immediate_tracking_groupid_uses_recipients_group_for_cross_post(): void
+    {
+        // A post on groups A and B; the recipient is a member of B only. The
+        // immediate-digest tracking groupid must record B (the recipient's group),
+        // not an arbitrary first group.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals($groupB->id, $mail->getTracking()->groupid);
+        $this->assertNotEquals($groupA->id, $mail->getTracking()->groupid);
     }
 
     public function test_immediate_mode_envelope_from_is_noreply_for_amp(): void
