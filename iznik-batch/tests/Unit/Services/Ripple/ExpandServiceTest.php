@@ -203,4 +203,52 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(1, $stats['initialized']); // counted
         $this->assertSame(0, DB::table('messages_reach')->where('msgid', $msgid)->count()); // but not written
     }
+
+    public function test_ripples_post_into_groups_whose_area_the_reach_covers(): void
+    {
+        // #6: as reach crosses into a group's area (DPA poly if present, else CGA
+        // polyofficial — i.e. groups.polyindex), the post is added Pending to that group.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // → tick 1
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        // Group B: area intersects the fake reach (-0.20..-0.10 lng, 51.50..51.60 lat).
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // Group C: far away → must NOT ripple in.
+        $groupC = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((1.0 53.0,1.1 53.0,1.1 53.1,1.0 53.1,1.0 53.0))', 3857, $groupC->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        // Rippled into B as fresh Pending.
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'post rippled into group B whose area the reach covers');
+        $this->assertSame('Pending', $b->collection);
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+
+        // Origin group untouched (still Approved).
+        $origin = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $originGid)->first();
+        $this->assertSame('Approved', $origin->collection);
+
+        // Far group C not touched.
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupC->id)->first(),
+            'post not rippled into a group whose area the reach does not cover'
+        );
+
+        // Idempotent — re-running never duplicates the rippled-in row.
+        $this->service()->process(false, 500);
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->count()
+        );
+    }
 }
