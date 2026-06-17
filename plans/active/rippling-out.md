@@ -3,14 +3,14 @@
 **Spec**: `plans/rippling-out-rollout/design.md` (read it before working — it is the source of truth).
 **Worktree**: `/home/edward/FreegleDocker-rippling-out` · **Branch base**: `origin/master` · **Feature branch**: `feature/rippling-out`
 **Goal**: all PRs pushed → through CI → adversarial-review fixes applied. **Not merged** (humans merge).
-**Rule**: PRs split by deployability — reach infra first (dark), **browse & email last**. Each UI PR carries screenshots. Inter-PR dependencies stated explicitly in each PR body.
+**Rule**: PRs split by deployability — reach infra first (no consumer reads reach yet), **browse & email last**. Each UI PR carries screenshots. Inter-PR dependencies stated explicitly in each PR body.
 
 ## PR / deployability plan
 
 | PR | Branch | Contents | Depends on | Status |
 |----|--------|----------|-----------|--------|
 | A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | ✅ PR #768, 12/12 green, adversarial review done + fixed (blocker+2 major+minor), CI running. NOT merged. |
-| B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (flagged/allowlisted) | A | ⬜ Pending |
+| B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (to all newly-reached members, no flag) | A | ⬜ Pending |
 | C | `feature/rippling-held-replies` | #3 `chat_messages_rippling` hold/release + mod chat-held reason | A | ⬜ Pending |
 | D | `feature/rippling-mod-ui` | #6 ripple-in mod banner + #7 reach map + #4 help modal (carry-over) | A | ⬜ Pending |
 | E | `feature/rippling-browse` | #1 browse UI (filter/order/map) + #2 reply-eligibility + #8 FAQ | A | ⬜ Pending |
@@ -33,8 +33,7 @@
 
 ## PR B — immediate mails on expansion (next)
 Branch off `feature/rippling-reach-engine` (depends on A). Pattern to copy:
-`iznik-batch/app/Console/Commands/Push/SendDailyPostsPushCommand.php` — **dark by default +
-allowlist** (`FREEGLE_RIPPLE_MAIL_ALLOWLIST`, empty = nobody). Newly-reached members with
+`iznik-batch/app/Console/Commands/Push/SendDailyPostsPushCommand.php` — sends immediate mail to all newly-reached members (no allowlist, no dark flag — gated by merge order). Newly-reached members with
 `User::SIMPLE_MAIL_FULL` get an immediate "new post near you" mail.
 
 | # | Task | Status | Notes |
@@ -42,9 +41,9 @@ allowlist** (`FREEGLE_RIPPLE_MAIL_ALLOWLIST`, empty = nobody). Newly-reached mem
 | B1 | `messages_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
 | B2 | Hook into `ExpandService`: on init/advance compute newly-reached members = users with a location inside the new reach polygon AND NOT already notified AND `SIMPLE_MAIL_FULL` | ⬜ | spatial query `ST_Contains(reach.polygon, ST_SRID(POINT(u.lng,u.lat),3857))`; user loc from `users.lastlocation`/`users_approxlocs` — confirm source |
 | B3 | Mail: reuse unified-digest single-post mailable / "new post near you" template | ⬜ | see `UnifiedDigestService` / daily-posts push payload |
-| B4 | Allowlist gate (dark) + per-expansion cap; record in ledger | ⬜ | |
+| B4 | Per-expansion cap; record in ledger (no allowlist) | ⬜ | |
 | B5 | #9 instrumentation: count immediate mails sent per expansion | ⬜ | |
-| B6 | Tests (Http+spatial seeded, allowlist on/off, no-double-mail) + push PR, CI, adversarial review | ⬜ | |
+| B6 | Tests (Http+spatial seeded, no-double-mail) + push PR, CI, adversarial review | ⬜ | |
 
 Remaining PRs after B: C held-replies (`chat_messages_rippling`), D mod-UI (#6 banner + #7 reach
 map + #4 modal carry-over), E browse (#1 + #2 reply-eligibility + #8 FAQ), F digest (#5), G
