@@ -20,7 +20,7 @@
 
 | Task | Area | Summary |
 |------|------|---------|
-| 19 | Audit | Write `plans/multi-group-stats-audit.md` |
+| 19 | Audit | ✅ Write `plans/multi-group-stats-audit.md`; one pre-Task-20 fix identified (session.go held-check must use mg.heldby) |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | ✅ Write `plans/multi-group-v1-audit-results.md`; ModBot multi-group rule merge fixed |
 | 28 | Go | ✅ `getPrimaryGroupForMessage` re-labelled as legacy fallback |
