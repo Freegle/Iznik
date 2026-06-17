@@ -293,11 +293,10 @@ class ChatNotificationServiceTest extends TestCase
             return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
         };
 
-        // Flag off (default): no gate is applied, so the message is selected normally.
-        $this->assertTrue($present(), 'message is selectable with the rippling flag off');
+        // No held reply yet → the delivery gate is always true, so the message is selected.
+        $this->assertTrue($present(), 'message is selectable when nothing is held');
 
-        // Flag on + a non-released rippling row → the delivery gate excludes the message.
-        config(['freegle.ripple.hold_replies' => true]);
+        // A non-released rippling row → the delivery gate excludes the message.
         $rowId = (int) DB::table('chat_messages_rippling')->insertGetId([
             'chatid' => $room->id,
             'chatmsgid' => $msg->id,

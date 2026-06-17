@@ -21,9 +21,9 @@ use Illuminate\Support\Facades\Log;
  * Releasing simply sets status='released', after which the normal notification pipeline
  * delivers it (no reviewrequired / processingsuccessful changes needed).
  *
- * Dark until wired in: BOTH the incoming-reply hold call site AND the delivery-gate
- * clauses are added behind config('freegle.ripple.hold_replies'), so with the flag off
- * chat_messages_rippling is always empty and nothing changes.
+ * Inert until the reach engine is live: shouldHold returns false while a post has no
+ * reach row (hasReach fails open if messages_reach is absent), so until then no reply is
+ * ever held, chat_messages_rippling stays empty, and the delivery gate is always true.
  */
 class RippleReplyService
 {
@@ -168,7 +168,7 @@ class RippleReplyService
             // messages_reach is created by the reach engine (PR A). Until that's
             // deployed the table may not exist — fail open ("not rippling") so an
             // external reply is delivered normally rather than crashing incoming-mail
-            // processing. With the hold_replies flag off this never runs anyway.
+            // processing. This is what keeps held replies inert before the engine is live.
             Log::warning('ripple:hasReach query failed (messages_reach missing?)', [
                 'msgid' => $msgid,
                 'error' => $e->getMessage(),

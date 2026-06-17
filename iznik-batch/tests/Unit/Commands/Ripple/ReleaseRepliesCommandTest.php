@@ -55,19 +55,8 @@ class ReleaseRepliesCommandTest extends TestCase
         return [$rowId, (int) $message->id];
     }
 
-    public function test_disabled_flag_is_noop(): void
+    public function test_releases_covered_replies(): void
     {
-        config(['freegle.ripple.hold_replies' => false]);
-        [$rowId] = $this->seedHeldInsideReach();
-
-        $this->artisan('ripple:release-replies')->assertExitCode(0);
-
-        $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
-    }
-
-    public function test_releases_covered_replies_when_enabled(): void
-    {
-        config(['freegle.ripple.hold_replies' => true]);
         [$rowId] = $this->seedHeldInsideReach();
 
         $this->artisan('ripple:release-replies')->assertExitCode(0);
@@ -79,7 +68,6 @@ class ReleaseRepliesCommandTest extends TestCase
     {
         // Regression: a post transiently absent from messages_spatial (reach row gone)
         // but NOT actually taken/withdrawn must not have its replies wrongly marked gone.
-        config(['freegle.ripple.hold_replies' => true]);
         [$rowId] = $this->seedHeldNoReach(); // message is live, no outcome, no reach row
 
         $this->artisan('ripple:release-replies')->assertExitCode(0);
@@ -89,7 +77,6 @@ class ReleaseRepliesCommandTest extends TestCase
 
     public function test_no_reach_and_post_taken_marks_gone(): void
     {
-        config(['freegle.ripple.hold_replies' => true]);
         [$rowId, $msgid] = $this->seedHeldNoReach();
         DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
 

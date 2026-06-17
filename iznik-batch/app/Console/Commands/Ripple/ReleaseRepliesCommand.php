@@ -15,8 +15,8 @@ use Illuminate\Support\Facades\Log;
  *   - reach 'done'  → max reach without covering everyone → release anyway
  *   - otherwise     → release the ones now inside reach
  *
- * DARK until RIPPLE_HOLD_REPLIES is set (the hold side that creates these rows is
- * also behind that flag), so with the flag off there is nothing to release.
+ * Inert until the reach engine is live: until a reply is held there is nothing to
+ * release, so this is a cheap no-op.
  */
 class ReleaseRepliesCommand extends Command
 {
@@ -29,12 +29,6 @@ class ReleaseRepliesCommand extends Command
     public function handle(RippleReplyService $svc): int
     {
         $this->registerShutdownHandlers();
-
-        if (!config('freegle.ripple.hold_replies', false)) {
-            $this->info('Held-reply release disabled (RIPPLE_HOLD_REPLIES off).');
-
-            return Command::SUCCESS;
-        }
 
         $dryRun = (bool) $this->option('dry-run');
 

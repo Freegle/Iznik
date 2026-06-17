@@ -1634,12 +1634,12 @@ class IncomingMailService
             type: ChatMessage::TYPE_INTERESTED
         );
 
-        // Rippling-out held replies (#3, dark behind RIPPLE_HOLD_REPLIES): email/TN replies
-        // bypass the in-app reply-eligibility gate (#2), so re-apply the same reach test
-        // here. If the post is still rippling out and this replier's area isn't covered yet,
-        // hold the reply (record a chat_messages_rippling row) so the poster isn't notified
-        // until it reaches them. With the flag off this never runs.
-        if ($chatMsgId !== null && config('freegle.ripple.hold_replies')) {
+        // Rippling-out held replies (#3): email/TN replies bypass the in-app reply-
+        // eligibility gate (#2), so re-apply the same reach test here. If the post is still
+        // rippling out and this replier's area isn't covered yet, hold the reply (record a
+        // chat_messages_rippling row) so the poster isn't notified until it reaches them.
+        // hasReach fails open, so before the reach engine is live nothing is held.
+        if ($chatMsgId !== null) {
             $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser);
         }
 
@@ -1695,8 +1695,8 @@ class IncomingMailService
      * the replier's area isn't covered yet. The replier's location is their last known
      * location (the same source the digest uses for distance). Records a
      * chat_messages_rippling row (status='held'); the delivery gate then withholds the
-     * poster notification until the post ripples to them (status→'released'). Dark behind
-     * RIPPLE_HOLD_REPLIES — the caller only invokes this when the flag is on.
+     * poster notification until the post ripples to them (status→'released'). Inert until
+     * the reach engine populates messages_reach (hasReach fails open before then).
      */
     private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
     {

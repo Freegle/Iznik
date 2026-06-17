@@ -842,12 +842,11 @@ class PushNotificationService
      */
     public function notifyChatMessage(int $messageId): int
     {
-        // Rippling-out held replies (#3, dark behind RIPPLE_HOLD_REPLIES): don't push a
-        // reply to the poster while it is held because the post hasn't yet rippled to the
-        // replier's area. With the flag off the rippling table is empty, so this never
-        // fires. The reply is pushed normally once released (status='released').
-        if (config('freegle.ripple.hold_replies')
-            && app(RippleReplyService::class)->isDeliveryHeld($messageId)) {
+        // Rippling-out held replies (#3): don't push a reply to the poster while it is held
+        // because the post hasn't yet rippled to the replier's area. Until a reply is held
+        // the rippling table is empty, so this never fires. The reply is pushed normally
+        // once released (status='released').
+        if (app(RippleReplyService::class)->isDeliveryHeld($messageId)) {
             return 0;
         }
 

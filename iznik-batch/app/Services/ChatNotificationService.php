@@ -134,14 +134,12 @@ class ChatNotificationService
             ->whereNull('users.deleted')
             ->select('chat_messages.*');
 
-        // Rippling-out held replies (#3, dark behind RIPPLE_HOLD_REPLIES): an external
-        // reply held because the post hasn't yet rippled to the replier's area must not be
-        // emailed to the poster. Enforced via the chat_messages_rippling delivery gate —
-        // NOT chat_messages.reviewrequired (that bit is shared with the spam/mod hold).
-        // With the flag off the table is empty, so the gate is always true: no change.
-        if (config('freegle.ripple.hold_replies')) {
-            $query->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'));
-        }
+        // Rippling-out held replies (#3): an external reply held because the post hasn't
+        // yet rippled to the replier's area must not be emailed to the poster. Enforced via
+        // the chat_messages_rippling delivery gate — NOT chat_messages.reviewrequired (that
+        // bit is shared with the spam/mod hold). Until any reply is held the table is empty,
+        // so the gate is always true and nothing changes.
+        $query->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'));
 
         // For User2User chats, only include reviewed messages.
         if ($chatType === ChatRoom::TYPE_USER2USER) {
