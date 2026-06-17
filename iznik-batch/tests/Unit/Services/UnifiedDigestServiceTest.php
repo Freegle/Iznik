@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\UnifiedDigestService;
