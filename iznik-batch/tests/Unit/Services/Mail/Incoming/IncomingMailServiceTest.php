@@ -2024,6 +2024,58 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNotEquals(RoutingResult::INCOMING_SPAM, $result);
     }
 
+    public function test_tn_chat_reply_to_noreply_routed_as_chat(): void
+    {
+        // Bug 9800/1: TN sends chat-thread replies to noreply@ (the From address in the
+        // chat notification email) instead of the notify- Reply-To address.
+        // Without the fix this triggers handleDigestReply(), which sends back a
+        // "we can't tell which post you'd like to reply to" email — a false error.
+        // The In-Reply-To header references the chat notification Message-ID, so we
+        // can recover the chat room and route the message correctly.
+        // https://discourse.ilovefreegle.org/t/9800/1
+        Mail::fake();
+
+        $tnEmail = 'tn-'.uniqid().'@user.trashnothing.com';
+        $tnUser = $this->createTestUser(['email_preferred' => $tnEmail]);
+        $freegleUser = $this->createTestUser(['email_preferred' => $this->uniqueEmail('freegle')]);
+        $chat = $this->createTestChatRoom($tnUser, $freegleUser);
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+        $userDomain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $fakeMsgId = 99; // Any numeric ID; only chatId is used for routing
+
+        $email = $this->createMinimalEmail([
+            'From' => $tnEmail,
+            'To' => $noreplyAddr,
+            'Subject' => 'Re: Someone wants your item',
+            'In-Reply-To' => "<chat-{$chat->id}-msg-{$fakeMsgId}@{$userDomain}>",
+        ], 'Happy to collect, when suits you?');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $tnEmail,
+            $noreplyAddr
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(
+            RoutingResult::TO_USER,
+            $result,
+            'TN chat-thread reply to noreply@ should be routed as a chat message, not digest reply'
+        );
+        Mail::assertNotSent(\App\Mail\Digest\DigestReplyNotice::class);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chat->id)
+            ->where('userid', $tnUser->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should be created from TN chat reply');
+        $this->assertStringContainsString('Happy to collect', $chatMsg->message);
+    }
+
     // ========================================
     // Tryst (Calendar) Response Tests
     // ========================================

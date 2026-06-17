@@ -134,7 +134,15 @@ class IncomingMailService
             return $this->handleHumanReplyToBounceAddress($email);
         }
 
-        // Phase 3c: Reply to digest email (sent from noreply@).
+        // Phase 3c: Recover TN chat replies misrouted to noreply@ instead of notify-.
+        // TN sometimes sends chat-thread replies to the From address rather than the
+        // Reply-To address. Detect via In-Reply-To referencing a chat Message-ID.
+        $misroutedResult = $this->handleMisroutedChatReply($email);
+        if ($misroutedResult !== null) {
+            return $misroutedResult;
+        }
+
+        // Phase 3d: Reply to digest email (sent from noreply@).
         // Send helpful auto-response explaining how to reply to specific posts.
         if ($email->isDigestReply()) {
             return $this->handleDigestReply($email);
@@ -1685,9 +1693,63 @@ class IncomingMailService
      */
     private function handleChatNotificationReply(ParsedEmail $email): RoutingResult
     {
-        $chatId = $email->chatId;
-        $userId = $email->chatUserId;
+        return $this->processChatReply($email, $email->chatId, $email->chatUserId);
+    }
 
+    /**
+     * Recover TN chat-thread replies misrouted to noreply@ instead of notify-.
+     *
+     * Freegle chat notification emails are sent FROM noreply@ with Reply-To set to
+     * notify-{chatId}-{userId}@. TN sometimes sends follow-up chat replies back to
+     * the From address (noreply@) rather than the Reply-To address, which causes
+     * isDigestReply() to fire and send a false "can't tell which post" error email.
+     * We recover by parsing the chatId from the In-Reply-To Message-ID.
+     *
+     * @see https://discourse.ilovefreegle.org/t/9800/1
+     */
+    private function handleMisroutedChatReply(ParsedEmail $email): ?RoutingResult
+    {
+        $noreplyAddr = config('freegle.mail.noreply_addr');
+        if (strtolower($email->envelopeTo) !== strtolower($noreplyAddr)) {
+            return null;
+        }
+
+        $inReplyTo = $email->getHeader('in-reply-to');
+        if ($inReplyTo === null) {
+            return null;
+        }
+
+        $userDomain = config('freegle.mail.user_domain');
+        if (! preg_match('/chat-(\d+)-msg-\d+@'.preg_quote($userDomain, '/').'/', $inReplyTo, $matches)) {
+            return null;
+        }
+
+        $chatId = (int) $matches[1];
+
+        $senderAddress = strtolower($email->fromAddress ?? $email->envelopeFrom ?? '');
+        $userEmail = \App\Models\UserEmail::where('email', $senderAddress)->first();
+        if ($userEmail === null) {
+            Log::info('Misrouted chat reply from unknown sender, falling through', [
+                'from' => $senderAddress,
+                'chat_id' => $chatId,
+            ]);
+
+            return null;
+        }
+
+        $userId = $userEmail->userid;
+
+        Log::info('Recovering TN chat reply misrouted to noreply@', [
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'from' => $senderAddress,
+        ]);
+
+        return $this->processChatReply($email, $chatId, $userId);
+    }
+
+    private function processChatReply(ParsedEmail $email, int $chatId, int $userId): RoutingResult
+    {
         Log::info('Processing chat notification reply', [
             'chat_id' => $chatId,
             'user_id' => $userId,
