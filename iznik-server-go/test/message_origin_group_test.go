@@ -43,3 +43,45 @@ func TestMessageOriginGroup(t *testing.T) {
 	// No group rows at all → 0.
 	assert.Equal(t, uint64(0), message.MessageOriginGroup(db, 999999999), "no rows → 0")
 }
+
+// ClipReachForRejectedGroup must subtract a rejecting secondary group's area from a post's
+// rippling reach, so the post stops being reply-eligible / visible there, while the origin
+// area stays covered (#6).
+func TestClipReachForRejectedGroup(t *testing.T) {
+	db := database.DBConn
+
+	// Self-sufficient: messages_reach belongs to PR A (merges before #772). Create a
+	// minimal stand-in so this test runs in isolation off master.
+	db.Exec("CREATE TABLE IF NOT EXISTS messages_reach (msgid BIGINT UNSIGNED PRIMARY KEY, polygon GEOMETRY NOT NULL SRID 3857)")
+
+	prefix := uniquePrefix("clipreach")
+	userID := CreateTestUser(t, prefix, "User")
+	group1 := CreateTestGroup(t, prefix+"a") // origin (west)
+	group2 := CreateTestGroup(t, prefix+"b") // secondary group that rejects (east)
+	mid := CreateTestMessage(t, userID, group1, "OFFER: clip reach test item", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW() + INTERVAL 1 HOUR, 'Approved', 0)", mid, group2)
+
+	// group2's area (DPA/CGA = polyindex) lies to the EAST of the origin.
+	db.Exec("UPDATE `groups` SET polyindex = ST_GeomFromText("+
+		"'POLYGON((0.05 51.45,0.15 51.45,0.15 51.55,0.05 51.55,0.05 51.45))', 3857) WHERE id = ?", group2)
+
+	// Reach covers BOTH the western origin area and the eastern group2 area.
+	db.Exec("INSERT INTO messages_reach (msgid, polygon) VALUES (?, ST_GeomFromText("+
+		"'POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))', 3857))", mid)
+
+	covers := func(lng, lat string) int {
+		var v int
+		db.Raw("SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT("+lng+", "+lat+"), 3857)), 0) "+
+			"FROM messages_reach WHERE msgid = ?", mid).Scan(&v)
+		return v
+	}
+
+	assert.Equal(t, 1, covers("0.1", "51.5"), "reach initially covers the secondary group's area")
+	assert.Equal(t, 1, covers("-0.1", "51.5"), "reach initially covers the origin area")
+
+	message.ClipReachForRejectedGroup(db, mid, group2)
+
+	assert.Equal(t, 0, covers("0.1", "51.5"), "rejected secondary group's area is clipped out of the reach")
+	assert.Equal(t, 1, covers("-0.1", "51.5"), "origin area is still covered after the clip")
+}
