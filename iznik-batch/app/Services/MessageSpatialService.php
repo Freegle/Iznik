@@ -210,8 +210,16 @@ class MessageSpatialService
 
     private function removeNonApprovedMessages(bool $dryRun = false): int
     {
+        // Join on BOTH msgid AND groupid: messages_spatial holds one row per post (unique
+        // msgid) for a specific group, so a spatial row must only be dropped when the
+        // messages_groups row for ITS OWN group is non-approved. Joining on msgid alone
+        // would let a rippled-in Pending row on another group (#6) delete the origin post's
+        // approved spatial row, flickering it out of browse every spatial-index run.
         $rows = DB::table('messages_spatial')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
+            ->join('messages_groups', function ($join) {
+                $join->on('messages_groups.msgid', '=', 'messages_spatial.msgid')
+                    ->on('messages_groups.groupid', '=', 'messages_spatial.groupid');
+            })
             ->where('messages_groups.collection', '!=', MessageGroup::COLLECTION_APPROVED)
             ->select('messages_spatial.id', 'messages_spatial.msgid')
             ->get();

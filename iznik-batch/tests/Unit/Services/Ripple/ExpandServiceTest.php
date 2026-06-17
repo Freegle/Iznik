@@ -226,13 +226,28 @@ class ExpandServiceTest extends TestCase
             ['POLYGON((1.0 53.0,1.1 53.0,1.1 53.1,1.0 53.1,1.0 53.0))', 3857, $groupC->id]
         );
 
+        // Group D: area intersects the reach BUT not a live Freegle group → must NOT ripple in.
+        $groupD = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, type = 'Other', onhere = 0, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.16 51.53,-0.13 51.53,-0.13 51.57,-0.16 51.57,-0.16 51.53))', 3857, $groupD->id]
+        );
+
         $stats = $this->service()->process(false, 500);
 
-        // Rippled into B as fresh Pending.
+        // Rippled into B as fresh Pending, carrying the post's msgtype (else it is invisible
+        // to type-filtered browse once approved — addApprovedMessage copies messages_groups.msgtype).
         $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($b, 'post rippled into group B whose area the reach covers');
         $this->assertSame('Pending', $b->collection);
+        $this->assertSame(Message::TYPE_OFFER, $b->msgtype);
         $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+
+        // A non-Freegle / not-onhere group is never rippled into, even inside the reach.
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupD->id)->first(),
+            'post not rippled into a non-Freegle group'
+        );
 
         // Origin group untouched (still Approved).
         $origin = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $originGid)->first();

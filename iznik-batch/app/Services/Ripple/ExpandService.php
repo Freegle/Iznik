@@ -240,17 +240,21 @@ class ExpandService
     {
         try {
             $n = DB::affectingStatement(
-                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts)
-                 SELECT ?, g.id, 'Pending', NOW(), 0
+                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype)
+                 SELECT ?, g.id, 'Pending', NOW(), 0, m.type
                  FROM `groups` g
-                 WHERE g.publish = 1
+                 CROSS JOIN messages m
+                 WHERE m.id = ?
+                   AND g.publish = 1
+                   AND g.type = 'Freegle'
+                   AND g.onhere = 1
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
                    AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )",
-                [$msgid, $reachWkt, $msgid]
+                [$msgid, $msgid, $reachWkt, $msgid]
             );
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
