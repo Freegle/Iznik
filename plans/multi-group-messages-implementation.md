@@ -22,7 +22,7 @@
 |------|------|---------|
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
-| 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
+| 22 | Audit | ✅ Write `plans/multi-group-v1-audit-results.md`; ModBot multi-group rule merge fixed |
 | 28 | Go | ✅ `getPrimaryGroupForMessage` re-labelled as legacy fallback |
 | 29 | Laravel | ✅ `DeadlineReached` and `ChatNotification` now pick the recipient's group |
 
@@ -1680,9 +1680,9 @@ Already implemented and tested in commit `d68107b59` (verified on this branch).
 
 ---
 
-## Task 22: V1 PHP Audit Confirmation ❌ NOT DONE
+## Task 22: V1 PHP Audit Confirmation ✅ DONE
 
-`plans/multi-group-v1-audit-results.md` does not exist.
+Results in [plans/multi-group-v1-audit-results.md](multi-group-v1-audit-results.md).
 
 **Files:** None — this is a verification task.
 
