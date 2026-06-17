@@ -196,6 +196,7 @@ class AutoApproveService
         // V1 approve(): UPDATE messages_groups SET collection='Approved', approvedby=whoAmId(),
         // approvedat=NOW(), arrival=NOW() WHERE msgid=? AND groupid=? AND collection!='Approved'
         // V1 whoAmId() returns NULL in cron context (no session).
+        // Also clear contentcheck_reasons so IP-abuse warnings are not shown after auto-approval.
         DB::table('messages_groups')
             ->where('msgid', $candidate->msgid)
             ->where('groupid', $groupid)
@@ -205,6 +206,7 @@ class AutoApproveService
                 'approvedby' => null,
                 'approvedat' => now(),
                 'arrival' => now(),
+                'contentcheck_reasons' => null,
             ]);
 
         // V1 autoapprove() log: type=Message, subtype=Autoapproved.

@@ -799,6 +799,57 @@ func TestPostMessageApprove(t *testing.T) {
 	// (not synchronously in the Go API), so no log or push_notify_group_mods assertions here.
 }
 
+// TestApproveMessageClearsContentcheckReasons verifies that approving a pending
+// message clears contentcheck_reasons so the IpAbuse (and other) warnings are not
+// shown to moderators after the post has been approved.
+// Discourse #9768 post 5: moderator reports IP-abuse warning still showing on posts
+// approved 2 days ago.
+func TestApproveMessageClearsContentcheckReasons(t *testing.T) {
+	prefix := uniquePrefix("msgmod_appr_ccr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a pending message with an IpAbuse contentcheck_reasons entry —
+	// simulating what ContentCheckService writes when it detects shared-IP abuse.
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Offer', ?, NOW(), NOW())",
+		posterID, prefix+" ip abuse offer", locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, prefix+" ip abuse offer").Scan(&msgID)
+	require.NotZero(t, msgID)
+
+	ipAbuseReasons := `[{"check":"IpAbuse","action":"flag","detail":"IP shared by many users","ip":"192.0.2.1"}]`
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at, contentcheck_reasons) VALUES (?, ?, NOW(), 'Pending', 0, NOW(), ?)",
+		msgID, groupID, ipAbuseReasons)
+
+	// Pre-condition: contentcheck_reasons must be set.
+	var reasonsBefore *string
+	db.Raw("SELECT contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&reasonsBefore)
+	require.NotNil(t, reasonsBefore, "pre-condition: contentcheck_reasons must be set before approve")
+
+	// Approve the message as a moderator.
+	body, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Approve"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Post-condition: contentcheck_reasons must be NULL after approval so the
+	// IP-abuse warning is no longer shown to moderators.
+	var reasonsAfter *string
+	db.Raw("SELECT contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&reasonsAfter)
+	assert.Nil(t, reasonsAfter, "contentcheck_reasons must be cleared when a message is approved")
+}
+
 // TestApproveAddsApprovedMessageToSpatial verifies that a Pending message with a
 // location is not in messages_spatial, and that approving it adds it (so it then
 // shows in the public browse) with the correct coordinates.
