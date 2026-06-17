@@ -112,7 +112,7 @@ Schedule::command('ripple:expand')
     ->runInBackground();
 
 // Release/expire held external (email/TN) replies as posts ripple out (#3).
-// Dark until RIPPLE_HOLD_REPLIES is set.
+// Inert until the reach engine is live -- nothing to release until a reply is held.
 Schedule::command('ripple:release-replies')
     ->everyMinute()
     ->withoutOverlapping()

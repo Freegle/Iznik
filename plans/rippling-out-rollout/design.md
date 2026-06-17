@@ -268,6 +268,9 @@ Linked from the #2 blocked-reply message.
 
 - Branch off **`origin/master`** (not local `master` HEAD, not the current branch).
 - **One big feature** conceptually, **delivered as multiple PRs split by deployability**.
+- **No in-code feature flags, toggle switches or dual-mode fallbacks** -- the rollout
+  switches purely to rippling, gated by PR release/merge ORDER. reachBrowse and
+  RIPPLE_HOLD_REPLIES were removed; each stage is simply inert until the data it reads exists.
 - **Reach infrastructure (#0) deploys first (dark); browse (#1/#2) and email/digest (#5)
   changes deploy *last*.** Mod-facing and other backend stages sit in between.
 - Each UI-affecting PR includes **before/after screenshots**.
@@ -284,8 +287,8 @@ Ordered by deployability — reach infra first, **browse and email last**:
 
 | PR | Contents | Stage |
 |---|---|---|
-| A | #0 reach calculation + `messages_reach` + `ripple:expand` (no mails) | Dark — **first** |
-| B | #0 immediate mails on expansion (flagged/allowlisted, like daily-posts push) | Backend |
+| A | #0 reach calculation + `messages_reach` + `ripple:expand` (no mails) | **First** (no consumer) |
+| B | #0 immediate mails on expansion (to newly-reached members) | Backend |
 | C | #3 held external replies + mod chat-held reason | Backend + mod |
 | D | #6 mod banner + #7 reach map (+ #4 modal, already local) | Mod UI |
 | E | #1 browse UI (filter/order/map polygon) + #2 reply-eligibility + #8 member FAQ | **Consumer — last** |
