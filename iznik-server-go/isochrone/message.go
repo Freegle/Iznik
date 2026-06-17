@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type IsochronesUsers struct {
@@ -119,12 +120,59 @@ func Messages(c *fiber.Ctx) error {
 
 		wg.Wait()
 
+		// Q2a (§6): hide posts whose rippling reach exists but hasn't reached the viewer
+		// yet. Inert until the reach engine populates messages_reach.
+		res = FilterReachBlocked(db, res, float64(latlng.Lat), float64(latlng.Lng))
+
 		for ix, r := range res {
 			res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
 		}
 	}
 
 	return c.JSON(res)
+}
+
+// FilterReachBlocked removes messages whose rippling reach exists but does not yet cover
+// the viewer's location (§6 — a post stays hidden until the ripple reaches you). It is
+// inert until the reach engine populates messages_reach: a missing table or no matching
+// rows leaves msgs unchanged, so non-rippling posts and the pre-engine period are
+// unaffected.
+func FilterReachBlocked(db *gorm.DB, msgs []message.MessageSummary, lat, lng float64) []message.MessageSummary {
+	if len(msgs) == 0 || (lat == 0 && lng == 0) {
+		return msgs
+	}
+
+	ids := make([]uint64, 0, len(msgs))
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+
+	var rows []struct {
+		Msgid uint64 `gorm:"column:msgid"`
+	}
+	if err := db.Raw(
+		"SELECT msgid FROM messages_reach WHERE msgid IN (?) "+
+			"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+		ids, lng, lat, utils.SRID,
+	).Scan(&rows).Error; err != nil {
+		return msgs // messages_reach absent (pre-engine) — no filtering
+	}
+	if len(rows) == 0 {
+		return msgs
+	}
+
+	blocked := make(map[uint64]bool, len(rows))
+	for _, r := range rows {
+		blocked[r.Msgid] = true
+	}
+
+	out := make([]message.MessageSummary, 0, len(msgs))
+	for _, m := range msgs {
+		if !blocked[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func Count(c *fiber.Ctx) error {
