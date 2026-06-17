@@ -1293,4 +1293,43 @@ describe('MessageExpanded', () => {
       expect(wrapper.findAll('.thumbnail-item .proxy-image').length).toBe(2)
     })
   })
+
+  describe('email link ?reply=1 on standalone page', () => {
+    afterEach(() => {
+      globalThis.__testUseRoute = undefined
+    })
+
+    it('does not auto-open reply pane when ?reply=1 is in URL on standalone page', async () => {
+      // Simulate arriving from an email link that has ?reply=1
+      // On the standalone message page (not inModal, not fullscreenOverlay)
+      // the reply pane must NOT auto-open so the user can see and expand the photo.
+      globalThis.__testUseRoute = () => ({
+        params: { id: '123' },
+        query: { reply: '1' },
+        path: '/message/123',
+        name: 'message-id',
+        fullPath: '/message/123?reply=1',
+      })
+
+      const wrapper = await createWrapper()
+      const comp = wrapper.findComponent(MessageExpanded)
+
+      expect(comp.vm.showReplyOverlay).toBe(false)
+    })
+
+    it('still auto-opens reply pane with ?reply=1 in modal context', async () => {
+      globalThis.__testUseRoute = () => ({
+        params: { id: '123' },
+        query: { reply: '1' },
+        path: '/message/123',
+        name: 'message-id',
+        fullPath: '/message/123?reply=1',
+      })
+
+      const wrapper = await createWrapper({ inModal: true })
+      const comp = wrapper.findComponent(MessageExpanded)
+
+      expect(comp.vm.showReplyOverlay).toBe(true)
+    })
+  })
 })

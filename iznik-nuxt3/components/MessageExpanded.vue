@@ -905,9 +905,12 @@ onMounted(() => {
 
   // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
   // chat-style reply pane straight away so they don't need to click Reply
-  // again. The pane fetches its own message data and gates its own render,
-  // so this is safe to call unconditionally.
-  if (useRoute().query.reply) {
+  // again — but only when the component is already inside a modal or overlay
+  // (inModal / fullscreenOverlay). On the standalone message page, auto-opening
+  // the full-screen reply pane covers the photo entirely, preventing users who
+  // clicked the email image/title link from seeing or expanding it. The Reply
+  // button remains visible on the standalone page so no click is lost.
+  if (useRoute().query.reply && (props.inModal || props.fullscreenOverlay)) {
     expandReply()
   }
 })
