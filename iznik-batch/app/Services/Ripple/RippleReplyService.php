@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Models\ChatMessage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -146,10 +147,58 @@ class RippleReplyService
      */
     public function markGone(int $msgid): int
     {
-        return DB::table('chat_messages_rippling')
+        $held = DB::table('chat_messages_rippling')
             ->where('msgid', $msgid)
             ->where('status', 'held')
-            ->update(['status' => 'taken-gone', 'releasedat' => now()]);
+            ->get();
+
+        foreach ($held as $row) {
+            DB::table('chat_messages_rippling')->where('id', $row->id)->update([
+                'status' => 'taken-gone',
+                'releasedat' => now(),
+            ]);
+            $this->notifyReplierGone($row);
+        }
+
+        return $held->count();
+    }
+
+    /**
+     * Tell the replier their held reply can't be delivered because the post has been
+     * taken/withdrawn. Posts a System message into their chat authored by the poster (the
+     * other party in the DM) so the existing chat pipeline — processingrequired=1, handled
+     * by ChatProcessService — delivers it to and notifies the REPLIER. Best-effort: a
+     * missing chat or poster is skipped rather than aborting the batch.
+     */
+    private function notifyReplierGone(object $row): void
+    {
+        try {
+            $chat = DB::table('chat_rooms')->where('id', $row->chatid)->first(['user1', 'user2']);
+            if ($chat === null) {
+                return;
+            }
+            $posterId = ((int) $chat->user1 === (int) $row->replieruserid)
+                ? (int) $chat->user2
+                : (int) $chat->user1;
+            if ($posterId <= 0) {
+                return;
+            }
+
+            ChatMessage::create([
+                'chatid' => (int) $row->chatid,
+                'userid' => $posterId,
+                'message' => "Sorry — the item you replied about has now been taken, so it's no longer available.",
+                'type' => ChatMessage::TYPE_SYSTEM,
+                'refmsgid' => (int) $row->msgid,
+                'date' => now(),
+                'platform' => 0,
+                'reviewrequired' => 0,
+                'processingrequired' => 1,
+                'replyreceived' => 0,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: failed to tell replier post is gone (rippling row {$row->id}): {$e->getMessage()}");
+        }
     }
 
     private function release(int $ripplingRowId): void

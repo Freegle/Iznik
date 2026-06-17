@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\ChatMessage;
 use App\Services\Ripple\ReachQueryService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
@@ -122,5 +123,32 @@ class RippleReplyServiceTest extends TestCase
         $this->assertSame('taken-gone', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
         // taken-gone still blocks delivery (status <> released).
         $this->assertTrue($this->service()->isDeliveryHeld($cmid));
+    }
+
+    public function test_mark_gone_tells_the_replier_the_post_is_gone(): void
+    {
+        $msgid = $this->seedReachedPost();
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        $rip = DB::table('chat_messages_rippling')->where('id', $rowId)->first();
+        $chat = DB::table('chat_rooms')->where('id', $rip->chatid)->first(['user1', 'user2']);
+        $replier = (int) $rip->replieruserid;
+        $poster = ((int) $chat->user1 === $replier) ? (int) $chat->user2 : (int) $chat->user1;
+
+        $this->service()->markGone($msgid);
+
+        // A System message is posted into the chat, authored by the poster (so the existing
+        // chat pipeline notifies the REPLIER), referencing the taken post and queued for
+        // delivery — it is NOT the held reply and is not delivery-gated.
+        $sys = DB::table('chat_messages')
+            ->where('chatid', $rip->chatid)
+            ->where('type', ChatMessage::TYPE_SYSTEM)
+            ->where('userid', $poster)
+            ->first();
+        $this->assertNotNull($sys, 'replier is told the post is gone via a System chat message');
+        $this->assertSame((int) $msgid, (int) $sys->refmsgid);
+        $this->assertStringContainsStringIgnoringCase('taken', $sys->message);
+        $this->assertSame(1, (int) $sys->processingrequired);
+        $this->assertNotEquals($cmid, $sys->id, 'the notice is a new message, not the held reply');
     }
 }
