@@ -291,6 +291,19 @@ describe('PostFilters', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       expect(wrapper.text()).toContain('Newest posts first')
     })
+
+    it('uses rippling-out sort labels + Nearby when reachBrowse is on (#1)', () => {
+      mockMe.value.settings.reachBrowse = true
+      const wrapper = createWrapper({ forceShowFilters: true })
+      const text = wrapper.text()
+      expect(text).toContain('New to you')
+      expect(text).toContain('Newest posted')
+      expect(text).toContain('Nearby')
+      // Legacy labels are gone.
+      expect(text).not.toContain('Unseen posts first')
+      // The manual travel-time slider help text is hidden under reach-browse.
+      expect(text).not.toContain('Adjust the slider to show posts from nearer')
+    })
   })
 
   describe('group select', () => {

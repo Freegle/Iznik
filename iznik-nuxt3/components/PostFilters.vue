@@ -42,7 +42,13 @@
           </b-button>
         </div>
       </div>
-      <div v-if="browseView === 'nearby'" class="isochrones">
+      <!-- Rippling-out (#1): with reach-browse on, the catchment is worked out
+           automatically (it ripples out over time), so the manual travel-time
+           slider is hidden. Dark until me.settings.reachBrowse is enabled. -->
+      <div
+        v-if="browseView === 'nearby' && !reachBrowse"
+        class="isochrones"
+      >
         <IsoChrone
           v-for="(isochrone, ix) in isochroneList"
           :id="isochrone.id"
@@ -54,6 +60,19 @@
         <IsoChrone v-if="showAddIsochrone" @added="added" @cancel="cancel" />
         <p class="help-text d-none d-md-block">
           Adjust the slider to show posts from nearer or further away.
+          <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
+        </p>
+      </div>
+      <div
+        v-else-if="browseView === 'nearby' && reachBrowse"
+        class="isochrones"
+      >
+        <p class="help-text d-none d-md-block mt-0">
+          We show posts near you first, then gradually further away.
+          <nuxt-link no-prefetch to="/help?topic=which-posts">
+            How does this work?
+          </nuxt-link>
+          ·
           <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
         </p>
       </div>
@@ -291,17 +310,25 @@ watch(type, (newVal) => {
 
 // Sort
 
-const sortOptions = [
-  {
-    value: 'Unseen',
-    text: 'Unseen posts first',
-    selected: true,
-  },
-  {
-    value: 'Newest',
-    text: 'Newest posts first',
-  },
-]
+// Rippling-out (#1): with reach-browse on, the default sort is "New to you"
+// (unseen and newly-visible first, then the rippling order), plus a "Nearby"
+// nearest-first option. Dark until me.settings.reachBrowse is enabled; the legacy
+// labels remain until then.
+const reachBrowse = computed(() => !!me.value?.settings?.reachBrowse)
+
+const sortOptions = computed(() => {
+  if (reachBrowse.value) {
+    return [
+      { value: 'Unseen', text: 'New to you', selected: true },
+      { value: 'Newest', text: 'Newest posted' },
+      { value: 'Nearby', text: 'Nearby' },
+    ]
+  }
+  return [
+    { value: 'Unseen', text: 'Unseen posts first', selected: true },
+    { value: 'Newest', text: 'Newest posts first' },
+  ]
+})
 
 const authStore = useAuthStore()
 const sort = computed({
