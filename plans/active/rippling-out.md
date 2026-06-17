@@ -32,18 +32,22 @@
 | A8 | Push branch, open PR (deps stated), get CI green, adversarial review + fixes | ⬜ | not merged |
 
 ## PR B — immediate mails on expansion (RE-SCOPED — see discovery below)
-Branch `feature/rippling-immediate-mails` off A. **B1 done** (committed `a75c01ce5`):
-`messages_reach_notified` ledger + prod SQL.
+Branch `feature/rippling-immediate-mails` off A (rebased onto latest A: rippleIntoNewGroups #6 + fixes).
+**B1 done:** `messages_reach_notified` ledger + prod SQL.
 
-**DISCOVERY (2026-06-16):** a standalone "ripple immediate mail" would **double-mail**.
+**DISCOVERY:** a standalone "ripple immediate mail" would **double-mail**.
 `UnifiedDigestService::processGroupImmediate` already mails a group's immediate-eligible members
 (`memberships.emailfrequency = IMMEDIATE`) when a post arrives on that group — and rippling adds
 the post to new groups (#6), so that existing path fires there too. So immediate-mail-by-reach is
-NOT additive; it is the **immediate digest's recipient selection becoming reach-gated** (only
-members whose `users_approxlocs` point is inside `messages_reach.polygon`, via
-`ST_Contains(mr.polygon, ST_SRID(POINT(uap.lng,uap.lat),3857))`), using the ledger for dedup.
-That is a **modification of live immediate email**, not a dark add-on, and it belongs WITH the
-digest reach-selection work (#5/F), not as a separate early PR.
+NOT additive; it must dedup via the ledger.
+
+**FURTHER (adversarial review):** the reach gate must NOT live in the immediate digest's per-group
+**cursor** loop — the cursor advances once, so members the reach reaches at tick 2+ are never
+re-evaluated → silently dropped. CORRECT = **expander-driven**: `ExpandService` mails newly-reached
+members on each reach write (init + every tick), reach-gated + ledger-deduped (re-evaluated each
+tick, no cursor); and the cursor digest **excludes** rippling posts (`NOT EXISTS messages_reach`)
+so it never double-mails. Member point = `COALESCE(settings.mylocation, lastlocation→locations)`,
+resolved atomically (both lat+lng or fall back). `ST_Contains(mr.polygon, ST_SRID(POINT(lng,lat),3857))`.
 
 **Decision:** keep B1 (the ledger) as the committed foundation. Fold the immediate-mail-by-reach
 recipient change INTO the digest PR (now **PR F: reach-gated digest selection, immediate + daily

@@ -34,7 +34,7 @@ class ExpandService
     {
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
-            'removed' => 0, 'skipped' => 0, 'errors' => 0,
+            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0,
         ];
 
         // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
@@ -137,6 +137,7 @@ class ExpandService
                             json_encode($schedule['ticks']), $next, $status,
                         ]
                     );
+                    $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
                 }
 
                 $stats['initialized']++;
@@ -206,6 +207,7 @@ class ExpandService
                          WHERE msgid = ?',
                         [$entry['wkt'], $target, $next, $status, $row->msgid]
                     );
+                    $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
                 }
 
                 $stats['expanded']++;
@@ -217,6 +219,49 @@ class ExpandService
                 $stats['errors']++;
                 Log::warning("ripple: advance failed for msg {$row->msgid}: {$e->getMessage()}");
             }
+        }
+    }
+
+    /**
+     * Ripple a post INTO every published group whose area the reach now covers (#6).
+     *
+     * "Crosses into a new group" = the reach polygon intersects the group's area. A
+     * group's area is its DPA (poly) if present, else its CGA (polyofficial) — exactly
+     * what groups.polyindex holds (GroupStatsService stores
+     * ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'))), so we test the
+     * spatial-indexed polyindex and skip the (0,0) point sentinel.
+     *
+     * Inserts a fresh-Pending messages_groups row (collection forced to 'Pending', so the
+     * existing moderation pipeline — ContentCheck/AutoApprove/visibility — treats it as a
+     * new arrival), idempotently (INSERT IGNORE + NOT EXISTS on the existing (msgid,groupid)
+     * rows, so the origin group and already-rippled groups are never touched or duplicated).
+     */
+    private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats): void
+    {
+        try {
+            $n = DB::affectingStatement(
+                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype)
+                 SELECT ?, g.id, 'Pending', NOW(), 0, m.type
+                 FROM `groups` g
+                 CROSS JOIN messages m
+                 WHERE m.id = ?
+                   AND g.publish = 1
+                   AND g.type = 'Freegle'
+                   AND g.onhere = 1
+                   AND g.polyindex IS NOT NULL
+                   AND ST_GeometryType(g.polyindex) <> 'POINT'
+                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
+                   )",
+                [$msgid, $msgid, $reachWkt, $msgid]
+            );
+            if ($n > 0) {
+                $stats['rippled_in'] += $n;
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: ripple-into-groups failed for msg {$msgid}: {$e->getMessage()}");
         }
     }
 
