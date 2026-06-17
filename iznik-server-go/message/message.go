@@ -1107,13 +1107,14 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 		}
 
 		// Age the post against the same expireTime V1 uses (maxagetoshow /
-		// EXPIRE_TIME = 90 days, or the repost window). For Rejected posts age by
-		// the ORIGINAL date (messages.date) rather than arrival: a rejected post's
-		// arrival can be recent while the post itself is years old, which would
-		// otherwise keep a long-dead rejected message in the member's active posts
-		// (Discourse topic 9481/561). V1 capped a member's own posts by age too.
+		// EXPIRE_TIME = 90 days, or the repost window). For Rejected/Pending posts
+		// age by the ORIGINAL date (messages.date) rather than arrival: a post
+		// returned to the pending queue gets a recent arrival while the original
+		// message can be years old, which would otherwise keep it in the member's
+		// active posts (Discourse topic 9481/561 for Rejected, 9481/583 for Pending).
+		// V1 capped a member's own posts by age too.
 		ageBasis := m.Arrival
-		if m.Collection == utils.COLLECTION_REJECTED && !m.Date.IsZero() {
+		if (m.Collection == utils.COLLECTION_REJECTED || m.Collection == utils.COLLECTION_PENDING) && !m.Date.IsZero() {
 			ageBasis = m.Date
 		}
 		daysAgo := int(now.Sub(ageBasis).Hours() / 24)

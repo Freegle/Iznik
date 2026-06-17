@@ -291,6 +291,76 @@ func TestOldRejectedMessageClassifiedAsOld(t *testing.T) {
 	}
 }
 
+func TestOldPendingMessageClassifiedAsOld(t *testing.T) {
+	// A post that is 69+ months old but has been returned to the Pending queue
+	// (recent messages_groups.arrival) must still be aged out using its ORIGINAL
+	// date (messages.date), not the recent arrival. Regression from Discourse
+	// topic 9481/583: the prior fix (#664) only covered COLLECTION_REJECTED.
+	db := database.DBConn
+	prefix := uniquePrefix("oldpend")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	// createPending inserts a Pending post (no spatial row) with a given
+	// original date but a RECENT arrival — simulating a post returned to the
+	// pending queue long after it was first submitted.
+	createPending := func(subject string, dateDaysAgo int) uint64 {
+		db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_SUB(NOW(), INTERVAL ? DAY))",
+			userID, subject, locationID, dateDaysAgo)
+		var id uint64
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+			userID, subject).Scan(&id)
+		require.NotZero(t, id)
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+			"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 1 DAY), 'Pending', 0)", id, groupID)
+		t.Cleanup(func() {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		})
+		return id
+	}
+
+	oldPendID := createPending("OFFER: Ancient Pending Lamp", 400) // years-old → must be aged out
+	midPendID := createPending("OFFER: Two-Month Pending Chair", 60) // within 90-day expiry → still active
+
+	// active=true: old pending excluded, mid-age (within expiry) still present.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	foundOld, foundMid := false, false
+	for _, m := range msgs {
+		if m.ID == oldPendID {
+			foundOld = true
+		}
+		if m.ID == midPendID {
+			foundMid = true
+		}
+	}
+	assert.False(t, foundOld, "Years-old pending post should NOT appear in active (Discourse 9481/583)")
+	assert.True(t, foundMid, "Pending post within the 90-day expiry should still appear in active")
+
+	// active=false: old pending marked hasoutcome=true (Old); mid one not.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=false&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &msgs)
+	for _, m := range msgs {
+		if m.ID == oldPendID {
+			assert.True(t, m.Hasoutcome, "Years-old pending post should be hasoutcome=true (Old) in non-active query")
+		}
+		if m.ID == midPendID {
+			assert.False(t, m.Hasoutcome, "Pending post within expiry should not be marked Old")
+		}
+	}
+}
+
 func TestExpiredPromisedMessageExcludedFromActive(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("exprms")
