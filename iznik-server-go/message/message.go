@@ -240,7 +240,7 @@ type Message struct {
 	Tnpostid         *string          `json:"tnpostid"`
 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
-	// i.e. has no messages_reach row, or eligibility wasn't computed). false = the post
+	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
 	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
 }
@@ -777,7 +777,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 	// Reply-eligibility (#2): a post is view-only (replyeligible=false) when the viewer
 	// cannot reply to it yet. Two reasons:
-	//   - rippling-out: the post has rippled out (has a messages_reach row) but not yet to
+	//   - rippling-out: the post has rippled out (has a rippling_reach row) but not yet to
 	//     the viewer's location; or
 	//   - the viewer is banned from every group the post is on, so they must not interact
 	//     with it (mirrors the digest ban exclusion, but for the location-based reach path).
@@ -798,8 +798,8 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				Msgid uint64 `gorm:"column:msgid"`
 			}
 			// Ignore the error: until the reach engine (PR A) is deployed the
-			// messages_reach table may not exist, in which case nothing is reach-blocked.
-			if err := db.Raw("SELECT msgid FROM messages_reach WHERE msgid IN (?) "+
+			// rippling_reach table may not exist, in which case nothing is reach-blocked.
+			if err := db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
 				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
 				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error; err == nil {
 				for _, b := range reachBlocked {
@@ -808,8 +808,8 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				if n := len(reachBlocked); n > 0 {
 					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
 					// can't reply to yet). Best-effort — errors ignored so it never affects the
-					// response, and it is inert until the reach engine populates messages_reach.
-					db.Exec("INSERT INTO ripple_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
+					// response, and it is inert until the reach engine populates rippling_reach.
+					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
 						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
 				}
 			}

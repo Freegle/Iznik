@@ -9,15 +9,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Reply-eligibility (#2 rippling-out): a post that has rippled out (has a messages_reach
+// Reply-eligibility (#2 rippling-out): a post that has rippled out (has a rippling_reach
 // row) but not yet to the viewer's location must come back replyeligible=false so the UI
 // shows it view-only. A post with no reach row isn't rippling, so replyeligible is omitted
-// (eligible). Self-sufficient: creates messages_reach if the reach-engine migration (PR A)
+// (eligible). Self-sufficient: creates rippling_reach if the reach-engine migration (PR A)
 // isn't in this schema yet, so it runs regardless of merge order.
 func TestReplyEligibleReach(t *testing.T) {
 	db := database.DBConn
 
-	db.Exec(`CREATE TABLE IF NOT EXISTS messages_reach (
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon GEOMETRY NOT NULL SRID 3857,
@@ -38,34 +38,34 @@ func TestReplyEligibleReach(t *testing.T) {
 	idStr := fmt.Sprint(mid)
 
 	// 1) No reach row → eligible (field omitted/nil).
-	db.Exec("DELETE FROM messages_reach WHERE msgid = ?", mid)
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 	msgs := message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) {
 		assert.Nil(t, msgs[0].ReplyEligible, "no reach row → eligible (omitted)")
 	}
 
 	// 2) Reach row whose polygon does NOT contain the viewer → not eligible (false).
-	db.Exec("INSERT INTO messages_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
 		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
-	db.Exec("DELETE FROM ripple_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()")
+	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "outside reach → replyeligible set") {
 		assert.False(t, *msgs[0].ReplyEligible, "outside reach → replyeligible=false")
 	}
 	// Q5 (§15): a reach-blocked view increments the reply-blocked-by-reach counter.
 	var blockedCount int
-	db.Raw("SELECT count FROM ripple_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()").Scan(&blockedCount)
+	db.Raw("SELECT count FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()").Scan(&blockedCount)
 	assert.GreaterOrEqual(t, blockedCount, 1, "reply-blocked-by-reach event counted")
 
 	// 3) Reach row containing the viewer → eligible (nil).
-	db.Exec("UPDATE messages_reach SET polygon = "+
+	db.Exec("UPDATE rippling_reach SET polygon = "+
 		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857) WHERE msgid = ?", mid)
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) {
 		assert.Nil(t, msgs[0].ReplyEligible, "inside reach → eligible (omitted)")
 	}
-	db.Exec("DELETE FROM messages_reach WHERE msgid = ?", mid)
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 
 	// 4) Viewer banned from the post's (only) group → reply-ineligible regardless of reach
 	//    (a banned user must not interact with that group's posts).

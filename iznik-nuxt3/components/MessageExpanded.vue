@@ -671,7 +671,7 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 // reply yet — the post hasn't rippled out to their area, or they're banned from every
 // group it's on. Show a view-only notice instead of the Reply button. Never blocks the
 // poster's own post. The field is omitted (so this stays false) until the reach engine
-// populates messages_reach, so this is inert until then with no client-side flag.
+// populates rippling_reach, so this is inert until then with no client-side flag.
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
 )

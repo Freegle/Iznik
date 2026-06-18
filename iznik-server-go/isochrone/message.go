@@ -121,7 +121,7 @@ func Messages(c *fiber.Ctx) error {
 		wg.Wait()
 
 		// Q2a (§6): hide posts whose rippling reach exists but hasn't reached the viewer
-		// yet. Inert until the reach engine populates messages_reach.
+		// yet. Inert until the reach engine populates rippling_reach.
 		res = FilterReachBlocked(db, res, float64(latlng.Lat), float64(latlng.Lng))
 
 		for ix, r := range res {
@@ -134,7 +134,7 @@ func Messages(c *fiber.Ctx) error {
 
 // FilterReachBlocked removes messages whose rippling reach exists but does not yet cover
 // the viewer's location (§6 — a post stays hidden until the ripple reaches you). It is
-// inert until the reach engine populates messages_reach: a missing table or no matching
+// inert until the reach engine populates rippling_reach: a missing table or no matching
 // rows leaves msgs unchanged, so non-rippling posts and the pre-engine period are
 // unaffected.
 func FilterReachBlocked(db *gorm.DB, msgs []message.MessageSummary, lat, lng float64) []message.MessageSummary {
@@ -151,11 +151,11 @@ func FilterReachBlocked(db *gorm.DB, msgs []message.MessageSummary, lat, lng flo
 		Msgid uint64 `gorm:"column:msgid"`
 	}
 	if err := db.Raw(
-		"SELECT msgid FROM messages_reach WHERE msgid IN (?) "+
+		"SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
 			"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
 		ids, lng, lat, utils.SRID,
 	).Scan(&rows).Error; err != nil {
-		return msgs // messages_reach absent (pre-engine) — no filtering
+		return msgs // rippling_reach absent (pre-engine) — no filtering
 	}
 	if len(rows) == 0 {
 		return msgs
@@ -211,12 +211,12 @@ func isochroneCount(myid uint64) uint64 {
 	applyReach := false
 	if latlng.Lng != 0 || latlng.Lat != 0 {
 		var n int
-		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'messages_reach'").Scan(&n)
+		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'rippling_reach'").Scan(&n)
 		applyReach = n > 0
 	}
 	reachClause := ""
 	if applyReach {
-		reachClause = "AND NOT EXISTS (SELECT 1 FROM messages_reach mr WHERE mr.msgid = messages_spatial.msgid AND ST_Contains(mr.polygon, ST_SRID(POINT(?, ?), ?)) = 0) "
+		reachClause = "AND NOT EXISTS (SELECT 1 FROM rippling_reach mr WHERE mr.msgid = messages_spatial.msgid AND ST_Contains(mr.polygon, ST_SRID(POINT(?, ?), ?)) = 0) "
 	}
 
 	db.Where("userid = ?", myid).Find(&isochrones)
