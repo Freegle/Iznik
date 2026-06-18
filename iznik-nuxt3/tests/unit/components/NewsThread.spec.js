@@ -510,6 +510,15 @@ describe('NewsThread', () => {
       expect(wrapper.find('.b-dropdown').exists()).toBe(true)
     })
 
+    it('thread-menu is not floated and wrapper reserves right-side space for the button (Discourse #9749)', async () => {
+      const wrapper = await createWrapper()
+      const dropdown = wrapper.find('.b-dropdown')
+      // The button must NOT use float-end; instead the wrapper reserves padding so
+      // all content lines — not just the line beside a float — have clearance.
+      expect(dropdown.classes()).not.toContain('float-end')
+      expect(wrapper.find('.news-component-wrapper').exists()).toBe(true)
+    })
+
     it('shows "Open in new window" option', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Open in new window')

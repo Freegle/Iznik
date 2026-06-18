@@ -13,10 +13,10 @@
             <span v-else>the system</span>
             and is only visible to volunteers and the person who posted it.
           </div>
-          <div v-if="isNewsComponent">
+          <div v-if="isNewsComponent" class="news-component-wrapper">
             <b-dropdown
               lazy
-              class="float-end thread-menu"
+              class="thread-menu"
               right
               variant="link"
               no-caret
@@ -666,13 +666,20 @@ async function unmute() {
   z-index: 10000;
 }
 
+.news-component-wrapper {
+  /* Reserve right-side space for the "..." button so every line of text has
+     clearance, not just lines vertically adjacent to a float. The wrapper is
+     the containing block; the button sits inside its reserved padding area. */
+  position: relative;
+  padding-right: 3rem;
+}
+
 .thread-menu {
-  /* The "..." menu is floated to the end; the post text wraps beside it on the
-     first line (and reclaims full width below, so no space is wasted). Give it a
-     clear gap so it does not sit right up against the text — 0.5rem (the first
-     attempt) was too small on inline name+body replies at narrow/iPad widths
-     (Discourse #9749 - chitchat niggle). */
-  margin-left: 1.5rem;
+  /* Absolutely positioned in the wrapper's reserved right-side padding so no
+     text can reach it regardless of content height (Discourse #9749). */
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 :deep(.strike) {
