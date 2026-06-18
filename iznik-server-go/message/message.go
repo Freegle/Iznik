@@ -1392,11 +1392,19 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
-	// Return results where Msgid is not 0
+	// Return results where Msgid is not 0, deduplicated by msgid. The keyword path
+	// merges an exact-match pass with a starts-with pass (res2); any exact match is
+	// also a starts-with match, so without this dedup essentially every match would be
+	// returned twice. A message cross-posted to several of the searched groups likewise
+	// yields one spatial row per group and must collapse to a single result. We keep the
+	// first occurrence (exact matches are appended first, so they win). This mirrors the
+	// dedup mergeHybrid already applies on the vector path.
 	filtered := []SearchResult{}
+	seen := make(map[uint64]bool, len(res))
 
 	for _, r := range res {
-		if r.Msgid != 0 {
+		if r.Msgid != 0 && !seen[r.Msgid] {
+			seen[r.Msgid] = true
 			filtered = append(filtered, r)
 		}
 	}

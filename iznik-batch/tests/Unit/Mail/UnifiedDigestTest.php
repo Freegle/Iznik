@@ -342,6 +342,34 @@ class UnifiedDigestTest extends TestCase
         $this->assertNotSame($groupA->namefull, $card['groupName']);
     }
 
+    public function test_byline_falls_back_to_first_group_when_recipient_in_neither(): void
+    {
+        // Edge case: the recipient is a member of NEITHER posted-to group (e.g. a
+        // cross-group digest, or membership changed). selectPreferredGroup must
+        // degrade gracefully to the first posted-to group — a real, non-empty group
+        // name — rather than group 0 / a blank byline.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        // Deliberately no membership of either group for $user.
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Lamp (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $card = $ref->getValue($mail)->first();
+
+        $this->assertSame($groupA->namefull, $card['groupName'], 'byline should fall back to the first posted-to group');
+        $this->assertNotEmpty($card['groupName'], 'byline group name must not be blank');
+    }
+
     public function test_cross_post_text_shown_for_multiple_groups(): void
     {
         $user = $this->createTestUser();

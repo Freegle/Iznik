@@ -564,37 +564,57 @@ the items below are the residual gaps and the proposed end-to-end coverage.
 - **Go approve re-indexes idempotently** — `addApprovedMessageToSpatialIndex` re-queries *all*
   approved groups and upserts one row each, so approving a cross-post's 2nd group adds its row
   live.
-- **Search dedups rows AND relevance** — `GROUP BY msgid` + `COUNT(DISTINCT wordid)`. Browse list
-  dedups via `ROW_NUMBER() PARTITION BY id`.
+- **Search dedups rows AND relevance** — `GROUP BY msgid` + `COUNT(DISTINCT wordid)` *within* each
+  pass, **and** (fixed during the E2E test work) by msgid *across* the exact + starts-with passes in
+  the `Search` handler. Browse list dedups via `ROW_NUMBER() PARTITION BY id`.
 
 ### Residual gaps (tracked, not blocking)
 
-1. **No end-to-end test ties the layers together** — every test added is component-level. A
-   future change that re-breaks cross-post dedup would pass all current unit tests. → test plan
-   below.
+1. ✅ **RESOLVED — end-to-end coverage added.** Four cross-post lifecycle tests now thread one
+   message through each service's full read/write path (see test plan below). Was: every test was
+   component-level.
 2. **Pagination boundary repeat** (G4/H11) — a cross-post straddling the page boundary can repeat
    via its older group row. Deferred (fixing risks the perf-tuned UNION-ALL query).
-3. **`selectPreferredGroup` → `?? 0` fallback** when the recipient is in *none* of a post's groups
-   — untested digest-byline edge. Low stakes.
+3. ✅ **RESOLVED — `selectPreferredGroup` neither-group edge now tested**
+   (`test_byline_falls_back_to_first_group_when_recipient_in_neither`). It degrades to the first
+   posted-to group's real name; the `?? 0` fallback is only reachable for an *empty* group list,
+   which does not occur for a real post.
 4. **Ops note (not code):** the spatial migration does `DROP/ADD UNIQUE INDEX` on
    `messages_spatial` — an index rebuild that locks on a large prod table. Schedule a deploy window.
 5. **H8** — drop `messages.heldby` dual-writes; deferred to V1 retirement.
 
-### End-to-end test plan (gap #1) — NOT YET IMPLEMENTED
+### End-to-end test plan (gap #1) — ✅ IMPLEMENTED (validated; not yet committed)
 
 Polyglot stack ⇒ "end-to-end" = full read/write path *within* each service. One cross-posted
-message threaded through each layer:
+message threaded through each layer. All four pass (Go 3199✓, Laravel all 4248✓).
 
-- [ ] **Go `TestCrossPost_FullReadSurface`** — approve msg on groups A & B → appears **once** in
-  the combined MT list, once in each single-group browse, returned in search for an A-member and a
-  B-member, and `messages_spatial` has exactly 2 rows.
-- [ ] **Go `TestCrossPost_HeldOnOneGroupReadSurface`** — hold on A only → held-count A=1 /
-  pending B=1 (badge + groupWork split), browse hides on A but shows on B, spatial A-row removed by
-  reconcile while B-row stays.
-- [ ] **Laravel `SpatialServiceCrossPostTest`** — approve on 2 groups → 2 rows; per-group reject →
-  only that row gone, external spatial server **not** told; withdraw → both gone + external told
-  **once** (`spatialAdminRemoveIfGone`).
-- [ ] **Laravel `test_digest_byline_recipient_in_neither_group`** — covers gap #3.
+- [x] **Go `TestCrossPost_FullReadSurface`** (`test/message_test.go`) — cross-post approved on
+  groups A & B → `messages_spatial` has exactly 2 rows (one per group), appears **once** in the
+  combined MT queue, **once** in mygroups browse, and is returned **exactly once** by search on
+  **each** group.
+  - **Bug found & fixed while writing this test:** the keyword search path (`Search`,
+    `message.go`) concatenated an exact-match pass with a starts-with pass and only filtered out
+    `Msgid == 0` — no dedup by msgid. Since any exact match is also a starts-with match, every
+    exact-match message was returned **twice** (and a cross-post's per-group spatial rows could
+    multiply it further). Fixed by deduping the merged results by msgid (mirroring `mergeHybrid` on
+    the vector path). Regression test: `TestAPISearch_DedupsExactAndStartsMatch` in `search_test.go`.
+- [x] **Go `TestCrossPost_HeldOnOneGroupReadSurface`** (`test/message_test.go`) — pending
+  cross-post held on group A via the **real Hold endpoint** → per-group `heldby` (A held by the mod,
+  B untouched), `group/work` split (A `pendingother`≥1 & `pending`=0, B `pending`≥1 &
+  `pendingother`=0), and the cross-post still appears **once** in the combined pending queue.
+  (Note: hold leaves `collection` unchanged, so a held post is *pending*, not in browse at all —
+  the original plan's "browse hides on A" framing was inaccurate.)
+- [x] **Laravel `test_crosspost_withdrawn_removes_all_rows_and_notifies_external_once`**
+  (`tests/Unit/Services/MessageSpatialServiceTest.php`) — cross-post withdrawn → **all** per-group
+  spatial rows removed and the external server told **exactly once** (`spatialAdminRemoveIfGone`
+  dedup). The "approve→2 rows" and "per-group reject removes only that row, external NOT told" cases
+  were already covered by the pre-existing `test_crosspost_gets_one_spatial_row_per_group` and
+  `test_per_group_non_approval_removes_only_that_group`.
+- [x] **Laravel `test_byline_falls_back_to_first_group_when_recipient_in_neither`**
+  (`tests/Unit/Mail/UnifiedDigestTest.php`) — covers gap #3: recipient in neither posted group →
+  byline degrades to the first posted-to group's real name (never blank / group 0). Note
+  `selectPreferredGroup` only returns null for an *empty* group list, so the `?? 0` fallback is not
+  reachable for a real post.
 
 ---
 

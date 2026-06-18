@@ -378,6 +378,59 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals([$groupA->id], array_values($groupids), 'only the still-approved group keeps its spatial row');
     }
 
+    public function test_crosspost_withdrawn_removes_all_rows_and_notifies_external_once(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: wardrobe (London)',
+            'textbody' => 'A wardrobe.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        foreach ([$groupA->id, $groupB->id] as $gid) {
+            MessageGroup::create([
+                'msgid' => $message->id,
+                'groupid' => $gid,
+                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(5),
+            ]);
+            DB::statement(
+                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+                [$message->id, $gid, Message::TYPE_OFFER, now()->subDays(5)]
+            );
+        }
+
+        // Withdraw is a whole-message outcome, so every per-group spatial row must go.
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id,
+            'outcome' => Message::OUTCOME_WITHDRAWN,
+        ]);
+
+        // The external spatial server is keyed by msgid (one location per message), so a
+        // cross-post that is fully withdrawn must trigger exactly ONE removeItems call —
+        // not one per group row.
+        $this->spatialAdmin
+            ->expects($this->once())
+            ->method('removeItems')
+            ->with('messages', $this->containsEqual($message->id));
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'all per-group spatial rows should be removed when the message is withdrawn'
+        );
+    }
+
     private function countUpsertsForMessage(int $msgid): int
     {
         // A stable per-group set means upsertRecentMessages finds nothing to change

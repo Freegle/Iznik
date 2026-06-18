@@ -222,6 +222,208 @@ func TestMyGroupsDedupsMultiGroup(t *testing.T) {
 	assert.Equal(t, 1, count, "cross-posted message should appear exactly once in mygroups, not once per group")
 }
 
+// TestCrossPost_FullReadSurface threads a single message cross-posted to two groups
+// through the whole public + mod read surface, asserting it is visible on BOTH groups
+// (the messages_spatial per-group fix, audit §G1/H1) and deduplicated to exactly one
+// row everywhere it should collapse. End-to-end companion to the per-component unit
+// tests (multi-group plan §I).
+func TestCrossPost_FullReadSurface(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("crosspost_readsurface")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	viewerID, viewerToken := CreateFullTestUser(t, prefix+"_viewer")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, viewerID, groupA, "Member")
+	CreateTestMembership(t, viewerID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Rare, short (<=10 char) coined word so the search index hit is deterministic and
+	// our message stays within the SEARCH_LIMIT top results in the shared test DB.
+	searchWord := fmt.Sprintf("zq%d", time.Now().UnixNano()%100000)
+	subject := fmt.Sprintf("OFFER: %s sofa (EH1)", searchWord)
+	lat, lng := 55.9533, -3.1883
+
+	// Posted + approved on group A (helper adds messages_groups/spatial/index for A).
+	msgID := CreateTestMessage(t, posterID, groupA, subject, lat, lng)
+
+	// Cross-post to group B: approved messages_groups + per-group spatial row + per-group
+	// word index, mirroring what the real per-group writers produce.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 0, ?, NOW(), 'Offer')", utils.SRID),
+		msgID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupB)
+	indexMessageWords(t, db, msgID, groupB, subject)
+
+	defer func() {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	// 1. messages_spatial holds exactly one row per group (per-group unique key).
+	var spatialCount, distinctGroups int64
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	db.Raw("SELECT COUNT(DISTINCT groupid) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&distinctGroups)
+	assert.Equal(t, int64(2), spatialCount, "cross-post should have one spatial row per group")
+	assert.Equal(t, int64(2), distinctGroups, "spatial rows should cover both groups")
+
+	// 2. Combined ModTools list (groupid=0, covers all the mod's groups) returns the
+	//    cross-post exactly once, not once per group.
+	mtURL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", mtURL, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var mtBody map[string]interface{}
+	json2.NewDecoder(resp.Body).Decode(&mtBody)
+	mtCount := 0
+	if ids, ok := mtBody["messages"].([]interface{}); ok {
+		for _, id := range ids {
+			if uint64(id.(float64)) == msgID {
+				mtCount++
+			}
+		}
+	}
+	assert.Equal(t, 1, mtCount, "cross-post should appear once in the combined mod queue")
+
+	// 3. mygroups browse for a viewer in BOTH groups: exactly once (read-side dedup).
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+viewerToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var browse []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &browse)
+	browseCount := 0
+	for _, m := range browse {
+		if m.ID == msgID {
+			browseCount++
+		}
+	}
+	assert.Equal(t, 1, browseCount, "cross-post should appear once in mygroups browse")
+
+	// 4. Search must find the cross-post when filtering by EITHER group — this is the
+	//    crux of the per-group spatial fix: before it, only one group had a spatial row,
+	//    so a search filtered to the OTHER group returned nothing. The endpoint dedups by
+	//    msgid (across its exact + starts-with passes and across per-group spatial rows),
+	//    so the message must be returned exactly once each time.
+	searchCount := func(groupid uint64) int {
+		u := fmt.Sprintf("/api/message/search/%s?groupids=%d&jwt=%s", searchWord, groupid, viewerToken)
+		r, e := getApp().Test(httptest.NewRequest("GET", u, nil))
+		require.NoError(t, e)
+		require.Equal(t, 200, r.StatusCode)
+		var results []message.SearchResult
+		json2.Unmarshal(rsp(r), &results)
+		c := 0
+		for _, res := range results {
+			if res.Msgid == msgID {
+				c++
+			}
+		}
+		return c
+	}
+	assert.Equal(t, 1, searchCount(groupA), "cross-post must be searchable on group A exactly once")
+	assert.Equal(t, 1, searchCount(groupB), "cross-post must be searchable on group B exactly once (per-group spatial fix)")
+}
+
+// TestCrossPost_HeldOnOneGroupReadSurface holds a pending cross-post on one group only
+// via the real Hold endpoint, then asserts the mod read surface reflects it per-group:
+// held on A, still plain-pending on B, and deduplicated to one row in the combined
+// queue. Exercises the write->read path through the live HTTP handlers (multi-group
+// plan §I), unlike the unit tests that pre-seed heldby in SQL.
+func TestCrossPost_HeldOnOneGroupReadSurface(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("crosspost_held")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Pending cross-post on both groups.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
+		msgID, groupB)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	// Hold on group A only, via the real endpoint.
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupA})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	// 1. Hold is per-group: A held by the mod, B untouched.
+	var heldByA *uint64
+	var heldByB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldByA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldByB)
+	require.NotNil(t, heldByA, "group A copy should be held")
+	assert.Equal(t, modID, *heldByA, "group A copy should be held by the acting mod")
+	assert.Nil(t, heldByB, "group B copy must NOT be held (per-group hold)")
+
+	// 2. group/work splits it correctly: A counts it as held (pendingother), B as plain
+	//    pending. Fresh groups, so these counts are isolated to our message.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var work []struct {
+		Groupid      uint64 `json:"groupid"`
+		Pending      int64  `json:"pending"`
+		Pendingother int64  `json:"pendingother"`
+	}
+	json2.Unmarshal(rsp(resp), &work)
+	var gA, gB *struct {
+		Groupid      uint64 `json:"groupid"`
+		Pending      int64  `json:"pending"`
+		Pendingother int64  `json:"pendingother"`
+	}
+	for i := range work {
+		if work[i].Groupid == groupA {
+			gA = &work[i]
+		}
+		if work[i].Groupid == groupB {
+			gB = &work[i]
+		}
+	}
+	require.NotNil(t, gA, "group A should be in group/work results")
+	require.NotNil(t, gB, "group B should be in group/work results")
+	assert.Equal(t, int64(0), gA.Pending, "held-on-A copy must not be in group A 'pending'")
+	assert.GreaterOrEqual(t, gA.Pendingother, int64(1), "held-on-A copy must be in group A 'pendingother'")
+	assert.GreaterOrEqual(t, gB.Pending, int64(1), "unheld-on-B copy must be in group B 'pending'")
+	assert.Equal(t, int64(0), gB.Pendingother, "unheld-on-B copy must not be in group B 'pendingother'")
+
+	// 3. The combined Pending mod queue still returns the cross-post exactly once.
+	mtURL := fmt.Sprintf("/api/modtools/messages?collection=Pending&fromuser=%d&jwt=%s", posterID, modToken)
+	mtResp, err := getApp().Test(httptest.NewRequest("GET", mtURL, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, mtResp.StatusCode)
+	var mtBody map[string]interface{}
+	json2.NewDecoder(mtResp.Body).Decode(&mtBody)
+	mtCount := 0
+	if ids, ok := mtBody["messages"].([]interface{}); ok {
+		for _, id := range ids {
+			if uint64(id.(float64)) == msgID {
+				mtCount++
+			}
+		}
+	}
+	assert.Equal(t, 1, mtCount, "held cross-post should appear once in the combined pending queue")
+}
+
 func TestMessagesByUser(t *testing.T) {
 	// Create a user with a message
 	prefix := uniquePrefix("usermsg")

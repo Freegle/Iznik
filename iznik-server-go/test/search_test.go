@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestGetWords(t *testing.T) {
@@ -113,6 +114,44 @@ func TestAPISearch(t *testing.T) {
 	groupidStr := strconv.FormatUint(groupID, 10)
 	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/search/%s?groupids=%s", searchWord, groupidStr), nil))
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+// TestAPISearch_DedupsExactAndStartsMatch guards against the search endpoint returning
+// the same message more than once. The keyword path runs an exact-match pass and a
+// starts-with pass and concatenates them; any exact match is also a starts-with match, so
+// without dedup-by-msgid every exact hit would be returned twice.
+func TestAPISearch_DedupsExactAndStartsMatch(t *testing.T) {
+	prefix := uniquePrefix("srch_dedup")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// A rare, short (<=10 char) coined word so the index hit is deterministic and stays
+	// within SEARCH_LIMIT in the shared DB. It is the word's own prefix, so it matches
+	// BOTH the exact and the starts-with pass.
+	word := fmt.Sprintf("zq%d", time.Now().UnixNano()%100000)
+	msgID := CreateTestMessage(t, userID, groupID, "OFFER: "+word+" gadget", 55.9533, -3.1883)
+	defer func() {
+		db := database.DBConn
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/search/"+word, nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SearchResult
+	json2.Unmarshal(rsp(resp), &results)
+
+	count := 0
+	for _, r := range results {
+		if r.Msgid == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "a message matching both the exact and starts-with pass must be returned only once")
 }
 
 func TestAPISearch_WithoutAuth(t *testing.T) {
