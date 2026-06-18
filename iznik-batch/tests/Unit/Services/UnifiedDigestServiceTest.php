@@ -863,27 +863,32 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->mailNewlyReachedForPost($msg->id);
 
-        $ledgered = fn ($uid) => DB::table('messages_reach_notified')
+        $ledgered = fn ($uid) => DB::table('rippling_reach_notified')
             ->where('msgid', $msg->id)->where('userid', $uid)->exists();
         $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
 
         // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
-        DB::statement('UPDATE messages_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+        DB::statement('UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
             ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
-        $before = DB::table('messages_reach_notified')->where('msgid', $msg->id)->count();
+        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
         $this->assertSame(
             $before + 1,
-            DB::table('messages_reach_notified')->where('msgid', $msg->id)->count(),
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
             'only B newly notified — A not re-mailed'
         );
+
+        // #0 / §15 instrumentation: both expander mails (A then B) are counted.
+        $this->assertSame(2, (int) DB::table('rippling_event_metrics')
+            ->where('day', now()->toDateString())->where('event', 'immediate_mailed')->value('count'),
+            'immediate mails on expansion are counted');
     }
 
     public function test_cursor_immediate_digest_excludes_posts_with_a_reach_row(): void
     {
-        // A rippling post (has a messages_reach row) is mailed by the expander, NOT the cursor
+        // A rippling post (has a rippling_reach row) is mailed by the expander, NOT the cursor
         // digest — so the cursor digest must skip it, or members get two immediate mails.
         config(['freegle.digest.immediate_allowlist' => '*']);
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
@@ -923,18 +928,18 @@ class UnifiedDigestServiceTest extends TestCase
         // No reach row yet → the cursor immediate digest mails the group and records the ledger.
         $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertTrue(
-            DB::table('messages_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
             'cursor immediate send is recorded in the ledger'
         );
 
         // Reach row appears afterwards; the expander must not re-mail the already-mailed member.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        $before = DB::table('messages_reach_notified')->where('msgid', $msg->id)->count();
+        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $sent = $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertSame(0, $sent, 'expander does not re-mail members the cursor digest already mailed');
         $this->assertSame(
             $before,
-            DB::table('messages_reach_notified')->where('msgid', $msg->id)->count(),
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
             'no new ledger rows — the shared ledger prevents the double-mail'
         );
     }
@@ -948,11 +953,11 @@ class UnifiedDigestServiceTest extends TestCase
         $user->save();
     }
 
-    /** Seed a messages_reach row for a post with the given WKT polygon (SRID 3857). */
+    /** Seed a rippling_reach row for a post with the given WKT polygon (SRID 3857). */
     protected function seedReach(int $msgid, string $wkt): void
     {
         DB::statement(
-            "INSERT INTO messages_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
             . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$msgid, $wkt]

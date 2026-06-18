@@ -8,10 +8,10 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 /**
- * ripple:expand — maintains the rippling-out reach (messages_reach) for every
+ * ripple:expand — maintains the rippling-out reach (rippling_reach) for every
  * active post. Runs every minute in the batch container (see routes/console.php),
  * computing reach via the routing server. Dark in PR A: nothing reads the reach
- * yet, so this only populates messages_reach.
+ * yet, so this only populates rippling_reach.
  */
 class ExpandCommand extends Command
 {
@@ -21,7 +21,7 @@ class ExpandCommand extends Command
                             {--dry-run : Compute and report without writing reach}
                             {--limit=500 : Max posts to initialise/advance this run}';
 
-    protected $description = 'Maintain rippling-out reach (messages_reach) for active posts';
+    protected $description = 'Maintain rippling-out reach (rippling_reach) for active posts';
 
     public function handle(ExpandService $service): int
     {

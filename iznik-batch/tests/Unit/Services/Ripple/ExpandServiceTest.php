@@ -22,7 +22,7 @@ class ExpandServiceTest extends TestCase
         config(['freegle.ripple.hazard_hours' => [1, 3, 6]]);
         config(['freegle.ripple.active_start_hour' => 0]);
         config(['freegle.ripple.active_end_hour' => 24]);
-        DB::statement('DELETE FROM messages_reach');
+        DB::statement('DELETE FROM rippling_reach');
         DB::statement('DELETE FROM messages_spatial');
     }
 
@@ -88,7 +88,7 @@ class ExpandServiceTest extends TestCase
         $stats = $this->service()->process(false, 500);
 
         $this->assertSame(1, $stats['initialized']);
-        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
         $this->assertNotNull($row);
         $this->assertSame(1, (int) $row->tick);
         $this->assertSame(3, (int) $row->total_ticks);
@@ -96,7 +96,7 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull($row->next_expansion_at);
         $this->assertSame(
             'POLYGON',
-            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM messages_reach WHERE msgid = ?', [$msgid])->t
+            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
         );
     }
 
@@ -108,7 +108,7 @@ class ExpandServiceTest extends TestCase
 
         $this->service()->process(false, 500);
 
-        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
         $this->assertSame(3, (int) $row->tick);
         $this->assertSame('done', $row->status);
         $this->assertNull($row->next_expansion_at);
@@ -124,7 +124,7 @@ class ExpandServiceTest extends TestCase
         ]);
         // Start the post stuck at tick 1 with an overdue expansion.
         DB::statement(
-            "INSERT INTO messages_reach
+            "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
@@ -135,7 +135,7 @@ class ExpandServiceTest extends TestCase
         $stats = $this->service()->process(false, 500);
 
         $this->assertGreaterThanOrEqual(1, $stats['expanded']);
-        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
         $this->assertSame(3, (int) $row->tick);  // 7h elapsed → final tick
         $this->assertSame('done', $row->status);
     }
@@ -151,7 +151,7 @@ class ExpandServiceTest extends TestCase
             'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
         ]);
         DB::statement(
-            "INSERT INTO messages_reach
+            "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
@@ -161,7 +161,7 @@ class ExpandServiceTest extends TestCase
         $stats = $this->service()->process(false, 500);
 
         $this->assertGreaterThanOrEqual(1, $stats['removed']);
-        $this->assertSame(0, DB::table('messages_reach')->where('msgid', $message->id)->count());
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count());
     }
 
     public function test_handles_filtered_empty_polygon_tick_and_still_completes(): void
@@ -186,7 +186,7 @@ class ExpandServiceTest extends TestCase
 
         $this->service()->process(false, 500);
 
-        $row = DB::table('messages_reach')->where('msgid', $msgid)->first();
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
         $this->assertSame(3, (int) $row->total_ticks); // hazard count, not the 2 usable polygons
         $this->assertSame(3, (int) $row->tick);
         $this->assertSame('done', $row->status);
@@ -201,7 +201,7 @@ class ExpandServiceTest extends TestCase
         $stats = $this->service()->process(true, 500);
 
         $this->assertSame(1, $stats['initialized']); // counted
-        $this->assertSame(0, DB::table('messages_reach')->where('msgid', $msgid)->count()); // but not written
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count()); // but not written
     }
 
     public function test_ripples_post_into_groups_whose_area_the_reach_covers(): void

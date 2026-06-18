@@ -340,11 +340,11 @@ class UnifiedDigestService
                         // Coordinate with the expander-driven reach mailer: record this send so
                         // mailNewlyReachedForPost never re-mails the same member once the post's
                         // reach row appears (the post is cursor-mailed on arrival, before the reach
-                        // engine creates messages_reach minutes later). Kept OUTSIDE the spool try so
+                        // engine creates rippling_reach minutes later). Kept OUTSIDE the spool try so
                         // a ledger-write failure can't masquerade as a spool failure or abort the
                         // loop; harmless for non-rippling posts (the row is simply never read).
                         try {
-                            DB::table('messages_reach_notified')->insertOrIgnore([
+                            DB::table('rippling_reach_notified')->insertOrIgnore([
                                 'msgid' => (int) $message->mg_msgid,
                                 'userid' => (int) $uid,
                                 'notified_at' => now(),
@@ -442,7 +442,7 @@ class UnifiedDigestService
      * Expander-driven rippling immediate mail (#0 step 4). Called by ExpandService after each
      * reach write (init + every tick). Mails the post to every immediate-eligible member of a
      * group it is APPROVED on whose location the reach NOW covers and who has not already been
-     * notified (messages_reach_notified), recording each so a later tick — or another rippled-in
+     * notified (rippling_reach_notified), recording each so a later tick — or another rippled-in
      * group — never re-mails them. Because it re-runs every tick (no cursor), members the reach
      * reaches later are picked up; the cursor digest excludes reach-row posts so neither path
      * double-mails. Member point = settings.mylocation (both coords) else lastlocation. Returns
@@ -464,7 +464,7 @@ class UnifiedDigestService
             $recipientIds = collect(DB::select(
                 "SELECT DISTINCT u.id AS id
                  FROM messages_groups mg
-                 JOIN messages_reach mr ON mr.msgid = mg.msgid
+                 JOIN rippling_reach mr ON mr.msgid = mg.msgid
                  JOIN memberships m ON m.groupid = mg.groupid
                       AND m.emailfrequency = ? AND m.collection = 'Approved'
                  JOIN users u ON u.id = m.userid
@@ -482,7 +482,7 @@ class UnifiedDigestService
                               ELSE l.lat END
                        ), ?))
                    AND NOT EXISTS (
-                         SELECT 1 FROM messages_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
+                         SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
                        )",
                 [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
             ))->pluck('id')->map(fn ($v) => (int) $v)->all();
@@ -526,7 +526,7 @@ class UnifiedDigestService
                         $user->email_preferred,
                         emailType: 'digest_immediate',
                     );
-                    DB::table('messages_reach_notified')->insertOrIgnore([
+                    DB::table('rippling_reach_notified')->insertOrIgnore([
                         'msgid' => $msgid,
                         'userid' => (int) $user->id,
                         'notified_at' => now(),
@@ -537,6 +537,15 @@ class UnifiedDigestService
                         'msgid' => $msgid, 'user_id' => $user->id, 'error' => $e->getMessage(),
                     ]);
                 }
+            }
+
+            // #0 / §15 instrumentation: count immediate mails sent on expansion.
+            if ($sent > 0 && !$dryRun) {
+                DB::statement(
+                    'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
+                    . 'ON DUPLICATE KEY UPDATE count = count + ?',
+                    ['immediate_mailed', $sent, $sent]
+                );
             }
 
             return $sent;
@@ -559,13 +568,13 @@ class UnifiedDigestService
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
-            // Rippling posts (those with a messages_reach row) are mailed by the
+            // Rippling posts (those with a rippling_reach row) are mailed by the
             // expander-driven reach mailer (mailNewlyReachedForPost) — reach-gated and
             // ledger-deduped — so exclude them here or the cursor digest would double-mail.
-            // Inert until the reach engine populates messages_reach (no rows → no exclusion).
+            // Inert until the reach engine populates rippling_reach (no rows → no exclusion).
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))->from('messages_reach')
-                    ->whereColumn('messages_reach.msgid', 'messages.id');
+                $q->select(DB::raw(1))->from('rippling_reach')
+                    ->whereColumn('rippling_reach.msgid', 'messages.id');
             })
             // V1 parity (Digest.php:218): a post with any outcome
             // (Taken/Received/Withdrawn/...) is no longer available, so it

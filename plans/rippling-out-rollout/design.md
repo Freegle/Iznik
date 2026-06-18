@@ -53,7 +53,7 @@ Reach is a per-**message** attribute, needed only while a message is in `message
 stops and its row is removed. This bounds the workload to the in-flight set (small relative
 to `chat_messages` / `messages`).
 
-### Data model — `messages_reach`
+### Data model — `rippling_reach`
 Keyed by **msgid** (one reach per message, from its physical origin):
 
 | Column | Notes |
@@ -86,7 +86,7 @@ A Laravel scheduled command **`ripple:expand`**, every minute, gated to active h
    withdrawn → `status='stopped'`.
 
 ### Reach test (used everywhere)
-`ST_Contains(messages_reach.polygon, <viewer point>)` — this **flips** today's browse test
+`ST_Contains(rippling_reach.polygon, <viewer point>)` — this **flips** today's browse test
 (today: *your* isochrone contains the post point) to *the post's grown reach contains you*.
 
 ### Smoothing
@@ -116,7 +116,7 @@ deploy well ahead of any front-end. Immediate mails (step 4) are a later, flagge
   - **R is not a separate dropdown entry** — it is the order the default falls back to. The
     user-facing sort stays the three options above; no extra "rippling order" control.
 - **Post-list source per filter:**
-  - *Nearby* → posts in `messages_spatial` whose `messages_reach.polygon` contains **any of
+  - *Nearby* → posts in `messages_spatial` whose `rippling_reach.polygon` contains **any of
     the viewer's defined locations**. Viewers may have **multiple locations** on the browse
     page; the reach test (here, in #2 reply-eligibility, and in #5 digest selection) must
     consider **all of them** — a post qualifies if its reach contains *any* viewer location.
@@ -153,7 +153,7 @@ In-app replies can't arrive early (#2 blocks them in UI + API). Email and TrashN
 
 - A reply to post **P** from location **L** outside P's current reach → **held** (not
   delivered to the poster).
-- **Storage:** a **separate table named `chat_messages_rippling`** — *not* `chat_messages_held`
+- **Storage:** a **separate table named `rippling_held_replies`** — *not* `chat_messages_held`
   (the word "hold" already means a moderator's manual hold; this is distinct) and *not* a flag
   on the large `chat_messages` table. Bounded by the in-flight (`messages_spatial`) set.
   Columns: id, `chatid`, `chatmsgid`, `msgid` (P), `replieruserid`, replier `lat`/`lng`,
@@ -186,7 +186,7 @@ In-app replies can't arrive early (#2 blocks them in UI + API). Email and TrashN
 
 ## 8. #5 — Unified Digest ordering
 
-- Digest post **selection** uses the same reach (posts whose `messages_reach` covers the
+- Digest post **selection** uses the same reach (posts whose `rippling_reach` covers the
   recipient at send time).
 - Digest **ordering** = flat **R** (the digest scorer) — **no unseen tier**, because each
   post is emailed once (the browse unseen-first overlay exists only because browse is
@@ -225,7 +225,7 @@ A rejection by a **secondary** (non-origin) group behaves differently from an or
 
 ### Visibility model (ties reach to per-group moderation)
 A post **P** is visible to a user at location **L** iff:
-1. `messages_reach(P).polygon` contains **L** (reach gate), **and**
+1. `rippling_reach(P).polygon` contains **L** (reach gate), **and**
 2. P is **approved** on at least one group whose **CGA contains L**.
 This makes secondary rejection a clean subtractive veto, and means a rippled-in post becomes
 visible in a new group's area only once it is approved there. To keep visibility tracking the
@@ -243,7 +243,7 @@ the existing global-edit behaviour from the multi-group design).
 
 - A button on **any** message in mod views (pending, approved, …) — label TBD at copy time
   (candidates: "Who can see this?", "Reach", "Visible area").
-- Renders the message's **live** `messages_reach.polygon` (Chaikin-smoothed, same as browse).
+- Renders the message's **live** `rippling_reach.polygon` (Chaikin-smoothed, same as browse).
   For a brand-new **pending** post not yet in `messages_spatial`, shows the **prospective**
   initial catchment (computed on the fly). A post pending on a rippled-into group already has
   a real reach (active on its origin group) → shows the genuine current polygon.
@@ -287,7 +287,7 @@ Ordered by deployability — reach infra first, **browse and email last**:
 
 | PR | Contents | Stage |
 |---|---|---|
-| A | #0 reach calculation + `messages_reach` + `ripple:expand` (no mails) | **First** (no consumer) |
+| A | #0 reach calculation + `rippling_reach` + `ripple:expand` (no mails) | **First** (no consumer) |
 | B | #0 immediate mails on expansion (to newly-reached members) | Backend |
 | C | #3 held external replies + mod chat-held reason | Backend + mod |
 | D | #6 mod banner + #7 reach map (+ #4 modal, already local) | Mod UI |

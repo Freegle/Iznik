@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * messages_reach_notified — ledger of which members have already been sent the
+ * rippling_reach_notified — ledger of which members have already been sent the
  * immediate "new post near you" mail for a rippling post, so expansion steps
  * never re-notify someone already reached (PR B).
  *
@@ -17,11 +17,11 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        if (Schema::hasTable('messages_reach_notified')) {
+        if (Schema::hasTable('rippling_reach_notified')) {
             return;
         }
 
-        Schema::create('messages_reach_notified', function (Blueprint $t) {
+        Schema::create('rippling_reach_notified', function (Blueprint $t) {
             $t->unsignedBigInteger('msgid');
             $t->unsignedBigInteger('userid');
             $t->timestamp('notified_at')->useCurrent();
@@ -30,19 +30,19 @@ return new class extends Migration {
         });
 
         DB::statement(
-            'ALTER TABLE messages_reach_notified
-                ADD CONSTRAINT messages_reach_notified_msgid_foreign
+            'ALTER TABLE rippling_reach_notified
+                ADD CONSTRAINT rippling_reach_notified_msgid_foreign
                 FOREIGN KEY (msgid) REFERENCES messages (id) ON DELETE CASCADE'
         );
         DB::statement(
-            'ALTER TABLE messages_reach_notified
-                ADD CONSTRAINT messages_reach_notified_userid_foreign
+            'ALTER TABLE rippling_reach_notified
+                ADD CONSTRAINT rippling_reach_notified_userid_foreign
                 FOREIGN KEY (userid) REFERENCES users (id) ON DELETE CASCADE'
         );
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('messages_reach_notified');
+        Schema::dropIfExists('rippling_reach_notified');
     }
 };

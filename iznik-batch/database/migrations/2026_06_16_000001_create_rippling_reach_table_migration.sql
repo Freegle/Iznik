@@ -1,6 +1,6 @@
--- Idempotent production SQL for 2026_06_16_000001_create_messages_reach_table.php
+-- Idempotent production SQL for 2026_06_16_000001_create_rippling_reach_table.php
 --
--- Creates messages_reach: the current "rippled out" reach polygon for each active
+-- Creates rippling_reach: the current "rippled out" reach polygon for each active
 -- post (a subset of messages_spatial), maintained by the ripple:expand engine.
 -- `polygon` is SRID 3857 to match messages_spatial.point so ST_Contains works
 -- without reprojection.
@@ -11,7 +11,7 @@
 -- Run once on production BEFORE deploying the iznik-batch code that runs
 -- ripple:expand. Requires CREATE / REFERENCES privilege on the iznik database.
 
-CREATE TABLE IF NOT EXISTS messages_reach (
+CREATE TABLE IF NOT EXISTS rippling_reach (
     msgid             BIGINT UNSIGNED  NOT NULL,
     lat               DOUBLE           NOT NULL,
     lng               DOUBLE           NOT NULL,
@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS messages_reach (
     created_at        TIMESTAMP        NULL DEFAULT NULL,
     updated_at        TIMESTAMP        NULL DEFAULT NULL,
     PRIMARY KEY (msgid),
-    SPATIAL INDEX messages_reach_polygon (polygon),
-    INDEX messages_reach_next_expansion_at_index (next_expansion_at),
-    INDEX messages_reach_status_index (status),
-    CONSTRAINT messages_reach_msgid_foreign FOREIGN KEY (msgid)
+    SPATIAL INDEX rippling_reach_polygon (polygon),
+    INDEX rippling_reach_next_expansion_at_index (next_expansion_at),
+    INDEX rippling_reach_status_index (status),
+    CONSTRAINT rippling_reach_msgid_foreign FOREIGN KEY (msgid)
         REFERENCES messages (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
