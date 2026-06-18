@@ -250,9 +250,9 @@ priority (full tasks in §H):
    one group and invisible in browse/map/search on the others (and the reconciler
    flip-flopped it between groups). Fixed across schema + both writers + reconciler +
    read-side dedup + the spatial-go index. → H1–H5.
-2. **🔴 Chase-up emails double-send for cross-posts (G7a).** `ChaseUpService` evaluates
-   chase-up eligibility per group, so a cross-posted item emails the poster once per group
-   for the same physical outcome. → H12.
+2. **✅ DONE (validated, not committed) — Chase-up emails double-sent for cross-posts (G7a).**
+   `ChaseUpService` now stamps `lastchaseup` on all the item's groups when one chase-up is
+   sent, so a cross-posted item is chased up once per interval, not once per group. → H12.
 
 **Pre-Task-20 (must precede dropping `messages.heldby`)**
 3. **✅ DONE (validated, not committed) — `session/session.go:1024` & `:1033`** now read
@@ -494,12 +494,15 @@ Ordered by priority. Check off as completed.
   recipient-preferred group instead of `postedToGroups[0]`.
 - [ ] **H11.** Pagination cursor `message_list.go:570` — read the arrival of the same group
   the list ORDER BY used (the contextual group), not an arbitrary `LIMIT 1` group row.
-- [ ] **H12. Deduplicate chase-up emails per item (G7a).** In `ChaseUpService` (and the
-  `ChaseUpPromised` path), gate the chase-up email on `(fromuser, msgid)` so a cross-posted
-  item triggers at most one chase-up per chaseup interval. Recommended: check the most
-  recent `lastchaseup` across **all** the message's `messages_groups` rows before sending,
-  and stamp `lastchaseup` on **all** of them when sent. Add a test for a message on two
-  groups both past max reposts → exactly one email. (Reposting stays per-group — unchanged.)
+- [x] **H12. Deduplicate chase-up emails per item (G7a).** ✅ DONE (validated, not
+  committed) — `ChaseUpService::processGroup()` now stamps `lastchaseup` on **all** of the
+  message's `messages_groups` rows when a chase-up is sent (was per-group), restoring V1's
+  whole-item `WHERE msgid = ?` behaviour. Because `process()` scans groups sequentially and
+  `getCandidates()` re-reads `lastchaseup`, the other groups then see the item as recently
+  chased and skip it — so a cross-posted item is chased up once per interval, not once per
+  group. Reposting stays per-group (keys off arrival/autoreposts). Test:
+  `test_crosspost_chased_up_once_not_per_group` (`ChaseUpServiceTest.php`); Laravel 4239✓.
+  (`ChaseUpPromised` shares this path, so it's covered too.)
 
 ### Investigated — NO change needed (resolved 🔵 items; recorded for the reviewer)
 

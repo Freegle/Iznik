@@ -254,6 +254,60 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $stats['chased']);
     }
 
+    public function test_crosspost_chased_up_once_not_per_group(): void
+    {
+        // A message cross-posted to two groups, both eligible for chase-up. The
+        // chase-up is about the item's global outcome, so the poster must get ONE
+        // email, not one per group.
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupA, ['added' => now()->subDays(60)]);
+        $this->createMembership($user, $groupB, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $groupA, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Group A row eligible (max reposts reached, old arrival).
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupA->id)
+            ->update(['arrival' => now()->subHours(500), 'autoreposts' => 5]);
+
+        // Cross-post to group B, also eligible.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(500),
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)
+            ->update(['autoreposts' => 5]);
+
+        // One chat reply about the item, old enough to trigger a chase-up.
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $message->id,
+            'date' => now()->subHours(200),
+        ]);
+
+        $stats = $this->service->process();
+
+        // Exactly one chase-up for the single physical item, despite two groups.
+        $this->assertEquals(1, $stats['chased'], 'cross-posted item must be chased up once, not once per group');
+
+        // lastchaseup stamped on BOTH groups so neither re-fires on the next run.
+        $rows = DB::table('messages_groups')->where('msgid', $message->id)->get();
+        $this->assertCount(2, $rows);
+        foreach ($rows as $r) {
+            $this->assertNotNull($r->lastchaseup, 'lastchaseup must be set on every group of the item');
+        }
+    }
+
     public function test_constants(): void
     {
         $this->assertEquals(90, ChaseUpService::LOOKBACK_DAYS);
