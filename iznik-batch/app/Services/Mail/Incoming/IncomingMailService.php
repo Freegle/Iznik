@@ -1692,25 +1692,21 @@ class IncomingMailService
 
     /**
      * Rippling-out (#3): hold an external reply when the post is still rippling out and
-     * the replier's area isn't covered yet. The replier's location is their last known
-     * location (the same source the digest uses for distance). Records a
-     * rippling_held_replies row (status='held'); the delivery gate then withholds the
-     * poster notification until the post ripples to them (status→'released'). Inert until
+     * the replier's area isn't covered yet. The replier's location is resolved as
+     * settings.mylocation else lastlocation — the SAME order the immediate mail and the
+     * digest reach-gate use, so the hold/read/notify paths agree on where the replier is.
+     * Records a rippling_held_replies row (status='held'); the delivery gate then withholds
+     * the poster notification until the post ripples to them (status→'released'). Inert until
      * the reach engine populates rippling_reach (hasReach fails open before then).
      */
     private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
     {
-        if ($replier->lastlocation === null) {
+        $latlng = $this->resolveReplierLatLng($replier);
+        if ($latlng === null) {
             return;
         }
 
-        $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
-        if ($loc === null || $loc->lat === null || $loc->lng === null) {
-            return;
-        }
-
-        $lat = (float) $loc->lat;
-        $lng = (float) $loc->lng;
+        [$lat, $lng] = $latlng;
         $service = app(RippleReplyService::class);
 
         if ($service->shouldHold($msgid, $lat, $lng)) {
@@ -1722,6 +1718,34 @@ class IncomingMailService
                 'replieruserid' => $replier->id,
             ]);
         }
+    }
+
+    /**
+     * Resolve a replier's point as settings.mylocation (both coords) else their lastlocation —
+     * the same order the immediate-mail recipient query and the digest reach-gate use, so the
+     * held point (and releaseCovered, which tests it) agree with the read/notify paths.
+     *
+     * @return array{0:float,1:float}|null [lat, lng]
+     */
+    private function resolveReplierLatLng(User $replier): ?array
+    {
+        $settings = $replier->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
+            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        }
+
+        if ($replier->lastlocation) {
+            $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
+            if ($loc && $loc->lat !== null && $loc->lng !== null) {
+                return [(float) $loc->lat, (float) $loc->lng];
+            }
+        }
+
+        return null;
     }
 
     /**
