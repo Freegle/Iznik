@@ -111,11 +111,13 @@ describe('ClearanceManager', () => {
     expect(w.vm.isClearance).toBe(false)
   })
 
-  it('loads the message then the interested users on mount', async () => {
+  it('loads the message then ALL interested users on mount (incl. withdrawn, for names)', async () => {
     mount(ClearanceManager, mountOpts)
     await flushPromises()
     expect(h.fetch).toHaveBeenCalledWith(1, true)
     expect(h.fetchMultiple).toHaveBeenCalledTimes(1)
-    expect(h.fetchMultiple.mock.calls[0][0].sort()).toEqual([1, 2])
+    // Users 1 (Reserved) + 2 (Interested) + 3 (Withdrawn) — withdrawn included
+    // so their name renders in the declined/withdrawn section.
+    expect(h.fetchMultiple.mock.calls[0][0].sort()).toEqual([1, 2, 3])
   })
 })
