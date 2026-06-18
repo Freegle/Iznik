@@ -680,6 +680,22 @@ describe('compose store', () => {
       expect(store.messageValid({ value: 'Offer' })).toBe(false)
     })
 
+    it('returns false when item is "Test" (Discourse 9788/32)', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: 'Test', description: 'Test' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('returns false when item is "test" as Wanted (Discourse 9788/32)', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Wanted', item: 'test', description: 'test' },
+      ]
+      expect(store.messageValid({ value: 'Wanted' })).toBe(false)
+    })
+
     it('returns false when the description is purely numeric and there are no photos', () => {
       const store = useComposeStore()
       store.messages = [{ type: 'Offer', item: 'Sofa', description: '24' }]

@@ -39,6 +39,7 @@ const UNPOSTABLE_ITEM_PATTERNS = [
   /^browse$/,
   /^eney fink$/,
   /^eney think$/,
+  /^test$/,
 ]
 
 // Shared core: true when the value has no descriptive letters after trimming —

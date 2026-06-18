@@ -119,6 +119,19 @@ describe('isVagueItem', () => {
     expect(isVagueItem('garden')).toBe(false)
   })
 
+  it('rejects "test" placeholder (Discourse 9788/32)', () => {
+    expect(isVagueItem('test')).toBe(true)
+    expect(isVagueItem('Test')).toBe(true)
+    expect(isVagueItem('TEST')).toBe(true)
+    expect(isVagueItem('  test  ')).toBe(true)
+  })
+
+  it('does not block real items containing "test"', () => {
+    expect(isVagueItem('test kit')).toBe(false)
+    expect(isVagueItem('covid test')).toBe(false)
+    expect(isVagueItem('pregnancy test')).toBe(false)
+  })
+
   it('treats empty / nullish as not-vague', () => {
     expect(isVagueItem('')).toBe(false)
     expect(isVagueItem(null)).toBe(false)
