@@ -12,6 +12,7 @@
 
 - NEVER commit unless tests pass. NEVER push unless told to. NEVER add "Claude Code" to commits. Full stops at end of sentences.
 - **Backend first**: Deploy backend before dependent frontend. Split cross-component changes into separate PRs. Link related PRs. Verify production deployment before merging frontend.
+- **Discourse-reported issues**: a PR (or PR comment) addressing a Discourse report must embed the post-specific link in a `## Discourse` section: `https://discourse.ilovefreegle.org/t/<topicid>/<postnumber>`. NEVER write `Closes #<topic>` for a Discourse topic — a topic is not a GitHub issue, and `Closes #NNNN` would try to auto-close an unrelated GitHub issue. Never reference a thread as a bare "topic NNNN" with no link.
 
 ## Code Style
 

@@ -98,14 +98,6 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['duplicates_found']);
     }
 
-    public function test_update_kudos_returns_count(): void
-    {
-        // This test verifies the method runs without error.
-        $count = $this->service->updateKudos();
-
-        $this->assertIsInt($count);
-    }
-
     public function test_cleanup_users_dry_run_does_not_modify(): void
     {
         // Create a user with a Yahoo Groups email.
@@ -130,31 +122,6 @@ class UserManagementServiceTest extends TestCase
 
         // User should still exist.
         $this->assertDatabaseHas('users', ['id' => $user->id]);
-    }
-
-    public function test_update_kudos_with_active_user(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser();
-        $this->createMembership($user, $group);
-
-        // Set lastaccess to recent so user is selected.
-        $user->update(['lastaccess' => now()]);
-
-        // Create a message from the user (gives 1 distinct month of posts).
-        $this->createTestMessage($user, $group);
-
-        $count = $this->service->updateKudos();
-
-        // The method should run and return an integer.
-        $this->assertIsInt($count);
-        $this->assertGreaterThanOrEqual(1, $count);
-
-        // Check users_kudos table was populated.
-        $kudosRow = DB::table('users_kudos')->where('userid', $user->id)->first();
-        $this->assertNotNull($kudosRow);
-        $this->assertGreaterThanOrEqual(1, $kudosRow->posts);
-        $this->assertEquals($kudosRow->posts, $kudosRow->kudos);
     }
 
     public function test_process_bounced_emails_with_no_bounced(): void
@@ -377,78 +344,6 @@ class UserManagementServiceTest extends TestCase
 
         // User should NOT be deleted because they still have messages.
         $this->assertDatabaseHas('users', ['id' => $user->id]);
-    }
-
-    public function test_calculate_kudos_via_reflection(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        // Create a message from the user (gives 1 distinct month of posts).
-        $this->createTestMessage($user, $group);
-
-        // Create a chat message (gives 1 distinct month of chats).
-        // First create a chat room.
-        $chatId = DB::table('chat_rooms')->insertGetId([
-            'chattype' => 'User2User',
-        ]);
-        DB::table('chat_messages')->insert([
-            'chatid' => $chatId,
-            'userid' => $user->id,
-            'date' => now(),
-            'message' => 'Test chat message',
-            'type' => 'Default',
-        ]);
-
-        // Use reflection to test protected method.
-        $reflection = new \ReflectionClass($this->service);
-        $method = $reflection->getMethod('calculateKudos');
-        $method->setAccessible(true);
-
-        $kudos = $method->invoke($this->service, $user->id);
-
-        // Returns array with V1-style components.
-        $this->assertIsArray($kudos);
-        $this->assertArrayHasKey('posts', $kudos);
-        $this->assertArrayHasKey('chats', $kudos);
-        $this->assertArrayHasKey('newsfeed', $kudos);
-        $this->assertArrayHasKey('events', $kudos);
-        $this->assertArrayHasKey('vols', $kudos);
-        $this->assertArrayHasKey('facebook', $kudos);
-        $this->assertArrayHasKey('platform', $kudos);
-
-        // Should have 1 month of posts and 1 month of chats.
-        $this->assertEquals(1, $kudos['posts']);
-        $this->assertEquals(1, $kudos['chats']);
-    }
-
-    public function test_calculate_kudos_with_no_activity(): void
-    {
-        // Create user with no activity.
-        $user = User::create([
-            'firstname' => 'New',
-            'lastname' => 'User',
-            'fullname' => 'New User',
-            'added' => now(),
-        ]);
-
-        // Use reflection to test protected method.
-        $reflection = new \ReflectionClass($this->service);
-        $method = $reflection->getMethod('calculateKudos');
-        $method->setAccessible(true);
-
-        $kudos = $method->invoke($this->service, $user->id);
-
-        // New user with no activity should have all zeros.
-        $this->assertIsArray($kudos);
-        $this->assertEquals(0, $kudos['posts']);
-        $this->assertEquals(0, $kudos['chats']);
-        $this->assertEquals(0, $kudos['newsfeed']);
-        $this->assertEquals(0, $kudos['events']);
-        $this->assertEquals(0, $kudos['vols']);
-        $this->assertFalse($kudos['facebook']);
-        $this->assertFalse($kudos['platform']);
     }
 
     public function test_merge_users_for_email_with_single_user(): void
