@@ -220,6 +220,11 @@ class UnifiedDigestService
         $messages = $this->getGroupMessagesSinceCursor($groupid, $cursorMsgdate, $cursorMsgid);
 
         if ($messages->isEmpty()) {
+            // Every new message in this group is rippling-excluded (delivered by the
+            // expander-driven reach mailer instead). Advance the cursor past them to the
+            // latest approved post — otherwise, after full rippling rollout the cursor
+            // freezes here forever and the (unbounded) scan window grows every tick.
+            $this->advanceCursorPastExcluded($groupid, $cursorMsgdate, $cursorMsgid, $dryRun);
             return ['emails' => 0, 'users' => []];
         }
 
@@ -597,8 +602,45 @@ class UnifiedDigestService
         return $query
             ->orderBy('messages_groups.arrival', 'asc')
             ->orderBy('messages_groups.msgid', 'asc')
+            // Bound the per-tick scan; the cursor advances to the last processed message so
+            // the next tick continues. Prevents an unbounded window on a busy group.
+            ->limit(500)
             ->with(['attachments', 'fromUser', 'groups'])
             ->get();
+    }
+
+    /**
+     * Advance the per-group cursor to the latest approved post when every new message was
+     * rippling-excluded (so getGroupMessagesSinceCursor returned nothing to mail). Without
+     * this the cursor would never move past reach posts and the scan window would grow
+     * without bound after full rippling rollout. Mirrors getGroupMessagesSinceCursor's
+     * filters minus the reach exclusion, taking the newest (arrival, msgid) as the watermark.
+     */
+    protected function advanceCursorPastExcluded(int $groupid, ?string $cursorMsgdate, int $cursorMsgid, bool $dryRun): void
+    {
+        $watermark = DB::table('messages_groups as mg')
+            ->join('messages', 'messages.id', '=', 'mg.msgid')
+            ->where('mg.groupid', $groupid)
+            ->where('mg.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('mg.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
+
+        if ($cursorMsgdate) {
+            $watermark->whereRaw(
+                '(mg.arrival > ? OR (mg.arrival = ? AND mg.msgid > ?))',
+                [$cursorMsgdate, $cursorMsgdate, $cursorMsgid]
+            );
+        }
+
+        $row = $watermark
+            ->orderByDesc('mg.arrival')->orderByDesc('mg.msgid')
+            ->select('mg.arrival', 'mg.msgid')
+            ->first();
+
+        if ($row) {
+            $this->advanceGroupCursor($groupid, $row->arrival, (int) $row->msgid, $dryRun);
+        }
     }
 
     /**
@@ -1086,7 +1128,50 @@ class UnifiedDigestService
             $query->where('messages_groups.arrival', '>=', now()->subDay());
         }
 
+        // Reach-gate rippling posts for the daily digest and the daily-posts push (both
+        // call this) just like the immediate path: a post with a rippling_reach row is only
+        // included once its reach covers this member (nearest-first), so daily/push members
+        // are not notified of posts they cannot yet reply to. Posts with no reach row are
+        // unaffected. Skipped entirely when we can't resolve the member's location (fail
+        // open — no regression for locationless members).
+        $latlng = $this->resolveUserLatLng($user);
+        if ($latlng !== null) {
+            $query->whereRaw(
+                'NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
+                    AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), 3857)) = 0)',
+                [$latlng[1], $latlng[0]] // POINT(lng, lat)
+            );
+        }
+
         return $query->with(['attachments', 'fromUser', 'groups'])->get();
+    }
+
+    /**
+     * Resolve a member's point as settings.mylocation (both coords) else their lastlocation —
+     * the same order the immediate-mail recipient query uses, so the digest, the push and the
+     * immediate path all agree on where a member is. Returns [lat, lng] or null if unknown.
+     *
+     * @return array{0:float,1:float}|null
+     */
+    private function resolveUserLatLng(User $user): ?array
+    {
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
+            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        }
+
+        if ($user->lastlocation) {
+            $loc = DB::table('locations')->where('id', $user->lastlocation)->first(['lat', 'lng']);
+            if ($loc && $loc->lat !== null && $loc->lng !== null) {
+                return [(float) $loc->lat, (float) $loc->lng];
+            }
+        }
+
+        return null;
     }
 
     /**

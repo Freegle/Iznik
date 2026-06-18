@@ -944,6 +944,66 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    public function test_daily_digest_reach_gates_rippling_posts_by_member_location(): void
+    {
+        // The daily digest (and the daily-posts push, which shares getPostsForUser) must
+        // reach-gate rippling posts by the member's location, just like the immediate path —
+        // a daily member is only shown a rippling post once its reach covers them.
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        // Reach COVERS the member (-0.1, 51.5 is inside this polygon).
+        $covered = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: covered (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $covered->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($covered->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        // Reach does NOT cover the member (far to the east).
+        $faraway = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: faraway (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $faraway->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($faraway->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+
+        $tracker = UserDigest::create([
+            'userid' => $member->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+        ]);
+
+        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')->all();
+
+        $this->assertContains($covered->id, $ids, 'reach-covered rippling post is included for the daily member');
+        $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
+    }
+
+    public function test_immediate_cursor_advances_past_reach_excluded_posts(): void
+    {
+        // After full rollout every new post has a reach row, so the cursor digest finds
+        // nothing to mail. The cursor must still advance past those posts — otherwise it
+        // freezes forever and the scan window grows without bound.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        [$group, $poster] = $this->bootstrapImmediateGroup();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach only (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertEquals((int) $msg->id, (int) $cursor->msgid,
+            'cursor advances past the reach-excluded post rather than freezing');
+    }
+
     /** Set a user's settings.mylocation point (the canonical first-choice location source). */
     protected function setMyLocation(User $user, float $lat, float $lng): void
     {
