@@ -157,6 +157,9 @@ class UnifiedDigestSummaryTest extends TestCase
                 'heroImageUrl' => 'https://example.com/hero.png',
                 'displayImageUrl' => 'https://example.com/img.png',
                 'isPlaceholder' => false,
+                'postedToText' => null,
+                'metaText' => null,
+                'isOwnPost' => false,
             ]);
         }
 
@@ -183,6 +186,7 @@ class UnifiedDigestSummaryTest extends TestCase
             ])->toArray(),
             'ampApiUrl' => 'https://api.example.com/amp',
             'ampUserId' => 42,
+            'accentColor' => \App\Mail\Digest\DigestStyle::OFFER_GREEN,
         ];
     }
 
@@ -260,6 +264,28 @@ class UnifiedDigestSummaryTest extends TestCase
         // No overflow → no collapsible control ("Show N more" only ever
         // appears inside the <details>, so its absence proves no collapse).
         $this->assertStringNotContainsString('<details', $html);
+    }
+
+    public function test_html_summary_links_wrapped_in_div_for_outlook_compatibility(): void
+    {
+        // Discourse t/9363/31: Outlook Classic (Word HTML rendering engine) ignores
+        // CSS `display:block` on inline <a> elements, so summary items ran together
+        // with no visible line breaks. Fix: each summary <a> must be wrapped in a
+        // <div> block element, which Outlook's Word engine does respect.
+        // Uses direct view rendering (same pattern as AMP tests) since the MJML
+        // content inside <mj-text> is passed through verbatim to compiled HTML.
+        $mjml = view('emails.mjml.digest.unified', $this->summaryViewData(3))->render();
+
+        $this->assertStringContainsString('In this digest', $mjml);
+
+        // Each visible summary link must appear as <div...><a href="..."> — not as
+        // a bare <a style="display:block"> that Outlook Classic silently ignores.
+        $this->assertMatchesRegularExpression(
+            '/<div[^>]*>\s*<a\s[^>]*href="https:\/\/example\.com\/message\/1000"/',
+            $mjml,
+            'Summary links must be wrapped in <div> for Outlook classic compatibility (t/9363/31); '
+            . 'bare <a style="display:block"> is ignored by Outlook\'s Word rendering engine'
+        );
     }
 
     public function test_html_immediate_single_post_has_no_summary_index(): void
