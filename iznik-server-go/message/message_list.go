@@ -565,9 +565,14 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	// Build pagination context from last ID.
 	var respCtx *PaginationContext
 	if len(msgIDs) == limit {
-		// Get arrival time of last message for pagination.
+		// The list orders msgids by MAX(arrival) across the queried groups (see
+		// buildMTUnionAllMsgIDQuery), so the cursor must be that same MAX — not an
+		// arbitrary group's arrival via LIMIT 1. Otherwise, for a cross-posted
+		// message the next page's arrival boundary lands at the wrong time and can
+		// drop messages that sort between the two values.
 		var lastArrival time.Time
-		db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? AND deleted = 0 LIMIT 1", msgIDs[len(msgIDs)-1]).Scan(&lastArrival)
+		db.Raw("SELECT MAX(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
+			msgIDs[len(msgIDs)-1], groupIDs).Scan(&lastArrival)
 		if !lastArrival.IsZero() {
 			respCtx = &PaginationContext{
 				Date: lastArrival.Unix(),

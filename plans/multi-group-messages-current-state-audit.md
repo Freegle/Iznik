@@ -265,8 +265,8 @@ priority (full tasks in §H):
 **Should-fix — consistency (low stakes)**
 6. **✅ DONE (validated, not committed) — Digest per-post byline / immediate sponsors** now
    use the recipient-preferred group, matching the Task-27 header fix. → H9, H10.
-7. **🔴 Pagination cursor `message_list.go:570` (G4)** — reads an arbitrary group's arrival
-   instead of the contextual group's; page boundaries can skip/repeat. → H11.
+7. **✅ DONE (validated, not committed) — Pagination cursor `message_list.go:570` (G4)** now
+   reads `MAX(arrival)` across the queried groups, matching the list ordering. → H11.
 
 ## F. Items that were flagged for verification (now all resolved)
 
@@ -494,8 +494,14 @@ Ordered by priority. Check off as completed.
 - [x] **H10.** ✅ DONE (validated, not committed) — `UnifiedDigestService` immediate-mode
   sponsors now scope to the recipient-preferred group via the same (now `public`)
   `UnifiedDigest::selectPreferredGroup()`. Laravel 4240✓.
-- [ ] **H11.** Pagination cursor `message_list.go:570` — read the arrival of the same group
-  the list ORDER BY used (the contextual group), not an arbitrary `LIMIT 1` group row.
+- [x] **H11.** ✅ DONE (validated, not committed) — `ListMessagesMT` pagination cursor
+  (`message_list.go:570`) now reads `MAX(arrival)` across the queried groups, matching the
+  list's `MAX(arrival)` ordering (`buildMTUnionAllMsgIDQuery`), instead of an arbitrary
+  `LIMIT 1` group row. Test: `TestListMessagesMT_PaginationCursorUsesMaxArrival`; Go 3197✓.
+  *(Residual, out of H11 scope: the per-branch cursor filter is `mg.arrival < ?` per row, so
+  a cross-post whose group arrivals straddle the page boundary can still repeat on the next
+  page via its older group row. Fully fixing that means keyset-paginating on the grouped
+  `MAX(arrival)`, which risks the perf-tuned UNION-ALL query — deferred.)*
 - [x] **H12. Deduplicate chase-up emails per item (G7a).** ✅ DONE (validated, not
   committed) — `ChaseUpService::processGroup()` now stamps `lastchaseup` on **all** of the
   message's `messages_groups` rows when a chase-up is sent (was per-group), restoring V1's

@@ -7940,6 +7940,67 @@ func TestListMessagesMT_MultiGroupGlobalArrivalOrder(t *testing.T) {
 		"Second page must continue the global arrival DESC ordering")
 }
 
+// TestListMessagesMT_PaginationCursorUsesMaxArrival verifies that when the last
+// message of a page is cross-posted to several queried groups, the pagination
+// cursor uses its MAX(arrival) across those groups — matching the list's
+// MAX(arrival) ordering — rather than an arbitrary group's arrival.
+func TestListMessagesMT_PaginationCursorUsesMaxArrival(t *testing.T) {
+	prefix := uniquePrefix("listmt_cursor")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Two single-group messages (newest), then a cross-posted message whose two
+	// group arrivals straddle: older on A (10d), newer on B (6d). Its sort key is
+	// MAX(arrival) = the 6-day-ago B arrival, so it is the oldest of the three.
+	m0 := CreateTestMessageWithArrival(t, posterID, groupA, prefix+" m0", 52.0, -1.0, 2)
+	m1 := CreateTestMessageWithArrival(t, posterID, groupA, prefix+" m1", 52.0, -1.0, 4)
+	m2 := CreateTestMessageWithArrival(t, posterID, groupA, prefix+" m2", 52.0, -1.0, 10)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, arrival, autoreposts) "+
+		"VALUES (?, ?, 'Approved', 0, DATE_SUB(NOW(), INTERVAL 6 DAY), 0)", m2, groupB)
+	defer func() {
+		for _, id := range []uint64{m0, m1, m2} {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		}
+	}()
+
+	// Full page of 3 (all mod groups, fromuser-isolated) → cursor present, last = m2.
+	pageURL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&limit=3&jwt=%s",
+		posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", pageURL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	page := body["messages"].([]interface{})
+	require.Equal(t, 3, len(page))
+	assert.Equal(t, m2, uint64(page[2].(float64)), "cross-posted message sorts last by MAX(arrival)")
+
+	ctxObj, ok := body["context"].(map[string]interface{})
+	require.True(t, ok, "pagination context should be present on a full page")
+
+	// Cursor must equal m2's MAX(arrival) across the queried groups (the 6-day B
+	// arrival), not the older 10-day A arrival.
+	var maxArr, minArr time.Time
+	db.Raw("SELECT MAX(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
+		m2, []uint64{groupA, groupB}).Scan(&maxArr)
+	db.Raw("SELECT MIN(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
+		m2, []uint64{groupA, groupB}).Scan(&minArr)
+	assert.Equal(t, maxArr.Unix(), int64(ctxObj["Date"].(float64)), "cursor should be MAX(arrival)")
+	assert.NotEqual(t, minArr.Unix(), int64(ctxObj["Date"].(float64)), "cursor must not be the older group's arrival")
+}
+
 func TestListMessagesGroupsIncludesHeldby(t *testing.T) {
 	prefix := uniquePrefix("list_heldby")
 	db := database.DBConn
