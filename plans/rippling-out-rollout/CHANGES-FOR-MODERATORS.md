@@ -40,6 +40,13 @@ There's a **"Learn more"** link next to it that explains rippling out if you wan
 detail. These posts go through your normal pending list like any other — approve or reject
 them as you normally would (remembering the "please don't" above).
 
+**One timing difference to know about:** a post that rippled in *and was already approved on
+the community it started in* will **auto-approve on your community after a short while** if
+nobody rejects it first — it was already vetted where it was posted, so we don't make it sit
+out the full review window again. You still see it in your pending list and can reject it for
+the usual reasons; just do so reasonably promptly if you don't want it to go live locally. (A
+post that hasn't been approved anywhere yet follows your normal pending process, unchanged.)
+
 ### 2. A "Who can see this?" button
 On posts in your moderation screens there's a button (label may be "Who can see this?" or
 "Reach") that shows you, on a map, **the area a post is currently visible in**. This is

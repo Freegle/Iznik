@@ -49,6 +49,12 @@ reply sent early is simply **held quietly** and delivered the moment the post re
 (If the item is taken or withdrawn before it ever reaches them, they're told it's already
 gone, so they're not left waiting.)
 
+### Notifications follow the same rule
+A member's **daily digest email** and **"new posts near you" notifications** only include a
+post once it has rippled out to their area — so members are never nudged about something they
+can't yet act on. The notification arrives when the post reaches them, at which point they can
+reply straight away.
+
 ### A short note in Help
 There's a new entry in **Help** called **"Which posts do I see?"** that explains all of
 this in members' own terms. It's flagged as a new change. The wording is:
