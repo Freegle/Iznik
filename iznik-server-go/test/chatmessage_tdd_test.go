@@ -94,6 +94,9 @@ func TestGetChatMessages_HeldReplyHiddenFromPoster(t *testing.T) {
 	CreateTestMembership(t, posterID, groupID, "Member")
 	CreateTestMembership(t, replierID, groupID, "Member")
 
+	// The original post (messages.id) that the chat is about — required by the FK on rippling_held_replies.msgid.
+	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: Test item (heldreply)", 51.5, -0.1)
+
 	// Poster initiated the chat; replier replied (a fully-processed, normally-visible message).
 	chatID := CreateTestChatRoom(t, posterID, &replierID, nil, "User2User")
 	db.Exec(
@@ -108,8 +111,9 @@ func TestGetChatMessages_HeldReplyHiddenFromPoster(t *testing.T) {
 	}
 
 	// The reply is held — replier is outside the post's current reach.
+	// chatmsgid references chat_messages.id; msgid references messages.id (the original post).
 	db.Exec("INSERT INTO rippling_held_replies (chatid, chatmsgid, msgid, replieruserid, status, created_at) "+
-		"VALUES (?, ?, ?, ?, 'held', NOW())", chatID, msgID, msgID, replierID)
+		"VALUES (?, ?, ?, ?, 'held', NOW())", chatID, msgID, postMsgID, replierID)
 	defer db.Exec("DELETE FROM rippling_held_replies WHERE chatmsgid = ?", msgID)
 
 	fetchAs := func(userID uint64) []map[string]interface{} {
