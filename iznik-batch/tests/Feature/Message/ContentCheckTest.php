@@ -1442,14 +1442,16 @@ class ContentCheckTest extends TestCase
 
     public function test_subject_repeat_not_flagged_for_short_item_name_test_post(): void
     {
-        // Regression: "Offer: Test" is 11 chars and was NOT skipped by the < 10 guard,
-        // so common test-post subjects accumulated across many groups and falsely flagged
-        // legitimate mod/tester posts. V1 parity: use the item name ("Test" = 4 chars)
-        // for the length guard, not the full subject. See Discourse 9788/28.
+        // Regression (Discourse 9788/28): "Offer: Test" is 11 chars and was NOT skipped
+        // by the < 10 guard, so common test-post subjects accumulated across many groups
+        // over time and falsely flagged legitimate mod/tester posts.
+        // Root cause: the old code checked strlen(full subject) instead of strlen(item name).
+        // "Offer: Test" = 11 chars passes the guard; "Test" = 4 chars does not.
+        // Fix: checkSubjectRepeat now accepts $itemName and guards on item name length.
         $subject = 'Offer: Test';
 
-        // Simulate 30 prior posts with the same subject from different groups (as happens
-        // when many mods routinely post "Offer: Test" messages to their own groups).
+        // Simulate 30 prior "Offer: Test" posts from different groups (as accumulates
+        // naturally when mods routinely post Test messages to verify their groups).
         $groups = [];
         for ($i = 0; $i < 30; $i++) {
             $groups[] = $this->createTestGroup();
@@ -1477,9 +1479,7 @@ class ContentCheckTest extends TestCase
             ]);
         }
 
-        // A new mod now posts "Offer: Test" — with item name "Test" (< 10 chars).
-        // V1 would skip the subject-repeat check (item name "Test" < 10 chars);
-        // the regression caused it to NOT skip and falsely flag.
+        // A new mod posts "Offer: Test" to their own group.
         $newUser = $this->createTestUser();
         $newGroup = $this->createTestGroup();
         $newMsgId = DB::table('messages')->insertGetId([
@@ -1500,9 +1500,19 @@ class ContentCheckTest extends TestCase
             'deleted'    => 0,
         ]);
 
-        $result = $this->service->checkSubjectRepeat($subject, $newMsgId, 'Test');
+        // BUG (old code path): calling WITHOUT $itemName uses the full subject
+        // "Offer: Test" (11 chars >= 10), so the guard does not fire. With 30+
+        // groups in the window, the repeat check triggers and flags the message.
+        // This proves the DB state is correct and the bug is real.
+        $buggyPathResult = $this->service->checkSubjectRepeat($subject, $newMsgId);
+        $this->assertNotNull($buggyPathResult, 'Without itemName, "Offer: Test" (11 chars) passes the length guard and 30+ groups causes a false flag — this confirms the bug exists');
+        $this->assertEquals('SubjectRepeat', $buggyPathResult['check']);
 
-        $this->assertNull($result, 'Short item name "Test" should not trigger subject-repeat flag even when 30+ prior posts exist');
+        // FIX (new code path): calling WITH $itemName='Test' uses the item name
+        // length (4 chars < 10), so the guard fires immediately and returns null.
+        // A real mod "Test" post must not be blocked even with 30+ prior groups.
+        $fixedPathResult = $this->service->checkSubjectRepeat($subject, $newMsgId, 'Test');
+        $this->assertNull($fixedPathResult, 'With itemName="Test" (4 chars < 10), the length guard fires before the group count query — no false flag');
     }
 
     // -------------------------------------------------------------------------
