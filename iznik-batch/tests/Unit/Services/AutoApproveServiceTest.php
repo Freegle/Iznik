@@ -78,6 +78,43 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    public function test_auto_approve_mails_newly_reached_members_of_a_done_rippling_post(): void
+    {
+        // A rippling post auto-approved on a group AFTER its reach has finished expanding
+        // ('done') must still mail the now-reachable immediate members (the ExpandService tick
+        // loop won't revisit a 'done' post) — closing the post-'done' approval gap.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['added' => now()->subHours(72)]); // immediate by default
+        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
+        $member->save();
+
+        $message = $this->createTestMessage($poster, $group);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
+        ]);
+        // Reach (status 'done') covering the member's location.
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+        );
+
+        $this->service->process();
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            'auto-approve mails a now-reachable immediate member of a done-reach rippling post'
+        );
+    }
+
     public function test_does_not_auto_approve_message_marked_spam_on_another_group(): void
     {
         // A message that is Pending (and otherwise eligible) on one group but

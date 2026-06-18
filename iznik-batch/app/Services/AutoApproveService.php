@@ -113,6 +113,14 @@ class AutoApproveService
                         $stats['skipped']++;
                     }
                 }
+
+                // A rippling post can be auto-approved on a newly-reached group AFTER its reach
+                // has finished expanding (the ExpandService tick loop only revisits 'expanding'
+                // posts), so mail any now-reachable immediate members here too. Idempotent and a
+                // no-op for non-rippling posts (the reach gate + ledger in mailNewlyReachedForPost).
+                if (!$dryRun) {
+                    app(\App\Services\UnifiedDigestService::class)->mailNewlyReachedForPost((int) $msgid);
+                }
             } catch (\Exception $e) {
                 Log::error("Error auto-approving message #{$msgid}: " . $e->getMessage());
                 $stats['errors']++;
