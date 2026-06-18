@@ -44,6 +44,59 @@ class DiscourseClient
     }
 
     /**
+     * GET a Discourse JSON endpoint, mirroring V1 Utils::curlWithRetry + the
+     * per-call error check the callers (GetAllUsers/GetUser/GetUserEmail) did.
+     *
+     * Discourse rate-limits the admin API aggressively. V1 retried on HTTP 429
+     * (or an "errors" body containing "too many") up to 60× with a 1s delay,
+     * and threw on any other error response — so the run aborted loudly rather
+     * than emailing a report built on partially-resolved Discourse users. The
+     * earlier port did neither: a 429 silently became a body with no
+     * single_sign_on_record, so the mod looked absent from Discourse and their
+     * groups were falsely flagged NOT REPRESENTED. Restore the retry + throw.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<string, mixed>
+     */
+    private function getJson(string $url, array $query = []): array
+    {
+        $maxRetries = max(1, (int) config('freegle.discourse.max_retries', 60));
+        $retryDelay = max(0, (int) config('freegle.discourse.retry_delay_s', 1));
+
+        for ($attempt = 1; ; $attempt++) {
+            $resp = $this->request()->get($url, $query);
+            $data = $resp->json();
+            $errors = is_array($data) && isset($data['errors']) ? (array) $data['errors'] : [];
+
+            $rateLimited = $resp->status() === 429;
+            foreach ($errors as $error) {
+                if (stripos((string) $error, 'too many') !== false) {
+                    $rateLimited = true;
+                }
+            }
+
+            if ($rateLimited) {
+                if ($attempt >= $maxRetries) {
+                    throw new \RuntimeException("Discourse: max retries ($maxRetries) exceeded due to rate limiting: {$url}");
+                }
+                if ($retryDelay > 0) {
+                    sleep($retryDelay);
+                }
+                continue;
+            }
+
+            if (!is_array($data)) {
+                throw new \RuntimeException("Discourse: unexpected non-JSON response (HTTP {$resp->status()}): {$url}");
+            }
+            if ($errors !== []) {
+                throw new \RuntimeException('Discourse: '.implode(', ', $errors).": {$url}");
+            }
+
+            return $data;
+        }
+    }
+
+    /**
      * All trust_level_0 members (effectively every user), first 1000 — overrides
      * Discourse's default page size of 20.
      *
@@ -51,15 +104,13 @@ class DiscourseClient
      */
     public function getAllUsers(): array
     {
-        $resp = $this->request()->get($this->baseUrl.'/groups/trust_level_0/members.json', [
+        $data = $this->getJson($this->baseUrl.'/groups/trust_level_0/members.json', [
             'limit' => 1000,
             'offset' => 0,
         ]);
-        $data = $resp->json();
 
-        if (!is_array($data) || !isset($data['members'])) {
-            $err = is_array($data) && isset($data['errors']) ? implode(', ', (array) $data['errors']) : 'unexpected response';
-            throw new \RuntimeException('Discourse getAllUsers: '.$err);
+        if (!isset($data['members'])) {
+            throw new \RuntimeException('Discourse getAllUsers: unexpected response (no members)');
         }
 
         return $data['members'];
@@ -73,14 +124,14 @@ class DiscourseClient
      */
     public function getUser(int $id, string $username): array
     {
-        return (array) $this->request()->get($this->baseUrl."/admin/users/{$id}/{$username}.json")->json();
+        return $this->getJson($this->baseUrl."/admin/users/{$id}/{$username}.json");
     }
 
     /** The user's primary email address. */
     public function getUserEmail(string $username): string
     {
-        $data = $this->request()->get($this->baseUrl."/users/{$username}/emails.json")->json();
+        $data = $this->getJson($this->baseUrl."/users/{$username}/emails.json");
 
-        return is_array($data) ? (string) ($data['email'] ?? '') : '';
+        return (string) ($data['email'] ?? '');
     }
 }
