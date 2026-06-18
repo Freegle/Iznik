@@ -340,7 +340,6 @@ var cronJobs = []CronJob{
 	// User Management
 	{Command: "users:update-ratings", Name: "Rating Visibility", Description: "Updates rating visibility based on whether the rater and ratee actually had chat interaction", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "User Management", Active: true},
 	{Command: "users:update-support-roles", Name: "Support Roles", Description: "Grants or removes Support Tools access based on team membership (never downgrades Admin users)", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
-	{Command: "users:update-kudos", Name: "User Kudos", Description: "Daily kudos recalculation for users active in the last 2 days", Schedule: "Daily at 4am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:update-lastaccess", Name: "Last Access", Description: "Hourly fallback users.lastaccess update from chat / membership activity", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
 	{Command: "users:update-modmails", Name: "Mod Mails Sync", Description: "Syncs recent mod actions into users_modmails (rejected/deleted/replied) and prunes old entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "User Management", Active: true},
 	{Command: "users:remap-locations", Name: "Remap Locations", Description: "Updates cached location names in user settings when the canonical name has changed", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "User Management", Active: true},
