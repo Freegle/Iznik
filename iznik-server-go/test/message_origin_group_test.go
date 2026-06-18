@@ -85,3 +85,18 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 	assert.Equal(t, 0, covers("0.1", "51.5"), "rejected secondary group's area is clipped out of the reach")
 	assert.Equal(t, 1, covers("-0.1", "51.5"), "origin area is still covered after the clip")
 }
+
+// RecordRippleEvent upserts a per-day counter (§15/§16 instrumentation), used here for the
+// secondary-group rejection event.
+func TestRecordRippleEvent(t *testing.T) {
+	db := database.DBConn
+	db.Exec("DELETE FROM ripple_event_metrics WHERE event = 'test_evt'")
+	defer db.Exec("DELETE FROM ripple_event_metrics WHERE event = 'test_evt'")
+
+	message.RecordRippleEvent(db, "test_evt")
+	message.RecordRippleEvent(db, "test_evt")
+
+	var count int
+	db.Raw("SELECT count FROM ripple_event_metrics WHERE day = CURDATE() AND event = 'test_evt'").Scan(&count)
+	assert.Equal(t, 2, count, "per-event counter increments in place via upsert")
+}

@@ -1932,6 +1932,7 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	for _, gid := range authorizedGroups {
 		if originGid != 0 && gid != originGid {
 			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			RecordRippleEvent(db, "secondary_reject")
 			ClipReachForRejectedGroup(db, req.ID, gid)
 			continue
 		}
@@ -1965,6 +1966,14 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 		"AND ST_Within(mr.polygon, g.polyindex)", gid, msgid)
+}
+
+// RecordRippleEvent bumps the per-day counter for a rippling-out event (design §15/§16 —
+// "instrument from day one"), surfaced read-only in sysadmin. Best-effort: errors are
+// ignored so instrumentation never affects the request (e.g. before the table ships).
+func RecordRippleEvent(db *gorm.DB, event string) {
+	db.Exec("INSERT INTO ripple_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) "+
+		"ON DUPLICATE KEY UPDATE count = count + 1", event)
 }
 
 // handleDeleteMessage deletes a message (mod action).
