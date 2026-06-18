@@ -103,9 +103,20 @@ Allow a single message to exist on multiple Freegle groups simultaneously. The d
 - `messages_history` (already has groupid, unique on `(msgid, groupid)`)
 - `messages_postings` (already has groupid)
 - `messages_popular` (already has groupid)
-- `messages_spatial` (already has groupid)
 - `messages_index` (already has groupid)
 - `newsfeed` (already has groupid)
+
+### Tables needing a per-group key change
+
+- `messages_spatial` — **had a `groupid` column but a `UNIQUE(msgid)` key**, so a
+  cross-posted message could only ever be indexed on ONE group. The browse/map/search
+  queries filter by `messages_spatial.groupid`, so a message would appear on whichever
+  single group happened to win the upsert and be invisible on the others. Fixed by
+  migration `2026_06_17_000001_make_messages_spatial_per_group.php` (unique key changed to
+  `(msgid, groupid)`), plus the writers/reconcilers updated to insert one row per approved
+  group (Go `addApprovedMessageToSpatialIndex`, batch `MessageSpatialService`). The external
+  spatial-go R-tree index stays one-row-per-msgid (it is location-only KNN) and is only
+  evicted when the last group row is gone. See audit §G1 / TODO H1.
 
 ## Go API Changes
 

@@ -329,18 +329,19 @@ A user browsing/searching only the other group never sees it, even though it's l
    user in multiple of a post's groups sees it **once** (mirrors the Task 11 list dedup).
 5. Confirm the spatial server (`iznik-spatial-go`) consumes the per-group rows correctly.
 
-### G2. 🔴 Mod-queue / pending-work held splits read global `messages.heldby`
+### G2. ✅ FIXED (validated, not committed) — Mod-queue / pending-work held splits read global `messages.heldby`
 
-Confirmed (already in §A3 / §E):
+→ H6 (`session.go`) and H7 (`groupWork.go:135`). Confirmed (already in §A3 / §E):
 - `session/session.go:1024` (unheld) & `:1033` (held) → switch to `mg.heldby`.
 - `group/groupWork.go:135` → `m` is the joined `messages` table; the held split uses the
   **global** column, so per-group holds are invisible and it breaks at Task 20. Switch the
   `held` expression to `mg.heldby IS NOT NULL`. (`groupWork.go:204` is `memberships` — n/a.)
 
-### G3. 🔴 (low) Digest per-post byline & immediate-email sponsors use `postedToGroups[0]`
+### G3. ✅ FIXED (validated, not committed) — Digest per-post byline & immediate-email sponsors used `postedToGroups[0]`
 
+→ H9 (byline) and H10 (immediate sponsors); both now use the recipient-preferred group.
 The digest **header** group was fixed to the recipient's group (Task 27), but two per-post
-sites still take the first group:
+sites still took the first group:
 - `app/Mail/Digest/UnifiedDigest.php:787` — the "Posted on <group>" byline + `/explore`
   link uses `$postedToGroups[0]`. On a cross-post this can name a group the recipient isn't
   in. Should use the recipient-preferred group (reuse `preferredGroupForPost()` logic).
@@ -348,13 +349,17 @@ sites still take the first group:
   `postedToGroups[0]` to fetch sponsors. For a cross-post the sponsors shown may be the
   wrong group's. Lower stakes (sponsors), but inconsistent with the header fix.
 
-### G4. 🔴 (low) Pagination cursor reads an arbitrary group's arrival
+### G4. ✅ FIXED (validated, not committed) — Pagination cursor read an arbitrary group's arrival
 
-`message/message_list.go:570` — the "next page" cursor does
+→ H11. `message/message_list.go:570` — the "next page" cursor did
 `SELECT arrival FROM messages_groups WHERE msgid = ? … LIMIT 1`. The list is ordered by the
-**contextual** group's arrival, but the cursor may read a *different* group's arrival for a
-multi-group message → a page boundary could skip or repeat a post. Edge case; fix by
-selecting the arrival for the same group the ORDER BY used.
+group's `MAX(arrival)`, but the cursor read a *different* (arbitrary) group's arrival for a
+multi-group message → a page boundary could skip or repeat a post. Fixed to select
+`MAX(arrival)` across the queried groups, matching the ORDER BY. **Residual edge (noted, out
+of scope):** the per-branch filter is still `mg.arrival < ?` per row, so a cross-post whose
+group arrivals straddle the boundary can repeat via its older group row; fully fixing this
+needs keyset pagination on the grouped `MAX(arrival)`, which risks the perf-tuned UNION-ALL
+query — deferred.
 
 ### G5. ✅ Resolved as already-correct (downgraded from 🔵)
 
@@ -530,12 +535,66 @@ Ordered by priority. Check off as completed.
 
 ### Documentation
 
-- [ ] **H13.** Fold the spatial-index finding (G1) into
-  `multi-group-messages-design.md` — it currently lists `messages_spatial` under
-  "Tables already per-group (no changes needed)", which is **incorrect** (unique key is
-  `msgid`, not `(msgid, groupid)`).
-- [ ] **H14.** Correct `multi-group-stats-audit.md` — it marked `groupWork.go:135` SAFE but
-  the held split reads the global column (H7).
+- [x] **H13.** ✅ DONE — folded the spatial-index finding (G1) into
+  `multi-group-messages-design.md`: moved `messages_spatial` out of "Tables already
+  per-group" into a new "Tables needing a per-group key change" section documenting the
+  `UNIQUE(msgid)` → `(msgid, groupid)` fix, the per-group writers, and the one-row-per-msgid
+  external R-tree.
+- [x] **H14.** ✅ DONE — corrected `multi-group-stats-audit.md`: the `groupWork.go:135` row
+  now carries a CORRECTION note (count grouping safe, but the `held` expression read the
+  global `m.heldby`); the summary and Action-Items sections updated to list both the
+  `session.go` (H6) and `groupWork.go:135` (H7) held-split fixes as done.
+
+---
+
+## I. Post-implementation review (2026-06-18) — findings & end-to-end test plan
+
+Full read **and** write path re-reviewed after all §H code landed. The core is sound;
+the items below are the residual gaps and the proposed end-to-end coverage.
+
+### Review verdict (verified, not assumed)
+
+- **Write side is fully per-group.** `handleApprove/handleReject/handleHold/handleRelease/handleSpam`
+  all scope to `WHERE msgid = ? AND groupid IN ?` (authorised groups). `messages.heldby` is
+  only dual-written for backwards-compat (→ H8).
+- **Spatial migration needs no data backfill.** The reconciler `upsertRecentMessages` detects a
+  missing per-group row via `whereNull('messages_spatial.msgid')` and inserts it; its 31-day
+  window *is* the browse window, so existing cross-posts self-heal on the next pass. Older
+  cross-posts are out of the browse window anyway.
+- **Go approve re-indexes idempotently** — `addApprovedMessageToSpatialIndex` re-queries *all*
+  approved groups and upserts one row each, so approving a cross-post's 2nd group adds its row
+  live.
+- **Search dedups rows AND relevance** — `GROUP BY msgid` + `COUNT(DISTINCT wordid)`. Browse list
+  dedups via `ROW_NUMBER() PARTITION BY id`.
+
+### Residual gaps (tracked, not blocking)
+
+1. **No end-to-end test ties the layers together** — every test added is component-level. A
+   future change that re-breaks cross-post dedup would pass all current unit tests. → test plan
+   below.
+2. **Pagination boundary repeat** (G4/H11) — a cross-post straddling the page boundary can repeat
+   via its older group row. Deferred (fixing risks the perf-tuned UNION-ALL query).
+3. **`selectPreferredGroup` → `?? 0` fallback** when the recipient is in *none* of a post's groups
+   — untested digest-byline edge. Low stakes.
+4. **Ops note (not code):** the spatial migration does `DROP/ADD UNIQUE INDEX` on
+   `messages_spatial` — an index rebuild that locks on a large prod table. Schedule a deploy window.
+5. **H8** — drop `messages.heldby` dual-writes; deferred to V1 retirement.
+
+### End-to-end test plan (gap #1) — NOT YET IMPLEMENTED
+
+Polyglot stack ⇒ "end-to-end" = full read/write path *within* each service. One cross-posted
+message threaded through each layer:
+
+- [ ] **Go `TestCrossPost_FullReadSurface`** — approve msg on groups A & B → appears **once** in
+  the combined MT list, once in each single-group browse, returned in search for an A-member and a
+  B-member, and `messages_spatial` has exactly 2 rows.
+- [ ] **Go `TestCrossPost_HeldOnOneGroupReadSurface`** — hold on A only → held-count A=1 /
+  pending B=1 (badge + groupWork split), browse hides on A but shows on B, spatial A-row removed by
+  reconcile while B-row stays.
+- [ ] **Laravel `SpatialServiceCrossPostTest`** — approve on 2 groups → 2 rows; per-group reject →
+  only that row gone, external spatial server **not** told; withdraw → both gone + external told
+  **once** (`spatialAdminRemoveIfGone`).
+- [ ] **Laravel `test_digest_byline_recipient_in_neither_group`** — covers gap #3.
 
 ---
 

@@ -13,7 +13,7 @@
 - Use `GROUP BY groupid` — each group counts its own rows, one per message.
 - Query `messages` directly (not via `messages_groups` join) — one row per message.
 
-**One actionable pre-Task-20 fix in Go:** `session.go` held-check still reads `m.heldby` (the global column that Task 20 will drop). Must switch to `mg.heldby` before Task 20 runs.
+**Two actionable held-split fixes in Go (now done — TODO H6/H7):** both `session.go` (badge counts) and `group/groupWork.go:135` (mod-queue held split) read `m.heldby` (the global column that Task 20 will drop). Originally only `session.go` was caught here; the `groupWork.go:135` held split was under-flagged — see the correction note on that row below. Both have been switched to `mg.heldby`.
 
 **One low-priority V1 issue:** `User.php::getActiveCountss()` inflates per-user post counts for multi-group messages. V1 PHP is being retired so this is noted only.
 
@@ -47,7 +47,7 @@ All message-count queries here use `GROUP BY mg.groupid`, so each group's count 
 
 | Line | Expression | Assessment |
 |------|-----------|-----------|
-| 135–140 | `COUNT(*) … GROUP BY mg.groupid, held` | ✅ SAFE — per-group counts; multi-group message counted once per group |
+| 135–140 | `COUNT(*) … GROUP BY mg.groupid, held` | ⚠️ **CORRECTION** — the *count grouping* is per-group and safe, but the `held` expression was `(m.heldby IS NOT NULL)`, reading the **global** `messages.heldby` column. A message held on group A but not B was reported held in BOTH groups' pending split, and would break when Task 20 drops `messages.heldby`. Fixed (TODO H7) to `(mg.heldby IS NOT NULL)`. This audit originally marked the line SAFE on the count grouping alone and missed the global-column held split. |
 | 168–172 | `COUNT(*) … GROUP BY mg.groupid` | ✅ SAFE — same |
 | 281–285 | `COUNT(DISTINCT me.msgid) … GROUP BY groupid` | ✅ SAFE — DISTINCT on msgid |
 | 324–341 | `COUNT(DISTINCT mo.id) … GROUP BY groupid` | ✅ SAFE — DISTINCT on outcome ID; intentionally counts outcomes not messages |
@@ -146,11 +146,19 @@ V1 is being retired; issues here do not require fixes.
 
 ## Action Items
 
-### Must-fix before Task 20 (drop `messages.heldby`)
+### Held-split fixes (done — TODO H6/H7)
 
-**`session.go:1029–1035`** — the held-pending badge count uses `m.heldby IS NOT NULL`. When Task 20 drops `messages.heldby`, this will break. Fix: change the held check to `mg.heldby IS NOT NULL`.
+These read the global `messages.heldby` column to split held vs unheld pending items.
+Besides breaking when Task 20 drops the column, they were already **functionally wrong**
+under multi-group: a message held on one group but not another reported held on both.
+Both have been switched to `mg.heldby` and validated.
 
-The fix in context:
+- **`session.go:1029–1035`** (badge counts) — done in H6.
+- **`group/groupWork.go:135–140`** (mod-queue pending held split) — done in H7. This row
+  was originally marked SAFE in the findings table because the *count grouping* is
+  per-group; the global-column held expression was missed.
+
+The `session.go` fix in context:
 ```go
 // Current (lines 1029-1035):
 db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
