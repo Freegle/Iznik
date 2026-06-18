@@ -4352,3 +4352,101 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 		"messagehistory entries must include 'postdate' field (bug: Go API returns 'arrival' only; "+
 			"frontend uses msg.postdate → dayjs(undefined) = current time instead of original arrival)")
 }
+
+// TestMessageHistory_NoDuplicatesOnRepost covers Discourse #9672 post 3.
+//
+// Root cause: GetUserMessageHistory LEFT JOINed messages_postings without a
+// groupid constraint (mp ON mp.msgid = m.id).  A message reposted N times has N
+// rows in messages_postings; the unconstrained JOIN fans those rows out into N
+// duplicate history entries per (message, group) pair, causing the "duplicated
+// and incomplete" posting history the reporter sees when filtering by a specific
+// community group in ModPostingHistoryModal.
+//
+// Fix: replace the JOIN with a correlated subquery
+//
+//	COALESCE((SELECT MAX(mp.date) ... WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), m.arrival)
+//
+// which produces exactly one row per (message, group) and uses only postings
+// for that specific group (no cross-group contamination of arrival dates).
+func TestMessageHistory_NoDuplicatesOnRepost(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_dup")
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Table", 55.9533, -3.1883)
+
+	// Insert two messages_postings rows for the same (msgid, groupid): the initial
+	// post and one autorepost — exactly the pattern the real submit+repost path
+	// produces.  Before the fix, the LEFT JOIN fans these into 2 history rows.
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, repost, autorepost) VALUES (?, ?, 0, 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, repost, autorepost) VALUES (?, ?, 1, 1)", msgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_postings WHERE msgid = ?", msgID)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var count int
+	for _, h := range history {
+		if h.ID == msgID && h.Groupid == groupID {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count,
+		"exactly one messagehistory entry per (msgID, groupID) regardless of repost count")
+}
+
+// TestMessageHistory_ArrivalUsesLatestGroupPosting verifies that when a message
+// is posted to two groups and each group has its own messages_postings rows, the
+// arrival date returned for each group reflects only that group's most recent
+// posting date (no cross-group contamination).
+func TestMessageHistory_ArrivalUsesLatestGroupPosting(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_grp_arr")
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupA := CreateTestGroup(t, prefix+"a")
+	groupB := CreateTestGroup(t, prefix+"b")
+
+	// Create message approved in both groups.
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" Chair", 55.9533, -3.1883)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Group A had a posting 5 days ago; Group B had a posting 2 days ago.
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, date, repost, autorepost) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 5 DAY), 0, 0)", msgID, groupA)
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, date, repost, autorepost) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 2 DAY), 0, 0)", msgID, groupB)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_postings WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var daysAgoA, daysAgoB int
+	var foundA, foundB bool
+	for _, h := range history {
+		if h.ID == msgID {
+			if h.Groupid == groupA {
+				foundA = true
+				daysAgoA = h.Daysago
+			} else if h.Groupid == groupB {
+				foundB = true
+				daysAgoB = h.Daysago
+			}
+		}
+	}
+
+	assert.True(t, foundA, "should have a history entry for groupA")
+	assert.True(t, foundB, "should have a history entry for groupB")
+	// Group A posting was 5 days ago; Group B posting was 2 days ago.
+	// Each should use only ITS OWN group's posting date.
+	assert.GreaterOrEqual(t, daysAgoA, 4, "groupA arrival should reflect its 5-day-old posting")
+	assert.LessOrEqual(t, daysAgoA, 6, "groupA arrival should reflect its 5-day-old posting")
+	assert.GreaterOrEqual(t, daysAgoB, 1, "groupB arrival should reflect its 2-day-old posting")
+	assert.LessOrEqual(t, daysAgoB, 3, "groupB arrival should reflect its 2-day-old posting")
+}
