@@ -483,8 +483,8 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
 		"LEFT JOIN messages_postings mp ON mp.msgid = m.id "+
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection = ? "+
-		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED).Scan(&history)
+		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
+		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
 
 	now := time.Now()
 	for ix, h := range history {
