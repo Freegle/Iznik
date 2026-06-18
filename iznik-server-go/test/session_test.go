@@ -1560,6 +1560,40 @@ func TestWorkCountStoriesBasic(t *testing.T) {
 	assert.GreaterOrEqual(t, stories, float64(1), "Should count unreviewed story from group member")
 }
 
+// TestWorkCountPendingHeldPerGroup verifies the session badge splits held vs
+// unheld pending using the per-group messages_groups.heldby, not the global
+// messages.heldby. A message held on one group but unheld-pending on another must
+// count toward both 'pendingother' (held) and 'pending' (unheld).
+func TestWorkCountPendingHeldPerGroup(t *testing.T) {
+	prefix := uniquePrefix("wc_heldpg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Held per group badge', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	// Held on A, unheld on B. Both content-checked so the badge query counts them.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, ?, NOW())", msgID, groupA, holderID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID, groupB)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	work := getSessionWork(t, token)
+	// Held copy (A) → pendingother (blue); unheld copy (B) → pending (red).
+	// On the old global-heldby logic the A copy would have counted as unheld
+	// (messages.heldby is NULL here), so pendingother would miss it.
+	assert.GreaterOrEqual(t, work["pendingother"].(float64), float64(1), "held-on-A copy must count as pendingother")
+	assert.GreaterOrEqual(t, work["pending"].(float64), float64(1), "unheld-on-B copy must count as pending")
+}
+
 func TestWorkCountStoriesDateFilter(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_date")
 	db := database.DBConn

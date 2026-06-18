@@ -255,12 +255,10 @@ priority (full tasks in §H):
    for the same physical outcome. → H12.
 
 **Pre-Task-20 (must precede dropping `messages.heldby`)**
-3. **🔴 `session/session.go:1024` & `:1033`** — mod-queue badge held/unheld split reads
-   global `m.heldby`. Switch to `mg.heldby`. (Stats audit flagged 1033; 1024 is its pair.) → H6.
-4. **🔴 `group/groupWork.go:135`** — pending held/unheld split reads global `m.heldby`
-   (joined `messages`), not `mg.heldby`. Per-group hold is invisible here and it breaks at
-   Task 20. **Under-flagged by the stats audit** (marked SAFE for the GROUP BY, but the held
-   expression uses the global column). → H7.
+3. **✅ DONE (validated, not committed) — `session/session.go:1024` & `:1033`** now read
+   `mg.heldby` for the held/unheld badge split. → H6.
+4. **✅ DONE (validated, not committed) — `group/groupWork.go:135`** held-split now reads
+   `mg.heldby`, not the global `messages.heldby`. **Was under-flagged by the stats audit.** → H7.
 5. **🟡→remove `message/message.go:1799,2051,2084,2121`** — `messages.heldby` dual-writes,
    to be removed with Task 20. → H8.
 
@@ -475,13 +473,17 @@ Ordered by priority. Check off as completed.
 
 ### Pre-Task-20 (must precede dropping `messages.heldby`)
 
-- [ ] **H6.** `session/session.go:1024` & `:1033` — switch held/unheld badge counts from
-  `m.heldby` to `mg.heldby`.
-- [ ] **H7.** `group/groupWork.go:135` — switch the pending held-split expression from
-  `m.heldby` (global) to `mg.heldby` (per-group). Add a test for a message held on one of
-  two groups.
+- [x] **H6.** ✅ DONE (validated, not committed) — `session/session.go:1024` & `:1033` now
+  read `mg.heldby` (per-group) for the unheld/held pending badge split. The `messages m`
+  join stays (needed for `m.deleted`/`m.fromuser`). Test: `TestWorkCountPendingHeldPerGroup`
+  (`session_test.go`).
+- [x] **H7.** ✅ DONE (validated, not committed) — `group/groupWork.go:135` held-split now
+  reads `mg.heldby` (not the global `messages.heldby`). Updated `TestGetGroupWork_HeldPending`
+  to seed `messages_groups.heldby`; added `TestGetGroupWork_HeldPerGroup` (message held on
+  one of two groups shows held only there). Go suite 3195✓.
 - [ ] **H8.** Remove the `messages.heldby` dual-writes in `message/message.go:1799, 2051,
-  2084, 2121` as part of Task 20, after H6/H7 land and V1 is retired.
+  2084, 2121` as part of Task 20, after H6/H7 land and V1 is retired. *(Deferred — depends
+  on V1 retirement; not actionable now.)*
 
 ### Should-fix (consistency / correctness)
 
