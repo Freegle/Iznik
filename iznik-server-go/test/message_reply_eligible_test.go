@@ -48,10 +48,15 @@ func TestReplyEligibleReach(t *testing.T) {
 	db.Exec("INSERT INTO messages_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
 		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
+	db.Exec("DELETE FROM ripple_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "outside reach → replyeligible set") {
 		assert.False(t, *msgs[0].ReplyEligible, "outside reach → replyeligible=false")
 	}
+	// Q5 (§15): a reach-blocked view increments the reply-blocked-by-reach counter.
+	var blockedCount int
+	db.Raw("SELECT count FROM ripple_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()").Scan(&blockedCount)
+	assert.GreaterOrEqual(t, blockedCount, 1, "reply-blocked-by-reach event counted")
 
 	// 3) Reach row containing the viewer → eligible (nil).
 	db.Exec("UPDATE messages_reach SET polygon = "+
