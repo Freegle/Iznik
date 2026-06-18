@@ -293,9 +293,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      * Select a preferred group from a list, given the user's memberships.
      *
      * Prefer a group the user is a member of; fall back to the first group.
-     * Static so it can be used in both instance and static contexts.
+     * Static + public so it can be used in both instance and static contexts,
+     * including from UnifiedDigestService when scoping a per-post group.
      */
-    protected static function selectPreferredGroup(array $groups, array $userGroupIds): ?int
+    public static function selectPreferredGroup(array $groups, array $userGroupIds): ?int
     {
         if (empty($groups)) {
             return null;
@@ -781,10 +782,15 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $isOffer = $message->type === 'Offer';
 
         // Primary group name (friendly full name) + /explore link for the
-        // "Posted by … on <group>" byline.
+        // "Posted by … on <group>" byline. For a cross-post, prefer a group the
+        // recipient is a member of (matching the digest header/subject group)
+        // rather than an arbitrary first group.
         $groupName = null;
         $groupUrl = null;
-        $primaryGroupId = $postedToGroups[0] ?? null;
+        $primaryGroupId = self::selectPreferredGroup(
+            $postedToGroups,
+            $this->user->memberships->pluck('groupid')->all()
+        );
         if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
             $g = $this->groupLookup[$primaryGroupId];
             $groupName = $g->namefull ?: $g->nameshort;

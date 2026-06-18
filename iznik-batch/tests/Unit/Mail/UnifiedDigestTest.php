@@ -315,6 +315,33 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('/explore/'.$group->id, $target);
     }
 
+    public function test_byline_uses_recipients_group_for_cross_post(): void
+    {
+        // Recipient is a member of group B only; the post is cross-posted to A and
+        // B (A listed first). The "Posted on …" byline must name B — the group the
+        // recipient is actually in — not the arbitrary first group A.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Sofa (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $card = $ref->getValue($mail)->first();
+
+        $this->assertSame($groupB->namefull, $card['groupName'], 'byline should name the recipient\'s group');
+        $this->assertNotSame($groupA->namefull, $card['groupName']);
+    }
+
     public function test_cross_post_text_shown_for_multiple_groups(): void
     {
         $user = $this->createTestUser();

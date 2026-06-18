@@ -263,7 +263,7 @@ priority (full tasks in §H):
    to be removed with Task 20. → H8.
 
 **Should-fix — consistency (low stakes)**
-6. **🔴 Digest per-post byline / immediate sponsors use `postedToGroups[0]` (G3)** — should
+6. **✅ DONE (validated, not committed) — Digest per-post byline / immediate sponsors** now
    use the recipient-preferred group, matching the Task-27 header fix. → H9, H10.
 7. **🔴 Pagination cursor `message_list.go:570` (G4)** — reads an arbitrary group's arrival
    instead of the contextual group's; page boundaries can skip/repeat. → H11.
@@ -487,11 +487,13 @@ Ordered by priority. Check off as completed.
 
 ### Should-fix (consistency / correctness)
 
-- [ ] **H9.** Digest per-post byline `UnifiedDigest.php:787` — use the recipient-preferred
-  group instead of `postedToGroups[0]` (reuse `preferredGroupForPost()`). Add a test for a
-  cross-post where the recipient is in only one of the groups.
-- [ ] **H10.** Immediate-digest sponsors `UnifiedDigestService.php:795` — pick the
-  recipient-preferred group instead of `postedToGroups[0]`.
+- [x] **H9.** ✅ DONE (validated, not committed) — `UnifiedDigest::prepareCard()` byline +
+  `/explore` link now use `selectPreferredGroup(postedToGroups, recipient's groups)` instead
+  of `postedToGroups[0]`, so a cross-post's byline names the recipient's group (matching the
+  header/subject). Test: `test_byline_uses_recipients_group_for_cross_post`.
+- [x] **H10.** ✅ DONE (validated, not committed) — `UnifiedDigestService` immediate-mode
+  sponsors now scope to the recipient-preferred group via the same (now `public`)
+  `UnifiedDigest::selectPreferredGroup()`. Laravel 4240✓.
 - [ ] **H11.** Pagination cursor `message_list.go:570` — read the arrival of the same group
   the list ORDER BY used (the contextual group), not an arbitrary `LIMIT 1` group row.
 - [x] **H12. Deduplicate chase-up emails per item (G7a).** ✅ DONE (validated, not
