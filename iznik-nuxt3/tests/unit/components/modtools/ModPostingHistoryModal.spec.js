@@ -335,4 +335,71 @@ describe('ModPostingHistoryModal', () => {
       expect(wrapper.vm.messages.length).toBe(3)
     })
   })
+
+  describe('deduplication of reposted messages (Discourse 9672)', () => {
+    // The server SQL JOINs messages_postings without aggregation, producing one row
+    // per repost for each message.  This causes duplicate (id, groupid) pairs in
+    // messagehistory that must be deduplicated client-side.
+
+    const createUserWithReposts = () =>
+      createUser({
+        messagehistory: [
+          // message 201 appears twice in group 123 — simulates two messages_postings rows
+          {
+            id: 201,
+            subject: 'Offer: Sofa',
+            type: 'Offer',
+            arrival: '2024-01-10T10:00:00Z',
+            groupid: 123,
+            outcome: null,
+            repost: false,
+            autorepost: false,
+            collection: 'Approved',
+          },
+          {
+            id: 201,
+            subject: 'Offer: Sofa',
+            type: 'Offer',
+            arrival: '2024-02-10T10:00:00Z',
+            groupid: 123,
+            outcome: null,
+            repost: true,
+            autorepost: true,
+            collection: 'Approved',
+          },
+          // message 202 in a different group — unique
+          {
+            id: 202,
+            subject: 'Wanted: Table',
+            type: 'Wanted',
+            arrival: '2024-01-15T10:00:00Z',
+            groupid: 456,
+            outcome: null,
+            repost: false,
+            autorepost: false,
+            collection: 'Approved',
+          },
+        ],
+      })
+
+    it('deduplicates messages with same (id, groupid), keeping the entry with the latest arrival', async () => {
+      const wrapper = mountComponent({ user: createUserWithReposts() })
+      wrapper.vm.groupid = 123
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.messages.length).toBe(1)
+      expect(wrapper.vm.messages[0].arrival).toBe('2024-02-10T10:00:00Z')
+    })
+
+    it('reverting the group filter to all-groups shows the full deduplicated history', async () => {
+      const wrapper = mountComponent({ user: createUserWithReposts() })
+
+      wrapper.vm.groupid = 123
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.messages.length).toBe(1)
+
+      wrapper.vm.groupid = 0
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.messages.length).toBe(2)
+    })
+  })
 })

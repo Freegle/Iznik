@@ -10,7 +10,7 @@
         <NoticeMessage v-if="!messages.length" variant="info" class="mb-2">
           There are no posts to show.
         </NoticeMessage>
-        <ModGroupSelect v-model="groupid" modonly class="mb-2" />
+        <ModGroupSelect v-model="groupid" modonly :all="true" class="mb-2" />
         <b-row
           v-for="message in messages"
           :key="message.id"
@@ -105,17 +105,28 @@ const messages = computed(() => {
   let ret = []
 
   if (user.value && user.value.messagehistory) {
-    ret = user.value.messagehistory.filter((message) => {
-      return !props.type || props.type === message.type
-    })
+    // The server SQL JOINs messages_postings without aggregation, producing one row
+    // per repost entry per (message, group) pair.  Deduplicate by (id, groupid),
+    // keeping the entry with the latest arrival date (= most recent repost).
+    const seen = new Map()
+    for (const message of user.value.messagehistory) {
+      if (props.type && props.type !== message.type) continue
+      const key = `${message.id}-${message.groupid}`
+      const existing = seen.get(key)
+      if (!existing || new Date(message.arrival) > new Date(existing.arrival)) {
+        seen.set(key, message)
+      }
+    }
 
-    ret.forEach((message) => {
+    // Spread into plain copies so we never mutate reactive store objects.
+    ret = Array.from(seen.values()).map((message) => {
       const group = groupStore.get(message.groupid)
-      if (group) {
-        message.groupname = group.namedisplay
-      } else {
-        message.groupname = '#' + message.groupid
+      if (!group) {
         groupStore.fetch(message.groupid)
+      }
+      return {
+        ...message,
+        groupname: group ? group.namedisplay : '#' + message.groupid,
       }
     })
 
