@@ -1952,6 +1952,15 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 // Errors are ignored on purpose: until the reach engine (PR A) is live there is no
 // rippling_reach table/row to clip, in which case this is a harmless no-op.
 func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
+	// Record the rejected group BEFORE clipping the polygon, so the expander
+	// (ExpandService::advanceDue) re-subtracts it on every tick — otherwise the next tick
+	// overwrites `polygon` from the cached schedule and silently undoes this rejection.
+	// Dedup the id; ignored (best-effort) if the rejected_groups column is not present yet.
+	db.Exec("UPDATE rippling_reach "+
+		"SET rejected_groups = JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?) "+
+		"WHERE msgid = ? AND (rejected_groups IS NULL "+
+		"OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)", gid, msgid, gid)
+
 	// Trim where the reach extends beyond the rejected group (skip the wholly-within
 	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
 	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+

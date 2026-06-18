@@ -51,8 +51,10 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 	db := database.DBConn
 
 	// Self-sufficient: rippling_reach belongs to PR A (merges before #772). Create a
-	// minimal stand-in so this test runs in isolation off master.
-	db.Exec("CREATE TABLE IF NOT EXISTS rippling_reach (msgid BIGINT UNSIGNED PRIMARY KEY, polygon GEOMETRY NOT NULL SRID 3857)")
+	// minimal stand-in so this test runs in isolation off master. rejected_groups records
+	// the clip so the expander can re-apply it each tick (added by the additive migration).
+	db.Exec("CREATE TABLE IF NOT EXISTS rippling_reach (msgid BIGINT UNSIGNED PRIMARY KEY, polygon GEOMETRY NOT NULL SRID 3857, rejected_groups JSON NULL)")
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN rejected_groups JSON NULL")
 
 	prefix := uniquePrefix("clipreach")
 	userID := CreateTestUser(t, prefix, "User")
@@ -84,6 +86,18 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 
 	assert.Equal(t, 0, covers("0.1", "51.5"), "rejected secondary group's area is clipped out of the reach")
 	assert.Equal(t, 1, covers("-0.1", "51.5"), "origin area is still covered after the clip")
+
+	// The rejected group is persisted so the expander re-applies the clip on each tick
+	// (otherwise advanceDue overwrites polygon from the cached schedule and undoes it).
+	var recorded int
+	db.Raw("SELECT JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) FROM rippling_reach WHERE msgid = ?", group2, mid).Scan(&recorded)
+	assert.Equal(t, 1, recorded, "rejected group id is recorded in rejected_groups for tick re-clipping")
+
+	// Re-clipping is idempotent: a second rejection of the same group does not duplicate it.
+	message.ClipReachForRejectedGroup(db, mid, group2)
+	var n int
+	db.Raw("SELECT JSON_LENGTH(rejected_groups) FROM rippling_reach WHERE msgid = ?", mid).Scan(&n)
+	assert.Equal(t, 1, n, "the same rejected group is not appended twice")
 }
 
 // RecordRippleEvent upserts a per-day counter (§15/§16 instrumentation), used here for the
