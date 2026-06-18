@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * The rippling-out reach engine.
  *
- * Maintains one messages_reach row per active post (the subset of
+ * Maintains one rippling_reach row per active post (the subset of
  * messages_spatial — the browsable, approved, not-taken set), advancing each
  * post's reach polygon over wall-clock time per the hazard schedule. Runs in the
  * existing batch container and computes reach via the routing server (see
@@ -54,7 +54,7 @@ class ExpandService
     private function removeStale(bool $dryRun): int
     {
         if ($dryRun) {
-            return (int) DB::table('messages_reach as mr')
+            return (int) DB::table('rippling_reach as mr')
                 ->whereNotExists(function ($q) {
                     $q->select(DB::raw(1))
                         ->from('messages_spatial as ms')
@@ -66,7 +66,7 @@ class ExpandService
         // deleted (a separate COUNT then DELETE can drift — messages:update-spatial-index
         // mutates messages_spatial concurrently).
         DB::statement(
-            'DELETE mr FROM messages_reach mr
+            'DELETE mr FROM rippling_reach mr
              LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
              WHERE ms.msgid IS NULL'
         );
@@ -82,7 +82,7 @@ class ExpandService
                     ANY_VALUE(ST_X(ms.point)) AS lng,
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
-             LEFT JOIN messages_reach mr ON mr.msgid = ms.msgid
+             LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
              WHERE mr.msgid IS NULL
              GROUP BY ms.msgid
              LIMIT ?',
@@ -125,7 +125,7 @@ class ExpandService
 
                 if (!$dryRun) {
                     DB::statement(
-                        'INSERT INTO messages_reach
+                        'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, next_expansion_at, status,
                             created_at, updated_at)
@@ -151,7 +151,7 @@ class ExpandService
 
     private function advanceDue(bool $dryRun, int $limit, array &$stats): void
     {
-        $rows = DB::table('messages_reach')
+        $rows = DB::table('rippling_reach')
             ->where('status', 'expanding')
             ->whereNotNull('next_expansion_at')
             ->where('next_expansion_at', '<=', now())
@@ -181,7 +181,7 @@ class ExpandService
                     // Not actually due for a new tick yet — reschedule and move on.
                     if (!$dryRun) {
                         $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
-                        DB::table('messages_reach')->where('msgid', $row->msgid)->update([
+                        DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
                             'next_expansion_at' => $next,
                             'status' => $next === null ? 'done' : 'expanding',
                             'updated_at' => now(),
@@ -201,7 +201,7 @@ class ExpandService
 
                 if (!$dryRun) {
                     DB::statement(
-                        'UPDATE messages_reach
+                        'UPDATE rippling_reach
                          SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?',
