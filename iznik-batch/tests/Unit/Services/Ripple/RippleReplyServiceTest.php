@@ -154,4 +154,24 @@ class RippleReplyServiceTest extends TestCase
         $this->assertSame(1, (int) $sys->processingsuccessful);
         $this->assertNotEquals($cmid, $sys->id, 'the notice is a new message, not the held reply');
     }
+
+    public function test_held_reply_state_transitions_are_counted(): void
+    {
+        // #3 / §15 instrumentation: hold → 'held', release → 'released', markGone → 'taken_gone'.
+        DB::table('ripple_event_metrics')->whereIn('event', ['held', 'released', 'taken_gone'])->delete();
+        $count = fn ($e) => (int) DB::table('ripple_event_metrics')
+            ->where('day', now()->toDateString())->where('event', $e)->value('count');
+
+        $msgid = $this->seedReachedPost();
+        $this->seedHeldReply($msgid, self::OUTSIDE);   // hold()
+        $this->assertSame(1, $count('held'), 'hold counted');
+
+        $this->service()->releaseAll($msgid);          // release()
+        $this->assertSame(1, $count('released'), 'release counted');
+
+        $msgid2 = $this->seedReachedPost();
+        $this->seedHeldReply($msgid2, self::OUTSIDE);
+        $this->service()->markGone($msgid2);           // taken-gone
+        $this->assertSame(1, $count('taken_gone'), 'taken-gone counted');
+    }
 }

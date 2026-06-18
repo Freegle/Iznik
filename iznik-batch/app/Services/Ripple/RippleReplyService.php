@@ -78,7 +78,7 @@ class RippleReplyService
      */
     public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng): int
     {
-        return (int) DB::table('chat_messages_rippling')->insertGetId([
+        $id = (int) DB::table('chat_messages_rippling')->insertGetId([
             'chatid' => $chatid,
             'chatmsgid' => $chatmsgid,
             'msgid' => $msgid,
@@ -88,6 +88,27 @@ class RippleReplyService
             'status' => 'held',
             'created_at' => now(),
         ]);
+        $this->recordEvent('held');
+
+        return $id;
+    }
+
+    /**
+     * Bump the per-day counter for a held-reply state transition (#3 / §15 instrumentation),
+     * surfaced read-only in sysadmin. Best-effort: errors are swallowed so instrumentation
+     * never blocks the hold/release path.
+     */
+    private function recordEvent(string $event): void
+    {
+        try {
+            DB::statement(
+                'INSERT INTO ripple_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) '
+                . 'ON DUPLICATE KEY UPDATE count = count + 1',
+                [$event]
+            );
+        } catch (\Throwable $e) {
+            Log::warning("ripple: recordEvent({$event}) failed: {$e->getMessage()}");
+        }
     }
 
     /**
@@ -157,6 +178,7 @@ class RippleReplyService
                 'status' => 'taken-gone',
                 'releasedat' => now(),
             ]);
+            $this->recordEvent('taken_gone');
             $this->notifyReplierGone($row);
         }
 
@@ -213,6 +235,7 @@ class RippleReplyService
             'status' => 'released',
             'releasedat' => now(),
         ]);
+        $this->recordEvent('released');
     }
 
     private function hasReach(int $msgid): bool
