@@ -245,10 +245,11 @@ intentional/legacy fallback (🟡), or V1-retired (⚪). The genuinely-outstandi
 priority (full tasks in §H):
 
 **Critical — user-visible correctness**
-1. **🔴 Spatial index is single-group (G1).** `messages_spatial` has `UNIQUE(msgid)`, so a
-   cross-posted message is indexed under only one group and is invisible in browse/map/
-   search on the others; the bulk reconciler also flip-flops it between groups. Needs schema
-   + both writers + reconciler + read-side dedup. **Not covered by any prior task.** → H1–H5.
+1. **✅ DONE (validated, not committed) — Spatial index is now per-group (G1).**
+   `messages_spatial` was `UNIQUE(msgid)`, so a cross-posted message was indexed under only
+   one group and invisible in browse/map/search on the others (and the reconciler
+   flip-flopped it between groups). Fixed across schema + both writers + reconciler +
+   read-side dedup + the spatial-go index. → H1–H5.
 2. **🔴 Chase-up emails double-send for cross-posts (G7a).** `ChaseUpService` evaluates
    chase-up eligibility per group, so a cross-posted item emails the poster once per group
    for the same physical outcome. → H12.
@@ -294,9 +295,9 @@ Every item originally flagged 🔵 has been investigated; see **§G** for the fu
 
 Each flagged item was opened and traced. Conclusions:
 
-### G1. 🔴 **MAJOR — Spatial index is single-group per message** (browse / map / search visibility)
+### G1. ✅ **FIXED (validated, not committed) — Spatial index was single-group per message** (browse / map / search visibility)
 
-**This is the most significant finding and is not covered by any existing task.**
+**This was the most significant finding and was not covered by any prior task. Implemented in H1–H5.**
 
 - `messages_spatial` has a **`UNIQUE(msgid)`** key
   (`iznik-batch/database/migrations/2025_12_10_094529_create_messages_spatial_table.php:21`)
@@ -443,20 +444,34 @@ collection.
 
 Ordered by priority. Check off as completed.
 
-### Critical (correctness — user-visible bugs)
+### Critical (correctness — user-visible bugs) — ✅ DONE (validated; not yet committed)
 
-- [ ] **H1. Make the spatial index per-group (G1).** Schema migration changing
-  `messages_spatial` unique key `msgid` → `(msgid, groupid)`.
-- [ ] **H2.** Update Go writer `addApprovedMessageToSpatialIndex`
-  (`message/message.go:1730–1766`) to insert one row per approved group.
-- [ ] **H3.** Update Laravel `MessageSpatialService::addApprovedMessage()` and
-  `upsertRecentMessages()` to write/maintain one row per (msgid, groupid); fix the
-  change-detection WHERE (line 66) and delete/remove logic so multi-group rows don't
-  flip-flop.
-- [ ] **H4.** Add `GROUP BY msgid` / `DISTINCT` dedup to spatial reads:
-  `message/groups.go`, `message/bounds.go`, `message/search.go` — so a user in multiple of
-  a post's groups sees it once. Add a multi-group test.
-- [ ] **H5.** Verify `iznik-spatial-go` consumes per-group spatial rows correctly.
+> Go suite 3193✓ and Laravel suite 4238✓ (incl. 4 new tests); migration verified on a
+> fresh test DB. **spatial-go (H5) not locally runnable** — additive `GROUP BY ms.msgid`
+> consistent with `search.go`; CI runs the spatial-go suite separately.
+
+- [x] **H1. Make the spatial index per-group (G1).** New migration
+  [2026_06_17_000001_make_messages_spatial_per_group.php](../iznik-batch/database/migrations/2026_06_17_000001_make_messages_spatial_per_group.php)
+  swaps `UNIQUE(msgid)` → `UNIQUE(msgid, groupid)`, dropping/re-adding the msgid FK and
+  detecting the old single-column unique by shape (name-agnostic; aliases the
+  `information_schema` column to dodge a server-dependent column-case bug).
+- [x] **H2.** `addApprovedMessageToSpatialIndex`
+  ([message/message.go](../iznik-server-go/message/message.go)) now loops all approved
+  groups and inserts one row each (removed `ORDER BY arrival DESC LIMIT 1`).
+- [x] **H3.** `MessageSpatialService` ([app/Services/MessageSpatialService.php](../iznik-batch/app/Services/MessageSpatialService.php)):
+  `upsertRecentMessages()` and `addApprovedMessage()` write one row per (msgid, groupid);
+  change-detection joins on **both** msgid and groupid (removed the `groupid != groupid`
+  flip-flop clause); `removeOldMessages()`/`removeNonApprovedMessages()` are per-group
+  (incl. orphaned / soft-deleted group rows); new `spatialAdminRemoveIfGone()` only evicts
+  a msgid from the external server once **no** group rows remain.
+- [x] **H4.** `ROW_NUMBER() OVER (PARTITION BY id …)` dedup wrapper added to
+  [groups.go](../iznik-server-go/message/groups.go) and [bounds.go](../iznik-server-go/message/bounds.go);
+  [search.go](../iznik-server-go/message/search.go) uses `COUNT(DISTINCT messages_index.wordid)`
+  so per-group rows don't inflate relevance. Tests: `TestMyGroupsDedupsMultiGroup`,
+  `TestBoundsDedupsMultiGroup`, plus two `MessageSpatialServiceTest` reconciler tests.
+- [x] **H5.** [dataset_messages.go](../iznik-spatial-go/dataset_messages.go) load + delta
+  queries `GROUP BY ms.msgid` (with `MAX()` for promised/successful) so the per-message
+  point index stays one item per msgid (avoids R-tree orphan churn from duplicate extids).
 
 ### Pre-Task-20 (must precede dropping `messages.heldby`)
 

@@ -1727,20 +1727,24 @@ func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid 
 	}
 }
 
-// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial row for a
+// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial rows for a
 // message that has just become Approved, so it appears in browse/search immediately
 // instead of waiting for the every-5-minute reconciler (MessageSpatialService).
 // messages_spatial backs the public browse/map, so it must only contain Approved
 // messages with a location — Pending/Spam/Rejected must never be added here. The
 // query re-checks collection=Approved so this is a safe no-op if called otherwise.
+//
+// messages_spatial is keyed on (msgid, groupid): a cross-posted message gets one row
+// per group it is approved on, so it shows in browse/search on each of those groups.
 func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
-	var row struct {
+	type spatialRow struct {
 		Lat     float64
 		Lng     float64
 		Msgtype string
 		Groupid uint64
 		Arrival string
 	}
+	var rows []spatialRow
 	db.Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
 		"messages_groups.groupid AS groupid, "+
 		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
@@ -1750,19 +1754,21 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 		"WHERE messages.id = ? AND messages_groups.collection = ? "+
 		"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
 		"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
-		"AND messages_outcomes.id IS NULL "+
-		"ORDER BY messages_groups.arrival DESC LIMIT 1",
-		msgid, utils.COLLECTION_APPROVED).Scan(&row)
+		"AND messages_outcomes.id IS NULL",
+		msgid, utils.COLLECTION_APPROVED).Scan(&rows)
 
-	if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
-		return
+	for _, row := range rows {
+		if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
+			continue
+		}
+
+		// groupid is part of the unique key, so it is never updated on conflict.
+		db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
+			"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE point = VALUES(point), "+
+			"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
+			msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
 	}
-
-	db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
-		"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), "+
-		"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
-		msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
 }
 
 // handleApprove approves a pending message.

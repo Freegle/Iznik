@@ -136,7 +136,7 @@ func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, 
 		bf = bf + " AND "
 	}
 
-	sql := "SELECT COUNT(*) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 		"INNER JOIN words ON messages_index.wordid = words.id " +
 		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 		"WHERE " +
@@ -177,7 +177,7 @@ func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, m
 			bf = bf + " AND "
 		}
 
-		sql := "SELECT COUNT(*) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 			"INNER JOIN words ON messages_index.wordid = words.id " +
 			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 			"WHERE (" + bf
@@ -211,7 +211,7 @@ func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64,
 	var res []SearchResult
 
 	if len(words) > 0 {
-		sql := "SELECT COUNT(*) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 			"INNER JOIN words ON messages_index.wordid = words.id " +
 			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 			"WHERE "
@@ -253,7 +253,7 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 	var res []SearchResult
 
 	if len(words) > 0 {
-		sql := "SELECT COUNT(*) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 			"INNER JOIN words ON messages_index.wordid = words.id " +
 			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 			"WHERE "

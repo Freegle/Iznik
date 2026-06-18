@@ -120,6 +120,43 @@ func TestBounds(t *testing.T) {
 	assert.Equal(t, len(msgs), 0)
 }
 
+// TestBoundsDedupsMultiGroup verifies that a message cross-posted to two groups
+// shows as a single pin on the public map, even though messages_spatial now holds
+// one row per group (both within the viewport).
+func TestBoundsDedupsMultiGroup(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("bounds_dedup")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupA, "Member")
+
+	lat, lng := 55.9533, -3.1883
+	msgID := CreateTestMessage(t, userID, groupA, "Test MultiGroup Bounds Item", lat, lng)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 0, ?, NOW(), 'Offer')", utils.SRID),
+		msgID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupB)
+
+	// Logged out: only the spatial subquery contributes, so a missing dedup would
+	// surface the message twice (one row per group).
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/inbounds?swlat=55&swlng=-3.5&nelat=56&nelng=-3", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "cross-posted message should appear once on the map, not once per group")
+}
+
 func TestMyGroups(t *testing.T) {
 	// Get logged out - should return 401
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups", nil))
@@ -141,6 +178,48 @@ func TestMyGroups(t *testing.T) {
 	var msgs []message.MessageSummary
 	json2.Unmarshal(rsp(resp), &msgs)
 	// We expect at least some messages (could be from other tests too)
+}
+
+// TestMyGroupsDedupsMultiGroup verifies that a message cross-posted to two groups
+// the viewer is a member of appears exactly once in the mygroups browse, even
+// though messages_spatial now holds one row per group.
+func TestMyGroupsDedupsMultiGroup(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("mygroups_dedup")
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	CreateTestMembership(t, viewerID, groupA, "Member")
+	CreateTestMembership(t, viewerID, groupB, "Member")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+
+	// Message posted on group A (CreateTestMessage adds the messages_groups +
+	// messages_spatial rows for A), then cross-posted to group B.
+	lat, lng := 55.9533, -3.1883
+	msgID := CreateTestMessage(t, posterID, groupA, "Test MultiGroup MyGroups Item", lat, lng)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 0, ?, NOW(), 'Offer')", utils.SRID),
+		msgID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupB)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "cross-posted message should appear exactly once in mygroups, not once per group")
 }
 
 func TestMessagesByUser(t *testing.T) {

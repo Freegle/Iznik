@@ -45,8 +45,12 @@ func Bounds(c *fiber.Ctx) error {
 	// hasn't made it into messages_spatial yet.
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
+	// messages_spatial is per-group, so a message on several groups within the
+	// viewport appears once per group; the ROW_NUMBER() wrapper collapses it to a
+	// single pin (its most relevant: unseen first, then newest arrival).
 	db.Raw(""+
-		"SELECT * FROM ("+
+		"SELECT lat, lng, id, successful, promised, groupid, type, arrival, unseen FROM ("+
+		"SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.id ORDER BY t.unseen DESC, t.arrival DESC) AS rn FROM ("+
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
 		"messages_spatial.msgid AS id, "+
@@ -79,7 +83,7 @@ func Bounds(c *fiber.Ctx) error {
 		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
 		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"AND messages_outcomes.id IS NULL "+
-		") t "+
+		") t) d WHERE d.rn = 1 "+
 		"ORDER BY unseen DESC, arrival DESC, id DESC "+
 		limitq+";",
 		myid, utils.MESSAGE_LIKES_VIEW,
