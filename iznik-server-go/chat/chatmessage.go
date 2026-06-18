@@ -366,6 +366,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// Rippling-out reply gate (#5): an in-app reply to a post (CHAT_MESSAGE_INTERESTED) the
+	// viewer can see but whose reach has not yet reached them (replyeligible=false in the read
+	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
+	// or modified client, or a ?reply= deep link. Mirror the read-path reply-eligibility check:
+	// a rippling_reach row exists for the post and does NOT contain the replier's location.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+		latlng := user.GetLatLng(myid)
+		if latlng.Lat != 0 || latlng.Lng != 0 {
+			var blocked int
+			// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
+			if err := db.Raw("SELECT COUNT(*) FROM rippling_reach WHERE msgid = ? "+
+				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+				*payload.Refmsgid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error; err == nil && blocked > 0 {
+				return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+			}
+		}
+	}
+
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
 	payload.Userid = myid

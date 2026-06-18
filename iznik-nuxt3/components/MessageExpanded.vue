@@ -585,6 +585,7 @@ import {
   defineAsyncComponent,
   onMounted,
   onUnmounted,
+  watch,
 } from 'vue'
 import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
@@ -928,10 +929,20 @@ onMounted(() => {
 
   // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
   // chat-style reply pane straight away so they don't need to click Reply
-  // again. The pane fetches its own message data and gates its own render,
-  // so this is safe to call unconditionally.
+  // again — but NOT when the post is reach-blocked for them (rippling-out #5),
+  // or the deep link would bypass the reply gate. message may still be loading,
+  // so wait for it before deciding. (ChatReplyPane also gates its own composer.)
   if (useRoute().query.reply) {
-    expandReply()
+    if (message.value) {
+      if (!reachBlocked.value) expandReply()
+    } else {
+      const stop = watch(message, (m) => {
+        if (m) {
+          stop()
+          if (!reachBlocked.value) expandReply()
+        }
+      })
+    }
   }
 })
 
