@@ -598,6 +598,38 @@ message threaded through each layer:
 
 ---
 
+## J. Reconciliation with old branch `feature/multi-group-messages` (2026-06-18)
+
+The stale in-progress branch `origin/feature/multi-group-messages` (23 commits, tip
+`e9d132d01`, merge-base `4bfe8844a`) was audited file-by-file against this branch
+(`messages-multiple-messages`/`messages-multiple-groups`). **Result: fully superseded —
+nothing outstanding.**
+
+Verification method: for every code file they touched, their added lines were grepped
+against our version; their Go `func Test*` names and Vue/JS `it()/describe()` titles were
+diffed against ours. All present.
+
+- **Identical in ours:** `TnDedupCommand` (+ test + `TN_DEDUP_ENABLED` guard in
+  `config/freegle.php`), the `2026_04_14_000001/000002` per-group column migrations,
+  `messages_groups` heldby/spamtype/spamreason columns, `resolveAuthorizedGroups`
+  cross-group bypass guard, per-group Hold/Release/Delete/Spam/BackToPending,
+  `COUNT(DISTINCT)` dashboard counts, ModTools multi-group indicator + contextual-groupid
+  plumbing, non-mod components, message-report-to-shared-group, digest dedup.
+- **All their tests present** — every Go test func and every Vue/JS spec case from their
+  branch exists in ours (ours adds many more).
+- **Ours is strictly better in 3 places:**
+  1. `microvolunteering.go sendForReview` — theirs wrote `spamreason` to ALL groups
+     (`WHERE msgid = ?`); ours scopes it `WHERE msgid = ? AND groupid = ? AND collection = ?`.
+  2. CI orb `Determine changed paths` — theirs improved path-filtering via merge-base; ours
+     removed path-filtering entirely (Coveralls-carryforward fix), making theirs moot.
+  3. Ours additionally has the spatial-per-group (H1–H5), chase-up dedup (H12), digest
+     preferred-group (H9/H10), pagination `MAX(arrival)` (H11), and per-group held-count
+     (H6/H7) work the old branch never contained.
+
+**No action items added — the old branch can be deleted once this branch merges.**
+
+---
+
 ## Search commands used (for reproducibility)
 
 ```bash
