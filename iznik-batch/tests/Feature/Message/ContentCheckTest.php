@@ -1440,6 +1440,71 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result, 'Subject older than 7 days should not be flagged');
     }
 
+    public function test_subject_repeat_not_flagged_for_short_item_name_test_post(): void
+    {
+        // Regression: "Offer: Test" is 11 chars and was NOT skipped by the < 10 guard,
+        // so common test-post subjects accumulated across many groups and falsely flagged
+        // legitimate mod/tester posts. V1 parity: use the item name ("Test" = 4 chars)
+        // for the length guard, not the full subject. See Discourse 9788/28.
+        $subject = 'Offer: Test';
+
+        // Simulate 30 prior posts with the same subject from different groups (as happens
+        // when many mods routinely post "Offer: Test" messages to their own groups).
+        $groups = [];
+        for ($i = 0; $i < 30; $i++) {
+            $groups[] = $this->createTestGroup();
+        }
+
+        $priorUser = $this->createTestUser();
+        $priorMsgId = DB::table('messages')->insertGetId([
+            'fromuser' => $priorUser->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Test',
+            'message'  => 'Test',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        foreach ($groups as $group) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $priorMsgId,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        // A new mod now posts "Offer: Test" — with item name "Test" (< 10 chars).
+        // V1 would skip the subject-repeat check (item name "Test" < 10 chars);
+        // the regression caused it to NOT skip and falsely flag.
+        $newUser = $this->createTestUser();
+        $newGroup = $this->createTestGroup();
+        $newMsgId = DB::table('messages')->insertGetId([
+            'fromuser' => $newUser->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Test',
+            'message'  => 'Test',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $newMsgId,
+            'groupid'    => $newGroup->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $result = $this->service->checkSubjectRepeat($subject, $newMsgId, 'Test');
+
+        $this->assertNull($result, 'Short item name "Test" should not trigger subject-repeat flag even when 30+ prior posts exist');
+    }
+
     // -------------------------------------------------------------------------
     // checkKnownSpammer — flag messages containing spammer email (V1 parity)
     // -------------------------------------------------------------------------
