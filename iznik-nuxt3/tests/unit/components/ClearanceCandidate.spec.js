@@ -10,15 +10,13 @@ vi.mock('~/stores/message', () => ({
 }))
 vi.mock('~/stores/user', () => ({
   useUserStore: () => ({
-    byId: (id) => (id === 7 ? { displayname: 'Sam' } : null),
+    byId: (id) => {
+      if (id === 7) return { displayname: 'Sam' } // no ratings
+      if (id === 8)
+        return { displayname: 'Pat', info: { ratings: { Up: 5, Down: 1 } } }
+      return null
+    },
   }),
-}))
-vi.mock('~/components/UserRatings', () => ({
-  default: {
-    name: 'UserRatings',
-    template: '<span class="ur-stub" />',
-    props: ['id'],
-  },
 }))
 
 import ClearanceCandidate from '~/components/ClearanceCandidate.vue'
@@ -43,6 +41,17 @@ describe('ClearanceCandidate', () => {
     expect(known.vm.displayName).toBe('Sam')
     const unknown = mountRow({ userid: 99, quantity: 1, state: 'Interested' })
     expect(unknown.vm.displayName).toBe('Freegler')
+  })
+
+  it('shows a read-only reputation only when the freegler has ratings', () => {
+    // User 7 has no ratings → no clutter.
+    const none = mountRow({ userid: 7, quantity: 1, state: 'Interested' })
+    expect(none.vm.reputation).toBeNull()
+    expect(none.find('[data-testid="reputation"]').exists()).toBe(false)
+    // User 8 has thumbs → compact read-only reputation shown.
+    const rated = mountRow({ userid: 8, quantity: 1, state: 'Interested' })
+    expect(rated.vm.reputation).toMatchObject({ up: 5, down: 1 })
+    expect(rated.find('[data-testid="reputation"]').exists()).toBe(true)
   })
 
   it('offers allocate/decline for an interested candidate', () => {

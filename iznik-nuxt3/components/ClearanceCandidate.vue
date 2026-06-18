@@ -6,11 +6,23 @@
   >
     <div class="clearance-candidate__who">
       <span class="clearance-candidate__name">{{ displayName }}</span>
-      <UserRatings
-        v-if="interest.userid"
-        :id="interest.userid"
-        class="clearance-candidate__ratings"
-      />
+      <!-- Read-only reputation: only shown when the freegler actually has
+           ratings, so a clearance of new repliers isn't cluttered with "0"s.
+           The offerer shouldn't be rating people from here, so it's not
+           interactive (unlike the full UserRatings widget). -->
+      <span
+        v-if="reputation"
+        class="clearance-candidate__rep small"
+        :title="reputation.title"
+        data-testid="reputation"
+      >
+        <span v-if="reputation.up" class="text-success me-1">
+          <v-icon icon="thumbs-up" /> {{ reputation.up }}
+        </span>
+        <span v-if="reputation.down" class="text-danger">
+          <v-icon icon="thumbs-down" /> {{ reputation.down }}
+        </span>
+      </span>
     </div>
 
     <div class="clearance-candidate__detail small text-muted">
@@ -67,7 +79,6 @@
 import { ref, computed } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
-import UserRatings from '~/components/UserRatings'
 import {
   clearanceStateLabel,
   clearanceStateVariant,
@@ -97,6 +108,18 @@ const busy = ref(false)
 const displayName = computed(
   () => userStore.byId(props.interest.userid)?.displayname || 'Freegler'
 )
+
+// Compact, read-only reputation from the user's rating counts. Null when the
+// freegler has no thumbs either way, so new repliers don't show "0 / 0".
+const reputation = computed(() => {
+  const r = userStore.byId(props.interest.userid)?.info?.ratings
+  if (!r || (!r.Up && !r.Down)) return null
+  return {
+    up: r.Up || 0,
+    down: r.Down || 0,
+    title: `${r.Up || 0} thumbs up, ${r.Down || 0} down`,
+  }
+})
 const stateLabel = computed(() => clearanceStateLabel(props.interest.state))
 const stateVariant = computed(() => clearanceStateVariant(props.interest.state))
 const actions = computed(() => clearanceActions(props.interest.state))
@@ -166,10 +189,35 @@ defineExpose({ setState, actions, displayName, inactive, busy })
   flex: 0 0 auto;
 }
 
+.clearance-candidate__rep {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .clearance-candidate__actions {
   flex: 1 1 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* On a phone the name | detail | badges | actions don't fit on one row, which
+   truncated names to "Jane Sm…". Stack each part full-width so names read in
+   full and the actions sit left-aligned under them. */
+@media (max-width: 575.98px) {
+  .clearance-candidate__who,
+  .clearance-candidate__detail,
+  .clearance-candidate__badges,
+  .clearance-candidate__actions {
+    flex-basis: 100%;
+  }
+
+  .clearance-candidate__name {
+    white-space: normal;
+  }
+
+  .clearance-candidate__actions {
+    justify-content: flex-start;
+  }
 }
 </style>
