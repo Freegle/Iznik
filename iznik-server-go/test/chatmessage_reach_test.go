@@ -22,8 +22,17 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reachreply")
 
-	// Self-sufficient: rippling_reach belongs to PR A (merges before PR E).
-	db.Exec("CREATE TABLE IF NOT EXISTS rippling_reach (msgid BIGINT UNSIGNED PRIMARY KEY, polygon GEOMETRY NOT NULL SRID 3857)")
+	// Self-sufficient: rippling_reach belongs to PR A (merges before PR E). Use the SAME
+	// stand-in schema as the other reach tests (isochrone_reach_test, message_reply_eligible_test)
+	// — Go tests share one DB with CREATE TABLE IF NOT EXISTS, so a narrower schema here would
+	// break their lat/lng/status inserts (whichever test runs first wins the table).
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
@@ -35,8 +44,8 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach reply test item", 51.5, -0.1)
 
-	// Reach exists but does NOT cover the replier (far to the east).
-	db.Exec("INSERT INTO rippling_reach (msgid, polygon) VALUES (?, ST_GeomFromText("+
+	// Reach exists but does NOT cover the replier (far to the east). lat/lng are NOT NULL.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
 		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857))", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
