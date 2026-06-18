@@ -11,7 +11,7 @@ class ExpandCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        DB::statement('DELETE FROM messages_reach');
+        DB::statement('DELETE FROM rippling_reach');
         DB::statement('DELETE FROM messages_spatial');
     }
 

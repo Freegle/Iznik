@@ -297,7 +297,7 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertTrue($present(), 'message is selectable when nothing is held');
 
         // A non-released rippling row → the delivery gate excludes the message.
-        $rowId = (int) DB::table('chat_messages_rippling')->insertGetId([
+        $rowId = (int) DB::table('rippling_held_replies')->insertGetId([
             'chatid' => $room->id,
             'chatmsgid' => $msg->id,
             'msgid' => $post->id,
@@ -310,7 +310,7 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertFalse($present(), 'held reply is gated out of the email selection');
 
         // Released → the gate no longer matches, so the message is selectable again.
-        DB::table('chat_messages_rippling')->where('id', $rowId)->update(['status' => 'released']);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['status' => 'released']);
         $this->assertTrue($present(), 'released reply is delivered (selectable) again');
     }
 

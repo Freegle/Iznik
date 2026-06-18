@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
  * reach?" — the single gate shared by browse "Nearby" (#1), reply-eligibility
  * (#2) and held-reply release (#3).
  *
- * Uses the SRID-3857 convention of messages_reach.polygon / messages_spatial.point
+ * Uses the SRID-3857 convention of rippling_reach.polygon / messages_spatial.point
  * (lng/lat degrees under an SRID-3857 label), so points are built the same way the
  * Go API builds them: ST_SRID(POINT(lng, lat), 3857).
  */
@@ -26,7 +26,7 @@ class ReachQueryService
         try {
             $row = DB::selectOne(
                 'SELECT EXISTS(
-                    SELECT 1 FROM messages_reach
+                    SELECT 1 FROM rippling_reach
                     WHERE msgid = ?
                       AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
                  ) AS within',
@@ -35,7 +35,7 @@ class ReachQueryService
 
             return (bool) ($row->within ?? 0);
         } catch (\Throwable $e) {
-            // messages_reach is created by the reach engine (PR A). Until that is
+            // rippling_reach is created by the reach engine (PR A). Until that is
             // deployed the table may be absent — fail open ("not within reach") so
             // callers degrade safely instead of throwing.
             return false;

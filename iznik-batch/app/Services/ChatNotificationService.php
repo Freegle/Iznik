@@ -136,7 +136,7 @@ class ChatNotificationService
 
         // Rippling-out held replies (#3): an external reply held because the post hasn't
         // yet rippled to the replier's area must not be emailed to the poster. Enforced via
-        // the chat_messages_rippling delivery gate — NOT chat_messages.reviewrequired (that
+        // the rippling_held_replies delivery gate — NOT chat_messages.reviewrequired (that
         // bit is shared with the spam/mod hold). Until any reply is held the table is empty,
         // so the gate is always true and nothing changes.
         $query->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'));

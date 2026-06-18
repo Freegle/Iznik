@@ -1,4 +1,4 @@
--- Idempotent production SQL for 2026_06_16_000003_create_chat_messages_rippling_table.php
+-- Idempotent production SQL for 2026_06_16_000003_create_rippling_held_replies_table.php
 --
 -- External (email / TrashNothing) replies held because the post hasn't yet
 -- rippled to the replier's location (PR C / #3). Named _rippling, NOT _held — a
@@ -7,7 +7,7 @@
 -- Safe to run multiple times: CREATE TABLE IF NOT EXISTS.
 -- Run once on production BEFORE deploying the held-reply code.
 
-CREATE TABLE IF NOT EXISTS chat_messages_rippling (
+CREATE TABLE IF NOT EXISTS rippling_held_replies (
     id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     chatid         BIGINT UNSIGNED NOT NULL,
     chatmsgid      BIGINT UNSIGNED NOT NULL,
@@ -19,11 +19,11 @@ CREATE TABLE IF NOT EXISTS chat_messages_rippling (
     created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     releasedat     TIMESTAMP NULL DEFAULT NULL,
     PRIMARY KEY (id),
-    INDEX chat_messages_rippling_msgid_index (msgid),
-    INDEX chat_messages_rippling_chatid_index (chatid),
-    INDEX chat_messages_rippling_status_index (status),
-    CONSTRAINT chat_messages_rippling_chatmsgid_foreign FOREIGN KEY (chatmsgid)
+    INDEX rippling_held_replies_msgid_index (msgid),
+    INDEX rippling_held_replies_chatid_index (chatid),
+    INDEX rippling_held_replies_status_index (status),
+    CONSTRAINT rippling_held_replies_chatmsgid_foreign FOREIGN KEY (chatmsgid)
         REFERENCES chat_messages (id) ON DELETE CASCADE,
-    CONSTRAINT chat_messages_rippling_msgid_foreign FOREIGN KEY (msgid)
+    CONSTRAINT rippling_held_replies_msgid_foreign FOREIGN KEY (msgid)
         REFERENCES messages (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

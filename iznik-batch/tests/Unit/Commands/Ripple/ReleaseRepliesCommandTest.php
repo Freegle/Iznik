@@ -13,8 +13,8 @@ class ReleaseRepliesCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        DB::statement('DELETE FROM chat_messages_rippling');
-        DB::statement('DELETE FROM messages_reach');
+        DB::statement('DELETE FROM rippling_held_replies');
+        DB::statement('DELETE FROM rippling_reach');
     }
 
     /** @return array{0:int,1:int} [ripplingRowId, chatmsgid] — a held reply INSIDE the reach. */
@@ -24,7 +24,7 @@ class ReleaseRepliesCommandTest extends TestCase
         $group = $this->createTestGroup();
         $message = $this->createTestMessage($user, $group);
         DB::statement(
-            "INSERT INTO messages_reach
+            "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
@@ -61,7 +61,7 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->artisan('ripple:release-replies')->assertExitCode(0);
 
-        $this->assertSame('released', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
 
     public function test_no_reach_but_post_still_active_does_not_mark_gone(): void
@@ -72,7 +72,7 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->artisan('ripple:release-replies')->assertExitCode(0);
 
-        $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
 
     public function test_no_reach_and_post_taken_marks_gone(): void
@@ -82,6 +82,6 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->artisan('ripple:release-replies')->assertExitCode(0);
 
-        $this->assertSame('taken-gone', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
 }

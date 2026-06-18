@@ -18,8 +18,8 @@ class RippleReplyServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        DB::statement('DELETE FROM chat_messages_rippling');
-        DB::statement('DELETE FROM messages_reach');
+        DB::statement('DELETE FROM rippling_held_replies');
+        DB::statement('DELETE FROM rippling_reach');
     }
 
     private function service(): RippleReplyService
@@ -33,7 +33,7 @@ class RippleReplyServiceTest extends TestCase
         $group = $this->createTestGroup();
         $message = $this->createTestMessage($user, $group);
         DB::statement(
-            "INSERT INTO messages_reach
+            "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
@@ -81,7 +81,7 @@ class RippleReplyServiceTest extends TestCase
         $msgid = $this->seedReachedPost();
         [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
 
-        $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
         // Delivery is gated by the rippling row, NOT by reviewrequired (which stays 0).
         $this->assertTrue($this->service()->isDeliveryHeld($cmid));
         $this->assertSame(0, (int) DB::table('chat_messages')->where('id', $cmid)->value('reviewrequired'));
@@ -95,7 +95,7 @@ class RippleReplyServiceTest extends TestCase
         $released = $this->service()->releaseCovered($msgid);
 
         $this->assertSame(1, $released);
-        $this->assertSame('released', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
         // Gate now allows delivery; reviewrequired never touched.
         $this->assertFalse($this->service()->isDeliveryHeld($cmid));
     }
@@ -108,7 +108,7 @@ class RippleReplyServiceTest extends TestCase
         $released = $this->service()->releaseCovered($msgid);
 
         $this->assertSame(0, $released);
-        $this->assertSame('held', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
         $this->assertTrue($this->service()->isDeliveryHeld($cmid));
     }
 
@@ -120,7 +120,7 @@ class RippleReplyServiceTest extends TestCase
         $affected = $this->service()->markGone($msgid);
 
         $this->assertSame(1, $affected);
-        $this->assertSame('taken-gone', DB::table('chat_messages_rippling')->where('id', $rowId)->value('status'));
+        $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
         // taken-gone still blocks delivery (status <> released).
         $this->assertTrue($this->service()->isDeliveryHeld($cmid));
     }
@@ -130,7 +130,7 @@ class RippleReplyServiceTest extends TestCase
         $msgid = $this->seedReachedPost();
         [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
 
-        $rip = DB::table('chat_messages_rippling')->where('id', $rowId)->first();
+        $rip = DB::table('rippling_held_replies')->where('id', $rowId)->first();
         $chat = DB::table('chat_rooms')->where('id', $rip->chatid)->first(['user1', 'user2']);
         $replier = (int) $rip->replieruserid;
         $poster = ((int) $chat->user1 === $replier) ? (int) $chat->user2 : (int) $chat->user1;
@@ -158,8 +158,8 @@ class RippleReplyServiceTest extends TestCase
     public function test_held_reply_state_transitions_are_counted(): void
     {
         // #3 / §15 instrumentation: hold → 'held', release → 'released', markGone → 'taken_gone'.
-        DB::table('ripple_event_metrics')->whereIn('event', ['held', 'released', 'taken_gone'])->delete();
-        $count = fn ($e) => (int) DB::table('ripple_event_metrics')
+        DB::table('rippling_event_metrics')->whereIn('event', ['held', 'released', 'taken_gone'])->delete();
+        $count = fn ($e) => (int) DB::table('rippling_event_metrics')
             ->where('day', now()->toDateString())->where('event', $e)->value('count');
 
         $msgid = $this->seedReachedPost();

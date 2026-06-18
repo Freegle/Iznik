@@ -15,7 +15,7 @@ class ReachQueryServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        DB::statement('DELETE FROM messages_reach');
+        DB::statement('DELETE FROM rippling_reach');
     }
 
     private function seedReach(): int
@@ -33,7 +33,7 @@ class ReachQueryServiceTest extends TestCase
             'lng' => -0.1,
         ]);
         DB::statement(
-            "INSERT INTO messages_reach
+            "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",

@@ -11,20 +11,20 @@ use Illuminate\Support\Facades\Log;
  *
  * In-app replies are gated by reply-eligibility (#2) so they never arrive early.
  * Email/TN bypass that gate, so a reply from a location the post hasn't yet
- * rippled to is HELD by recording a `chat_messages_rippling` row (status='held').
+ * rippled to is HELD by recording a `rippling_held_replies` row (status='held').
  *
  * IMPORTANT (per adversarial review): this does NOT touch chat_messages.reviewrequired.
  * That bit is shared with the spam/mod-review hold — clearing it on release could free
  * a genuine mod/spam hold, and rippling-held messages would otherwise pollute the mod
  * review queue and be auto-rejected after 7 days. Instead the rippling hold is enforced
- * by GATING DELIVERY on the chat_messages_rippling row: the poster-notification queries
+ * by GATING DELIVERY on the rippling_held_replies row: the poster-notification queries
  * skip a chat message while it has a non-'released' rippling row (see deliveryGateSql()).
  * Releasing simply sets status='released', after which the normal notification pipeline
  * delivers it (no reviewrequired / processingsuccessful changes needed).
  *
  * Inert until the reach engine is live: shouldHold returns false while a post has no
- * reach row (hasReach fails open if messages_reach is absent), so until then no reply is
- * ever held, chat_messages_rippling stays empty, and the delivery gate is always true.
+ * reach row (hasReach fails open if rippling_reach is absent), so until then no reply is
+ * ever held, rippling_held_replies stays empty, and the delivery gate is always true.
  */
 class RippleReplyService
 {
@@ -41,14 +41,14 @@ class RippleReplyService
      */
     public static function deliveryGateSql(string $cmAlias = 'chat_messages.id'): string
     {
-        return "NOT EXISTS (SELECT 1 FROM chat_messages_rippling cmr
+        return "NOT EXISTS (SELECT 1 FROM rippling_held_replies cmr
                 WHERE cmr.chatmsgid = {$cmAlias} AND cmr.status <> 'released')";
     }
 
     /** Is this chat message currently held by rippling (delivery blocked)? */
     public function isDeliveryHeld(int $chatmsgid): bool
     {
-        return DB::table('chat_messages_rippling')
+        return DB::table('rippling_held_replies')
             ->where('chatmsgid', $chatmsgid)
             ->where('status', '<>', 'released')
             ->exists();
@@ -74,11 +74,11 @@ class RippleReplyService
 
     /**
      * Record a hold (delivery is blocked via deliveryGateSql, NOT reviewrequired).
-     * Returns the new chat_messages_rippling row id.
+     * Returns the new rippling_held_replies row id.
      */
     public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng): int
     {
-        $id = (int) DB::table('chat_messages_rippling')->insertGetId([
+        $id = (int) DB::table('rippling_held_replies')->insertGetId([
             'chatid' => $chatid,
             'chatmsgid' => $chatmsgid,
             'msgid' => $msgid,
@@ -102,7 +102,7 @@ class RippleReplyService
     {
         try {
             DB::statement(
-                'INSERT INTO ripple_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) '
+                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) '
                 . 'ON DUPLICATE KEY UPDATE count = count + 1',
                 [$event]
             );
@@ -118,7 +118,7 @@ class RippleReplyService
      */
     public function releaseCovered(int $msgid): int
     {
-        $held = DB::table('chat_messages_rippling')
+        $held = DB::table('rippling_held_replies')
             ->where('msgid', $msgid)
             ->where('status', 'held')
             ->get();
@@ -149,7 +149,7 @@ class RippleReplyService
      */
     public function releaseAll(int $msgid): int
     {
-        $held = DB::table('chat_messages_rippling')
+        $held = DB::table('rippling_held_replies')
             ->where('msgid', $msgid)
             ->where('status', 'held')
             ->get();
@@ -168,13 +168,13 @@ class RippleReplyService
      */
     public function markGone(int $msgid): int
     {
-        $held = DB::table('chat_messages_rippling')
+        $held = DB::table('rippling_held_replies')
             ->where('msgid', $msgid)
             ->where('status', 'held')
             ->get();
 
         foreach ($held as $row) {
-            DB::table('chat_messages_rippling')->where('id', $row->id)->update([
+            DB::table('rippling_held_replies')->where('id', $row->id)->update([
                 'status' => 'taken-gone',
                 'releasedat' => now(),
             ]);
@@ -231,7 +231,7 @@ class RippleReplyService
 
     private function release(int $ripplingRowId): void
     {
-        DB::table('chat_messages_rippling')->where('id', $ripplingRowId)->update([
+        DB::table('rippling_held_replies')->where('id', $ripplingRowId)->update([
             'status' => 'released',
             'releasedat' => now(),
         ]);
@@ -241,13 +241,13 @@ class RippleReplyService
     private function hasReach(int $msgid): bool
     {
         try {
-            return DB::table('messages_reach')->where('msgid', $msgid)->exists();
+            return DB::table('rippling_reach')->where('msgid', $msgid)->exists();
         } catch (\Throwable $e) {
-            // messages_reach is created by the reach engine (PR A). Until that's
+            // rippling_reach is created by the reach engine (PR A). Until that's
             // deployed the table may not exist — fail open ("not rippling") so an
             // external reply is delivered normally rather than crashing incoming-mail
             // processing. This is what keeps held replies inert before the engine is live.
-            Log::warning('ripple:hasReach query failed (messages_reach missing?)', [
+            Log::warning('ripple:hasReach query failed (rippling_reach missing?)', [
                 'msgid' => $msgid,
                 'error' => $e->getMessage(),
             ]);

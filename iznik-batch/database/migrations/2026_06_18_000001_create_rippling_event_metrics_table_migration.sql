@@ -1,5 +1,5 @@
--- Production idempotent SQL for ripple_event_metrics (rippling-out live counters, §15/§16).
-CREATE TABLE IF NOT EXISTS ripple_event_metrics (
+-- Production idempotent SQL for rippling_event_metrics (rippling-out live counters, §15/§16).
+CREATE TABLE IF NOT EXISTS rippling_event_metrics (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     day DATE NOT NULL,
     event VARCHAR(32) NOT NULL,

@@ -32,7 +32,7 @@ class ReleaseRepliesCommand extends Command
 
         $dryRun = (bool) $this->option('dry-run');
 
-        $msgids = DB::table('chat_messages_rippling')
+        $msgids = DB::table('rippling_held_replies')
             ->where('status', 'held')
             ->distinct()
             ->pluck('msgid');
@@ -45,7 +45,7 @@ class ReleaseRepliesCommand extends Command
         foreach ($msgids as $msgid) {
             $msgid = (int) $msgid;
 
-            $reach = DB::table('messages_reach')->where('msgid', $msgid)->first();
+            $reach = DB::table('rippling_reach')->where('msgid', $msgid)->first();
 
             if ($reach === null) {
                 // No reach row. This is only terminal ("taken-gone") if the post is
@@ -107,7 +107,7 @@ class ReleaseRepliesCommand extends Command
 
     private function heldCount(int $msgid): int
     {
-        return (int) DB::table('chat_messages_rippling')
+        return (int) DB::table('rippling_held_replies')
             ->where('msgid', $msgid)
             ->where('status', 'held')
             ->count();
