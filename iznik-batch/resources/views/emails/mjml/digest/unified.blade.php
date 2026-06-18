@@ -236,7 +236,7 @@
             $summaryPosts = collect($posts);
             $summaryVisible = \App\Mail\Digest\DigestStyle::SUMMARY_VISIBLE_LINES;
             $summaryHidden = $summaryPosts->slice($summaryVisible);
-            $summaryLink = 'color: ' . \App\Mail\Digest\DigestStyle::OFFER_GREEN . '; text-decoration: none; display: block; margin-bottom: 4px;';
+            $summaryLink = 'color: ' . \App\Mail\Digest\DigestStyle::OFFER_GREEN . '; text-decoration: none;';
         @endphp
         @if($summaryPosts->count() >= 2)
         <mj-section background-color="#ffffff" padding="16px 20px 4px">
@@ -246,14 +246,14 @@
                 </mj-text>
                 <mj-text font-size="14px" color="#212529" line-height="1.6" padding="0">
                     @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
-                    <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                    <div style="margin-bottom: 4px;"><a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a></div>
                     @endforeach
                     @if($summaryHidden->isNotEmpty())
                     <details style="margin-top: 2px;">
                         <summary style="cursor: pointer; color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; font-weight: 600;">Show {{ $summaryHidden->count() }} more</summary>
                         <div style="margin-top: 6px;">
                             @foreach($summaryHidden as $summaryPost)
-                            <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                            <div style="margin-bottom: 4px;"><a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a></div>
                             @endforeach
                         </div>
                     </details>
