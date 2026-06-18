@@ -262,6 +262,16 @@ class ExpandService
             );
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
+                // §15/§16 instrumentation: count groups a post was rippled into.
+                try {
+                    DB::statement(
+                        'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
+                        . 'ON DUPLICATE KEY UPDATE count = count + ?',
+                        ['rippled_in', $n, $n]
+                    );
+                } catch (\Throwable $e) {
+                    // best-effort; never affect the expander
+                }
             }
         } catch (\Throwable $e) {
             $stats['errors']++;
