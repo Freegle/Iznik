@@ -67,7 +67,6 @@ import { useMe } from '~/composables/useMe'
 import NoticeMessage from '~/components/NoticeMessage'
 import ClearanceManageItem from '~/components/ClearanceManageItem'
 import {
-  isActiveInterest,
   allocatedQuantity,
   distinctInterestedUsers,
 } from '~/composables/useClearance'
@@ -113,10 +112,13 @@ const fullyAllocated = computed(
 // candidate rows can show who they are.
 async function load() {
   await messageStore.fetch(props.id, true)
+  // Fetch everyone who's expressed interest — including withdrawn/rejected, so
+  // their names still show in the declined/withdrawn section (and if the offerer
+  // restores a rejected candidate).
   const ids = new Set()
   for (const item of message.value?.bulkitems || []) {
     for (const i of item.interest || []) {
-      if (isActiveInterest(i)) ids.add(i.userid)
+      ids.add(i.userid)
     }
   }
   if (ids.size) {
