@@ -25,7 +25,11 @@ class Spam {
     # For checking users as suspect.
     const SEEN_THRESHOLD = 16; // Number of groups to join or apply to before considered suspect
     const ESCALATE_THRESHOLD = 2; // Level of suspicion before a user is escalated to support/admin for review
-    const DISTANCE_THRESHOLD = 100; // Replies to items further apart than this is suspicious.  In miles.
+    // Replies to items further apart than this is suspicious.  In miles.  Tightened from 100 to 50 for
+    // rippling-out: a post's reach is now bounded by the poster's ~30-min drive isochrone, so a single
+    // member legitimately replying across >50 miles is itself the anomaly.  Rural groups that genuinely
+    // span further can still raise it per-group via settings.spammers.replydistance (honoured below).
+    const DISTANCE_THRESHOLD = 50;
 
     const REASON_NOT_SPAM = 'NotSpam';
     const REASON_COUNTRY_BLOCKED = 'CountryBlocked';

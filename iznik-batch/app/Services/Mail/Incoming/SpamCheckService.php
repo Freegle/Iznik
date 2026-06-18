@@ -32,6 +32,17 @@ class SpamCheckService
 
     public const SUBJECT_THRESHOLD = 30;
 
+    // Distinct groups a SINGLE poster may reach from one IP (within HISTORY_WINDOW_DAYS) before being
+    // flagged. Under rippling-out + single-group posting a legitimate poster reaches their own area's
+    // group(s) only, so one account hitting many groups from one IP is the location-hopping signal.
+    public const USER_GROUP_THRESHOLD = 10;
+
+    // The IP/subject reputation checks below count history over this trailing window rather than for
+    // all time. Without it they accumulate years of legitimate shared-NAT and subject reuse, which
+    // under single-group posting (where a high distinct-group count is a much weaker signal) turns
+    // them into false-positive factories. 90 days keeps a meaningful spam window without that drift.
+    public const HISTORY_WINDOW_DAYS = 90;
+
     public const IMAGE_THRESHOLD = 5;
 
     public const IMAGE_THRESHOLD_TIME = 24; // hours
@@ -448,6 +459,7 @@ class SpamCheckService
         $users = DB::table('messages_history')
             ->select('fromname')
             ->where('fromip', $ip)
+            ->where('arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
             ->whereNotNull('groupid')
             ->groupBy('fromuser')
             ->orderBy('arrival', 'desc')
@@ -466,26 +478,34 @@ class SpamCheckService
     }
 
     /**
-     * Check if IP has been used for too many different groups (matching legacy).
+     * Check if a SINGLE poster has reached too many different groups from one IP.
+     *
+     * Originally this counted distinct groups across ALL posters on an IP, which under rippling-out +
+     * single-group posting is just a "many users behind one NAT" artefact (each posts to their own
+     * area's group). The real signal is now ONE account reaching many groups from one IP - the
+     * location-hopping vector - so we decompose by fromuser and flag the worst single poster. Bounded
+     * to the trailing history window so long-lived shared IPs do not accumulate a false positive.
      *
      * @return array{bool, string, string}|null
      */
     public function checkIPGroups(string $ip): ?array
     {
-        $groups = DB::table('messages_history')
+        $worst = DB::table('messages_history')
             ->join('groups', 'groups.id', '=', 'messages_history.groupid')
-            ->select('groups.nameshort')
-            ->where('fromip', $ip)
-            ->groupBy('groupid')
-            ->get();
+            ->select('messages_history.fromuser')
+            ->selectRaw('COUNT(DISTINCT messages_history.groupid) as numgroups')
+            ->selectRaw('GROUP_CONCAT(DISTINCT groups.nameshort) as grouplist')
+            ->where('messages_history.fromip', $ip)
+            ->where('messages_history.arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
+            ->whereNotNull('messages_history.fromuser')
+            ->groupBy('messages_history.fromuser')
+            ->havingRaw('COUNT(DISTINCT messages_history.groupid) >= ?', [self::USER_GROUP_THRESHOLD])
+            ->orderByDesc('numgroups')
+            ->first();
 
-        $numGroups = $groups->count();
-
-        if ($numGroups >= self::GROUP_THRESHOLD) {
-            $list = $groups->pluck('nameshort')->implode(', ');
-
+        if ($worst !== null) {
             return [true, self::REASON_IP_USED_FOR_DIFFERENT_GROUPS,
-                "IP {$ip} recently used for {$numGroups} different groups ({$list})"];
+                "IP {$ip} poster {$worst->fromuser} recently posted to {$worst->numgroups} different groups ({$worst->grouplist})"];
         }
 
         return null;
@@ -500,6 +520,7 @@ class SpamCheckService
     {
         $count = DB::table('messages_history')
             ->where('prunedsubject', 'LIKE', "{$prunedSubject}%")
+            ->where('arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
             ->whereNotNull('groupid')
             ->distinct('groupid')
             ->count('groupid');
