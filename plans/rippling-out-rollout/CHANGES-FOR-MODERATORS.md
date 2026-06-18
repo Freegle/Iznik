@@ -42,7 +42,7 @@ them as you normally would (remembering the "please don't" above).
 
 **One timing difference to know about:** a post that rippled in *and was already approved on
 the community it started in* will **auto-approve on your community after a short while** if
-nobody rejects it first — it was already vetted where it was posted, so we don't make it sit
+nobody rejects it first. It was already vetted where it was posted, so we don't make it sit
 out the full review window again. You still see it in your pending list and can reject it for
 the usual reasons; just do so reasonably promptly if you don't want it to go live locally. (A
 post that hasn't been approved anywhere yet follows your normal pending process, unchanged.)

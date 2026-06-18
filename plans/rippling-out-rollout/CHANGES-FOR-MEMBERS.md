@@ -51,7 +51,7 @@ gone, so they're not left waiting.)
 
 ### Notifications follow the same rule
 A member's **daily digest email** and **"new posts near you" notifications** only include a
-post once it has rippled out to their area — so members are never nudged about something they
+post once it has rippled out to their area, so members are never nudged about something they
 can't yet act on. The notification arrives when the post reaches them, at which point they can
 reply straight away.
 
