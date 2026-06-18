@@ -25,28 +25,37 @@ func TestFilterReachBlocked(t *testing.T) {
 		SPATIAL INDEX msgreach_poly (polygon)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
+	// Create real messages so the FK on rippling_reach.msgid (present once the PR A
+	// migration runs) does not reject the test inserts.
+	prefix := uniquePrefix("filterreach")
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	mid1 := CreateTestMessage(t, posterID, groupID, "OFFER: reach-test-visible (filterreach)", 51.5, -0.1)
+	mid2 := CreateTestMessage(t, posterID, groupID, "OFFER: reach-test-hidden (filterreach)", 53.0, 2.0)
+	mid3 := CreateTestMessage(t, posterID, groupID, "OFFER: reach-test-no-reach (filterreach)", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", mid1, mid2)
+
 	// Viewer at lng -0.1, lat 51.5.
 	vlat, vlng := 51.5, -0.1
 
 	// Reach covers the viewer → stays visible.
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, "+
 		"ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)) "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", 970001)
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid1)
 	// Reach far away, does not cover the viewer → hidden.
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 53.0, 2.0, "+
 		"ST_GeomFromText('POLYGON((2.0 53.0,2.1 53.0,2.1 53.1,2.0 53.1,2.0 53.0))', 3857)) "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", 970002)
-	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", 970001, 970002)
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid2)
 
-	// 970003 has no reach row → non-rippling → stays visible.
-	in := []message.MessageSummary{{ID: 970001}, {ID: 970002}, {ID: 970003}}
+	// mid3 has no reach row → non-rippling → stays visible.
+	in := []message.MessageSummary{{ID: mid1}, {ID: mid2}, {ID: mid3}}
 	out := isochrone.FilterReachBlocked(db, in, vlat, vlng)
 
 	got := map[uint64]bool{}
 	for _, m := range out {
 		got[m.ID] = true
 	}
-	assert.True(t, got[970001], "reach covering the viewer stays visible")
-	assert.False(t, got[970002], "reach not covering the viewer is hidden")
-	assert.True(t, got[970003], "post with no reach row stays visible")
+	assert.True(t, got[mid1], "reach covering the viewer stays visible")
+	assert.False(t, got[mid2], "reach not covering the viewer is hidden")
+	assert.True(t, got[mid3], "post with no reach row stays visible")
 }
