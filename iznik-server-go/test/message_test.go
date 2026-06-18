@@ -850,6 +850,59 @@ func TestApproveMessageClearsContentcheckReasons(t *testing.T) {
 	assert.Nil(t, reasonsAfter, "contentcheck_reasons must be cleared when a message is approved")
 }
 
+// TestAlreadyApprovedMessageSuppressesContentcheckReasonsInAPIResponse verifies the
+// retrospective fix for Discourse #9768 post 5: posts that were already in
+// collection='Approved' with contentcheck_reasons still set in the DB (approved before
+// the DB-level clear was deployed) must NOT have contentcheck_reasons returned by the
+// GET /api/message/:id endpoint. This ensures the IP-abuse warning is not shown to
+// moderators on such historical records without requiring a DB back-fill.
+func TestAlreadyApprovedMessageSuppressesContentcheckReasonsInAPIResponse(t *testing.T) {
+	prefix := uniquePrefix("msgmod_retro_ccr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Insert a message directly in Approved collection with contentcheck_reasons set —
+	// simulating a historical record approved before the DB-level clear was deployed.
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Offer', NOW(), NOW())",
+		posterID, prefix+" retro ip abuse offer")
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, prefix+" retro ip abuse offer").Scan(&msgID)
+	require.NotZero(t, msgID)
+
+	ipAbuseReasons := `[{"check":"IpAbuse","action":"flag","detail":"IP shared by many users","ip":"192.0.2.1"}]`
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at, contentcheck_reasons) VALUES (?, ?, NOW(), 'Approved', 0, NOW(), ?)",
+		msgID, groupID, ipAbuseReasons)
+
+	// Pre-condition: contentcheck_reasons IS set in the DB (stale historical data).
+	var rawInDB *string
+	db.Raw("SELECT contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&rawInDB)
+	require.NotNil(t, rawInDB, "pre-condition: contentcheck_reasons must be set in DB to simulate historical data")
+
+	// Fetch the message via the API as a moderator.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+	require.NotEmpty(t, msg.MessageGroups, "response must include groups")
+
+	for _, mg := range msg.MessageGroups {
+		if mg.Groupid == groupID {
+			assert.Nil(t, mg.ContentcheckReasons,
+				"contentcheck_reasons must not be returned for an approved group (retrospective fix)")
+		}
+	}
+}
+
 // TestApproveAddsApprovedMessageToSpatial verifies that a Pending message with a
 // location is not in messages_spatial, and that approving it adds it (so it then
 // shows in the public browse) with the correct coordinates.

@@ -553,6 +553,17 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				"INNER JOIN `groups` g ON mp.groupid = g.id "+
 				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
 
+			// Suppress contentcheck_reasons for approved groups: the warning is only
+			// relevant while a post is pending moderation. Clearing it in the
+			// response means already-approved posts no longer show the IP-abuse
+			// (and other) warnings without requiring a DB back-fill (retrospective
+			// fix for Discourse #9768 post 5).
+			for i := range messageGroups {
+				if messageGroups[i].Collection == utils.COLLECTION_APPROVED {
+					messageGroups[i].ContentcheckReasons = nil
+				}
+			}
+
 			message.MessageGroups = messageGroups
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
