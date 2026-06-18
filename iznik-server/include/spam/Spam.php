@@ -140,8 +140,9 @@ class Spam {
             }
 
             # Now see if this IP has been used for too many different users.  That is likely to
-            # be someone masquerading to fool people.
-            $sql = "SELECT fromname FROM messages_history WHERE fromip = ? AND groupid IS NOT NULL GROUP BY fromuser ORDER BY arrival DESC;";
+            # be someone masquerading to fool people.  Bounded to the last 90 days so a long-lived
+            # shared NAT does not accumulate years of legitimate history (matches the V2 SpamCheckService).
+            $sql = "SELECT fromname FROM messages_history WHERE fromip = ? AND arrival >= DATE_SUB(NOW(), INTERVAL 90 DAY) AND groupid IS NOT NULL GROUP BY fromuser ORDER BY arrival DESC;";
             $users = $this->dbhr->preQuery($sql, [$ip]);
             $numusers = count($users);
 
@@ -154,8 +155,8 @@ class Spam {
             }
 
             # Now see if this IP has been used for too many different groups.  That's likely to
-            # be someone spamming.
-            $sql = "SELECT groups.nameshort FROM messages_history INNER JOIN `groups` ON groups.id = messages_history.groupid WHERE fromip = ? GROUP BY groupid;";
+            # be someone spamming.  Bounded to the last 90 days (matches the V2 SpamCheckService).
+            $sql = "SELECT groups.nameshort FROM messages_history INNER JOIN `groups` ON groups.id = messages_history.groupid WHERE fromip = ? AND messages_history.arrival >= DATE_SUB(NOW(), INTERVAL 90 DAY) GROUP BY groupid;";
             $groups = $this->dbhr->preQuery($sql, [$ip]);
             $numgroups = count($groups);
 
@@ -174,7 +175,9 @@ class Spam {
         $subj = $msg->getPrunedSubject();
 
         if (strlen($subj) >= 10) {
-            $sql = "SELECT COUNT(DISTINCT groupid) AS count FROM messages_history WHERE prunedsubject LIKE ? AND groupid IS NOT NULL;";
+            # Bounded to the last 90 days so a subject reused legitimately over years is not flagged
+            # (matches the V2 SpamCheckService).
+            $sql = "SELECT COUNT(DISTINCT groupid) AS count FROM messages_history WHERE prunedsubject LIKE ? AND arrival >= DATE_SUB(NOW(), INTERVAL 90 DAY) AND groupid IS NOT NULL;";
             $counts = $this->dbhr->preQuery($sql, [
                 "$subj%"
             ]);
