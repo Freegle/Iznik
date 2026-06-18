@@ -51,7 +51,8 @@
                 <ComposeGroup />
               </div>
               <p class="community-hint">
-                Tap to choose a different community nearby.
+                This is the Freegle community for your area. Your post starts
+                here and spreads out to people further away over time.
               </p>
             </div>
             <PostPersonalInfoWarning :group="group" :text="postText" />
