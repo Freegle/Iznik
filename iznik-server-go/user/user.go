@@ -81,6 +81,7 @@ type User struct {
 	Modmails           uint64          `json:"modmails" gorm:"-"`
 	Suspectreason      *string         `json:"suspectreason,omitempty" gorm:"-"`
 	Activedistance     *float64        `json:"activedistance" gorm:"-"`
+	Locationchanges    *int            `json:"locationchanges,omitempty" gorm:"-"`
 	Chatmodstatus      *string         `json:"chatmodstatus,omitempty" gorm:"->"`
 	Newsfeedmodstatus  *string         `json:"newsfeedmodstatus,omitempty" gorm:"->"`
 	Tnuserid           *uint64         `json:"tnuserid,omitempty" gorm:"->"`
@@ -1304,6 +1305,26 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		}()
 	}
 
+	// Under rippling-out a post's reach follows the poster's declared location, so a member who keeps
+	// changing location is the spam vector that group-spread (activedistance) used to be. Surface the
+	// count of distinct postcodes they have set in the last 90 days so mods reviewing a flagged member
+	// can see the hopping directly. We expose the count (cleanly available from the PostcodeChange log)
+	// rather than a geographic spread, which would need historical lat/lng we do not retain.
+	var locationchanges *int
+	if modtools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var n int
+			db.Raw("SELECT COUNT(DISTINCT text) FROM logs "+
+				"WHERE user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 90 DAY",
+				id, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&n)
+			if n > 0 {
+				locationchanges = &n
+			}
+		}()
+	}
+
 	wg.Wait()
 
 	// Resolve NULL ourPostingStatus → MODERATED.
@@ -1329,6 +1350,7 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	if callerIsMod || myid == id || auth.IsAdminOrSupport(myid) {
 		u.Activedistance = activedistance
+		u.Locationchanges = locationchanges
 		u.Lastpush = lastpush
 	}
 

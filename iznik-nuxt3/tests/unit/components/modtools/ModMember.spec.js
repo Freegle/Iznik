@@ -353,6 +353,23 @@ describe('ModMember', () => {
     })
   })
 
+  describe('location changes', () => {
+    it('shows location-change warning when locationchanges >= 3', () => {
+      const wrapper = mountComponent({
+        member: createMember({ locationchanges: 4 }),
+      })
+      expect(wrapper.text()).toContain('changed location')
+      expect(wrapper.text()).toContain('4 times in the last 90 days')
+    })
+
+    it('hides location-change warning when locationchanges < 3', () => {
+      const wrapper = mountComponent({
+        member: createMember({ locationchanges: 2 }),
+      })
+      expect(wrapper.text()).not.toContain('changed location')
+    })
+  })
+
   describe('banned member', () => {
     it('shows banned notice when member is banned', () => {
       const wrapper = mountComponent({
