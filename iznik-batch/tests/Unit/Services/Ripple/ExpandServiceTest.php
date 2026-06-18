@@ -140,6 +140,23 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('done', $row->status);
     }
 
+    public function test_blurs_poster_origin_for_reach(): void
+    {
+        // The reach origin (and stored centre) must be blurred ~400m like the locations
+        // Freegle exposes elsewhere, so the reach polygon is not a precise location oracle.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // exact origin 51.5, -0.1
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotEquals(51.5, (float) $row->lat, 'stored latitude is blurred, not exact');
+        $this->assertNotEquals(-0.1, (float) $row->lng, 'stored longitude is blurred, not exact');
+        // ...but still within ~1-2km of the true location (a small privacy blur, not a move).
+        $this->assertLessThan(0.02, abs((float) $row->lat - 51.5));
+        $this->assertLessThan(0.02, abs((float) $row->lng + 0.1));
+    }
+
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
     {
         Http::fake();
