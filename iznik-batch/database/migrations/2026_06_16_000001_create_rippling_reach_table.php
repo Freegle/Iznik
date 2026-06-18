@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * messages_reach — the current "rippled out" reach of each active post.
+ * rippling_reach — the current "rippled out" reach of each active post.
  *
  * One row per message that is currently rippling. The set is a subset of
  * messages_spatial (the browsable, approved, not-taken OFFER/WANTED set), so the
@@ -26,11 +26,11 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        if (Schema::hasTable('messages_reach')) {
+        if (Schema::hasTable('rippling_reach')) {
             return;
         }
 
-        Schema::create('messages_reach', function (Blueprint $t) {
+        Schema::create('rippling_reach', function (Blueprint $t) {
             // One reach per message (from the item's physical origin).
             $t->unsignedBigInteger('msgid')->primary();
 
@@ -75,21 +75,21 @@ return new class extends Migration {
         // messages_spatial.point. Spatial indexes require NOT NULL geometry; rows are
         // only ever inserted once a reach polygon exists, so NOT NULL is satisfiable.
         DB::statement(
-            'ALTER TABLE messages_reach
+            'ALTER TABLE rippling_reach
                 ADD COLUMN polygon GEOMETRY NOT NULL SRID 3857 AFTER lng,
-                ADD SPATIAL INDEX messages_reach_polygon (polygon)'
+                ADD SPATIAL INDEX rippling_reach_polygon (polygon)'
         );
 
         // Clean up reach when the underlying message is hard-deleted.
         DB::statement(
-            'ALTER TABLE messages_reach
-                ADD CONSTRAINT messages_reach_msgid_foreign
+            'ALTER TABLE rippling_reach
+                ADD CONSTRAINT rippling_reach_msgid_foreign
                 FOREIGN KEY (msgid) REFERENCES messages (id) ON DELETE CASCADE'
         );
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('messages_reach');
+        Schema::dropIfExists('rippling_reach');
     }
 };

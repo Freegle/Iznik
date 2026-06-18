@@ -50,9 +50,9 @@ func TestMessageOriginGroup(t *testing.T) {
 func TestClipReachForRejectedGroup(t *testing.T) {
 	db := database.DBConn
 
-	// Self-sufficient: messages_reach belongs to PR A (merges before #772). Create a
+	// Self-sufficient: rippling_reach belongs to PR A (merges before #772). Create a
 	// minimal stand-in so this test runs in isolation off master.
-	db.Exec("CREATE TABLE IF NOT EXISTS messages_reach (msgid BIGINT UNSIGNED PRIMARY KEY, polygon GEOMETRY NOT NULL SRID 3857)")
+	db.Exec("CREATE TABLE IF NOT EXISTS rippling_reach (msgid BIGINT UNSIGNED PRIMARY KEY, polygon GEOMETRY NOT NULL SRID 3857)")
 
 	prefix := uniquePrefix("clipreach")
 	userID := CreateTestUser(t, prefix, "User")
@@ -67,13 +67,13 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 		"'POLYGON((0.05 51.45,0.15 51.45,0.15 51.55,0.05 51.55,0.05 51.45))', 3857) WHERE id = ?", group2)
 
 	// Reach covers BOTH the western origin area and the eastern group2 area.
-	db.Exec("INSERT INTO messages_reach (msgid, polygon) VALUES (?, ST_GeomFromText("+
+	db.Exec("INSERT INTO rippling_reach (msgid, polygon) VALUES (?, ST_GeomFromText("+
 		"'POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))', 3857))", mid)
 
 	covers := func(lng, lat string) int {
 		var v int
 		db.Raw("SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT("+lng+", "+lat+"), 3857)), 0) "+
-			"FROM messages_reach WHERE msgid = ?", mid).Scan(&v)
+			"FROM rippling_reach WHERE msgid = ?", mid).Scan(&v)
 		return v
 	}
 
@@ -90,13 +90,13 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 // secondary-group rejection event.
 func TestRecordRippleEvent(t *testing.T) {
 	db := database.DBConn
-	db.Exec("DELETE FROM ripple_event_metrics WHERE event = 'test_evt'")
-	defer db.Exec("DELETE FROM ripple_event_metrics WHERE event = 'test_evt'")
+	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'test_evt'")
+	defer db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'test_evt'")
 
 	message.RecordRippleEvent(db, "test_evt")
 	message.RecordRippleEvent(db, "test_evt")
 
 	var count int
-	db.Raw("SELECT count FROM ripple_event_metrics WHERE day = CURDATE() AND event = 'test_evt'").Scan(&count)
+	db.Raw("SELECT count FROM rippling_event_metrics WHERE day = CURDATE() AND event = 'test_evt'").Scan(&count)
 	assert.Equal(t, 2, count, "per-event counter increments in place via upsert")
 }

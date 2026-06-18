@@ -9,21 +9,21 @@
 
 | PR | Branch | Contents | Depends on | Status |
 |----|--------|----------|-----------|--------|
-| A | `feature/rippling-reach-engine` | #0 reach calc: `messages_reach` migration + `ripple:expand` command (no mails) | — | ✅ PR #768, 12/12 green, adversarial review done + fixed (blocker+2 major+minor), CI running. NOT merged. |
+| A | `feature/rippling-reach-engine` | #0 reach calc: `rippling_reach` migration + `ripple:expand` command (no mails) | — | ✅ PR #768, 12/12 green, adversarial review done + fixed (blocker+2 major+minor), CI running. NOT merged. |
 | B | `feature/rippling-immediate-mails` | #0 immediate mails on expansion (to all newly-reached members, no flag) | A | ⬜ Pending |
-| C | `feature/rippling-held-replies` | #3 `chat_messages_rippling` hold/release + mod chat-held reason | A | ⬜ Pending |
+| C | `feature/rippling-held-replies` | #3 `rippling_held_replies` hold/release + mod chat-held reason | A | ⬜ Pending |
 | D | `feature/rippling-mod-ui` | #6 ripple-in mod banner + #7 reach map + #4 help modal (carry-over) | A | ⬜ Pending |
 | E | `feature/rippling-browse` | #1 browse UI (filter/order/map) + #2 reply-eligibility + #8 FAQ | A | ⬜ Pending |
 | F | `feature/rippling-digest` | #5 unified digest ordering uses reach | A | ⬜ Pending |
 
-(Each PR branches off `feature/rippling-out` or `origin/master`+A as appropriate; A must land first conceptually since all consume `messages_reach`.)
+(Each PR branches off `feature/rippling-out` or `origin/master`+A as appropriate; A must land first conceptually since all consume `rippling_reach`.)
 
 ## PR A — reach engine (current)
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
 | A1 | Read existing routing-go reach API (`ripple.go`, `fairness.go`, `server.go` routes, `posts_for_member.go`) | 🔄 In Progress | `/v1/ripple-schedule` returns per-tick {drive_min, cumulative_users, polygon}; one call per post origin |
-| A2 | Design `messages_reach` schema + migration (Laravel) | ⬜ | msgid PK, polygon, tick, schedule cache, next_expansion_at, status; scope = msgids in `messages_spatial` |
+| A2 | Design `rippling_reach` schema + migration (Laravel) | ⬜ | msgid PK, polygon, tick, schedule cache, next_expansion_at, status; scope = msgids in `messages_spatial` |
 | A3 | `ripple:expand` artisan command (compute schedule, persist current reach, advance ticks per time schedule, stop conditions) | ⬜ | no mails in PR A; cross-into-new-group insert deferred to its own task but design in |
 | A4 | Wire command into scheduler (every min, active hours 6am–11pm) | ⬜ | mirror `messages:contentcheck` |
 | A5 | Tests (migration, command, schedule walk, stop conditions) — 90%+ on touched modules | ⬜ | |
@@ -38,14 +38,14 @@ Branch off `feature/rippling-reach-engine` (depends on A). Pattern to copy:
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| B1 | `messages_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
+| B1 | `rippling_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
 | B2 | Hook into `ExpandService`: on init/advance compute newly-reached members = users with a location inside the new reach polygon AND NOT already notified AND `SIMPLE_MAIL_FULL` | ⬜ | spatial query `ST_Contains(reach.polygon, ST_SRID(POINT(u.lng,u.lat),3857))`; user loc from `users.lastlocation`/`users_approxlocs` — confirm source |
 | B3 | Mail: reuse unified-digest single-post mailable / "new post near you" template | ⬜ | see `UnifiedDigestService` / daily-posts push payload |
 | B4 | Per-expansion cap; record in ledger (no allowlist) | ⬜ | |
 | B5 | #9 instrumentation: count immediate mails sent per expansion | ⬜ | |
 | B6 | Tests (Http+spatial seeded, no-double-mail) + push PR, CI, adversarial review | ⬜ | |
 
-Remaining PRs after B: C held-replies (`chat_messages_rippling`), D mod-UI (#6 banner + #7 reach
+Remaining PRs after B: C held-replies (`rippling_held_replies`), D mod-UI (#6 banner + #7 reach
 map + #4 modal carry-over), E browse (#1 + #2 reply-eligibility + #8 FAQ), F digest (#5), G
 observability/self-tuning (#9), #10 postcode-driven single-group posting + TN main-group-only.
 Then the two moderator-audience change docs.
@@ -65,5 +65,5 @@ secondary group is a real veto we track (#9) and should be rare/intentional, not
 
 ## Session notes
 - 2026-06-16: spec finalised + committed; worktree `rippling-out` created off origin/master (`48be8e973`); feature branch `feature/rippling-reach-engine`. Containers starting. Beginning PR A.
-- 2026-06-16: PR A built — `messages_reach` migration (+ idempotent prod SQL), `routing_server_url`/`ripple.*` config (internal no-auth routing port 8194), `ReachService` (drives `/v1/ripple-schedule`, WKT, tick timing), `ExpandService` (init/advance/remove, active-hours gate, #9 log), `ripple:expand` command + scheduler entry. 11/11 Ripple tests green via status API. Dev `spatial` has no UK graph → tests mock routing.
+- 2026-06-16: PR A built — `rippling_reach` migration (+ idempotent prod SQL), `routing_server_url`/`ripple.*` config (internal no-auth routing port 8194), `ReachService` (drives `/v1/ripple-schedule`, WKT, tick timing), `ExpandService` (init/advance/remove, active-hours gate, #9 log), `ripple:expand` command + scheduler entry. 11/11 Ripple tests green via status API. Dev `spatial` has no UK graph → tests mock routing.
 - Design grew: #9 observability/self-tuning; #6 multi-group (secondary out-of-area rejection = clip + no poster notify + track; mod edit "applies to all groups" warning; visibility = reach ∩ approved-covering-group); #10 postcode-driven single-group posting + TN main-group-only (retire manual cross-posting; deploy LATE). Two moderator-audience change docs due after all PRs.

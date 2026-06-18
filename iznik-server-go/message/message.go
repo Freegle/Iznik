@@ -1945,16 +1945,16 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 // ClipReachForRejectedGroup removes a rejecting secondary group's area from a post's
 // rippling reach polygon, so the post stops showing — and stops being reply-eligible —
-// in that group's area (#6). The post's reach (messages_reach.polygon, GEOMETRY SRID
+// in that group's area (#6). The post's reach (rippling_reach.polygon, GEOMETRY SRID
 // 3857) is trimmed by the group's DPA-or-CGA area (groups.polyindex). If the reach lies
 // wholly within the rejected group, nothing valid remains, so the reach row is dropped.
 //
 // Errors are ignored on purpose: until the reach engine (PR A) is live there is no
-// messages_reach table/row to clip, in which case this is a harmless no-op.
+// rippling_reach table/row to clip, in which case this is a harmless no-op.
 func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	// Trim where the reach extends beyond the rejected group (skip the wholly-within
 	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
-	db.Exec("UPDATE messages_reach mr JOIN `groups` g ON g.id = ? "+
+	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+
 		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) "+
 		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
@@ -1962,7 +1962,7 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 		"AND NOT ST_Within(mr.polygon, g.polyindex)", gid, msgid)
 
 	// Reach wholly inside the rejected group → no area remains: drop the reach row.
-	db.Exec("DELETE mr FROM messages_reach mr JOIN `groups` g ON g.id = ? "+
+	db.Exec("DELETE mr FROM rippling_reach mr JOIN `groups` g ON g.id = ? "+
 		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 		"AND ST_Within(mr.polygon, g.polyindex)", gid, msgid)
@@ -1972,7 +1972,7 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 // "instrument from day one"), surfaced read-only in sysadmin. Best-effort: errors are
 // ignored so instrumentation never affects the request (e.g. before the table ships).
 func RecordRippleEvent(db *gorm.DB, event string) {
-	db.Exec("INSERT INTO ripple_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) "+
+	db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) "+
 		"ON DUPLICATE KEY UPDATE count = count + 1", event)
 }
 

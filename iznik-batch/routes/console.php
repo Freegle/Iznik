@@ -102,7 +102,7 @@ Schedule::command('messages:contentcheck')
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
-// Maintain rippling-out reach (messages_reach) for active posts.
+// Maintain rippling-out reach (rippling_reach) for active posts.
 // Computes per-post reach via the routing server and advances it over time per
 // the hazard schedule. Dark until browse/digest/reply-eligibility read it.
 Schedule::command('ripple:expand')
