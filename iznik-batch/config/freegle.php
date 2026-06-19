@@ -265,6 +265,9 @@ return [
 
     // Rippling-out reach engine parameters (ripple:expand / ReachService).
     'ripple' => [
+        // Master activation switch for rippling-out (see the reach-engine PR). Ships dark (false);
+        // flip RIPPLE_ENABLED=true to turn the feature on with no code change.
+        'enabled' => (bool) env('RIPPLE_ENABLED', false),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.

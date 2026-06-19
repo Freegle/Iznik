@@ -22,6 +22,8 @@ class UnifiedDigestServiceTest extends TestCase
         parent::setUp();
         $this->service = new UnifiedDigestService();
         Mail::fake();
+        // Rippling ships dark; enable it so the reach-coordination ledger path is exercised.
+        config(['freegle.ripple.enabled' => true]);
     }
 
     public function test_deduplication_with_tnpostid(): void
@@ -903,6 +905,37 @@ class UnifiedDigestServiceTest extends TestCase
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
         $this->assertEquals(0, $stats['emails_sent'], 'cursor immediate digest skips a post that has a reach row');
+    }
+
+    public function test_cursor_immediate_ledger_is_dark_when_rippling_disabled(): void
+    {
+        // With the master activation switch off, the cursor immediate digest still mails normally but
+        // does NOT touch the rippling reach-coordination ledger (the expander mailer that reads it is
+        // inert while off anyway), so the new table stays empty in the dark state.
+        config(['freegle.ripple.enabled' => false]);
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: dark (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('d', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedImmediateCursor($group);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            'no reach-coordination ledger rows are written while rippling is off'
+        );
     }
 
     public function test_cursor_and_expander_do_not_double_mail_via_shared_ledger(): void

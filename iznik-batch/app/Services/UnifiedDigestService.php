@@ -341,7 +341,11 @@ class UnifiedDigestService
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    if ($spooled) {
+                    // Gated by the master activation switch: this reach-coordination ledger is only
+                    // meaningful once rippling is on (the expander mailer that reads it is inert while
+                    // off), so we don't touch the new table at all in the dark state. The immediate
+                    // mail itself is unaffected - it still sends.
+                    if ($spooled && config('freegle.ripple.enabled')) {
                         // Coordinate with the expander-driven reach mailer: record this send so
                         // mailNewlyReachedForPost never re-mails the same member once the post's
                         // reach row appears (the post is cursor-mailed on arrival, before the reach
