@@ -389,6 +389,15 @@ func GetMessages(c *fiber.Ctx) error {
 	}
 }
 
+// rippleEnabled reports whether the rippling-out feature is switched on. Mirrors the Laravel
+// config('freegle.ripple.enabled') / RIPPLE_ENABLED env so the whole feature ships dark and is
+// flipped on with one env var (default off). While off, the reach/reply-eligibility path below is
+// skipped entirely, so the API is byte-for-byte identical to pre-rippling.
+func rippleEnabled() bool {
+	v := os.Getenv("RIPPLE_ENABLED")
+	return v == "true" || v == "1"
+}
+
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
@@ -784,7 +793,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	// Posts with no reach row and no ban stay eligible (the field is omitted). The queries
 	// only run when there's something to find (a known location / an actual ban), keeping
 	// them off the hot path for the common case.
-	if myid > 0 && len(messages) > 0 {
+	//
+	// Gated by the master activation switch: while rippling is off this whole section is skipped,
+	// so ReplyEligible is never set and the response matches pre-rippling exactly (no reach query,
+	// no ban-eligibility query, no metrics write).
+	if rippleEnabled() && myid > 0 && len(messages) > 0 {
 		ids := make([]uint64, 0, len(messages))
 		for _, m := range messages {
 			ids = append(ids, m.ID)

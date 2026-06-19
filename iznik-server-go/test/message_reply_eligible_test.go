@@ -15,6 +15,8 @@ import (
 // (eligible). Self-sufficient: creates rippling_reach if the reach-engine migration (PR A)
 // isn't in this schema yet, so it runs regardless of merge order.
 func TestReplyEligibleReach(t *testing.T) {
+	// Reply-eligibility is gated by the master activation switch; enable it here so the path runs.
+	t.Setenv("RIPPLE_ENABLED", "true")
 	db := database.DBConn
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
@@ -75,5 +77,46 @@ func TestReplyEligibleReach(t *testing.T) {
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "banned → replyeligible set") {
 		assert.False(t, *msgs[0].ReplyEligible, "banned from the post's group → replyeligible=false")
 	}
+	db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?", viewerID, group)
+}
+
+// While the master activation switch is OFF (the default), the reply-eligibility path is skipped
+// entirely: even a post that has rippled out beyond the viewer (and even a ban) leaves ReplyEligible
+// omitted, so the API is identical to pre-rippling and the app shows no view-only blocks.
+func TestReplyEligibleDarkWhenDisabled(t *testing.T) {
+	t.Setenv("RIPPLE_ENABLED", "false")
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("repeligoff")
+	posterID := CreateTestUser(t, prefix, "Poster")
+	group := CreateTestGroup(t, prefix)
+	mid := CreateTestMessage(t, posterID, group, "OFFER: reply-eligible dark test", 51.5, -0.1)
+	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+	idStr := fmt.Sprint(mid)
+
+	// A reach row that does NOT contain the viewer AND a ban: both would set replyeligible=false
+	// when rippling is ON, so this proves the switch (not just absent data) makes the path dark.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
+	db.Exec("INSERT INTO users_banned (userid, groupid) VALUES (?, ?) "+
+		"ON DUPLICATE KEY UPDATE userid = VALUES(userid)", viewerID, group)
+
+	msgs := message.GetMessagesByIds(viewerID, []string{idStr}, false)
+	if assert.Len(t, msgs, 1) {
+		assert.Nil(t, msgs[0].ReplyEligible, "rippling off → reply-eligibility never set (post stays eligible)")
+	}
+
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 	db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?", viewerID, group)
 }
