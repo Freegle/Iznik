@@ -27,6 +27,7 @@ function mountComponent() {
         'b-tr': { template: '<tr><slot /></tr>' },
         'b-th': { template: '<th><slot /></th>' },
         'b-td': { template: '<td><slot /></td>' },
+        'b-badge': { template: '<span class="badge"><slot /></span>' },
         'b-spinner': { template: '<div class="spinner" />' },
       },
     },
@@ -64,5 +65,59 @@ describe('ModSysAdminRippling', () => {
     await flushPromises()
 
     expect(wrapper.html()).toContain('No rippling events recorded yet')
+  })
+
+  it('renders geographic hotspots and proposed parameter changes', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      totals: [],
+      recent: [],
+      hotspots: [
+        {
+          period_start: '2026-06-11',
+          area_type: 'group',
+          area_id: 99,
+          area_name: 'Anomaly Town',
+          metric: 'secondary_reject_rate',
+          value: 0.9,
+          baseline: 0.1,
+          deviation: 12.3,
+          direction: 'high',
+          severity: 'alert',
+        },
+      ],
+      proposed_params: [
+        {
+          ons_category: 'urban_major',
+          max_minutes: 25,
+          rationale: 'volume delta +80% outside band; propose to tighten reach',
+          proposed_at: '2026-06-18 09:00',
+        },
+      ],
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const html = wrapper.html()
+    expect(html).toContain('Anomaly Town')
+    expect(html).toContain('secondary_reject_rate')
+    expect(html).toContain('alert')
+    expect(html).toContain('urban_major')
+    expect(html).toContain('tighten reach')
+  })
+
+  it('shows empty states for hotspots and proposals when there are none', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      totals: [],
+      recent: [],
+      hotspots: [],
+      proposed_params: [],
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('No hotspots flagged')
+    expect(wrapper.html()).toContain('No proposals')
   })
 })

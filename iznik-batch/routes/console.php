@@ -1181,5 +1181,10 @@ Schedule::command('eee:sync-mv-labels')
     ->sendOutputTo(cronLog('eee:sync-mv-labels'))
     ->runInBackground();
 
-// ripple:monitor command exists but is not yet scheduled — pending decision
+// ripple:monitor command exists but is not yet scheduled - pending decision
 // on production rollout.  See plans/reference/ripple-curve-evaluation.md.
+//
+// ripple:tune (§16 self-tuning: rollup + geographic hotspots + advisory param
+// proposals) also exists but is left unscheduled for now. It is advisory only
+// (nothing it writes changes the engine until a proposal is promoted), and is
+// intended to run weekly once the production rollout decision is made.
