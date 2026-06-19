@@ -51,7 +51,7 @@ class LoveJunkInvoiceService
         $total = $tnCount + $fdCount;
 
         if ($total === 0) {
-            return ['tn' => 0, 'fd' => 0, 'tn_percent' => 0, 'fd_percent' => 0, 'tn_amount' => 0.0];
+            return ['tn' => 0, 'fd' => 0, 'tn_percent' => 0, 'fd_percent' => 0, 'tn_amount' => 0.0, 'sent' => false, 'recipient' => null];
         }
 
         $tnPercent = (int) round(($tnCount / $total) * 100);
@@ -61,6 +61,7 @@ class LoveJunkInvoiceService
         $tnAddr = config('freegle.mail.tn_invoice_addr');
         $treasurerAddr = config('freegle.mail.treasurer_addr');
 
+        $sent = false;
         if (!$dryRun && $tnAddr) {
             app(\App\Services\EmailSpoolerService::class)->spool(new TnInvoiceMail(
                 recipientEmail: $tnAddr,
@@ -70,6 +71,7 @@ class LoveJunkInvoiceService
                 tnPercent: $tnPercent,
                 treasurerAddr: $treasurerAddr,
             ));
+            $sent = true;
         }
 
         return [
@@ -78,6 +80,8 @@ class LoveJunkInvoiceService
             'tn_percent' => $tnPercent,
             'fd_percent' => $fdPercent,
             'tn_amount' => $tnAmount,
+            'sent' => $sent,
+            'recipient' => $tnAddr ?: null,
         ];
     }
 }
