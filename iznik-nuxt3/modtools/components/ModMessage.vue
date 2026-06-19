@@ -1041,19 +1041,22 @@ const duplicateAge = computed(() => {
   let check = false
   if (!message.value?.groups) return null
 
+  const msgtype = message.value.type.toLowerCase()
   message.value.groups.forEach((g) => {
     const grp = myModGroup(g.groupid)
+    if (!grp) return
 
-    // console.log("duplicateAge group", group?.settings?.duplicates)
-    if (
-      grp &&
-      grp.settings &&
-      grp.settings.duplicates && // TODO: MT group does not have settings
-      grp.settings.duplicates.check
-    ) {
+    // V1 parity: the group's default settings (Group.php) enable duplicate
+    // detection with a 14-day window. The V2 group API returns only the
+    // stored settings (no default merge), so a group with no explicit
+    // `duplicates` block must fall back to the default rather than silently
+    // disabling duplicate highlighting. Explicit check:0 still turns it off.
+    // (Discourse 9518/341)
+    const dup = grp.settings?.duplicates
+    const enabled = dup?.check ?? true
+    if (enabled) {
       check = true
-      const msgtype = message.value.type.toLowerCase()
-      ret = Math.min(ret, grp.settings.duplicates[msgtype])
+      ret = Math.min(ret, dup?.[msgtype] ?? 14)
     }
   })
 

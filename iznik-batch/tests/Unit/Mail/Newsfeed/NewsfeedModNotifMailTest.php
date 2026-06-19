@@ -22,12 +22,37 @@ class NewsfeedModNotifMailTest extends TestCase
     {
         return [
             [
-                'id'      => 42,
-                'label'   => 'Post',
-                'preview' => 'Anyone know a good plumber nearby?',
-                'added'   => '2026-05-22 10:30:00',
+                'id'         => 42,
+                'action'     => 'posted on ChitChat',
+                'preview'    => 'Anyone know a good plumber nearby?',
+                'added'      => '2026-05-22 10:30:00',
+                'userName'   => 'Jane Plumber',
+                'userAvatar' => 'https://www.ilovefreegle.org/avatar/jane-plumber.png',
             ],
         ];
+    }
+
+    public function test_shows_poster_name_avatar_and_chitchat_context(): void
+    {
+        $mail = new NewsfeedModNotifMail(
+            recipientEmail: 'mod@example.com',
+            posts: $this->makePosts(),
+        );
+
+        $html = $mail->render();
+
+        // Who posted — name and avatar (previously the card showed only "POST").
+        $this->assertStringContainsString('Jane Plumber', $html, 'poster name should render');
+        $this->assertStringContainsString(
+            'https://www.ilovefreegle.org/avatar/jane-plumber.png',
+            $html,
+            'poster avatar image should render'
+        );
+        $this->assertStringContainsString('posted on ChitChat', $html, 'action context should render');
+
+        // Clarifies this is ChitChat, not an OFFER/WANTED post on the group.
+        $this->assertStringContainsString('community chat feed', $html);
+        $this->assertStringContainsString('not OFFER or WANTED posts', $html);
     }
 
     public function test_chitchat_link_goes_to_user_site_not_modtools(): void

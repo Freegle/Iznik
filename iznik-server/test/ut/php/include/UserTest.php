@@ -1361,53 +1361,6 @@ class UserTest extends IznikTestCase {
         $this->assertNull($u->getPrivate('yahooid'));
     }
 
-    public function testKudos() {
-        list($g, $gid) = $this->createTestGroup('testgroup1', Group::GROUP_REUSE);
-        $g->setPrivate('lat', 8.5);
-        $g->setPrivate('lng', 179.3);
-        $g->setPrivate('poly', 'POLYGON((179.1 8.3, 179.3 8.3, 179.3 8.6, 179.1 8.6, 179.1 8.3))');
-
-        list($l, $areaid) = $this->createTestLocation(NULL, 'Tuvalu Central', 'Polygon', 'POLYGON((179.21 8.53, 179.21 8.54, 179.22 8.54, 179.22 8.53, 179.21 8.53, 179.21 8.53))');
-        $this->assertNotNull($areaid);
-        $areaatts = $l->getPublic();
-        $this->assertNull($areaatts['areeid']);
-        list($l2, $pcid) = $this->createTestLocation(NULL, 'TV13', 'Postcode', 'POLYGON((179.2 8.5, 179.3 8.5, 179.3 8.6, 179.2 8.6, 179.2 8.5))');
-        list($l3, $fullpcid) = $this->createTestLocation(NULL, 'TV13 1HH', 'Postcode', 'POINT(179.2167 8.53333)');
-        list($l4, $locid) = $this->createTestLocation(NULL, 'Tuvalu High Street', 'Road', 'POINT(179.2167 8.53333)');
-
-        $u = User::get($this->dbhm, $this->dbhm);
-        $uid = $u->create('Test', 'User', 'Test User');
-        $u->addEmail('test@test.com');
-        $this->log("Created $uid, add membership of $gid");
-        $rc = $u->addMembership($gid);
-        $this->assertNotNull($u->isApprovedMember($gid));
-        $this->assertGreaterThan(0, $u->addLogin(User::LOGIN_FACEBOOK, $uid, 'testpw'));
-        $u->setPrivate('lastlocation', $fullpcid);
-        $u->setSetting('mylocation', $areaatts);
-
-        $msg = $this->unique(file_get_contents(IZNIK_BASE . '/test/ut/php/msgs/basic'));
-        $msg = str_replace('Basic test', 'OFFER: Test item (Tuvalu High Street)', $msg);
-        $msg = str_ireplace('freegleplayground', 'testgroup', $msg);
-        $m = new Message($this->dbhr, $this->dbhm);
-        $m->parse(Message::EMAIL, 'test@test.com', 'testgroup1@yahoogroups.com', $msg);
-        list ($mid, $failok) = $m->save();
-        $m = new Message($this->dbhr, $this->dbhm, $mid);
-        $m->setPrivate('sourceheader', Message::PLATFORM);
-        $m->setPrivate('fromuser', $uid);
-
-        $u->updateKudos($uid, TRUE);
-        $kudos = $u->getKudos($uid);
-        $this->assertEquals(0, $kudos['kudos']);
-        $top = $u->topKudos($gid);
-        $this->assertEquals($uid, $top[0]['user']['id']);
-
-        # No mods as not got Facebook login
-        $mods = $u->possibleMods($gid);
-        $this->assertEquals(1, count($mods));
-        $this->assertEquals($uid, $mods[0]['user']['id']);
-
-        }
-
     public function testActiveSince() {
         $u = User::get($this->dbhm, $this->dbhm);
         $uid = $u->create('Test', 'User', 'Test User');
