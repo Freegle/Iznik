@@ -214,6 +214,88 @@ class MembershipsProcessingServiceTest extends TestCase
         $this->assertNull($membership->reviewrequestedat ?? null);
     }
 
+    // --- Seen on many groups (V1 Spam::checkUser parity) ---
+
+    public function test_flags_member_seen_on_many_groups(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        // 17 distinct groups joined in the last year (threshold is 16). One of
+        // them is the just-added group; the rest come from Group/Joined logs.
+        for ($i = 0; $i < 17; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $user->id,
+                'groupid' => 900000 + $i,
+                'timestamp' => now()->subDays(30),
+            ]);
+        }
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+        ]);
+
+        $this->service->processAll();
+
+        $membership = DB::table('memberships')
+            ->where('userid', $user->id)->where('groupid', $group->id)->first();
+        $this->assertNotNull($membership->reviewrequestedat);
+        $this->assertEquals('Seen on many groups', $membership->reviewreason);
+
+        $this->assertTrue(
+            DB::table('logs')->where('user', $user->id)
+                ->where('type', 'User')->where('subtype', 'Suspect')->exists(),
+            'a User/Suspect log should be written'
+        );
+    }
+
+    public function test_does_not_flag_member_on_few_groups(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        // Only 5 groups — well under the threshold.
+        for ($i = 0; $i < 5; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $user->id,
+                'groupid' => 910000 + $i,
+                'timestamp' => now()->subDays(30),
+            ]);
+        }
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+        ]);
+
+        $this->service->processAll();
+
+        $membership = DB::table('memberships')
+            ->where('userid', $user->id)->where('groupid', $group->id)->first();
+        $this->assertNull($membership->reviewrequestedat ?? null);
+    }
+
     // --- Dry-run mode ---
 
     public function test_dry_run_does_not_mark_entries_as_processed(): void
