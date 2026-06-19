@@ -1356,8 +1356,16 @@ function checkHistory(duplicateCheck) {
 
           const key = histMsg.id + '-' + histMsg.arrival
 
-          if (duplicateCheck && groupsInCommon) {
-            // Same group - so this is a duplicate
+          if (duplicateCheck && groupsInCommon && histMsg.id < message.value.id) {
+            // Same group, and this history message was posted before the one we're
+            // rendering (message ids are auto-increment, so a lower id means earlier).
+            // So the message we're rendering is the second/subsequent copy and IS a
+            // duplicate of this earlier one. We deliberately do NOT flag the first
+            // (original) post: when rendering it, every same-subject match in its
+            // history has a higher id, so checkHistory returns empty and it stays
+            // unflagged. This keeps the duplicate badge on the 2nd+ copies only - which
+            // matters now that Pending messages appear in messagehistory (PR #805), as
+            // otherwise both copies of a duplicated Pending post would be flagged.
             if (!dupids[key]) {
               dupids[key] = true
               ret.push(histMsg)
