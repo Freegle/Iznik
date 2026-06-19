@@ -301,6 +301,18 @@ describe('ModSettingsModConfig', () => {
       const wrapper = mountComponent()
       expect(wrapper.vm.locked).toBe(false)
     })
+
+    it('returns false when config is protected but createdby is null (no valid lock owner)', () => {
+      // Regression: parseInt(null) = NaN, and NaN !== myid is always true,
+      // causing a null-owner config to appear locked for everyone.
+      mockModConfigStore.current = {
+        ...defaultConfig,
+        protected: 1,
+        createdby: null,
+      }
+      const wrapper = mountComponent()
+      expect(wrapper.vm.locked).toBe(false)
+    })
   })
 
   describe('config sections', () => {
@@ -460,6 +472,20 @@ describe('ModSettingsModConfig', () => {
       const wrapper = mountComponent()
       await flushPromises()
       expect(wrapper.text()).toContain('Alice Moderator')
+    })
+
+    it('does not show locked notice when protected but createdby is null', async () => {
+      // Regression: protected=1 with createdby=null showed 'locked by #null'
+      // because '#' + null = '#null' in JS. No valid lock owner = not locked.
+      mockModConfigStore.current = {
+        ...defaultConfig,
+        protected: 1,
+        createdby: null,
+      }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('#null')
+      expect(wrapper.find('.notice-message').exists()).toBe(false)
     })
   })
 

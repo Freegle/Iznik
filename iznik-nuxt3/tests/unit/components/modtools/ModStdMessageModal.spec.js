@@ -278,6 +278,11 @@ describe('ModStdMessageModal', () => {
             props: ['value', 'find'],
             emits: ['selected'],
           },
+          AutoHeightTextarea: {
+            template:
+              '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+            props: ['modelValue', 'rows', 'maxRows', 'placeholder'],
+          },
         },
       },
     })

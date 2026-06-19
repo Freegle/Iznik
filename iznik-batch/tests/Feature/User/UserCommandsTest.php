@@ -63,35 +63,4 @@ class UserCommandsTest extends TestCase
             ->assertExitCode(0);
     }
 
-    public function test_update_kudos_command_runs_successfully(): void
-    {
-        $this->artisan('users:update-kudos')
-            ->assertExitCode(0);
-    }
-
-    public function test_update_kudos_displays_stats(): void
-    {
-        $this->artisan('users:update-kudos')
-            ->expectsOutputToContain('Updating user kudos')
-            ->expectsOutputToContain('Updated kudos for')
-            ->assertExitCode(0);
-    }
-
-    public function test_update_kudos_with_users(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        // Set lastaccess to recent so user is selected (V1: lastaccess > 2 days ago).
-        $user->update(['lastaccess' => now()]);
-
-        // Create some messages to generate kudos.
-        for ($i = 0; $i < 3; $i++) {
-            $this->createTestMessage($user, $group);
-        }
-
-        $this->artisan('users:update-kudos')
-            ->assertExitCode(0);
-    }
 }

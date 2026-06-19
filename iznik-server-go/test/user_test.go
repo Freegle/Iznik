@@ -4352,3 +4352,74 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 		"messagehistory entries must include 'postdate' field (bug: Go API returns 'arrival' only; "+
 			"frontend uses msg.postdate → dayjs(undefined) = current time instead of original arrival)")
 }
+
+// TestGetUserMessageHistory_IncludesPending verifies that Pending messages appear in the
+// messagehistory returned by GET /api/user/:id?modtools=true.
+//
+// ModTools duplicate detection (ModMessage.vue checkHistory) relies on messagehistory to
+// flag a new Pending post as a duplicate of a prior pending post from the same user.
+// Commit b277d9fab added AND mg.collection='Approved' to GetUserMessageHistory, which
+// broke this: Pending messages were silently excluded so no duplicate was ever flagged.
+// (Discourse 9518/341)
+//
+// This test asserts the FIXED behaviour (FAILS on buggy code, PASSES after fix).
+func TestGetUserMessageHistory_IncludesPending(t *testing.T) {
+	prefix := uniquePrefix("msghistory_pending")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Insert a Pending message — simulates a post awaiting moderation.
+	pendingSubject := prefix + " OFFER free bike"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', NOW())",
+		posterID, pendingSubject)
+	var pendingMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, pendingSubject).Scan(&pendingMsgID)
+	require.NotZero(t, pendingMsgID, "pending message must be created")
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) "+
+			"VALUES (?, ?, NOW(), 'Pending')",
+		pendingMsgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", pendingMsgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", pendingMsgID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&raw)
+	require.NoError(t, err)
+
+	// messagehistory is omitted (omitempty) when empty; nil means no history was returned.
+	pendingFound := false
+	if histRaw, exists := raw["messagehistory"]; exists {
+		if history, ok := histRaw.([]interface{}); ok {
+			for _, h := range history {
+				entry, _ := h.(map[string]interface{})
+				id := uint64(entry["id"].(float64))
+				if id == pendingMsgID {
+					pendingFound = true
+				}
+			}
+		}
+	}
+
+	// FIXED behaviour: Pending must appear so checkHistory() in ModMessage.vue can flag it
+	// as a duplicate. FAILS on code with mg.collection='Approved' filter.
+	assert.True(t, pendingFound,
+		"Pending message must appear in messagehistory for duplicate detection "+
+			"(regression: b277d9fab added mg.collection='Approved' filter that excludes Pending)")
+}

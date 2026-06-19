@@ -116,7 +116,6 @@ func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpe
 	add("users_builddates", "userid = ?", u, 0)
 	add("sessions", "userid = ?", u, 1000)
 	add("users_exports", "userid = ?", u, 0)
-	add("users_kudos", "userid = ?", u, 0)
 	add("users_thanks", "userid = ?", u, 0)
 	add("merges", "user1 = ? OR user2 = ? OR offeredby = ?", []interface{}{userID, userID, userID}, 0)
 
