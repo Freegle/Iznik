@@ -715,9 +715,34 @@ describe('submit', () => {
     const { result } = mountComposable()
     result.startTyping()
     const callback = vi.fn()
-    await result.submit(callback)
+    // The ref never arrives, so submit() waits on the readiness watch until its
+    // timeout before falling back. Advance past the timeout (fake timers) so the
+    // pending submit settles rather than hanging.
+    const pending = result.submit(callback)
+    await vi.advanceTimersByTimeAsync(5001)
+    await pending
     expect(result.state.value).toBe(ReplyState.COMPOSING)
     expect(callback).toHaveBeenCalled()
+  })
+
+  it('waits for a late formRef instead of erroring (CI race tolerance)', async () => {
+    // Reproduces the e2e flake: the form ref lags the Send click, so it is
+    // briefly null when submit() runs. submit() should wait on the readiness
+    // watch and proceed to validate once setRefs() supplies the ref, rather than
+    // logging an error and falling back.
+    const { result } = mountComposable()
+    // Initialise first (without a form ref) so supplying the form during the
+    // wait below doesn't re-initialise the machine mid-submit.
+    result.setRefs({ chatButton: makeChatButtonRef() })
+    result.startTyping()
+    const formRef = makeFormRef(true)
+    const callback = vi.fn()
+
+    const pending = result.submit(callback) // formRef null here → enters wait
+    result.setRefs({ form: formRef }) // ref wires up during the wait → watch fires
+    await pending
+
+    expect(formRef.validate).toHaveBeenCalled()
   })
 
   it('falls back to COMPOSING when formRef.validate throws', async () => {
