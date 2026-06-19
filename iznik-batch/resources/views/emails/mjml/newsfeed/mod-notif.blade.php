@@ -8,29 +8,38 @@
     <mj-section background-color="#ffffff" padding="20px 20px 10px">
       <mj-column>
         <mj-text font-size="20px" font-weight="bold" mj-class="text-modtools">
-          {{ $count }} chitchat post{{ $count !== 1 ? 's' : '' }} from your members
+          {{ $count }} ChitChat post{{ $count !== 1 ? 's' : '' }} from your members
         </mj-text>
-        <mj-text font-size="14px" color="#555555">
-          Recent chitchat activity in your groups on Freegle.
+        <mj-text font-size="14px" color="#555555" line-height="20px">
+          ChitChat is Freegle's community chat feed — not OFFER or WANTED posts on
+          your group. Here's what your members have posted there that you haven't
+          seen yet.
         </mj-text>
       </mj-column>
     </mj-section>
 
     @foreach ($posts as $post)
     <mj-section background-color="#F7F6EC" padding="12px 20px">
-      <mj-column>
-        <mj-text font-size="11px" font-weight="bold" color="#888888" padding="0 0 4px">
-          {{ strtoupper($post['label']) }}
+      <mj-column width="52px" vertical-align="top" padding="0">
+        @if (!empty($post['userAvatar']))
+        <mj-image src="{{ $post['userAvatar'] }}" alt="{{ $post['userName'] ?? '' }}" width="40px" height="40px" border-radius="20px" align="left" padding="2px 0 0" />
+        @endif
+      </mj-column>
+      <mj-column vertical-align="top" padding="0">
+        <mj-text font-size="14px" color="#333333" padding="0 0 4px">
+          <strong>{{ $post['userName'] ?? 'A freegler' }}</strong> {{ $post['action'] ?? 'posted on ChitChat' }}
         </mj-text>
-        <mj-text font-size="14px" color="#333333" padding="0 0 6px">
+        @if (!empty($post['preview']))
+        <mj-text font-size="14px" color="#555555" padding="0 0 6px">
           {{ $post['preview'] }}
         </mj-text>
+        @endif
         <mj-text font-size="11px" color="#999999" padding="0">
           {{ $post['added'] }}
         </mj-text>
       </mj-column>
-      <mj-column width="110px" vertical-align="middle">
-        <mj-button mj-class="btn-modtools" href="{{ $userSite }}/chitchat/{{ $post['id'] }}" font-size="13px" inner-padding="8px 14px">
+      <mj-column width="84px" vertical-align="middle" padding="0">
+        <mj-button mj-class="btn-modtools" href="{{ $userSite }}/chitchat/{{ $post['id'] }}" font-size="13px" inner-padding="8px 10px" width="84px" align="right">
           View
         </mj-button>
       </mj-column>

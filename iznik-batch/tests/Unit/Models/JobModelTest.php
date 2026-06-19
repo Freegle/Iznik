@@ -3,6 +3,7 @@
 namespace Tests\Unit\Models;
 
 use App\Models\Job;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
@@ -21,6 +22,44 @@ class JobModelTest extends TestCase
             $this->seededJobIds = [];
         }
         parent::tearDown();
+    }
+
+    /**
+     * Clear the jobs table for test isolation, riding out a transient lock-wait.
+     *
+     * This class cannot wrap its tests in a database transaction: seedJob
+     * registers each row with the external spatial index, which only sees
+     * COMMITTED rows, so the cases clear the table with real DELETEs instead.
+     * Under CI load the jobs table can be briefly locked by a concurrent writer
+     * (e.g. a scheduled jobs-sync), which made the bare DELETE fail with
+     * SQLSTATE[HY000] 1205 "Lock wait timeout exceeded" and flaked unrelated
+     * branches. We shorten the lock-wait window so a contended DELETE fails fast,
+     * then retry a few times to ride out a transient lock; a genuinely stuck lock
+     * still surfaces after the retries. The session timeout is restored after.
+     */
+    private function clearJobsTable(): void
+    {
+        $restore = (int) (DB::selectOne('SELECT @@SESSION.innodb_lock_wait_timeout AS t')->t ?? 50);
+        DB::statement('SET SESSION innodb_lock_wait_timeout = 2');
+
+        try {
+            for ($attempt = 1; ; $attempt++) {
+                try {
+                    DB::table('jobs')->delete();
+
+                    return;
+                } catch (QueryException $e) {
+                    // 1205 = lock wait timeout exceeded. Retry a bounded number of
+                    // times; rethrow anything else, or a lock that never clears.
+                    if ($attempt >= 10 || ! str_contains($e->getMessage(), '1205')) {
+                        throw $e;
+                    }
+                    usleep(300_000);
+                }
+            }
+        } finally {
+            DB::statement("SET SESSION innodb_lock_wait_timeout = {$restore}");
+        }
     }
 
     /**
@@ -106,7 +145,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_returns_empty_for_no_jobs(): void
     {
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         // Nothing in the test DB, so even if the index returns ids the by-id
         // enrich finds nothing.
@@ -117,7 +156,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_respects_limit(): void
     {
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         // Five eligible jobs at the search point.
         for ($i = 0; $i < 5; $i++) {
@@ -131,7 +170,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_filters_by_minimum_cpc(): void
     {
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         $this->seedJob(['title' => 'Low CPC Job', 'cpc' => 0.05]);  // below 0.10
         $this->seedJob(['title' => 'Good CPC Job', 'cpc' => 0.20]);
@@ -144,7 +183,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_filters_by_visibility(): void
     {
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         $this->seedJob(['title' => 'Visible Job', 'visible' => 1]);
         $this->seedJob(['title' => 'Hidden Job', 'visible' => 0]);
@@ -163,7 +202,7 @@ class JobModelTest extends TestCase
         // (matching the web view's KNN selection), not the top-CPC ones, so we
         // assert the variety invariants only: every result is the right size,
         // and repeated calls surface more than `limit` distinct jobs.
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         $limit = 4;
         $total = $limit * Job::VARIETY_POOL_MULTIPLIER + 3; // 15
@@ -189,7 +228,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_orders_by_cpc_desc(): void
     {
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         // All above the 0.10 floor; fewer than the default limit so there is no
         // variety shuffle and the CPC-desc order is preserved.
@@ -208,7 +247,7 @@ class JobModelTest extends TestCase
     {
         // The jobs feed stores location names lowercase ("stoke-on-trent");
         // nearLocation title-cases them so emails read naturally.
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         $this->seedJob(['title' => 'Test Job', 'location' => 'stoke-on-trent']);
 
@@ -221,7 +260,7 @@ class JobModelTest extends TestCase
     public function test_near_location_adds_placeholder_image_for_jobs_without_ai_images(): void
     {
         // With no matching ai_images row, image_url falls back to briefcase.png.
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
         DB::table('ai_images')->delete();
 
         $this->seedJob(['title' => 'Test Job']);
@@ -236,7 +275,7 @@ class JobModelTest extends TestCase
 
     public function test_near_location_uses_ai_image_when_available(): void
     {
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
         DB::table('ai_images')->delete();
 
         $jobTitle = 'Software Developer';
@@ -308,7 +347,7 @@ class JobModelTest extends TestCase
     public function test_near_location_finds_jobs_within_search_reach(): void
     {
         // A job ~5.5km north is still within the spatial KNN's search reach.
-        DB::table('jobs')->delete();
+        $this->clearJobsTable();
 
         $this->seedJob(['title' => 'Distant Job', 'location' => 'North London'], 51.5074 + 0.05, -0.1278);
 

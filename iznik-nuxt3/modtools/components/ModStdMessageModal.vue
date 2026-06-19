@@ -56,10 +56,11 @@
         </p>
       </NoticeMessage>
       <!-- Plain textarea for messages with no directives. -->
-      <b-form-textarea
+      <AutoHeightTextarea
         v-if="!useSegmentedEditor"
         v-model="body"
         rows="10"
+        max-rows="40"
         class="mt-2"
       />
       <!-- Segmented inline editor: the message in flow, with a box per <editthis>
@@ -73,14 +74,14 @@
         </p>
         <div class="segmented-body">
           <template v-for="(seg, i) in segments" :key="'seg' + i">
-            <b-form-textarea
+            <AutoHeightTextarea
               v-if="seg.type === 'text'"
               v-model="seg.content"
               class="seg-text"
               rows="3"
               max-rows="30"
             />
-            <b-form-textarea
+            <AutoHeightTextarea
               v-else-if="seg.type === 'editthis'"
               v-model="seg.value"
               :class="['seg-editthis', { 'seg-todo': !segEdited(seg) }]"

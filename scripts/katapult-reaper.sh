@@ -20,7 +20,12 @@
 #     | sudo tee /etc/cron.d/katapult-reaper
 #
 # Logic:
-#   1. Skip VMs younger than 10 minutes (grace period for job dispatch).
+#   0. ZOMBIE FALLBACK (runs first, regardless of age): if the VM's runner has a
+#      recorded last_connected older than ZOMBIE_RUNNER_IDLE_SECONDS, nothing is
+#      executing on it — reap it even if its pipeline is wedged in 'running'. This
+#      is the only path that frees a VM pinned by a stuck/orphaned workflow (which
+#      stays 'running' indefinitely — observed 18h+ on PR #789).
+#   1. Skip VMs younger than MIN_AGE_SECONDS (grace period for job dispatch).
 #   2. Extract the CircleCI pipeline number from the VM name.
 #   3. Check whether that pipeline has any workflow in 'running' state.
 #   4. If not → delete the VM.
@@ -54,6 +59,18 @@ MIN_AGE_SECONDS=9000  # 2.5 hours
 # reconnect blip can't expose a running job.
 RUNNER_ACTIVE_GRACE_SECONDS=300
 RUNNER_RESOURCE_CLASS="freegle/katapult-runner"
+
+# Zombie fallback. A stuck/orphaned CircleCI workflow can stay in 'running' state
+# indefinitely (observed 18h+ on PR #789), so pipeline_is_running() never clears
+# and the VM named after that pipeline would be pinned — and billed — forever.
+# The runner's connection is the ground truth: a runner executing a task (or just
+# sitting idle in the pool) heartbeats continuously, so its last_connected stays
+# fresh (seconds-to-minutes old; healthy VMs observed at 0-19min). A last_connected
+# older than this window therefore means the runner process is dead and nothing is
+# running here, whatever the pipeline status claims — so the VM is safe to reap.
+# Set well clear of the busiest observed idle gap (3x margin) so a quiet test phase
+# or a CPU-starvation heartbeat blip can never trigger a false reap of a live VM.
+ZOMBIE_RUNNER_IDLE_SECONDS=3600  # 1 hour
 
 DRY_RUN="${1:-}"  # pass --dry-run to print actions without deleting
 
@@ -103,7 +120,16 @@ if [ -n "$RUNNERS_JSON" ]; then
     while IFS=$'\t' read -r rname rconn; do
         [ -z "$rname" ] && continue
         repoch=$(date -d "$rconn" +%s 2>/dev/null || echo 0)
-        RUNNER_LAST_CONNECTED["$rname"]="$repoch"
+        # A single VM name can carry more than one runner registration (e.g. a
+        # re-launched agent), and CircleCI may briefly list a stale one alongside
+        # the live one. Keep the FRESHEST last_connected per name so any live
+        # registration protects the VM — otherwise a stale duplicate could make a
+        # busy VM look idle and get it wrongly reaped (critical for the zombie path,
+        # which no longer has pipeline_is_running as a backstop).
+        prev="${RUNNER_LAST_CONNECTED[$rname]:-0}"
+        if [ "$repoch" -gt "$prev" ]; then
+            RUNNER_LAST_CONNECTED["$rname"]="$repoch"
+        fi
     done < <(echo "$RUNNERS_JSON" | jq -r '(.items // .)[]? | select(type=="object") | [.name, (.last_connected // "")] | @tsv')
 fi
 
@@ -117,6 +143,38 @@ runner_recently_active() {
     [ -z "$lc" ] && return 1          # runner gone/deregistered — not active
     [ "$lc" -eq 0 ] 2>/dev/null && return 1
     [ $(( NOW - lc )) -lt "$RUNNER_ACTIVE_GRACE_SECONDS" ]
+}
+
+# True only with POSITIVE evidence that this VM's runner is dead: it has a recorded
+# last_connected that is older than ZOMBIE_RUNNER_IDLE_SECONDS. Deliberately strict:
+#   - no runner inventory fetched  -> false (fail safe: never reap on missing data)
+#   - no last_connected entry yet  -> false (runner may still be booting/registering;
+#                                     MIN_AGE + dispatch grace handle that case)
+#   - last_connected == 0          -> false
+# Only a real-but-stale timestamp returns true, so this can never reap a VM that is
+# merely waiting to start its job, nor one whose runner is heartbeating (idle or busy).
+runner_is_zombie_idle() {
+    local name="$1"
+    [ -z "$RUNNERS_JSON" ] && return 1
+    local lc="${RUNNER_LAST_CONNECTED[$name]:-}"
+    [ -z "$lc" ] && return 1
+    [ "$lc" -eq 0 ] 2>/dev/null && return 1
+    [ $(( NOW - lc )) -ge "$ZOMBIE_RUNNER_IDLE_SECONDS" ]
+}
+
+# Delete a VM (or log the intent under --dry-run). $3 is a human-readable reason.
+delete_vm() {
+    local vm_id="$1" vm_name="$2" reason="$3"
+    if [ "$DRY_RUN" = "--dry-run" ]; then
+        log "DRY-RUN: would delete $vm_name — $reason"
+        return
+    fi
+    log "Deleting $vm_name — $reason"
+    local http_status
+    http_status=$(curl -sf --max-time 15 -o /dev/null -w "%{http_code}" -X DELETE \
+        -H "Authorization: Bearer $KATAPULT_TOKEN" \
+        "${KATAPULT_API}/virtual_machines/${vm_id}" 2>&1) || http_status="curl-error"
+    log "DELETE $vm_name → HTTP $http_status"
 }
 
 # Cache of pipeline_number -> "running"|"done"
@@ -164,15 +222,28 @@ while IFS=$'\t' read -r vm_id vm_name created_at; do
     age=$(( NOW - created_at ))
     age_min=$(( age / 60 ))
 
-    # Skip VMs in the grace period.
-    if [ "$age" -lt "$MIN_AGE_SECONDS" ]; then
-        continue
-    fi
-
     # Extract pipeline number: circleci-runner-<epoch>-<pipeline_number>
     pipeline_num="${vm_name##*-}"
     if ! [[ "$pipeline_num" =~ ^[0-9]+$ ]]; then
         log "WARNING: Cannot parse pipeline number from VM name '$vm_name' — skipping"
+        continue
+    fi
+
+    # ZOMBIE FALLBACK (runs first, ignores age and pipeline status). Positive
+    # evidence the runner is dead — a real but stale last_connected — means nothing
+    # is executing here, even if the pipeline is wedged in 'running'. This is the
+    # only path that frees a VM pinned by a stuck workflow, which would otherwise be
+    # billed indefinitely. Safe to bypass MIN_AGE: runner_is_zombie_idle requires a
+    # last_connected older than ZOMBIE_RUNNER_IDLE_SECONDS, which a busy or
+    # waiting-to-dispatch runner never has.
+    if runner_is_zombie_idle "$vm_name"; then
+        idle_min=$(( (NOW - RUNNER_LAST_CONNECTED["$vm_name"]) / 60 ))
+        delete_vm "$vm_id" "$vm_name" "ZOMBIE: runner idle ${idle_min}m (>$((ZOMBIE_RUNNER_IDLE_SECONDS/60))m), pipeline=$pipeline_num — reaping regardless of pipeline status (age=${age_min}m)"
+        continue
+    fi
+
+    # Skip VMs in the grace period.
+    if [ "$age" -lt "$MIN_AGE_SECONDS" ]; then
         continue
     fi
 
@@ -190,15 +261,7 @@ while IFS=$'\t' read -r vm_id vm_name created_at; do
         continue
     fi
 
-    if [ "$DRY_RUN" = "--dry-run" ]; then
-        log "DRY-RUN: would delete $vm_name (age=${age_min}m, pipeline=$pipeline_num, status=${PIPELINE_STATUS[$pipeline_num]:-unknown})"
-    else
-        log "Deleting orphaned VM $vm_name (age=${age_min}m, pipeline=$pipeline_num)"
-        http_status=$(curl -sf --max-time 15 -o /dev/null -w "%{http_code}" -X DELETE \
-            -H "Authorization: Bearer $KATAPULT_TOKEN" \
-            "${KATAPULT_API}/virtual_machines/${vm_id}" 2>&1) || http_status="curl-error"
-        log "DELETE $vm_name → HTTP $http_status"
-    fi
+    delete_vm "$vm_id" "$vm_name" "orphaned (age=${age_min}m, pipeline=$pipeline_num done)"
 
 done < <(echo "$VMS_JSON" | jq -r '
     .virtual_machines[]

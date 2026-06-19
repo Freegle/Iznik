@@ -46,7 +46,6 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `purge:all` | Run all purge operations |
 | `purge:messages` | Purge old messages |
 | `purge:chats` | Purge old chat rooms |
-| `users:update-kudos` | Update user kudos scores |
 | `users:retention-stats` | Generate retention statistics |
 | `data:update-cpi` | Update CPI data |
 | `data:git-summary` | Generate git summary |
@@ -196,7 +195,6 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `chaseup.php` | `messages:chase-up` | - | Chase up messages with replies but no outcome |
 | `purge_messages.php` | `purge:messages` | - | Message purging |
 | `purge_chats.php` | `purge:chats` | - | Chat purging |
-| `users_kudos.php` | `users:update-kudos` | - | User kudos |
 | `users_retention.php` | `users:retention-stats` | - | User retention stats |
 | `membercounts.php` | `groups:update-counts` | - | Group member/mod counts |
 | `chat_latestmessage.php` | `chats:update-counts` | - | Chat message counts + reopen closed User2Mod |

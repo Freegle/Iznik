@@ -8181,6 +8181,74 @@ func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
 	assert.Equal(t, "TN Multi Updated Subject", subject2, "second message should also be updated")
 }
 
+// TestPatchMessageByTnPostidScrapesPhotosForAllMessages verifies that when a tnpostid
+// maps to several crossposted FD messages, the TN photo scrape runs for EVERY copy, not
+// just the first.  Regression test: the pic-link extraction used to strip req.Textbody
+// inside the per-message loop, so the second copy read an already-stripped body, found no
+// links, had its attachments deleted but never re-scraped, and ended up with no photo.
+func TestPatchMessageByTnPostidScrapesPhotosForAllMessages(t *testing.T) {
+	prefix := uniquePrefix("patchtn_multiscrape")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88811, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-multiscrape-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, prefix+" Offer G1", 55.9533, -3.1883)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, prefix+" Offer G2", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Stub out the network steps so the scrape is deterministic.
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string {
+		return []string{"https://img.trashnothing.com/fake/photo.jpg"}
+	}
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	// Distinct externaluid per upload so both rows survive INSERT IGNORE.
+	uploadCount := 0
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		uploadCount++
+		return fmt.Sprintf("freegletusd-multiscrape-%s-%d", prefix, uploadCount), nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	origScrapeRunner := message.TNPhotoScrapeRunner
+	message.TNPhotoScrapeRunner = message.ScrapeTNPhotosSync
+	defer func() { message.TNPhotoScrapeRunner = origScrapeRunner }()
+
+	textbody := "I have a sofa to give away.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/abc123\n"
+	body := map[string]interface{}{"textbody": textbody}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=88811&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// BOTH crossposted copies must have a scraped photo.
+	var count1, count2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg1ID).Scan(&count1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg2ID).Scan(&count2)
+	assert.Equal(t, int64(1), count1, "first crossposted copy should have the scraped photo")
+	assert.Equal(t, int64(1), count2, "second crossposted copy should also have the scraped photo")
+}
+
 // TestPostMessageByTnPostidUpdatesAllMessages verifies that POST /message with tnpostid
 // applies the action to ALL Freegle messages sharing the same tnpostid.
 func TestPostMessageByTnPostidUpdatesAllMessages(t *testing.T) {

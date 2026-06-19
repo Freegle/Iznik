@@ -46,13 +46,19 @@ class LocationIdTest extends TestCase
         return $method->invokeArgs($this->service, $args);
     }
 
+    // NB: seeded postcodes are placed in empty open sea (central North Sea), well
+    // beyond the KNN's largest 0.32°/~35km buffer from any real postcode. In CI the
+    // spatial server builds its 'postcodes' index from a populated DB, so seeding at
+    // a real UK location would let a real postcode out-compete (or, for the by-id
+    // enrich, shadow) the sentinel. At sea the sentinel is unambiguously nearest.
+
     #[Test]
     public function it_finds_closest_postcode_by_coordinates(): void
     {
         // Seed a postcode point into the spatial server's live index.
-        $this->seedSpatialPoint('postcodes', self::PC_ID, 57.145, -2.095);
+        $this->seedSpatialPoint('postcodes', self::PC_ID, 56.500, 3.000);
 
-        $foundId = $this->invokePrivateMethod('findClosestPostcodeId', [57.145, -2.095]);
+        $foundId = $this->invokePrivateMethod('findClosestPostcodeId', [56.500, 3.000]);
 
         $this->assertEquals(self::PC_ID, $foundId);
     }
@@ -70,9 +76,9 @@ class LocationIdTest extends TestCase
     public function it_finds_closest_postcode_offset_from_search_point(): void
     {
         // Seed a postcode slightly offset from the search point — KNN still finds it.
-        $this->seedSpatialPoint('postcodes', self::PC_ID, 57.150, -2.100);
+        $this->seedSpatialPoint('postcodes', self::PC_ID, 56.605, 3.005);
 
-        $foundId = $this->invokePrivateMethod('findClosestPostcodeId', [57.145, -2.095]);
+        $foundId = $this->invokePrivateMethod('findClosestPostcodeId', [56.600, 3.000]);
 
         $this->assertEquals(self::PC_ID, $foundId);
     }

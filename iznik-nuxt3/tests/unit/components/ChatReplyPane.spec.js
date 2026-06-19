@@ -173,6 +173,11 @@ describe('ChatReplyPane', () => {
           NewFreegler: {
             template: '<div class="new-freegler" />',
           },
+          MessagePhotosModal: {
+            template: '<div class="photos-modal-stub" :data-id="id" />',
+            props: ['id', 'initialIndex'],
+            emits: ['hidden'],
+          },
           SpinButton: {
             template:
               '<button class="spin-button" :disabled="disabled" @click="$emit(\'handle\', () => {})"><slot /></button>',
@@ -240,6 +245,56 @@ describe('ChatReplyPane', () => {
     await flushPromises()
     return wrapper
   }
+
+  describe('post photo zoom', () => {
+    it('opens the photo carousel modal when a multi-photo post is tapped', async () => {
+      // Multiple photos → the modal is the swipeable carousel (it shows all
+      // attachments with prev/next + dots); a single photo just shows the one.
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        attachments: [
+          { id: 10, path: 'https://example.com/p1.jpg' },
+          { id: 11, path: 'https://example.com/p2.jpg' },
+          { id: 12, path: 'https://example.com/p3.jpg' },
+        ],
+      })
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.photos-modal-stub').exists()).toBe(false)
+
+      await wrapper.find('.reply-card__incoming').trigger('click')
+      await flushPromises()
+
+      // The modal is opened for the whole message (id), so it carousels through
+      // every attachment rather than showing a single fixed image.
+      const modal = wrapper.find('.photos-modal-stub')
+      expect(modal.exists()).toBe(true)
+      expect(modal.attributes('data-id')).toBe('1')
+    })
+
+    it('opens the photo modal for a single-photo post too', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        attachments: [{ id: 10, path: 'https://example.com/p.jpg' }],
+      })
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.reply-card__incoming').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.photos-modal-stub').exists()).toBe(true)
+    })
+
+    it('does not open the photo modal when the post has no photo', async () => {
+      mockMessageStore.byId.mockReturnValue({ ...mockMessage, attachments: [] })
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.reply-card__incoming').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.photos-modal-stub').exists()).toBe(false)
+    })
+  })
 
   describe('rendering', () => {
     it('renders the reply overlay container', async () => {

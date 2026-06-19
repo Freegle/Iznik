@@ -722,8 +722,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				// Exclude backup mods (active:0 in membership settings) unless searching.
 				unions = append(unions,
 					"SELECT 0 AS search, user1 AS otheruid, nameshort, namefull, "+
-						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
-						"'' AS lastname, "+
+						"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
+						"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 						"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
@@ -851,8 +851,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// ModTools: search User2Mod chats visible to user — by message content/subject.
 					unions = append(unions,
 						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
-							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
-							"'' AS lastname, "+
+							"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
+							"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
 							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
@@ -869,10 +869,10 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// ModTools: search User2Mod chats by member's name/email.
 					unions = append(unions,
 						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
-							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
-							"'' AS lastname, "+
-							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
-							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
+							"COALESCE(users.firstname, '') AS firstname, "+
+							"COALESCE(users.lastname, '') AS lastname, "+
+							"COALESCE(users.fullname, '') AS fullname, "+
+							"users.deleted AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
 							"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 							"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
@@ -967,6 +967,17 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					groupName = chat.Namefull
 				}
 				chats[ix].Name = tnre.ReplaceAllString(chat.Fullname, "$1")
+				if groupName != "" {
+					chats[ix].Name += " (" + groupName + ")"
+				}
+			} else if chat.Otheruid != myid && (len(chat.Firstname) > 0 || len(chat.Lastname) > 0) {
+				// Member has no fullname but does have firstname/lastname — use those.
+				groupName := chat.Nameshort
+				if groupName == "" {
+					groupName = chat.Namefull
+				}
+				name := strings.TrimSpace(chat.Firstname + " " + chat.Lastname)
+				chats[ix].Name = tnre.ReplaceAllString(name, "$1")
 				if groupName != "" {
 					chats[ix].Name += " (" + groupName + ")"
 				}
