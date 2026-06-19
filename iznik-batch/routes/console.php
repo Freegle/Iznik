@@ -304,14 +304,6 @@ Schedule::command('emails:validate')
     ->sendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
 
-// Daily kudos recalculation for users active in last 2 days.
-// V1: cron/users_kudos.php
-Schedule::command('users:update-kudos')
-    ->dailyAt('04:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('users:update-kudos'))
-    ->runInBackground();
-
 // Hourly group member/mod count refresh.
 // V1: cron/membercounts.php
 Schedule::command('groups:update-counts')

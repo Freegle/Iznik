@@ -51,6 +51,7 @@
                 Tap to choose a different community nearby.
               </p>
             </div>
+            <PostPersonalInfoWarning :group="group" :text="postText" />
           </div>
         </div>
 
@@ -73,6 +74,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useRoute, useHead, useRuntimeConfig } from '#imports'
 import NoticeMessage from '~/components/NoticeMessage.vue'
 import ExternalLink from '~/components/ExternalLink.vue'
@@ -80,8 +82,10 @@ import GlobalMessage from '~/components/GlobalMessage.vue'
 import PostCode from '~/components/PostCode.vue'
 import WizardProgressCompact from '~/components/WizardProgressCompact.vue'
 import ComposeGroup from '~/components/ComposeGroup.vue'
+import PostPersonalInfoWarning from '~/components/PostPersonalInfoWarning.vue'
 import { setup, postcodeSelect, postcodeClear } from '~/composables/useCompose'
 import { buildHead } from '~/composables/useBuildHead'
+import { useComposeStore } from '~/stores/compose'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -95,9 +99,17 @@ useHead(
   )
 )
 
-const { initialPostcode, postcodeValid, noGroups, closed } = await setup(
+const { initialPostcode, postcodeValid, noGroups, closed, group } = await setup(
   'Wanted'
 )
+
+const composeStore = useComposeStore()
+const postText = computed(() => {
+  const msgs = composeStore.all.filter((m) => m.type === 'Wanted')
+  if (!msgs.length) return ''
+  const msg = msgs[0]
+  return ((msg.item || '') + ' ' + (msg.description || '')).trim()
+})
 </script>
 
 <style scoped lang="scss">

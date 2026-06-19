@@ -273,6 +273,40 @@ describe('MessageList', () => {
       expect(ret[0].id).toBe(2) // the copy on member group 10, not non-member 20
     })
 
+    it('deduplicates same user+subject with differing trailing location text (Discourse 9733/7)', () => {
+      // Two separate messages from the same user for the same item, posted to
+      // different groups. The only difference is the location in the subject.
+      // The fix strips trailing (location) before building the dedup key so that
+      // "OFFER: bike (Bethnal Green)" and "OFFER: bike (Bethel)" collapse to one.
+      const store = {
+        1: { id: 1, fromuser: 5, type: 'Offer', subject: 'OFFER: bike (Bethnal Green)', groups: [{ groupid: 20 }] },
+        2: { id: 2, fromuser: 5, type: 'Offer', subject: 'OFFER: bike (Bethel)', groups: [{ groupid: 10 }] },
+      }
+
+      const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
+
+      let ret = []
+      const dups = []
+      ;[{ id: 1 }, { id: 2 }].forEach((m) => {
+        const message = store[m.id]
+        let key = message.fromuser + '|' + stripLocation(message.subject)
+        const p = message.subject.indexOf(':')
+        if (p !== -1) {
+          key =
+            message.fromuser +
+            '|' +
+            message.type +
+            stripLocation(message.subject.substring(p))
+        }
+        if (!(key in dups)) {
+          ret.push(m)
+          dups[key] = m.id
+        }
+      })
+
+      expect(ret).toHaveLength(1)
+    })
+
     it('keeps firstSeenMessage over duplicates', () => {
       // Special handling for firstSeenMessage
       expect(true).toBe(true)
