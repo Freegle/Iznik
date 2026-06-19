@@ -1221,6 +1221,64 @@ describe('ModMessage', () => {
       expect(wrapper.vm.groupid).toBe(789)
     })
 
+    // Rippling-out: a post can ripple into a neighbouring group's pending queue
+    // from elsewhere, so mods are warned not to reject it just for being "out of
+    // area". The warning shows only on a rippled-in PENDING post.
+    const rippleEarlier = '2026-06-18T10:00:00Z'
+    const rippleLater = '2026-06-18T10:20:00Z' // 20 min later, beyond the 10-min origin window
+
+    it('warns mods not to reject a rippled-in pending post for being out of area', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            { groupid: 789, namedisplay: 'Context', collection: 'Pending', arrival: rippleLater },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(wrapper.vm.pending).toBe(true)
+      const warning = wrapper.find(
+        '[data-test="ripple-out-of-area-reject-warning"]'
+      )
+      expect(warning.exists()).toBe(true)
+      expect(warning.text()).toContain('out of area')
+    })
+
+    it('does not warn when the post has not rippled in', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            { groupid: 789, namedisplay: 'Context', collection: 'Pending', arrival: rippleEarlier },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(false)
+      expect(
+        wrapper.find('[data-test="ripple-out-of-area-reject-warning"]').exists()
+      ).toBe(false)
+    })
+
+    it('does not warn once a rippled-in post is approved (not pending)', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            { groupid: 789, namedisplay: 'Context', collection: 'Approved', arrival: rippleLater },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(wrapper.vm.pending).toBe(false)
+      expect(
+        wrapper.find('[data-test="ripple-out-of-area-reject-warning"]').exists()
+      ).toBe(false)
+    })
+
     it('falls back to first group when no contextGroupid', () => {
       const wrapper = mountComponent(
         {},

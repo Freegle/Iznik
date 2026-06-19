@@ -168,6 +168,17 @@
                 Learn more
               </a>
             </NoticeMessage>
+            <NoticeMessage
+              v-if="isRippledInToContextGroup && pending"
+              variant="warning"
+              class="mt-1 mb-2"
+              data-test="ripple-out-of-area-reject-warning"
+            >
+              This post rippled in from a neighbouring community, so the poster
+              may not live in your group's area. That is expected - please
+              don't reject it just for being "out of area". Only reject for the
+              usual reasons (spam, breaks the rules, wrong sort of thing).
+            </NoticeMessage>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
