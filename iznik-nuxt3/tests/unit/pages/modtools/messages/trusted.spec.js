@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-import TrustedPage from '~/modtools/pages/messages/trusted/[[id]]/[[term]].vue'
+import TrustedPage from '~/modtools/pages/messages/trusted/[[id]].vue'
 
 const mockBusy = ref(false)
 const mockContext = ref(null)
@@ -83,13 +83,14 @@ globalThis.__testUseRouter = () => ({
   currentRoute: { value: { path: '/' } },
 })
 
-describe('messages/trusted/[[id]]/[[term]].vue page', () => {
+describe('messages/trusted/[[id]].vue page', () => {
   function mountComponent() {
     return mount(TrustedPage, {
       global: {
         plugins: [createPinia()],
         stubs: {
           'client-only': { template: '<div><slot /></div>' },
+          ModHelpTrusted: { template: '<div class="mod-help-trusted" />' },
           ScrollToTop: { template: '<div class="scroll-to-top" />' },
           ModGroupSelect: {
             template: '<div class="mod-group-select" />',
