@@ -239,6 +239,10 @@ type Message struct {
 	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
 	Tnpostid         *string          `json:"tnpostid"`
 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
+	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
+	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
+	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -383,6 +387,15 @@ func GetMessages(c *fiber.Ctx) error {
 	} else {
 		return fiber.NewError(fiber.StatusBadRequest, "Steady on")
 	}
+}
+
+// rippleEnabled reports whether the rippling-out feature is switched on. Mirrors the Laravel
+// config('freegle.ripple.enabled') / RIPPLE_ENABLED env so the whole feature ships dark and is
+// flipped on with one env var (default off). While off, the reach/reply-eligibility path below is
+// skipped entirely, so the API is byte-for-byte identical to pre-rippling.
+func rippleEnabled() bool {
+	v := os.Getenv("RIPPLE_ENABLED")
+	return v == "true" || v == "1"
 }
 
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
@@ -768,6 +781,78 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&modCount)
 		if modCount > 0 || auth.IsAdminOrSupport(myid) {
 			checkWorryWords(db, messages)
+		}
+	}
+
+	// Reply-eligibility (#2): a post is view-only (replyeligible=false) when the viewer
+	// cannot reply to it yet. Two reasons:
+	//   - rippling-out: the post has rippled out (has a rippling_reach row) but not yet to
+	//     the viewer's location; or
+	//   - the viewer is banned from every group the post is on, so they must not interact
+	//     with it (mirrors the digest ban exclusion, but for the location-based reach path).
+	// Posts with no reach row and no ban stay eligible (the field is omitted). The queries
+	// only run when there's something to find (a known location / an actual ban), keeping
+	// them off the hot path for the common case.
+	//
+	// Gated by the master activation switch: while rippling is off this whole section is skipped,
+	// so ReplyEligible is never set and the response matches pre-rippling exactly (no reach query,
+	// no ban-eligibility query, no metrics write).
+	if rippleEnabled() && myid > 0 && len(messages) > 0 {
+		ids := make([]uint64, 0, len(messages))
+		for _, m := range messages {
+			ids = append(ids, m.ID)
+		}
+		blockedSet := make(map[uint64]bool)
+
+		// Reach-blocked: rippled out but not yet to the viewer's location.
+		latlng := user.GetLatLng(myid)
+		if latlng.Lat != 0 || latlng.Lng != 0 {
+			var reachBlocked []struct {
+				Msgid uint64 `gorm:"column:msgid"`
+			}
+			// Ignore the error: until the reach engine (PR A) is deployed the
+			// rippling_reach table may not exist, in which case nothing is reach-blocked.
+			if err := db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
+				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error; err == nil {
+				for _, b := range reachBlocked {
+					blockedSet[b.Msgid] = true
+				}
+				if n := len(reachBlocked); n > 0 {
+					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
+					// can't reply to yet). Best-effort — errors ignored so it never affects the
+					// response, and it is inert until the reach engine populates rippling_reach.
+					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
+						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
+				}
+			}
+		}
+
+		// Banned-blocked: the viewer is banned from every group the post is on. Only run
+		// the per-message check when the viewer actually has a ban somewhere.
+		var banCount int64
+		db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ?", myid).Scan(&banCount)
+		if banCount > 0 {
+			var bannedBlocked []struct {
+				Msgid uint64 `gorm:"column:msgid"`
+			}
+			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+				"LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ? "+
+				"WHERE mg.msgid IN (?) AND mg.deleted = 0 "+
+				"GROUP BY mg.msgid HAVING COUNT(mg.groupid) = COUNT(ub.groupid)",
+				myid, ids).Scan(&bannedBlocked)
+			for _, b := range bannedBlocked {
+				blockedSet[b.Msgid] = true
+			}
+		}
+
+		if len(blockedSet) > 0 {
+			notEligible := false
+			for ix := range messages {
+				if blockedSet[messages[ix].ID] {
+					messages[ix].ReplyEligible = &notEligible
+				}
+			}
 		}
 	}
 

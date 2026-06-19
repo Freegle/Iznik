@@ -412,8 +412,15 @@
                   message.promisedtome ? 'Promised to you' : 'Already promised'
                 }}
               </div>
+              <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
+                We're showing this to people closest to it first — you'll be
+                able to reply once it reaches your area.
+                <nuxt-link no-prefetch to="/help?topic=which-posts">
+                  Learn more
+                </nuxt-link>
+              </NoticeMessage>
               <div
-                v-if="replyable && !replied && !message.successful"
+                v-else-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
                 <b-button
@@ -465,8 +472,15 @@
           <v-icon icon="handshake" />
           {{ message.promisedtome ? 'Promised to you' : 'Already promised' }}
         </div>
+        <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
+          We're showing this to people closest to it first — you'll be able to
+          reply once it reaches your area.
+          <nuxt-link no-prefetch to="/help?topic=which-posts">
+            Learn more
+          </nuxt-link>
+        </NoticeMessage>
         <div
-          v-if="replyable && !replied && !message.successful"
+          v-else-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
           <b-button
@@ -571,6 +585,7 @@ import {
   defineAsyncComponent,
   onMounted,
   onUnmounted,
+  watch,
 } from 'vue'
 import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
@@ -652,6 +667,15 @@ const {
 } = useMessageDisplay(props.id)
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+
+// Reply-eligibility (#2): the API returns replyeligible === false when the viewer can't
+// reply yet — the post hasn't rippled out to their area, or they're banned from every
+// group it's on. Show a view-only notice instead of the Reply button. Never blocks the
+// poster's own post. The field is omitted (so this stays false) until the reach engine
+// populates rippling_reach, so this is inert until then with no client-side flag.
+const reachBlocked = computed(
+  () => message.value?.replyeligible === false && !fromme.value
+)
 
 // State
 const replied = ref(false)
@@ -905,10 +929,20 @@ onMounted(() => {
 
   // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
   // chat-style reply pane straight away so they don't need to click Reply
-  // again. The pane fetches its own message data and gates its own render,
-  // so this is safe to call unconditionally.
+  // again — but NOT when the post is reach-blocked for them (rippling-out #5),
+  // or the deep link would bypass the reply gate. message may still be loading,
+  // so wait for it before deciding. (ChatReplyPane also gates its own composer.)
   if (useRoute().query.reply) {
-    expandReply()
+    if (message.value) {
+      if (!reachBlocked.value) expandReply()
+    } else {
+      const stop = watch(message, (m) => {
+        if (m) {
+          stop()
+          if (!reachBlocked.value) expandReply()
+        }
+      })
+    }
   }
 })
 

@@ -104,8 +104,20 @@
         </NoticeMessage>
       </div>
 
+      <!-- Rippling-out reply gate (#5): the reach hasn't reached this viewer yet, so the post
+           is view-only. Show why instead of a composer whose send the server would reject —
+           covers every entry path (Reply button, ?reply= deep link, stale client). -->
+      <NoticeMessage
+        v-if="reachBlocked"
+        variant="info"
+        class="reply-card__reach-blocked"
+      >
+        We're showing this to people closest to it first — you'll be able to
+        reply once it reaches your area.
+      </NoticeMessage>
+
       <!-- Composer: matches the real chat footer -->
-      <div v-if="!me?.deleted" class="reply-card__composer">
+      <div v-else-if="!me?.deleted" class="reply-card__composer">
         <!-- Email for logged-out users -->
         <div v-if="!me" class="composer-field">
           <EmailValidator
@@ -324,6 +336,11 @@ await messageStore.fetch(props.messageId)
 const message = computed(() => {
   return messageStore?.byId(props.messageId)
 })
+
+// Rippling-out reply gate (#5): the API returns replyeligible === false when the post is
+// visible to this viewer but its reach hasn't reached them yet. Gate the composer so no entry
+// path shows a reply box whose send the server-side reach check would reject.
+const reachBlocked = computed(() => message.value?.replyeligible === false)
 
 const attachmentCount = computed(() => message.value?.attachments?.length || 0)
 

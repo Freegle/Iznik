@@ -378,6 +378,15 @@ const filteredMessages = computed(() => {
 
 // Helper function to sort messages
 function sortMessages(messages) {
+  // Rippling-out (#1): the "Nearby" sort orders nearest-first from the viewer's
+  // location. Falls back to recency if we don't have a centre (no known location).
+  const nearbyRef =
+    props.selectedSort === 'Nearby' &&
+    centre.value?.lat != null &&
+    centre.value?.lng != null
+      ? [centre.value.lat, centre.value.lng]
+      : null
+
   return messages.slice().sort((a, b) => {
     if (props.selectedSort === 'Unseen') {
       // Unseen messages first, then by descending date/time. But we don't want to treat successful posts as
@@ -392,8 +401,23 @@ function sortMessages(messages) {
       } else {
         return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
       }
+    } else if (nearbyRef) {
+      // Nearby: nearest-first, then recency as a tiebreak. Posts with no
+      // coordinates sort last.
+      const da =
+        a.lat != null && a.lng != null
+          ? getDistance(nearbyRef, [a.lat, a.lng])
+          : Infinity
+      const db =
+        b.lat != null && b.lng != null
+          ? getDistance(nearbyRef, [b.lat, b.lng])
+          : Infinity
+      if (da !== db) {
+        return da - db
+      }
+      return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
     } else {
-      // Descending date/time.
+      // Descending date/time (Newest posted; also Nearby with no known location).
       return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
     }
   })

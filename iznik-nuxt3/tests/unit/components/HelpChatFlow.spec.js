@@ -96,7 +96,12 @@ describe('HelpChatFlow', () => {
       it('renders all main category options', () => {
         const wrapper = createWrapper()
         const options = wrapper.findAll('.flow-option')
-        expect(options.length).toBe(6)
+        expect(options.length).toBe(7)
+      })
+
+      it('displays the Which posts do I see? option (rippling-out #8)', () => {
+        const wrapper = createWrapper()
+        expect(wrapper.text()).toContain('Which posts do I see?')
       })
 
       it('displays Posting items option', () => {
@@ -132,13 +137,13 @@ describe('HelpChatFlow', () => {
       it('shows icons for each option', () => {
         const wrapper = createWrapper()
         const icons = wrapper.findAll('.option-icon')
-        expect(icons.length).toBe(6)
+        expect(icons.length).toBe(7)
       })
 
       it('shows chevrons for non-back options', () => {
         const wrapper = createWrapper()
         const chevrons = wrapper.findAll('.chevron')
-        expect(chevrons.length).toBe(6)
+        expect(chevrons.length).toBe(7)
       })
     })
 
@@ -659,6 +664,27 @@ describe('HelpChatFlow', () => {
         await noResponseOption.trigger('click')
         expect(wrapper.find('.link-btn').attributes('data-to')).toBe('/chats')
         expect(wrapper.text()).toContain('Go to Chats')
+      })
+    })
+
+    describe('which-posts path (rippling-out #8)', () => {
+      it('shows the rippling-out explanation when clicked', async () => {
+        const wrapper = createWrapper()
+        const option = wrapper
+          .findAll('.flow-option')
+          .find((o) => o.text().includes('Which posts do I see?'))
+        await option.trigger('click')
+        expect(wrapper.text()).toContain('we show it to people nearby first')
+        expect(wrapper.text()).toContain('new change to how Freegle works')
+      })
+
+      it('renders the answer as html content', async () => {
+        const wrapper = createWrapper()
+        const option = wrapper
+          .findAll('.flow-option')
+          .find((o) => o.text().includes('Which posts do I see?'))
+        await option.trigger('click')
+        expect(wrapper.find('.flow-html').exists()).toBe(true)
       })
     })
 
