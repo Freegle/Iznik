@@ -111,4 +111,38 @@ describe('ComposeGroup', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Finding your local community')
   })
+
+  it('falls back to the cached store name when the nearby entry has none', async () => {
+    mockComposeStore.postcode.groupsnear = [
+      { id: 1, namedisplay: null, nameshort: null },
+    ]
+    mockGroupStore.get.mockReturnValue({ namedisplay: 'Cached Community' })
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'Cached Community'
+    )
+  })
+
+  it('logs and still derives the group when the postcode refetch fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockApi.location.typeahead.mockRejectedValueOnce(new Error('network'))
+    const wrapper = createWrapper()
+    await flushPromises()
+    // Refetch failed, but the component still locks and shows the derived group.
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'London Central'
+    )
+    expect(mockComposeStore.group).toBe(1)
+    expect(consoleSpy).toHaveBeenCalled()
+    consoleSpy.mockRestore()
+  })
+
+  it('renders the finding state and skips the refetch when no postcode is set', async () => {
+    mockComposeStore.postcode = null
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Finding your local community')
+    expect(mockApi.location.typeahead).not.toHaveBeenCalled()
+  })
 })
