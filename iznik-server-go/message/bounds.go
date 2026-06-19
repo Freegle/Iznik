@@ -45,12 +45,8 @@ func Bounds(c *fiber.Ctx) error {
 	// hasn't made it into messages_spatial yet.
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
-	// messages_spatial is per-group, so a message on several groups within the
-	// viewport appears once per group; the ROW_NUMBER() wrapper collapses it to a
-	// single pin (its most relevant: unseen first, then newest arrival).
 	db.Raw(""+
-		"SELECT lat, lng, id, successful, promised, groupid, type, arrival, unseen FROM ("+
-		"SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.id ORDER BY t.unseen DESC, t.arrival DESC) AS rn FROM ("+
+		"SELECT * FROM ("+
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
 		"messages_spatial.msgid AS id, "+
@@ -67,12 +63,12 @@ func Bounds(c *fiber.Ctx) error {
 		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"UNION "+
 		"SELECT messages.lat, messages.lng, messages.id, "+
-		"(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-		"(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-		"messages_groups.groupid, "+
+		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
+		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+		"MIN(messages_groups.groupid) AS groupid, "+
 		"messages.type,"+
-		"messages_groups.arrival, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+		"MAX(messages_groups.arrival) AS arrival, "+
+		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
 		"FROM messages "+
 		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
 		"INNER JOIN `groups` ON groups.id = messages_groups.groupid "+
@@ -83,7 +79,8 @@ func Bounds(c *fiber.Ctx) error {
 		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
 		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"AND messages_outcomes.id IS NULL "+
-		") t) d WHERE d.rn = 1 "+
+		"GROUP BY messages.id "+
+		") t "+
 		"ORDER BY unseen DESC, arrival DESC, id DESC "+
 		limitq+";",
 		myid, utils.MESSAGE_LIKES_VIEW,

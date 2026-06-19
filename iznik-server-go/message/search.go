@@ -79,14 +79,14 @@ func groupFilter(groupids []uint64) string {
 	ret := ""
 
 	if len(groupids) > 0 {
-		ret = " AND messages_spatial.groupid IN ("
+		ret = " AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN ("
 		for i, id := range groupids {
 			if i > 0 {
 				ret += ","
 			}
 			ret += strconv.FormatUint(id, 10)
 		}
-		ret += ") "
+		ret += ") AND mg.collection = 'Approved' AND mg.deleted = 0) "
 	}
 
 	return ret
