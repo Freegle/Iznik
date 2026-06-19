@@ -254,12 +254,10 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	// Posted + approved on group A (helper adds messages_groups/spatial/index for A).
 	msgID := CreateTestMessage(t, posterID, groupA, subject, lat, lng)
 
-	// Cross-post to group B: approved messages_groups + per-group spatial row + per-group
-	// word index, mirroring what the real per-group writers produce.
+	// Cross-post to group B: approved messages_groups + per-group word index. Under the
+	// one-row spatial model messages_spatial keeps a single row per message (UNIQUE(msgid));
+	// the cross-post's group membership lives in messages_groups, which browse/search join through.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
-	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
-		"VALUES (?, ST_GeomFromText(?, %d), 0, ?, NOW(), 'Offer')", utils.SRID),
-		msgID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupB)
 	indexMessageWords(t, db, msgID, groupB, subject)
 
 	defer func() {
@@ -269,12 +267,13 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 	}()
 
-	// 1. messages_spatial holds exactly one row per group (per-group unique key).
-	var spatialCount, distinctGroups int64
+	// 1. One-row spatial: a cross-post keeps a single messages_spatial row; both groups'
+	//    membership is recorded in messages_groups (which the read queries join through).
+	var spatialCount, approvedGroups int64
 	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
-	db.Raw("SELECT COUNT(DISTINCT groupid) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&distinctGroups)
-	assert.Equal(t, int64(2), spatialCount, "cross-post should have one spatial row per group")
-	assert.Equal(t, int64(2), distinctGroups, "spatial rows should cover both groups")
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = 'Approved'", msgID).Scan(&approvedGroups)
+	assert.Equal(t, int64(1), spatialCount, "one-row spatial: a cross-post has a single messages_spatial row")
+	assert.Equal(t, int64(2), approvedGroups, "cross-post is approved on both groups (messages_groups)")
 
 	// 2. Combined ModTools list (groupid=0, covers all the mod's groups) returns the
 	//    cross-post exactly once, not once per group.
