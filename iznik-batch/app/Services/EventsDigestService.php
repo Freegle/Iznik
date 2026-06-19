@@ -155,6 +155,10 @@ class EventsDigestService
      */
     protected function fetchUpcomingEvents(array $groupIds, string $userSite): array
     {
+        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+        $tusUploader = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080');
+        $deliveryUrl = config('freegle.delivery.base_url');
+
         $rawEvents = DB::table('communityevents')
             ->join('communityevents_groups', 'communityevents_groups.eventid', '=', 'communityevents.id')
             ->join('communityevents_dates', 'communityevents_dates.eventid', '=', 'communityevents.id')
@@ -218,11 +222,28 @@ class EventsDigestService
                 ? Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia')
                 : null;
 
+            // Build a working image URL. The previous fallback pointed at
+            // {userSite}/communityevent/{id}/image/{imgid}, which is not a real route
+            // on the user site and 404s in every client. Mirror how volunteering (and
+            // V1) serve images: an externally-hosted URL as-is; a TUS upload through
+            // the delivery/resize proxy; otherwise the image domain's community-event
+            // thumbnail route (cimg_/tcimg_ -> /api/image?id=X&communityevent=1).
             $imageUrl = null;
             if ($images->has($event->id)) {
                 $img = $images->get($event->id);
                 $mods = $img->externalmods ? json_decode($img->externalmods, true) : [];
-                $imageUrl = $mods['url'] ?? "{$userSite}/communityevent/{$event->id}/image/{$img->id}";
+                if (!empty($mods['url'])) {
+                    $imageUrl = $mods['url'];
+                } elseif ($img->externaluid
+                    && ($p = strpos($img->externaluid, 'freegletusd-')) !== false) {
+                    $fileId = substr($img->externaluid, $p + strlen('freegletusd-'));
+                    $source = $tusUploader . '/' . $fileId;
+                    $imageUrl = $deliveryUrl
+                        ? $deliveryUrl . '?url=' . urlencode($source) . '&w=400'
+                        : $source;
+                } else {
+                    $imageUrl = "{$imagesDomain}/tcimg_{$img->id}.jpg";
+                }
             }
 
             $eventsById[(int) $event->id] = [
