@@ -92,6 +92,55 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $message->id)->count());
     }
 
+    public function test_pending_rippled_in_row_keeps_approved_origin_spatial_row(): void
+    {
+        // #6 regression: removeNonApprovedMessages keys on (msgid, groupid), not msgid alone.
+        // A post Approved on its origin group A (with a spatial row) gets rippled Pending into
+        // group B. The Pending B row must NOT cause the still-Approved origin spatial row to be
+        // deleted — otherwise the post flickers out of browse on every spatial-index run.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: lamp (London)',
+            'textbody' => 'A lamp.',
+            'source' => 'Platform',
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupA->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+        ]);
+        // Rippled into B, still awaiting that group's moderation.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+        ]);
+        // The post's single spatial row belongs to its approved origin group A.
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $groupA->id, Message::TYPE_OFFER, now()->subDays(2)]
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            1,
+            DB::table('messages_spatial')->where('msgid', $message->id)->where('groupid', $groupA->id)->count(),
+            'approved origin spatial row survives a Pending rippled-in row on another group'
+        );
+    }
+
     public function test_removes_deleted_message_from_spatial_index(): void
     {
         $user = $this->createTestUser();

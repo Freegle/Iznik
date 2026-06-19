@@ -276,10 +276,17 @@ class StatsGenerationServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $otherGroup = $this->createTestGroup();
+        // A third, unrelated group id for the "other ids share the CSV" decoy. It must be a
+        // real, distinct id: a hardcoded literal (previously 999) collides whenever the groups
+        // auto-increment happens to assign $group that exact id, which makes the decoy token
+        // equal the group under test and double-counts it (Searches tally 3 instead of 2). The
+        // failing id depends only on how many groups earlier tests created, so it surfaced as a
+        // flake when the suite grew.
+        $unrelatedGroup = $this->createTestGroup();
 
         DB::table('search_history')->insert([
             ['date' => $this->date.' 10:00:00', 'term' => 'sofa', 'groups' => (string) $group->id],
-            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $otherGroup->id.','.$group->id.',999'],
+            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $otherGroup->id.','.$group->id.','.$unrelatedGroup->id],
             ['date' => $this->date.' 12:00:00', 'term' => 'table', 'groups' => (string) $otherGroup->id],
             // Wrong date — ignored.
             ['date' => '2026-04-02 10:00:00', 'term' => 'desk', 'groups' => (string) $group->id],

@@ -419,8 +419,15 @@ platform :ios do
     # App.xcodeproj so it builds + signs in CI (no manual Xcode step). Runs BEFORE the
     # version bumps below so increment_version_number / increment_build_number cover it too.
     # Non-fatal: if anything goes wrong the app still builds without the extension and iOS
-    # notifications fall back to plain text — so this can never break the live release.
-    sh("bundle exec ruby fastlane/add_nse_target.rb || bundle exec ruby add_nse_target.rb || echo '⚠️  NSE wiring step did not run'")
+    # notifications fall back to plain text - so this can never break the live release.
+    # Invoke by ABSOLUTE path from this Fastfile's location. The previous cwd-relative
+    # forms (fastlane/add_nse_target.rb, add_nse_target.rb) did not resolve from
+    # fastlane's sh working directory, so this step LoadError'd and silently no-op'd on
+    # every build - the NSE target was never wired and iOS rich push always degraded to
+    # plain text. The script itself is cwd-independent (it derives all paths from its own
+    # __dir__), so locating it by absolute path is the whole fix.
+    nse_script = File.expand_path('add_nse_target.rb', __dir__)
+    sh("bundle exec ruby \"#{nse_script}\" || echo '⚠️  NSE wiring step did not run'")
     # Confirmed wired only when BOTH the source is present AND the target is in the project.
     nse_present = File.exist?('../ios/App/NotificationServiceExtension/NotificationService.swift') &&
                   File.exist?('../ios/App/App.xcodeproj/project.pbxproj') &&

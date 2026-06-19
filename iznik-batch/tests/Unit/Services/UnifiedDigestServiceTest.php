@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\UnifiedDigestService;
@@ -21,6 +22,8 @@ class UnifiedDigestServiceTest extends TestCase
         parent::setUp();
         $this->service = new UnifiedDigestService();
         Mail::fake();
+        // Rippling ships dark; enable it so the reach-coordination ledger path is exercised.
+        config(['freegle.ripple.enabled' => true]);
     }
 
     public function test_deduplication_with_tnpostid(): void
@@ -832,6 +835,226 @@ class UnifiedDigestServiceTest extends TestCase
         // Both immediate members (recipient + poster) receive it.
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(2, $stats['emails_sent']);
+    }
+
+    public function test_mail_newly_reached_reach_gates_then_picks_up_later_reached_on_rerun(): void
+    {
+        // The expander-driven mailer (#0 step 4) mails the post to immediate members the reach
+        // NOW covers, ledgers them, and — crucially — on a LATER tick picks up members the reach
+        // reaches afterwards (the exact case the cursor-based approach silently dropped).
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $memberA = $this->createTestUser();
+        $this->createMembership($memberA, $group);
+        $memberB = $this->createTestUser();
+        $this->createMembership($memberB, $group);
+        $this->setMyLocation($memberA, 51.5, -0.1);  // inside reach v1
+        $this->setMyLocation($memberB, 51.5, 0.5);   // outside v1, inside v2
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach mail (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $ledgered = fn ($uid) => DB::table('rippling_reach_notified')
+            ->where('msgid', $msg->id)->where('userid', $uid)->exists();
+        $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
+        $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
+
+        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
+        DB::statement('UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
+        $this->service->mailNewlyReachedForPost($msg->id);
+        $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
+        $this->assertSame(
+            $before + 1,
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            'only B newly notified — A not re-mailed'
+        );
+
+        // #0 / §15 instrumentation: both expander mails (A then B) are counted.
+        $this->assertSame(2, (int) DB::table('rippling_event_metrics')
+            ->where('day', now()->toDateString())->where('event', 'immediate_mailed')->value('count'),
+            'immediate mails on expansion are counted');
+    }
+
+    public function test_cursor_immediate_digest_excludes_posts_with_a_reach_row(): void
+    {
+        // A rippling post (has a rippling_reach row) is mailed by the expander, NOT the cursor
+        // digest — so the cursor digest must skip it, or members get two immediate mails.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: rippling (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'cursor immediate digest skips a post that has a reach row');
+    }
+
+    public function test_cursor_immediate_ledger_is_dark_when_rippling_disabled(): void
+    {
+        // With the master activation switch off, the cursor immediate digest still mails normally but
+        // does NOT touch the rippling reach-coordination ledger (the expander mailer that reads it is
+        // inert while off anyway), so the new table stays empty in the dark state.
+        config(['freegle.ripple.enabled' => false]);
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: dark (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('d', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedImmediateCursor($group);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            'no reach-coordination ledger rows are written while rippling is off'
+        );
+    }
+
+    public function test_cursor_and_expander_do_not_double_mail_via_shared_ledger(): void
+    {
+        // A post is cursor-mailed on arrival (no reach row yet) and the reach row appears minutes
+        // later. The cursor send records the ledger, so the expander must NOT re-mail those members.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: window (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('c', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedImmediateCursor($group);
+
+        // No reach row yet → the cursor immediate digest mails the group and records the ledger.
+        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            'cursor immediate send is recorded in the ledger'
+        );
+
+        // Reach row appears afterwards; the expander must not re-mail the already-mailed member.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
+        $sent = $this->service->mailNewlyReachedForPost($msg->id);
+        $this->assertSame(0, $sent, 'expander does not re-mail members the cursor digest already mailed');
+        $this->assertSame(
+            $before,
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            'no new ledger rows — the shared ledger prevents the double-mail'
+        );
+    }
+
+    public function test_daily_digest_reach_gates_rippling_posts_by_member_location(): void
+    {
+        // The daily digest (and the daily-posts push, which shares getPostsForUser) must
+        // reach-gate rippling posts by the member's location, just like the immediate path —
+        // a daily member is only shown a rippling post once its reach covers them.
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        // Reach COVERS the member (-0.1, 51.5 is inside this polygon).
+        $covered = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: covered (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $covered->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($covered->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        // Reach does NOT cover the member (far to the east).
+        $faraway = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: faraway (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $faraway->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($faraway->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+
+        $tracker = UserDigest::create([
+            'userid' => $member->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+        ]);
+
+        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')->all();
+
+        $this->assertContains($covered->id, $ids, 'reach-covered rippling post is included for the daily member');
+        $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
+    }
+
+    public function test_immediate_cursor_advances_past_reach_excluded_posts(): void
+    {
+        // After full rollout every new post has a reach row, so the cursor digest finds
+        // nothing to mail. The cursor must still advance past those posts — otherwise it
+        // freezes forever and the scan window grows without bound.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        [$group, $poster] = $this->bootstrapImmediateGroup();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach only (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertEquals((int) $msg->id, (int) $cursor->msgid,
+            'cursor advances past the reach-excluded post rather than freezing');
+    }
+
+    /** Set a user's settings.mylocation point (the canonical first-choice location source). */
+    protected function setMyLocation(User $user, float $lat, float $lng): void
+    {
+        $settings = $user->settings ?? [];
+        $settings['mylocation'] = ['lat' => $lat, 'lng' => $lng];
+        $user->settings = $settings;
+        $user->save();
+    }
+
+    /** Seed a rippling_reach row for a post with the given WKT polygon (SRID 3857). */
+    protected function seedReach(int $msgid, string $wkt): void
+    {
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$msgid, $wkt]
+        );
     }
 
     /**
