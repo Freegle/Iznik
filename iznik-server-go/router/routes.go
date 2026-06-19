@@ -58,6 +58,7 @@ import (
 	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
 	"github.com/freegle/iznik-server-go/session"
@@ -510,6 +511,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Param key path string true "Configuration key"
 		// @Success 200 {object} config.ConfigItem
 		rg.Get("/config/:key", config.Get)
+
+		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
+		ripplingAdmin := rg.Group("/rippling")
+		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
+		ripplingAdmin.Get("/metrics", rippling.Metrics)
 
 		// Create a protected route group for admin endpoints
 		adminConfig := rg.Group("/config/admin")

@@ -81,6 +81,7 @@ type User struct {
 	Modmails           uint64          `json:"modmails" gorm:"-"`
 	Suspectreason      *string         `json:"suspectreason,omitempty" gorm:"-"`
 	Activedistance     *float64        `json:"activedistance" gorm:"-"`
+	Locationchanges    *int            `json:"locationchanges,omitempty" gorm:"-"`
 	Chatmodstatus      *string         `json:"chatmodstatus,omitempty" gorm:"->"`
 	Newsfeedmodstatus  *string         `json:"newsfeedmodstatus,omitempty" gorm:"->"`
 	Tnuserid           *uint64         `json:"tnuserid,omitempty" gorm:"->"`
@@ -490,8 +491,8 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 		"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome "+
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection = ? "+
-		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED).Scan(&history)
+		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
+		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
 
 	now := time.Now()
 	for ix, h := range history {
@@ -1311,6 +1312,26 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		}()
 	}
 
+	// Under rippling-out a post's reach follows the poster's declared location, so a member who keeps
+	// changing location is the spam vector that group-spread (activedistance) used to be. Surface the
+	// count of distinct postcodes they have set in the last 90 days so mods reviewing a flagged member
+	// can see the hopping directly. We expose the count (cleanly available from the PostcodeChange log)
+	// rather than a geographic spread, which would need historical lat/lng we do not retain.
+	var locationchanges *int
+	if modtools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var n int
+			db.Raw("SELECT COUNT(DISTINCT text) FROM logs "+
+				"WHERE user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 90 DAY",
+				id, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&n)
+			if n > 0 {
+				locationchanges = &n
+			}
+		}()
+	}
+
 	wg.Wait()
 
 	// Resolve NULL ourPostingStatus → MODERATED.
@@ -1336,6 +1357,7 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	if callerIsMod || myid == id || auth.IsAdminOrSupport(myid) {
 		u.Activedistance = activedistance
+		u.Locationchanges = locationchanges
 		u.Lastpush = lastpush
 	}
 
@@ -2014,6 +2036,58 @@ func PutUser(c *fiber.Ctx) error {
 // Returns the pruned settings JSON ready for storage, and appends any SET clauses needed for the
 // users table (e.g. lastlocation) to the provided slices. Callers must include those clauses in
 // their UPDATE statement.
+// RapidLocationChangeThreshold is the number of DISTINCT postcodes a user may set within 24 hours
+// before they are flagged for moderator review. Rippling-out makes a post's reach follow the
+// poster's declared location (not their group memberships), so rapidly hopping location is the new
+// way to push posts into unrelated areas. This catches that pattern; it is the one spam signal
+// rippling newly requires (see plans/rippling-out-rollout/spam-checks-review-2026-06-18.md). Tune
+// the constant if it proves too tight/loose.
+const RapidLocationChangeThreshold = 4
+
+// CheckLocationChangeVelocity flags a user for moderator review when they have set too many distinct
+// postcodes in the last 24 hours. It is NON-DESTRUCTIVE: it sets the existing member-review flag
+// that mods already act on (memberships.reviewrequestedat), NOT a block, post-suppression, or
+// auto-ban, so a genuine mover/traveller is reviewed rather than punished. Moderators are never
+// flagged. Called right after a PostcodeChange has been logged.
+func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
+	if RapidLocationChangeThreshold <= 0 {
+		return
+	}
+
+	var distinct int
+	db.Raw("SELECT COUNT(DISTINCT text) FROM logs WHERE user = ? AND type = ? AND subtype = ? "+
+		"AND timestamp >= NOW() - INTERVAL 24 HOUR",
+		myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&distinct)
+
+	if distinct < RapidLocationChangeThreshold {
+		return
+	}
+
+	// Never flag moderators/owners.
+	var modCount int
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
+		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	if modCount > 0 {
+		return
+	}
+
+	reason := fmt.Sprintf("Changed location %d times in 24h (rippling-out reach-hopping signal)", distinct)
+
+	// Flag the user's memberships for review, but don't re-flag rows already pending (only a fresh
+	// request, or one whose previous request has already been actioned).
+	db.Exec("UPDATE memberships SET reviewrequestedat = NOW(), reviewreason = ? WHERE userid = ? "+
+		"AND (reviewrequestedat IS NULL OR (reviewedat IS NOT NULL AND reviewedat >= reviewrequestedat))",
+		reason, myid)
+
+	log2.Log(log2.LogEntry{
+		Type:    log2.LOG_TYPE_USER,
+		Subtype: log2.LOG_SUBTYPE_SUSPECT,
+		User:    &myid,
+		Byuser:  &myid,
+		Text:    &reason,
+	})
+}
+
 func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]string, setArgs *[]interface{}) []byte {
 	db := database.DBConn
 
@@ -2050,6 +2124,10 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 				Byuser:  &myid,
 				Text:    textPtr,
 			})
+
+			// Rippling-out: reach now follows declared location, so flag rapid location-hopping
+			// for moderator review (non-destructive).
+			CheckLocationChangeVelocity(db, myid)
 		}
 	}
 

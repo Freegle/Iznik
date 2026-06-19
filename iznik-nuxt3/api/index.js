@@ -41,6 +41,7 @@ import ModConfigsAPI from './ModConfigsAPI.js'
 import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
+import RipplingAPI from './RipplingAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
@@ -90,6 +91,7 @@ export default (config) => {
     news: new NewsAPI(options),
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
+    rippling: new RipplingAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),
     spammers: new SpammersAPI(options),

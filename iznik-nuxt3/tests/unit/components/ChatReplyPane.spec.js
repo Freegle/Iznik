@@ -559,4 +559,23 @@ describe('ChatReplyPane', () => {
       expect(comp.vm.subjectItemName).toBe('')
     })
   })
+
+  describe('reach-blocked (rippling-out #5)', () => {
+    it('hides the composer and shows a notice when replyeligible is false', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+      })
+      const wrapper = await createWrapper()
+      // No reply box whose send the server would reject; an explanatory notice instead.
+      expect(wrapper.find('.reply-card__composer').exists()).toBe(false)
+      expect(wrapper.text()).toContain('closest to it first')
+    })
+
+    it('shows the composer when replyeligible is not false', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.reply-card__composer').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('closest to it first')
+    })
+  })
 })

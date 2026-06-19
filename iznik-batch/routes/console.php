@@ -102,6 +102,29 @@ Schedule::command('messages:contentcheck')
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
+// Maintain rippling-out reach (rippling_reach) for active posts.
+// Computes per-post reach via the routing server and advances it over time per
+// the hazard schedule. Dark until browse/digest/reply-eligibility read it.
+//
+// Gated by the master activation switch: while ripple.enabled is false the cron is not scheduled at
+// all, so no reach is computed, nothing is rippled into new groups, and every reach consumer stays
+// inert. This lets the whole feature ship dark and be turned on later with just RIPPLE_ENABLED=true.
+if (config('freegle.ripple.enabled')) {
+    Schedule::command('ripple:expand')
+        ->everyMinute()
+        ->withoutOverlapping()
+        ->sendOutputTo(cronLog('ripple:expand'))
+        ->runInBackground();
+}
+
+// Release/expire held external (email/TN) replies as posts ripple out (#3).
+// Inert until the reach engine is live -- nothing to release until a reply is held.
+Schedule::command('ripple:release-replies')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('ripple:release-replies'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
@@ -1158,5 +1181,10 @@ Schedule::command('eee:sync-mv-labels')
     ->sendOutputTo(cronLog('eee:sync-mv-labels'))
     ->runInBackground();
 
-// ripple:monitor command exists but is not yet scheduled — pending decision
+// ripple:monitor command exists but is not yet scheduled - pending decision
 // on production rollout.  See plans/reference/ripple-curve-evaluation.md.
+//
+// ripple:tune (§16 self-tuning: rollup + geographic hotspots + advisory param
+// proposals) also exists but is left unscheduled for now. It is advisory only
+// (nothing it writes changes the engine until a proposal is promoted), and is
+// intended to run weekly once the production rollout decision is made.

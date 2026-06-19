@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type IsochronesUsers struct {
@@ -119,12 +120,59 @@ func Messages(c *fiber.Ctx) error {
 
 		wg.Wait()
 
+		// Q2a (§6): hide posts whose rippling reach exists but hasn't reached the viewer
+		// yet. Inert until the reach engine populates rippling_reach.
+		res = FilterReachBlocked(db, res, float64(latlng.Lat), float64(latlng.Lng))
+
 		for ix, r := range res {
 			res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
 		}
 	}
 
 	return c.JSON(res)
+}
+
+// FilterReachBlocked removes messages whose rippling reach exists but does not yet cover
+// the viewer's location (§6 — a post stays hidden until the ripple reaches you). It is
+// inert until the reach engine populates rippling_reach: a missing table or no matching
+// rows leaves msgs unchanged, so non-rippling posts and the pre-engine period are
+// unaffected.
+func FilterReachBlocked(db *gorm.DB, msgs []message.MessageSummary, lat, lng float64) []message.MessageSummary {
+	if len(msgs) == 0 || (lat == 0 && lng == 0) {
+		return msgs
+	}
+
+	ids := make([]uint64, 0, len(msgs))
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+
+	var rows []struct {
+		Msgid uint64 `gorm:"column:msgid"`
+	}
+	if err := db.Raw(
+		"SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
+			"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+		ids, lng, lat, utils.SRID,
+	).Scan(&rows).Error; err != nil {
+		return msgs // rippling_reach absent (pre-engine) — no filtering
+	}
+	if len(rows) == 0 {
+		return msgs
+	}
+
+	blocked := make(map[uint64]bool, len(rows))
+	for _, r := range rows {
+		blocked[r.Msgid] = true
+	}
+
+	out := make([]message.MessageSummary, 0, len(msgs))
+	for _, m := range msgs {
+		if !blocked[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func Count(c *fiber.Ctx) error {
@@ -157,6 +205,20 @@ func isochroneCount(myid uint64) uint64 {
 
 	latlng := user.GetLatLng(myid)
 
+	// Reach-gate the count to match the browse list (FilterReachBlocked) so the nav badge
+	// doesn't over-count. Only when the reach engine's table exists (ships in PR A) and the
+	// viewer has a known location — otherwise count everything (inert/pre-engine behaviour).
+	applyReach := false
+	if latlng.Lng != 0 || latlng.Lat != 0 {
+		var n int
+		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'rippling_reach'").Scan(&n)
+		applyReach = n > 0
+	}
+	reachClause := ""
+	if applyReach {
+		reachClause = "AND NOT EXISTS (SELECT 1 FROM rippling_reach mr WHERE mr.msgid = messages_spatial.msgid AND ST_Contains(mr.polygon, ST_SRID(POINT(?, ?), ?)) = 0) "
+	}
+
 	db.Where("userid = ?", myid).Find(&isochrones)
 
 	if len(isochrones) > 0 {
@@ -172,6 +234,10 @@ func isochroneCount(myid uint64) uint64 {
 
 				thiscount := uint64(0)
 
+				args := []any{utils.SRID, myid, utils.MESSAGE_LIKES_VIEW, isochrone.Isochroneid, latlng.Lng, latlng.Lat, utils.SRID}
+				if applyReach {
+					args = append(args, latlng.Lng, latlng.Lat, utils.SRID)
+				}
 				db.Raw("SELECT COUNT(DISTINCT(messages_spatial.msgid)) "+
 					"FROM messages_spatial "+
 					"INNER JOIN isochrones ON ST_Contains(isochrones.polygon, ST_SRID(point, ?)) "+
@@ -179,7 +245,8 @@ func isochroneCount(myid uint64) uint64 {
 					"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
 					"WHERE isochrones.id = ? AND messages_spatial.successful = 0 "+
 					"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
-					"AND messages_likes.msgid IS NULL;", utils.SRID, myid, utils.MESSAGE_LIKES_VIEW, isochrone.Isochroneid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&thiscount)
+					reachClause+
+					"AND messages_likes.msgid IS NULL;", args...).Scan(&thiscount)
 
 				mu.Lock()
 				defer mu.Unlock()

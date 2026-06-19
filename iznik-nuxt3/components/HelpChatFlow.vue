@@ -180,7 +180,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import GroupRememberSelect from '~/components/GroupRememberSelect'
 import ChatButton from '~/components/ChatButton'
 import NoticeMessage from '~/components/NoticeMessage'
@@ -208,11 +208,27 @@ function toggleContact() {
 const currentNodeId = ref('start')
 const history = ref([])
 
+// Deep-link support: /help?topic=<nodeId> opens that node directly (e.g. the
+// rippling-out reply-eligibility notice links to ?topic=which-posts, #8).
+let route = null
+try {
+  route = useRoute()
+} catch (e) {
+  // useRoute is unavailable in some unit-test contexts — skip deep-linking.
+}
+onMounted(() => {
+  const topic = route?.query?.topic
+  if (typeof topic === 'string' && helpTree[topic]) {
+    currentNodeId.value = topic
+  }
+})
+
 const helpTree = {
   start: {
     options: [
       { id: 'posting', label: 'Posting items', icon: 'gift' },
       { id: 'replying', label: 'Replying to posts', icon: 'comments' },
+      { id: 'which-posts', label: 'Which posts do I see?', icon: 'eye' },
       { id: 'emails', label: 'Emails & notifications', icon: 'envelope' },
       { id: 'account', label: 'My account', icon: 'user' },
       { id: 'about', label: 'About Freegle', icon: 'info-circle' },
@@ -298,6 +314,13 @@ const helpTree = {
   'replying-no-response': {
     text: "Posters can get lots of replies and may take time to respond. If you haven't heard back after a few days, the item may have gone to someone else. You can check your Chats to see if there's been any response.",
     link: { to: '/chats', text: 'Go to Chats', icon: 'arrow-right' },
+  },
+
+  // === WHICH POSTS DO I SEE? (rippling-out member FAQ, #8) ===
+  'which-posts': {
+    html: `<p>When someone offers something, we show it to people nearby first, then gradually ripple it out to people further away as time passes. This keeps freegling local — neighbours get first chance to collect, which means less travel and a fairer chance for everyone.</p>
+<p>Because of this, you might occasionally find you're not able to reply to a post because it hasn't rippled out to your area yet. As soon as it reaches you, you'll be able to reply. <em>(This is a new change to how Freegle works.)</em></p>`,
+    options: [{ id: 'start', label: 'Start over', icon: 'home' }],
   },
 
   // === EMAILS ===
