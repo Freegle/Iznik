@@ -1440,6 +1440,81 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result, 'Subject older than 7 days should not be flagged');
     }
 
+    public function test_subject_repeat_not_flagged_for_short_item_name_test_post(): void
+    {
+        // Regression (Discourse 9788/28): "Offer: Test" is 11 chars and was NOT skipped
+        // by the < 10 guard, so common test-post subjects accumulated across many groups
+        // over time and falsely flagged legitimate mod/tester posts.
+        // Root cause: the old code checked strlen(full subject) instead of strlen(item name).
+        // "Offer: Test" = 11 chars passes the guard; "Test" = 4 chars does not.
+        // Fix: checkSubjectRepeat now accepts $itemName and guards on item name length.
+        $subject = 'Offer: Test';
+
+        // Simulate 30 prior "Offer: Test" posts from different groups (as accumulates
+        // naturally when mods routinely post Test messages to verify their groups).
+        $groups = [];
+        for ($i = 0; $i < 30; $i++) {
+            $groups[] = $this->createTestGroup();
+        }
+
+        $priorUser = $this->createTestUser();
+        $priorMsgId = DB::table('messages')->insertGetId([
+            'fromuser' => $priorUser->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Test',
+            'message'  => 'Test',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        foreach ($groups as $group) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $priorMsgId,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        // A new mod posts "Offer: Test" to their own group.
+        $newUser = $this->createTestUser();
+        $newGroup = $this->createTestGroup();
+        $newMsgId = DB::table('messages')->insertGetId([
+            'fromuser' => $newUser->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Test',
+            'message'  => 'Test',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $newMsgId,
+            'groupid'    => $newGroup->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        // BUG (old code path): calling WITHOUT $itemName uses the full subject
+        // "Offer: Test" (11 chars >= 10), so the guard does not fire. With 30+
+        // groups in the window, the repeat check triggers and flags the message.
+        // This proves the DB state is correct and the bug is real.
+        $buggyPathResult = $this->service->checkSubjectRepeat($subject, $newMsgId);
+        $this->assertNotNull($buggyPathResult, 'Without itemName, "Offer: Test" (11 chars) passes the length guard and 30+ groups causes a false flag — this confirms the bug exists');
+        $this->assertEquals('SubjectRepeat', $buggyPathResult['check']);
+
+        // FIX (new code path): calling WITH $itemName='Test' uses the item name
+        // length (4 chars < 10), so the guard fires immediately and returns null.
+        // A real mod "Test" post must not be blocked even with 30+ prior groups.
+        $fixedPathResult = $this->service->checkSubjectRepeat($subject, $newMsgId, 'Test');
+        $this->assertNull($fixedPathResult, 'With itemName="Test" (4 chars < 10), the length guard fires before the group count query — no false flag');
+    }
+
     // -------------------------------------------------------------------------
     // checkKnownSpammer — flag messages containing spammer email (V1 parity)
     // -------------------------------------------------------------------------

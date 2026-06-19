@@ -288,6 +288,85 @@ func TestGroupChatIconUsesNewestImage(t *testing.T) {
 	db.Exec("DELETE FROM groups_images WHERE id IN (?, ?)", img1ID, img2ID)
 }
 
+// TestModToolsChatNameUsesFirstLastWhenFullnameNull verifies that when a member has
+// firstname/lastname but no fullname, the ModTools chat list shows "Firstname Lastname (Group)"
+// instead of "GroupName Volunteers". This is the scenario that occurs after a volunteer
+// edits a member's post to move it to a new group and sends a standard welcome message.
+func TestModToolsChatNameUsesFirstLastWhenFullnameNull(t *testing.T) {
+	prefix := uniquePrefix("chatName9719")
+	db := database.DBConn
+
+	// Create a member with firstname/lastname but explicitly NULL fullname.
+	// This mirrors accounts that have only partial name data.
+	var memberID uint64
+	db.Exec(
+		"INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+			"VALUES (?, ?, NULL, 'User', NULL, ?)",
+		prefix+"First", prefix+"Last",
+		`{"mylocation":{"lat":51.5,"lng":-0.1}}`,
+	)
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&memberID)
+	if memberID == 0 {
+		t.Fatal("failed to create member user")
+	}
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", memberID, prefix+"@test.com")
+
+	// Create a mod with a full name and token.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	groupID := CreateTestGroup(t, prefix+"_grp")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	// Create a User2Mod chat (member → group mods).
+	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
+	assert.NoError(t, err)
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, type, date, reviewrequired, processingrequired, processingsuccessful) "+
+			"VALUES (?, ?, 'welcome message', 'ModMail', NOW(), 0, 0, 1)",
+		chatID, modID,
+	)
+
+	// ModTools endpoint (/api/chat/rooms) — the mod should see this chat.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat/rooms?chattypes[]=User2Mod&jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var wrapper struct {
+		Chatrooms []chat.ChatRoomListEntry `json:"chatrooms"`
+	}
+	json2.Unmarshal(rsp(resp), &wrapper)
+
+	var found *chat.ChatRoomListEntry
+	for i := range wrapper.Chatrooms {
+		if wrapper.Chatrooms[i].ID == chatID {
+			found = &wrapper.Chatrooms[i]
+			break
+		}
+	}
+
+	assert.NotNil(t, found, "ModTools /api/chat/rooms should show User2Mod chat %d to mod %d", chatID, modID)
+	if found != nil {
+		expectedFirst := prefix + "First"
+		expectedLast := prefix + "Last"
+		assert.Contains(t, found.Name, expectedFirst,
+			"Chat name should contain member's firstname when fullname is NULL, got %q", found.Name)
+		assert.Contains(t, found.Name, expectedLast,
+			"Chat name should contain member's lastname when fullname is NULL, got %q", found.Name)
+		assert.NotContains(t, found.Name, "Volunteers",
+			"Chat name should NOT be 'GroupName Volunteers' when member has firstname/lastname, got %q", found.Name)
+	}
+
+	// Clean up.
+	db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", memberID)
+	db.Exec("DELETE FROM memberships WHERE userid = ?", memberID)
+	db.Exec("DELETE FROM users WHERE id = ?", memberID)
+}
+
 func TestCreateChatMessage(t *testing.T) {
 	// Invalid chat id
 	resp, _ := getApp().Test(httptest.NewRequest("POST", "/api/chat/-1/message", nil))

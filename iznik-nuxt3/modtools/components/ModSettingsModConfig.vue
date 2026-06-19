@@ -39,14 +39,19 @@
     </div>
     <Spinner v-if="loading" :size="50" class="d-block mt-2" />
     <div v-else-if="configid && config">
-      <NoticeMessage v-if="config.protected" variant="info" class="mb-2">
+      <NoticeMessage v-if="config.protected && config.createdby" variant="info" class="mb-2">
         <v-icon icon="lock" />
         <span v-if="parseInt(config.createdby) === myid">
           You have locked this. Other people can use, view or copy it, but can't
           change or delete it.
         </span>
         <span v-else>
-          This is locked by #{{ config.createdby }}. You can use, view or copy
+          This is locked by
+          <strong>{{
+            lockerUser?.displayname ||
+            lockerUser?.fullname ||
+            '#' + config.createdby
+          }}</strong>. You can use, view or copy
           it, but you can't change or delete it.
         </span>
       </NoticeMessage>
@@ -339,6 +344,7 @@ const locked = computed(() => {
   return Boolean(
     config.value &&
       config.value.protected &&
+      config.value.createdby &&
       parseInt(config.value.createdby) !== myid.value
   )
 })
@@ -365,6 +371,12 @@ const configOptions = computed(() => {
 
 const config = computed(() => {
   return modConfigStore.current
+})
+
+const lockerUser = computed(() => {
+  return config.value?.createdby
+    ? userStore.byId(parseInt(config.value.createdby))
+    : null
 })
 
 const sharedbyUser = computed(() => {
@@ -403,6 +415,14 @@ watch(
         id: newval,
         configuring: true,
       })
+
+      if (
+        config.value?.protected &&
+        config.value?.createdby &&
+        parseInt(config.value?.createdby) !== myid.value
+      ) {
+        await userStore.fetch(parseInt(config.value.createdby))
+      }
     }
 
     loading.value = false

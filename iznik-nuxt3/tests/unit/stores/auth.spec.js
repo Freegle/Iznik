@@ -175,6 +175,16 @@ describe('auth store', () => {
       await store.addRelatedUser(null)
       expect(store.userlist).toHaveLength(0)
     })
+
+    it('recovers when userlist rehydrated as a non-array', async () => {
+      // State-shape drift: persisted userlist can come back as an object
+      // instead of an array, which used to make .includes() throw
+      // (Sentry: "this.userlist.includes is not a function").
+      store.userlist = { 0: 99 }
+      await store.addRelatedUser(42)
+      expect(Array.isArray(store.userlist)).toBe(true)
+      expect(store.userlist).toContain(42)
+    })
   })
 
   describe('clearRelated', () => {

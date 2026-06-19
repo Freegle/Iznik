@@ -70,8 +70,8 @@ func canModify(myid uint64, cfg *ModConfig) bool {
 	if cfg.Createdby != nil && *cfg.Createdby == myid {
 		return true
 	}
-	if cfg.Protected == 0 {
-		// Check if they can see it.
+	if cfg.Protected == 0 || cfg.Createdby == nil {
+		// Not protected, or no valid lock owner — open to any mod who can see it.
 		return canSee(myid, cfg)
 	}
 	return false

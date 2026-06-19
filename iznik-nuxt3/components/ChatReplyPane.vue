@@ -53,11 +53,15 @@
           {{ message.type === 'Offer' ? 'their offer' : 'what they want' }}.
         </p>
 
-        <!-- The post being replied to, shown as a chat message from the poster -->
+        <!-- The post being replied to, shown as a chat message from the poster.
+             We swallow the card's own click (which would navigate to the post
+             page — pointless while you're already replying to it) but, when the
+             post has photos, repurpose the tap to open the photo zoom modal so
+             people arriving from an email can still enlarge the picture. -->
         <div
           v-if="message"
           class="reply-card__incoming"
-          @click.capture.stop.prevent
+          @click.capture.stop.prevent="onPostClick"
         >
           <ChatMessageCard :id="messageId" class="reply-card__post" />
         </div>
@@ -241,6 +245,14 @@
     <div class="d-none">
       <ChatButton ref="replyToPostChatButton" :userid="replyToUser" />
     </div>
+
+    <!-- Photo zoom: lets people enlarge the post's photo from inside the reply
+         pane, matching the behaviour on Browse. -->
+    <MessagePhotosModal
+      v-if="showPhotos && attachmentCount"
+      :id="messageId"
+      @hidden="showPhotos = false"
+    />
   </div>
 </template>
 
@@ -277,6 +289,9 @@ import { FAR_AWAY } from '~/constants'
 
 const NewFreegler = defineAsyncComponent(() =>
   import('~/components/NewFreegler')
+)
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
@@ -326,6 +341,18 @@ const message = computed(() => {
 // visible to this viewer but its reach hasn't reached them yet. Gate the composer so no entry
 // path shows a reply box whose send the server-side reach check would reject.
 const reachBlocked = computed(() => message.value?.replyeligible === false)
+
+const attachmentCount = computed(() => message.value?.attachments?.length || 0)
+
+// Tapping the post card would normally navigate to the post page; inside the
+// reply pane that's pointless (you're already replying), so we open the photo
+// zoom modal instead when there's a photo to enlarge.
+const showPhotos = ref(false)
+function onPostClick() {
+  if (attachmentCount.value) {
+    showPhotos.value = true
+  }
+}
 
 // Fetch poster info
 watch(

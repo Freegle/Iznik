@@ -149,7 +149,7 @@ class ContentCheckService
         if ($r = $this->checkLanguage($subject, $textbody)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkSubjectRepeat($subject, $msgid)) {
+        if ($r = $this->checkSubjectRepeat($subject, $msgid, $itemName)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkKnownSpammer($textbody)) {
@@ -383,6 +383,13 @@ class ContentCheckService
         $kwLen   = strlen($kwLower);
         if ($kwLen === 0) {
             return false;
+        }
+
+        // Multi-word phrases: token-by-token matching can never match a phrase
+        // like "discounted price" against individual haystack tokens. Use a
+        // word-boundary-anchored phrase match instead (Discourse #9620/283).
+        if (str_contains($kwLower, ' ')) {
+            return (bool) preg_match('/\b' . preg_quote($kwLower, '/') . '\b/', $haystack);
         }
 
         $variants = $this->inflectionVariants($kwLower);
@@ -1344,10 +1351,14 @@ class ContentCheckService
     // checkSubjectRepeat — flag mass-submission spam (V1 parity)
     // -------------------------------------------------------------------------
 
-    public function checkSubjectRepeat(string $subject, int $msgid): ?array
+    public function checkSubjectRepeat(string $subject, int $msgid, ?string $itemName = null): ?array
     {
-        // Don't check very short subjects - might be something like "TAKEN"
-        if (strlen(trim($subject)) < 10) {
+        // V1 parity: use the item name (pruned subject) for the length guard, not the full
+        // subject. The type prefix ("Offer: ") adds 7+ chars, making "Offer: Test" 11 chars
+        // but the actual item is "Test" (4 chars). Without this, test subjects accumulate
+        // across many groups over time and falsely flag legitimate mod/tester posts.
+        $textToCheck = ($itemName !== null && trim($itemName) !== '') ? trim($itemName) : trim($subject);
+        if (strlen($textToCheck) < 10) {
             return null;
         }
 

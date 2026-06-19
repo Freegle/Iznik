@@ -3095,26 +3095,34 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		req.Type = req.Messagetype
 	}
 
+	// TN never sends an explicit attachments array.  We detect photo changes
+	// through the textbody:
+	//   • No trashnothing.com/pics/ links → user removed all photos → remove AI.
+	//   • Links present → scrape+store TN photos AND remove AI (TN photos replace it).
+	// In both cases the AI attachment must go; in the second case we also strip the
+	// "Check out the pictures…" block from the stored textbody and kick off scraping.
+	//
+	// This MUST be computed once, from the original textbody, BEFORE the per-message
+	// loop below.  A tnpostid can map to several crossposted FD messages; if we
+	// extracted the links and stripped req.Textbody inside the loop, the first
+	// iteration would remove the pic links from req.Textbody, so every subsequent
+	// crossposted copy would read an already-stripped body, find no links, and have
+	// its attachments deleted but never re-scraped — leaving all but the first copy
+	// with no photo.
+	var picPageURLs []string
+	if req.Textbody != nil {
+		picPageURLs = tnPicPageURLRegexp.FindAllString(*req.Textbody, -1)
+		if len(picPageURLs) > 0 {
+			// Strip the photo-link block before persisting the textbody.
+			stripped := tnPicHeaderRegexp.ReplaceAllString(*req.Textbody, "")
+			stripped = tnPicURLLineRegexp.ReplaceAllString(stripped, "")
+			stripped = strings.TrimSpace(stripped)
+			req.Textbody = &stripped
+		}
+	}
+
 	for _, msgID := range msgIDs {
 		req.ID = msgID
-
-		// TN never sends an explicit attachments array.  We detect photo changes
-		// through the textbody:
-		//   • No trashnothing.com/pics/ links → user removed all photos → remove AI.
-		//   • Links present → scrape+store TN photos AND remove AI (TN photos replace it).
-		// In both cases the AI attachment must go; in the second case we also strip the
-		// "Check out the pictures…" block from the stored textbody and kick off scraping.
-		var picPageURLs []string
-		if req.Textbody != nil {
-			picPageURLs = tnPicPageURLRegexp.FindAllString(*req.Textbody, -1)
-			if len(picPageURLs) > 0 {
-				// Strip the photo-link block before persisting the textbody.
-				stripped := tnPicHeaderRegexp.ReplaceAllString(*req.Textbody, "")
-				stripped = tnPicURLLineRegexp.ReplaceAllString(stripped, "")
-				stripped = strings.TrimSpace(stripped)
-				req.Textbody = &stripped
-			}
-		}
 
 		// Attachments must reach their final state BEFORE the edit's change signal is
 		// written.  applyPatchMessageCore writes the messages_edits row that /api/changes
