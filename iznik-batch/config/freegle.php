@@ -119,6 +119,11 @@ return [
         'url' => env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
         'api_key' => env('DISCOURSE_APIKEY', ''),
         'api_username' => env('DISCOURSE_API_USERNAME', 'system'),
+        // Per-user pacing between Discourse API calls (V1 used usleep(250000)).
+        'throttle_us' => (int) env('DISCOURSE_THROTTLE_US', 250000),
+        // Rate-limit retry policy (V1 Utils::curlWithRetry: 60 retries, 1s delay).
+        'max_retries' => (int) env('DISCOURSE_MAX_RETRIES', 60),
+        'retry_delay_s' => (int) env('DISCOURSE_RETRY_DELAY_S', 1),
     ],
 
     // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
@@ -265,6 +270,11 @@ return [
 
     // Rippling-out reach engine parameters (ripple:expand / ReachService).
     'ripple' => [
+        // Master activation switch for the whole rippling-out feature. Ships DARK (false) so all the
+        // server + app code can deploy (and clear the app stores) ahead of go-live; flip
+        // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
+        // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
+        'enabled' => (bool) env('RIPPLE_ENABLED', false),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.

@@ -1041,19 +1041,22 @@ const duplicateAge = computed(() => {
   let check = false
   if (!message.value?.groups) return null
 
+  const msgtype = message.value.type.toLowerCase()
   message.value.groups.forEach((g) => {
     const grp = myModGroup(g.groupid)
+    if (!grp) return
 
-    // console.log("duplicateAge group", group?.settings?.duplicates)
-    if (
-      grp &&
-      grp.settings &&
-      grp.settings.duplicates && // TODO: MT group does not have settings
-      grp.settings.duplicates.check
-    ) {
+    // V1 parity: the group's default settings (Group.php) enable duplicate
+    // detection with a 14-day window. The V2 group API returns only the
+    // stored settings (no default merge), so a group with no explicit
+    // `duplicates` block must fall back to the default rather than silently
+    // disabling duplicate highlighting. Explicit check:0 still turns it off.
+    // (Discourse 9518/341)
+    const dup = grp.settings?.duplicates
+    const enabled = dup?.check ?? true
+    if (enabled) {
       check = true
-      const msgtype = message.value.type.toLowerCase()
-      ret = Math.min(ret, grp.settings.duplicates[msgtype])
+      ret = Math.min(ret, dup?.[msgtype] ?? 14)
     }
   })
 
@@ -1353,8 +1356,16 @@ function checkHistory(duplicateCheck) {
 
           const key = histMsg.id + '-' + histMsg.arrival
 
-          if (duplicateCheck && groupsInCommon) {
-            // Same group - so this is a duplicate
+          if (duplicateCheck && groupsInCommon && histMsg.id < message.value.id) {
+            // Same group, and this history message was posted before the one we're
+            // rendering (message ids are auto-increment, so a lower id means earlier).
+            // So the message we're rendering is the second/subsequent copy and IS a
+            // duplicate of this earlier one. We deliberately do NOT flag the first
+            // (original) post: when rendering it, every same-subject match in its
+            // history has a higher id, so checkHistory returns empty and it stays
+            // unflagged. This keeps the duplicate badge on the 2nd+ copies only - which
+            // matters now that Pending messages appear in messagehistory (PR #805), as
+            // otherwise both copies of a duplicated Pending post would be flagged.
             if (!dupids[key]) {
               dupids[key] = true
               ret.push(histMsg)

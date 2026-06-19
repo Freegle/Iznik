@@ -20,6 +20,7 @@
       <div v-if="!closed && postcodeValid" class="form-section">
         <label class="form-label">Your local community:</label>
         <ComposeGroup />
+        <PostPersonalInfoWarning :group="group" :text="postText" />
       </div>
 
       <div v-if="postcodeValid && noGroups" class="no-groups-notice">
@@ -115,6 +116,7 @@ import NoticeMessage from '~/components/NoticeMessage.vue'
 import ExternalLink from '~/components/ExternalLink.vue'
 import EmailValidator from '~/components/EmailValidator.vue'
 import EmailBelongsToSomeoneElse from '~/components/EmailBelongsToSomeoneElse.vue'
+import PostPersonalInfoWarning from '~/components/PostPersonalInfoWarning.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
@@ -156,7 +158,15 @@ const {
   notAllowed,
   unvalidatedEmail,
   wentWrong,
+  group,
 } = await setup('Offer')
+
+const postText = computed(() => {
+  const msgs = composeStore.all.filter((m) => m.type === 'Offer')
+  if (!msgs.length) return ''
+  const msg = msgs[0]
+  return ((msg.item || '') + ' ' + (msg.description || '')).trim()
+})
 
 const canSubmit = makeCanSubmit({
   messageValid,

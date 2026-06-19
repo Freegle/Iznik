@@ -18,6 +18,8 @@ class ExpandServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Rippling is OFF by default (ships dark); enable it so the engine actually does work here.
+        config(['freegle.ripple.enabled' => true]);
         // Short, deterministic hazard schedule (3 ticks) + always-active window.
         config(['freegle.ripple.hazard_hours' => [1, 3, 6]]);
         config(['freegle.ripple.active_start_hour' => 0]);
@@ -78,6 +80,23 @@ class ExpandServiceTest extends TestCase
         Http::fake(['*ripple-schedule*' => Http::response([
             'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
         ], 200)]);
+    }
+
+    /** Master switch off: process() is inert - no reach computed, nothing rippled in (ships dark). */
+    public function test_process_is_inert_when_rippling_is_disabled(): void
+    {
+        config(['freegle.ripple.enabled' => false]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'no reach is initialised while rippling is off');
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no rippling_reach rows are written while rippling is off'
+        );
     }
 
     public function test_initialises_reach_for_new_spatial_post(): void
@@ -186,6 +205,23 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(1, $covers(-0.18, 51.55), 'western origin area is still covered after the tick');
     }
 
+    public function test_blurs_poster_origin_for_reach(): void
+    {
+        // The reach origin (and stored centre) must be blurred ~400m like the locations
+        // Freegle exposes elsewhere, so the reach polygon is not a precise location oracle.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // exact origin 51.5, -0.1
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotEquals(51.5, (float) $row->lat, 'stored latitude is blurred, not exact');
+        $this->assertNotEquals(-0.1, (float) $row->lng, 'stored longitude is blurred, not exact');
+        // ...but still within ~1-2km of the true location (a small privacy blur, not a move).
+        $this->assertLessThan(0.02, abs((float) $row->lat - 51.5));
+        $this->assertLessThan(0.02, abs((float) $row->lng + 0.1));
+    }
+
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
     {
         Http::fake();
@@ -248,5 +284,68 @@ class ExpandServiceTest extends TestCase
 
         $this->assertSame(1, $stats['initialized']); // counted
         $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count()); // but not written
+    }
+
+    public function test_ripples_post_into_groups_whose_area_the_reach_covers(): void
+    {
+        // #6: as reach crosses into a group's area (DPA poly if present, else CGA
+        // polyofficial — i.e. groups.polyindex), the post is added Pending to that group.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // → tick 1
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        // Group B: area intersects the fake reach (-0.20..-0.10 lng, 51.50..51.60 lat).
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // Group C: far away → must NOT ripple in.
+        $groupC = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((1.0 53.0,1.1 53.0,1.1 53.1,1.0 53.1,1.0 53.0))', 3857, $groupC->id]
+        );
+
+        // Group D: area intersects the reach BUT not a live Freegle group → must NOT ripple in.
+        $groupD = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, type = 'Other', onhere = 0, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.16 51.53,-0.13 51.53,-0.13 51.57,-0.16 51.57,-0.16 51.53))', 3857, $groupD->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        // Rippled into B as fresh Pending, carrying the post's msgtype (else it is invisible
+        // to type-filtered browse once approved — addApprovedMessage copies messages_groups.msgtype).
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'post rippled into group B whose area the reach covers');
+        $this->assertSame('Pending', $b->collection);
+        $this->assertSame(Message::TYPE_OFFER, $b->msgtype);
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+
+        // A non-Freegle / not-onhere group is never rippled into, even inside the reach.
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupD->id)->first(),
+            'post not rippled into a non-Freegle group'
+        );
+
+        // Origin group untouched (still Approved).
+        $origin = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $originGid)->first();
+        $this->assertSame('Approved', $origin->collection);
+
+        // Far group C not touched.
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupC->id)->first(),
+            'post not rippled into a group whose area the reach does not cover'
+        );
+
+        // Idempotent — re-running never duplicates the rippled-in row.
+        $this->service()->process(false, 500);
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->count()
+        );
     }
 }

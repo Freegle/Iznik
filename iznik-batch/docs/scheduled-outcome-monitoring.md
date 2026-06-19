@@ -172,7 +172,7 @@ would false-alarm constantly:
   `users:remove-spammers`.
 - **In-place recomputes with no advancing timestamp** (UPDATE existing rows):
   `groups:update-counts`, `chats:update-counts`, `users:update-lastaccess`,
-  `users:update-engagement`, `users:update-kudos`, `users:update-ratings`,
+  `users:update-engagement`, `users:update-ratings`,
   `users:update-support-roles`, `ai:usage-counts:update`,
   `donations:update-ads-target`, `microvolunteering:score`.
 - **Backlog-cleared / sparse maintenance** (legitimately a no-op once caught up):

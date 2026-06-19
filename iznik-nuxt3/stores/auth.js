@@ -97,8 +97,11 @@ export const useAuthStore = defineStore({
     },
     async addRelatedUser(id) {
       if (id) {
-        // Keep track of which users we log in as.
-        if (!this.userlist) {
+        // Keep track of which users we log in as. Guard against a non-array
+        // value: userlist is persisted to localStorage, and state shape drift
+        // (older app versions, or a serialization quirk) can rehydrate it as an
+        // object rather than an array, which would make .includes() throw.
+        if (!Array.isArray(this.userlist)) {
           this.userlist = []
         }
 

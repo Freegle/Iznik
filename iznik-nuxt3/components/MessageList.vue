@@ -392,12 +392,18 @@ const deDuplicatedMessages = computed(() => {
         // Already got this id
       } else if (m.id !== props.exclude) {
         ids[m.id] = true
-        let key = message.fromuser + '|' + message.subject
+        // Strip trailing (location) so that "bike (Bethnal Green)" and "bike (Bethel)"
+        // from the same poster collapse to one entry (Discourse 9733/7).
+        const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
+        let key = message.fromuser + '|' + stripLocation(message.subject)
         const p = message.subject.indexOf(':')
 
         if (p !== -1) {
           key =
-            message.fromuser + '|' + message.type + message.subject.substring(p)
+            message.fromuser +
+            '|' +
+            message.type +
+            stripLocation(message.subject.substring(p))
         }
 
         const already = key in dups

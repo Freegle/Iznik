@@ -17,10 +17,13 @@ use Illuminate\Support\Facades\Mail;
  * For each new approved membership:
  * - Send per-group welcome email if the group has one configured.
  * - Flag member for review if there are flagged mod comments about them.
+ * - Flag member for review if they have been seen on many groups (V1
+ *   Spam::checkUser "seen on many groups" branch).
  * - Mark the entry as processed (processingrequired = 0).
  *
- * Note: Full spam check (Spam::checkUser) is not implemented here.
- * The users:remove-spammers command handles spam detection separately.
+ * Note: the reply-distance branch of Spam::checkUser (suspect because they
+ * reply far from home) is not restored here — that fired on chat/reply, not
+ * on join, and belongs in the chat/reply path.
  */
 class MembershipsProcessingService
 {
@@ -89,6 +92,7 @@ class MembershipsProcessingService
             }
 
             $this->applyFlaggedComments($userId, $groupId);
+            $this->checkSeenOnManyGroups($userId, $groupId);
         }
 
         if (!$dryRun) {
@@ -96,6 +100,78 @@ class MembershipsProcessingService
                 ->where('id', $entry->id)
                 ->update(['processingrequired' => 0]);
         }
+    }
+
+    /**
+     * V1 parity: Spam::checkUser() "seen on many groups" branch
+     * (iznik-server/include/spam/Spam.php ~534-564). A member who has joined
+     * more than SEEN_THRESHOLD groups in the last year is "suspect" and flagged
+     * for moderator review on ALL their groups.
+     *
+     * This flagging was lost when the join flow moved to the Go API + this cron:
+     * Go AddMembership() explicitly delegates "spam check, and member review" to
+     * memberships_processing, but only the flagged-comments check was ported.
+     * The result was that the members-flagged-for-review queue dried up to ~0.
+     */
+    private function checkSeenOnManyGroups(int $userId, int $groupJustAdded): void
+    {
+        $threshold = 16; // Spam::SEEN_THRESHOLD
+
+        $user = User::find($userId);
+        if (!$user) {
+            return;
+        }
+
+        // Whitelist mods/staff, exactly as V1 ($u->isModerator()).
+        if ($user->isModerator()
+            || in_array($user->systemrole, ['Moderator', 'Support', 'Admin'], true)) {
+            return;
+        }
+
+        // Count distinct groups joined in the last year, excluding the
+        // just-added group (counted separately below, as it may race the log
+        // write) and excluding whitelisted spammer records.
+        $start = now()->subDays(365)->format('Y-m-d');
+        $count = DB::table('logs')
+            ->leftJoin('spam_users', function ($j) {
+                $j->on('spam_users.userid', '=', 'logs.user')
+                    ->where('spam_users.collection', '=', 'Whitelisted');
+            })
+            ->where('logs.user', $userId)
+            ->where('logs.type', 'Group')
+            ->where('logs.subtype', 'Joined')
+            ->where('logs.groupid', '!=', $groupJustAdded)
+            ->whereNull('spam_users.userid')
+            ->where('logs.timestamp', '>=', $start)
+            ->distinct()
+            ->count('logs.groupid');
+
+        $count++; // the just-added group, excluded from the query above
+
+        if ($count <= $threshold) {
+            return;
+        }
+
+        // Suspect. Record it and flag the member for review on all their groups,
+        // exactly as V1 Spam::checkUser did via User::memberReview().
+        DB::table('logs')->insert([
+            'type'    => 'User',
+            'subtype' => 'Suspect',
+            'user'    => $userId,
+            'text'    => 'Seen on many groups',
+        ]);
+
+        DB::table('memberships')
+            ->where('userid', $userId)
+            ->update([
+                'reviewrequestedat' => now(),
+                'reviewreason'      => 'Seen on many groups',
+            ]);
+
+        Log::info('MembershipsProcessing: flagged member for review - seen on many groups', [
+            'user'        => $userId,
+            'group_count' => $count,
+        ]);
     }
 
     private function countFlaggedComments(int $userId, int $groupId): int
