@@ -119,6 +119,11 @@ return [
         'url' => env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
         'api_key' => env('DISCOURSE_APIKEY', ''),
         'api_username' => env('DISCOURSE_API_USERNAME', 'system'),
+        // Per-user pacing between Discourse API calls (V1 used usleep(250000)).
+        'throttle_us' => (int) env('DISCOURSE_THROTTLE_US', 250000),
+        // Rate-limit retry policy (V1 Utils::curlWithRetry: 60 retries, 1s delay).
+        'max_retries' => (int) env('DISCOURSE_MAX_RETRIES', 60),
+        'retry_delay_s' => (int) env('DISCOURSE_RETRY_DELAY_S', 1),
     ],
 
     // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
@@ -248,6 +253,43 @@ return [
         env('SPATIAL_KNN_URL', 'http://localhost:8194')
     ))),
     'spatial_data_dir' => env('SPATIAL_DATA_DIR', '/data'),
+
+    // The routing/isochrone server (iznik-routing-go) — DISTINCT from the KNN
+    // finder above. Hosts GET /v1/ripple-schedule and /v1/fairness, called over
+    // HTTP by the ripple:expand reach engine from inside the existing batch
+    // container (no new container).
+    //
+    // The routing server listens on TWO ports: the external port (SPATIAL_PORT,
+    // 8196) requires a moderator JWT, while the internal port (SPATIAL_INTERNAL_PORT,
+    // 8194) is unauthenticated and intended for trusted backend services — which is
+    // exactly this engine (it has no user JWT). So we target the internal port.
+    // Set ROUTING_SERVER_URL in any environment whose routing server is not reachable
+    // at the default below (it must point at the routing server's INTERNAL/no-auth
+    // port, NOT the KNN finder and NOT the JWT-guarded external port).
+    'routing_server_url' => env('ROUTING_SERVER_URL', 'http://spatial:8194'),
+
+    // Rippling-out reach engine parameters (ripple:expand / ReachService).
+    'ripple' => [
+        // Master activation switch for the whole rippling-out feature. Ships DARK (false) so all the
+        // server + app code can deploy (and clear the app stores) ahead of go-live; flip
+        // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
+        // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
+        'enabled' => (bool) env('RIPPLE_ENABLED', false),
+        // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
+        'curve' => env('RIPPLE_CURVE', 'step-70'),
+        // Travel mode for the reach isochrone.
+        'mode' => env('RIPPLE_MODE', 'drive'),
+        // Maximum drive-time (minutes) the reach may grow to.
+        'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // Wall-clock hazard schedule (hours since arrival) at which the reach
+        // expands one tick. One schedule tick is requested per entry, so the
+        // number of ticks equals the length of this array.
+        'hazard_hours' => [1, 3, 6, 12, 24, 48, 72, 120, 168],
+        // Only expand during active hours (server local time): inclusive start,
+        // exclusive end. Outside this window, due expansions wait.
+        'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
+        'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+    ],
 
     /*
     |--------------------------------------------------------------------------

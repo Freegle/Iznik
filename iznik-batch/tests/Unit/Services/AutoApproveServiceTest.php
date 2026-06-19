@@ -78,6 +78,43 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    public function test_auto_approve_mails_newly_reached_members_of_a_done_rippling_post(): void
+    {
+        // A rippling post auto-approved on a group AFTER its reach has finished expanding
+        // ('done') must still mail the now-reachable immediate members (the ExpandService tick
+        // loop won't revisit a 'done' post) — closing the post-'done' approval gap.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['added' => now()->subHours(72)]); // immediate by default
+        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
+        $member->save();
+
+        $message = $this->createTestMessage($poster, $group);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
+        ]);
+        // Reach (status 'done') covering the member's location.
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+        );
+
+        $this->service->process();
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            'auto-approve mails a now-reachable immediate member of a done-reach rippling post'
+        );
+    }
+
     public function test_does_not_auto_approve_message_marked_spam_on_another_group(): void
     {
         // A message that is Pending (and otherwise eligible) on one group but
@@ -318,6 +355,96 @@ class AutoApproveServiceTest extends TestCase
         $this->assertDatabaseHas('messages_groups', [
             'msgid' => $message->id,
             'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /**
+     * A rippled-in post (messages_groups.rippled_in = 1) already Approved on its origin
+     * group is fast-tracked on nearby groups after the short veto window — even though the
+     * poster is NOT a member of the nearby group (the membership gate would block it, and
+     * the 48h fallback would leave it Pending forever otherwise).
+     */
+    public function test_fast_tracks_rippled_in_post_already_approved_on_origin(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        // Member of their origin group only — NOT the nearby group its reach rippled into.
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        // Rippled into the nearby group 2h ago (past the 1h veto window), still Pending.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'rippled-in post vetted on origin is fast-tracked past the membership gate');
+    }
+
+    /** Within the short veto window a rippled-in post stays Pending (mods can still reject). */
+    public function test_holds_rippled_in_post_within_veto_window(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        // Rippled in only 30 minutes ago — inside the veto window.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subMinutes(30),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /** A rippled-in post NOT yet Approved on its origin group is never fast-tracked. */
+    public function test_does_not_fast_track_rippled_in_when_origin_not_approved(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        // Origin still Pending (recent) — not yet vetted.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
             'collection' => MessageGroup::COLLECTION_PENDING,
         ]);
     }

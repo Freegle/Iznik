@@ -22,6 +22,14 @@
                 />
               </b-input-group>
             </NoticeMessage>
+            <NoticeMessage
+              v-if="editing && editmessage && message.groups && message.groups.length > 1"
+              variant="warning"
+              class="w-100 mb-2"
+            >
+              This edit will apply to the post on all
+              {{ message.groups.length }} groups it appears on.
+            </NoticeMessage>
             <div v-if="editing && editmessage" class="d-flex flex-wrap">
               <ModGroupSelect
                 v-model="editgroup"
@@ -149,6 +157,28 @@
                 :key="g.groupid"
               >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
             </div>
+            <NoticeMessage
+              v-if="isRippledInToContextGroup"
+              variant="info"
+              class="mt-1 mb-2"
+            >
+              This post is starting to become available to some of your group
+              members.
+              <a href="#" @click.prevent="ripplingExplanationModal?.show()">
+                Learn more
+              </a>
+            </NoticeMessage>
+            <NoticeMessage
+              v-if="isRippledInToContextGroup && pending"
+              variant="warning"
+              class="mt-1 mb-2"
+              data-test="ripple-out-of-area-reject-warning"
+            >
+              This post rippled in from a neighbouring community, so the poster
+              may not live in your group's area. That is expected - please
+              don't reject it just for being "out of area". Only reject for the
+              usual reasons (spam, breaks the rules, wrong sort of thing).
+            </NoticeMessage>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -650,6 +680,7 @@
       :userid="fromUserId"
       :safelist="false"
     />
+    <RipplingExplanationModal ref="ripplingExplanationModal" />
     <div ref="bottom" />
   </div>
 </template>
@@ -675,6 +706,7 @@ import { useModMe } from '~/composables/useModMe'
 import { useModGroupStore } from '@/stores/modgroup'
 
 import { twem } from '~/composables/useTwem'
+import { isRippledInToContextGroup as isRippledIn } from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -777,6 +809,7 @@ const { myModGroups, myModGroup } = useModMe()
 const top = ref(null)
 const bottom = ref(null)
 const spamConfirm = ref(null)
+const ripplingExplanationModal = ref(null)
 
 const saving = ref(false)
 const saved = ref(false)
@@ -824,6 +857,15 @@ const otherGroups = computed(() => {
   const gid = parseInt(groupid.value)
   return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
 })
+
+// Rippling-out (#6): the post originated on another group and has rippled in to the
+// group we're viewing it under, so it is "starting to become available" to this group's
+// members. Use the EXPLICIT context group (props.contextGroupid) — not the groupid
+// fallback to groups[0] — so the banner only shows when moderating a specific group's
+// queue, never in the all-groups view. See isRippledInToContextGroup for the rule.
+const isRippledInToContextGroup = computed(() =>
+  isRippledIn(message.value?.groups, props.contextGroupid)
+)
 
 const messageHistory = computed(() => {
   return fromUser.value?.messagehistory || []
@@ -1041,19 +1083,22 @@ const duplicateAge = computed(() => {
   let check = false
   if (!message.value?.groups) return null
 
+  const msgtype = message.value.type.toLowerCase()
   message.value.groups.forEach((g) => {
     const grp = myModGroup(g.groupid)
+    if (!grp) return
 
-    // console.log("duplicateAge group", group?.settings?.duplicates)
-    if (
-      grp &&
-      grp.settings &&
-      grp.settings.duplicates && // TODO: MT group does not have settings
-      grp.settings.duplicates.check
-    ) {
+    // V1 parity: the group's default settings (Group.php) enable duplicate
+    // detection with a 14-day window. The V2 group API returns only the
+    // stored settings (no default merge), so a group with no explicit
+    // `duplicates` block must fall back to the default rather than silently
+    // disabling duplicate highlighting. Explicit check:0 still turns it off.
+    // (Discourse 9518/341)
+    const dup = grp.settings?.duplicates
+    const enabled = dup?.check ?? true
+    if (enabled) {
       check = true
-      const msgtype = message.value.type.toLowerCase()
-      ret = Math.min(ret, grp.settings.duplicates[msgtype])
+      ret = Math.min(ret, dup?.[msgtype] ?? 14)
     }
   })
 
@@ -1353,8 +1398,16 @@ function checkHistory(duplicateCheck) {
 
           const key = histMsg.id + '-' + histMsg.arrival
 
-          if (duplicateCheck && groupsInCommon) {
-            // Same group - so this is a duplicate
+          if (duplicateCheck && groupsInCommon && histMsg.id < message.value.id) {
+            // Same group, and this history message was posted before the one we're
+            // rendering (message ids are auto-increment, so a lower id means earlier).
+            // So the message we're rendering is the second/subsequent copy and IS a
+            // duplicate of this earlier one. We deliberately do NOT flag the first
+            // (original) post: when rendering it, every same-subject match in its
+            // history has a higher id, so checkHistory returns empty and it stays
+            // unflagged. This keeps the duplicate badge on the 2nd+ copies only - which
+            // matters now that Pending messages appear in messagehistory (PR #805), as
+            // otherwise both copies of a duplicated Pending post would be flagged.
             if (!dupids[key]) {
               dupids[key] = true
               ret.push(histMsg)

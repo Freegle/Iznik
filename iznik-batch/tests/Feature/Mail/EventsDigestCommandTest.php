@@ -447,6 +447,57 @@ class EventsDigestCommandTest extends TestCase
         });
     }
 
+    public function test_local_event_image_uses_image_domain_thumbnail(): void
+    {
+        // A locally-uploaded event image (no externalmods url, no external uid) must
+        // resolve to the image domain's community-event thumbnail route. The old code
+        // pointed at {userSite}/communityevent/{id}/image/{imgid}, which is not a real
+        // route and 404'd, so event-digest photos never rendered.
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Local Photo Event');
+        $imageId = $this->addEventImage($eventId);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        $expected = config('freegle.images.domain') . "/tcimg_{$imageId}.jpg";
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($expected) {
+            $url = $mail->events[0]['imageUrl'];
+            return $url === $expected && ! str_contains($url, '/communityevent/');
+        });
+    }
+
+    public function test_tus_uploaded_event_image_uses_delivery_proxy(): void
+    {
+        // A TUS-uploaded image (externaluid contains freegletusd-) routes the raw file
+        // through the delivery/resize proxy, exactly as volunteering does.
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Tus Photo Event');
+        DB::table('communityevents_images')->insert([
+            'eventid'     => $eventId,
+            'contenttype' => 'image/jpeg',
+            'archived'    => 0,
+            'externaluid' => 'freegletusd-abc123',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        $source   = config('freegle.tus_uploader') . '/abc123';
+        $expected = config('freegle.delivery.base_url') . '?url=' . urlencode($source) . '&w=400';
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($expected) {
+            return $mail->events[0]['imageUrl'] === $expected;
+        });
+    }
+
     public function test_event_without_image_has_null_image_url(): void
     {
         Mail::fake();

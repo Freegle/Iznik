@@ -239,7 +239,9 @@
             <ModLogStdMsg :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'Deleted'">
-            <span v-if="logByuser">Rejected member</span>
+            <span v-if="logUser && logByuser && logByuser.id !== logUser.id"
+              >Rejected member</span
+            >
             <span v-else>User left platform ({{ log.text }})</span>
             <ModLogUser :userid="logUser.id" />
             <ModLogGroup :logid="logid" tag="on" />
