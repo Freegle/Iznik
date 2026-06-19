@@ -4353,6 +4353,58 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 			"frontend uses msg.postdate → dayjs(undefined) = current time instead of original arrival)")
 }
 
+// Under rippling-out a post's reach follows the poster's declared location, so a member who keeps
+// changing location is the spam vector that group-spread (activedistance) used to be. The mod user
+// info therefore exposes a count of distinct postcodes the member set in the last 90 days, gated to
+// moderators of the member (and self/admin), like activedistance.
+func TestUserLocationChangesModInfo(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("locchg")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Three distinct postcodes within the window, a duplicate (must not double-count) and one older
+	// than 90 days (must be excluded).
+	for _, pc := range []string{"AB1 1AA", "AB2 2BB", "AB3 3CC", "AB3 3CC"} {
+		db.Exec("INSERT INTO logs (type, subtype, user, byuser, text, timestamp) "+
+			"VALUES ('User', 'PostcodeChange', ?, ?, ?, NOW())", targetID, targetID, pc)
+	}
+	db.Exec("INSERT INTO logs (type, subtype, user, byuser, text, timestamp) "+
+		"VALUES ('User', 'PostcodeChange', ?, ?, 'OLD9 9ZZ', NOW() - INTERVAL 91 DAY)", targetID, targetID)
+	defer db.Exec("DELETE FROM logs WHERE user = ? AND subtype = 'PostcodeChange'", targetID)
+
+	t.Run("Moderator sees distinct 90-day location-change count", func(t *testing.T) {
+		url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var u user2.User
+		err = json.NewDecoder(resp.Body).Decode(&u)
+		assert.NoError(t, err)
+		assert.Equal(t, targetID, u.ID)
+		assert.NotNil(t, u.Locationchanges, "mod should see the location-change count")
+		assert.Equal(t, 3, *u.Locationchanges, "3 distinct postcodes in 90 days; duplicate and old one excluded")
+	})
+
+	t.Run("Without modtools the count is not computed", func(t *testing.T) {
+		url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, modToken)
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var u user2.User
+		err = json.NewDecoder(resp.Body).Decode(&u)
+		assert.NoError(t, err)
+		assert.Nil(t, u.Locationchanges, "non-modtools fetch omits the location-change count")
+	})
+}
+
 // TestGetUserMessageHistory_IncludesPending verifies that Pending messages appear in the
 // messagehistory returned by GET /api/user/:id?modtools=true.
 //

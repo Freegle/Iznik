@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ChatRoom;
 use App\Services\LokiService;
+use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
@@ -841,6 +842,14 @@ class PushNotificationService
      */
     public function notifyChatMessage(int $messageId): int
     {
+        // Rippling-out held replies (#3): don't push a reply to the poster while it is held
+        // because the post hasn't yet rippled to the replier's area. Until a reply is held
+        // the rippling table is empty, so this never fires. The reply is pushed normally
+        // once released (status='released').
+        if (app(RippleReplyService::class)->isDeliveryHeld($messageId)) {
+            return 0;
+        }
+
         $recipients = $this->getChatMessageRecipients($messageId);
 
         $count = 0;

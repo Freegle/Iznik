@@ -11,6 +11,8 @@ class ExpandCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Rippling ships dark; enable it so the command exercises the real engine path.
+        config(['freegle.ripple.enabled' => true]);
         DB::statement('DELETE FROM rippling_reach');
         DB::statement('DELETE FROM messages_spatial');
     }

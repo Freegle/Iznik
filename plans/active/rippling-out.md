@@ -67,6 +67,19 @@ non-members about groups they haven't joined); non-members within reach get the 
 - **G** — observability/self-tuning (#9).
 - **#10** — postcode-driven single-group posting + TN main-group-only (latest, after rippling live).
 - Then the two moderator-audience change docs.
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| B1 | `rippling_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
+| B2 | Hook into `ExpandService`: on init/advance compute newly-reached members = users with a location inside the new reach polygon AND NOT already notified AND `SIMPLE_MAIL_FULL` | ⬜ | spatial query `ST_Contains(reach.polygon, ST_SRID(POINT(u.lng,u.lat),3857))`; user loc from `users.lastlocation`/`users_approxlocs` — confirm source |
+| B3 | Mail: reuse unified-digest single-post mailable / "new post near you" template | ⬜ | see `UnifiedDigestService` / daily-posts push payload |
+| B4 | Per-expansion cap; record in ledger (no allowlist) | ⬜ | |
+| B5 | #9 instrumentation: count immediate mails sent per expansion | ⬜ | |
+| B6 | Tests (Http+spatial seeded, no-double-mail) + push PR, CI, adversarial review | ⬜ | |
+
+Remaining PRs after B: C held-replies (`rippling_held_replies`), D mod-UI (#6 banner + #7 reach
+map + #4 modal carry-over), E browse (#1 + #2 reply-eligibility + #8 FAQ), F digest (#5), G
+observability/self-tuning (#9), #10 postcode-driven single-group posting + TN main-group-only.
+Then the two moderator-audience change docs.
 
 ## Carry-over (deferred to PR D)
 Modal files built earlier on `fix/pending-url-spam-collection` (main checkout, uncommitted): `components/RipplingExplanation.vue`, `modtools/components/RipplingHelpModal.vue`, `modtools/components/RipplingExplorer.vue` (modified), + 2 specs. Re-create or copy into PR D.

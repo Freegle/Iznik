@@ -1822,6 +1822,41 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // handleReject rejects a pending message.
+// MessageOriginGroup returns the group a message was first posted to — the group whose
+// messages_groups.arrival matches the message's own arrival. With rippling-out a post is
+// added to nearby groups later (at ripple time), so the origin is the earliest-arriving
+// group AND its arrival must be at/near messages.arrival. Only that group's rejection
+// notifies the poster (#6); a secondary (rippled-in) group's rejection stays silent.
+//
+// Returns 0 when the origin cannot be determined — including when the origin group's row
+// was HARD-deleted (handleDeleteMessage / handleMove), leaving only later rippled-in
+// rows: those fail the arrival-match, so we return 0 and the caller falls back to
+// notifying all groups (the safe direction — notify rather than silently drop).
+// Soft-deleted (deleted=1) origin rows from a plain-delete rejection still persist and
+// are matched correctly, so a later secondary rejection stays silent as intended.
+//
+// messages_groups has no surrogate id column (its key is the composite (msgid, groupid)),
+// so groupid is the tiebreak when two groups share the same arrival second: lowest groupid
+// wins, deterministically. Manual cross-posting is retired by #10, so same-second ties are
+// rare (TN same-second import order).
+func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
+	var res struct {
+		Groupid  uint64
+		IsOrigin bool
+	}
+	db.Raw(`SELECT mg.groupid AS groupid,
+	               (mg.arrival <= m.arrival + INTERVAL 10 MINUTE) AS is_origin
+	        FROM messages_groups mg
+	        JOIN messages m ON m.id = mg.msgid
+	        WHERE mg.msgid = ?
+	        ORDER BY mg.arrival ASC, mg.groupid ASC
+	        LIMIT 1`, msgid).Scan(&res)
+	if !res.IsOrigin {
+		return 0
+	}
+	return res.Groupid
+}
+
 func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
@@ -1882,13 +1917,72 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Queue rejection email per authorised group (batch processor creates one log+push per group).
+	// Determine the message's ORIGIN group — the first group it was posted to (the
+	// earliest messages_groups arrival). With rippling-out, a post is added to nearby
+	// groups over time; a rejection by a SECONDARY (non-origin) group just stops it
+	// showing in that group's area and must NOT be sent back to the poster (#6): they
+	// posted it on their origin group and it remains available there, so a secondary
+	// "out of area" rejection is not their concern.
+	originGid := MessageOriginGroup(db, req.ID)
+
+	// Queue the rejection email only for the origin group (the batch processor creates
+	// one log+push per group). Secondary-group rejections are silent to the poster and
+	// logged for #9 observability (how often rippling pushes a post somewhere a group
+	// rejects it).
 	for _, gid := range authorizedGroups {
+		if originGid != 0 && gid != originGid {
+			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			RecordRippleEvent(db, "secondary_reject")
+			ClipReachForRejectedGroup(db, req.ID, gid)
+			continue
+		}
 		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
 			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Reject")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// ClipReachForRejectedGroup removes a rejecting secondary group's area from a post's
+// rippling reach polygon, so the post stops showing — and stops being reply-eligible —
+// in that group's area (#6). The post's reach (rippling_reach.polygon, GEOMETRY SRID
+// 3857) is trimmed by the group's DPA-or-CGA area (groups.polyindex). If the reach lies
+// wholly within the rejected group, nothing valid remains, so the reach row is dropped.
+//
+// Errors are ignored on purpose: until the reach engine (PR A) is live there is no
+// rippling_reach table/row to clip, in which case this is a harmless no-op.
+func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
+	// Record the rejected group BEFORE clipping the polygon, so the expander
+	// (ExpandService::advanceDue) re-subtracts it on every tick — otherwise the next tick
+	// overwrites `polygon` from the cached schedule and silently undoes this rejection.
+	// Dedup the id; ignored (best-effort) if the rejected_groups column is not present yet.
+	db.Exec("UPDATE rippling_reach "+
+		"SET rejected_groups = JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?) "+
+		"WHERE msgid = ? AND (rejected_groups IS NULL "+
+		"OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)", gid, msgid, gid)
+
+	// Trim where the reach extends beyond the rejected group (skip the wholly-within
+	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
+	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+
+		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) "+
+		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
+		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+		"AND ST_Intersects(mr.polygon, g.polyindex) "+
+		"AND NOT ST_Within(mr.polygon, g.polyindex)", gid, msgid)
+
+	// Reach wholly inside the rejected group → no area remains: drop the reach row.
+	db.Exec("DELETE mr FROM rippling_reach mr JOIN `groups` g ON g.id = ? "+
+		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
+		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+		"AND ST_Within(mr.polygon, g.polyindex)", gid, msgid)
+}
+
+// RecordRippleEvent bumps the per-day counter for a rippling-out event (design §15/§16 —
+// "instrument from day one"), surfaced read-only in sysadmin. Best-effort: errors are
+// ignored so instrumentation never affects the request (e.g. before the table ships).
+func RecordRippleEvent(db *gorm.DB, event string) {
+	db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) "+
+		"ON DUPLICATE KEY UPDATE count = count + 1", event)
 }
 
 // handleDeleteMessage deletes a message (mod action).

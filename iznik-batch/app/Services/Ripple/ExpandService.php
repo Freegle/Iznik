@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -23,6 +24,9 @@ class ExpandService
 {
     private const SRID = 3857;
 
+    /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
+    private const BLUR_USER = 400;
+
     public function __construct(private ReachService $reach)
     {
     }
@@ -36,6 +40,13 @@ class ExpandService
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
         ];
+
+        // Master activation switch. While rippling is disabled, do nothing: no reach is computed and
+        // nothing is rippled into new groups. The cron is also unscheduled when off (routes/console.php),
+        // so this is defence-in-depth that also covers a manual `artisan ripple:expand`.
+        if (!config('freegle.ripple.enabled')) {
+            return $stats;
+        }
 
         // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
         $stats['removed'] = $this->removeStale($dryRun);
@@ -98,7 +109,14 @@ class ExpandService
                     continue;
                 }
 
-                $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                // Blur the poster's origin (~400m, BLUR_USER) before computing the reach, so
+                // the reach polygon and its stored centre are no more precise than the
+                // location Freegle already exposes elsewhere (the Go API blurs displayed post
+                // locations identically). Avoids the reach polygon becoming a precise
+                // location oracle for the poster (#privacy). Deterministic per location.
+                [$lat, $lng] = $this->blurOrigin((float) $row->lat, (float) $row->lng);
+
+                $schedule = $this->reach->computeSchedule($lat, $lng);
                 if ($schedule === null) {
                     // Routing unreachable or origin off-graph — retry next run.
                     $stats['skipped']++;
@@ -131,7 +149,7 @@ class ExpandService
                             created_at, updated_at)
                          VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
                         [
-                            $row->msgid, $row->lat, $row->lng, $entry['wkt'], $arrival,
+                            $row->msgid, $lat, $lng, $entry['wkt'], $arrival,
                             $this->reach->mode(), $tick, $total,
                             $schedule['total_freeglers'], $schedule['max_drive_min'],
                             json_encode($schedule['ticks']), $next, $status,
@@ -209,6 +227,10 @@ class ExpandService
                          WHERE msgid = ?',
                         [$entry['wkt'], $target, $next, $status, $row->msgid]
                     );
+                    // The polygon was just overwritten from the cached schedule, which does NOT
+                    // include any secondary-group rejection clips. Re-subtract every rejected
+                    // group so a secondary "out of area" rejection survives expansion (#9).
+                    $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
                     $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
                     $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
                         ->mailNewlyReachedForPost((int) $row->msgid);
@@ -244,8 +266,8 @@ class ExpandService
     {
         try {
             $n = DB::affectingStatement(
-                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype)
-                 SELECT ?, g.id, 'Pending', NOW(), 0, m.type
+                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype, rippled_in)
+                 SELECT ?, g.id, 'Pending', NOW(), 0, m.type, 1
                  FROM `groups` g
                  CROSS JOIN messages m
                  WHERE m.id = ?
@@ -297,6 +319,59 @@ class ExpandService
         }
 
         return $best ?? ($ticks[0] ?? null);
+    }
+
+    /**
+     * Re-subtract every secondary-group rejection from a post's reach after the polygon has
+     * been rewritten from the cached schedule (which is clip-unaware). Mirrors the Go
+     * ClipReachForRejectedGroup partial-clip; never deletes the row (advanceDue must not
+     * resurrect it via initialiseNew), so a fully-clipped post keeps its last partial reach.
+     *
+     * @param string|null $rejectedGroupsJson JSON array of rejected group ids, or null.
+     */
+    private function reapplyClips(int $msgid, ?string $rejectedGroupsJson): void
+    {
+        if ($rejectedGroupsJson === null) {
+            return;
+        }
+        $gids = json_decode($rejectedGroupsJson, true);
+        if (!is_array($gids) || empty($gids)) {
+            return;
+        }
+        foreach ($gids as $gid) {
+            DB::statement(
+                'UPDATE rippling_reach mr JOIN `groups` g ON g.id = ?
+                 SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)
+                 WHERE mr.msgid = ? AND g.polyindex IS NOT NULL
+                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                   AND ST_Intersects(mr.polygon, g.polyindex)
+                   AND NOT ST_Within(mr.polygon, g.polyindex)',
+                [(int) $gid, $msgid]
+            );
+        }
+    }
+
+    /**
+     * Blur a poster's origin by ~400m (BLUR_USER) before it drives the reach polygon, so the
+     * reach is no more precise than the location Freegle exposes elsewhere. Same algorithm and
+     * geodesic engine (App\Support\GreatCircle) as iznik-server Utils::blur / Go utils.Blur:
+     * a deterministic, location-derived direction (so the reach doesn't jitter across recomputes)
+     * and a final 4-dp round.
+     *
+     * @return array{0:float,1:float} [lat, lng]
+     */
+    private function blurOrigin(float $lat, float $lng): array
+    {
+        // Guard against invalid stored coordinates so GreatCircle can't yield NaN.
+        if ($lat > 90 || $lat < -90 || $lng > 180 || $lng < -180) {
+            $lat = 53.945;  // centre of Britain (Dunsop Bridge), as utils.Blur falls back to
+            $lng = -2.5209;
+        }
+
+        $dir = ($lat * 1000 + $lng * 1000) % 360;            // deterministic per location (V1 parity)
+        $pos = GreatCircle::getPositionByDistance(self::BLUR_USER, $dir, $lat, $lng);
+
+        return [round($pos['lat'], 4), round($pos['lng'], 4)];
     }
 
     private function inActiveHours(): bool

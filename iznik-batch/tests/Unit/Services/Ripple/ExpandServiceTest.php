@@ -18,6 +18,8 @@ class ExpandServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Rippling is OFF by default (ships dark); enable it so the engine actually does work here.
+        config(['freegle.ripple.enabled' => true]);
         // Short, deterministic hazard schedule (3 ticks) + always-active window.
         config(['freegle.ripple.hazard_hours' => [1, 3, 6]]);
         config(['freegle.ripple.active_start_hour' => 0]);
@@ -80,6 +82,23 @@ class ExpandServiceTest extends TestCase
         ], 200)]);
     }
 
+    /** Master switch off: process() is inert - no reach computed, nothing rippled in (ships dark). */
+    public function test_process_is_inert_when_rippling_is_disabled(): void
+    {
+        config(['freegle.ripple.enabled' => false]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'no reach is initialised while rippling is off');
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no rippling_reach rows are written while rippling is off'
+        );
+    }
+
     public function test_initialises_reach_for_new_spatial_post(): void
     {
         $this->fakeRouting(3);
@@ -138,6 +157,69 @@ class ExpandServiceTest extends TestCase
         $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
         $this->assertSame(3, (int) $row->tick);  // 7h elapsed → final tick
         $this->assertSame('done', $row->status);
+    }
+
+    public function test_advance_reapplies_secondary_reject_clip(): void
+    {
+        // A secondary group rejected this post; ClipReachForRejectedGroup recorded the group
+        // in rejected_groups. When advanceDue rewrites polygon from the cached (clip-unaware)
+        // schedule, it must re-subtract the rejected group so the rejection survives the tick.
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        $group = $this->createTestGroup();
+        // Rejected group's area = the EASTERN half of the schedule polygon (lng -0.15..-0.10).
+        DB::statement(
+            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+                'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', 3857)
+             WHERE id = ?",
+            [$group->id]
+        );
+
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        // Stuck at tick 1, overdue, with the rejected group recorded.
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+        );
+        Http::fake();
+
+        $this->service()->process(false, 500);
+
+        // Tick advanced (proves the schedule polygon was rewritten)...
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(3, (int) $row->tick);
+        // ...yet a point inside the rejected group's eastern area is NO LONGER covered,
+        // while the western origin area still is — the clip survived the overwrite.
+        $covers = fn (float $lng, float $lat): int => (int) DB::selectOne(
+            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857)), 0) AS c
+             FROM rippling_reach WHERE msgid = ?',
+            [$lng, $lat, $msgid]
+        )->c;
+        $this->assertSame(0, $covers(-0.12, 51.55), 'rejected eastern area stays clipped after the tick');
+        $this->assertSame(1, $covers(-0.18, 51.55), 'western origin area is still covered after the tick');
+    }
+
+    public function test_blurs_poster_origin_for_reach(): void
+    {
+        // The reach origin (and stored centre) must be blurred ~400m like the locations
+        // Freegle exposes elsewhere, so the reach polygon is not a precise location oracle.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // exact origin 51.5, -0.1
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotEquals(51.5, (float) $row->lat, 'stored latitude is blurred, not exact');
+        $this->assertNotEquals(-0.1, (float) $row->lng, 'stored longitude is blurred, not exact');
+        // ...but still within ~1-2km of the true location (a small privacy blur, not a move).
+        $this->assertLessThan(0.02, abs((float) $row->lat - 51.5));
+        $this->assertLessThan(0.02, abs((float) $row->lng + 0.1));
     }
 
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
