@@ -16,6 +16,15 @@ class AutoApproveService
     public const PENDING_HOURS = 48;
 
     /**
+     * Short mod-veto window for rippling-out rows (messages_groups.rippled_in = 1) that are
+     * already Approved on their origin group. They were vetted there, so they auto-approve
+     * on nearby groups after this window instead of sitting Pending until a human acts —
+     * the membership gate (the poster joins few of the groups their reach touches) and the
+     * 48h fallback would otherwise leave every rippled-in post stuck Pending forever.
+     */
+    public const RIPPLED_IN_PENDING_HOURS = 1;
+
+    /**
      * User must be a member for this many hours before their messages auto-approve.
      */
     public const MEMBERSHIP_HOURS = 48;
@@ -61,6 +70,7 @@ class AutoApproveService
             ->select(
                 'messages_groups.msgid',
                 'messages_groups.groupid',
+                'messages_groups.rippled_in',
                 'messages.fromuser',
                 'messages.spamtype',
                 'messages.subject',
@@ -81,7 +91,27 @@ class AutoApproveService
                     ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
                     ->where('spam_mg.deleted', 0);
             })
-            ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS])
+            ->where(function ($q) {
+                // Normal posts: the 48h fallback (unchanged).
+                $q->where(function ($q2) {
+                    $q2->where('messages_groups.rippled_in', 0)
+                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS]);
+                })
+                // Rippling-out rows already Approved on their origin group: a short mod-veto
+                // window, then auto-approve (membership gate bypassed in shouldApproveOnGroup).
+                ->orWhere(function ($q2) {
+                    $q2->where('messages_groups.rippled_in', 1)
+                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::RIPPLED_IN_PENDING_HOURS])
+                        ->whereExists(function ($q3) {
+                            $q3->select(DB::raw(1))
+                                ->from('messages_groups as origin_mg')
+                                ->whereColumn('origin_mg.msgid', 'messages_groups.msgid')
+                                ->whereColumn('origin_mg.groupid', '!=', 'messages_groups.groupid')
+                                ->where('origin_mg.collection', MessageGroup::COLLECTION_APPROVED)
+                                ->where('origin_mg.deleted', 0);
+                        });
+                });
+            })
             ->get()
             ->groupBy('msgid');
 
@@ -146,6 +176,14 @@ class AutoApproveService
 
         if ($group->getAttribute('autofunctionoverride')) {
             return false;
+        }
+
+        // Rippling-out rows were already vetted on their origin group (the orWhere in
+        // process() only selects rippled_in rows that are Approved elsewhere). The poster
+        // need not be a member of every nearby group their reach touches, so bypass the
+        // membership gate — the group publish/closed/override checks above still apply.
+        if ((int) ($candidate->rippled_in ?? 0) === 1) {
+            return true;
         }
 
         // V1: $joined = $u->getMembershipAtt($gid, 'added');
