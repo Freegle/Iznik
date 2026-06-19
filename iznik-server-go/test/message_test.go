@@ -327,7 +327,48 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 		return c
 	}
 	assert.Equal(t, 1, searchCount(groupA), "cross-post must be searchable on group A exactly once")
-	assert.Equal(t, 1, searchCount(groupB), "cross-post must be searchable on group B exactly once (per-group spatial fix)")
+	assert.Equal(t, 1, searchCount(groupB), "cross-post must be searchable on group B exactly once (via the messages_groups join)")
+}
+
+// TestCrossPost_SingleGroupBrowse verifies a message cross-posted to group B still appears in
+// group B's single-group browse (/message/mygroups/:id, the gid>0 path) even though its single
+// messages_spatial row stores group A. Group membership is resolved via the messages_groups
+// EXISTS join, not messages_spatial.groupid.
+func TestCrossPost_SingleGroupBrowse(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("crosspost_singlegroup")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	viewerID, viewerToken := CreateFullTestUser(t, prefix+"_viewer")
+	CreateTestMembership(t, viewerID, groupB, "Member")
+
+	lat, lng := 55.9533, -3.1883
+	// Approved on A (helper writes the single messages_spatial row, groupid=A); cross-posted
+	// to B via messages_groups only (one-row spatial keeps A's row).
+	msgID := CreateTestMessage(t, posterID, groupA, "OFFER cross-post single-group browse", lat, lng)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	defer func() {
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/mygroups/%d?jwt=%s", groupB, viewerToken), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var browse []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &browse)
+	found := 0
+	for _, m := range browse {
+		if m.ID == msgID {
+			found++
+		}
+	}
+	assert.Equal(t, 1, found, "cross-post appears in group B's single-group browse via the messages_groups join, though its spatial row stores group A")
 }
 
 // TestCrossPost_HeldOnOneGroupReadSurface holds a pending cross-post on one group only
