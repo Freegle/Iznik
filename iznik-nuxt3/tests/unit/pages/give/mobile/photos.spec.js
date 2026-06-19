@@ -7,10 +7,13 @@ import PhotosPage from '~/pages/give/mobile/photos.vue'
 // ── Store mocks ───────────────────────────────────────────────────────────────
 
 const mockRouterPush = vi.fn()
-vi.stubGlobal('useRouter', () => ({
+// useRouter is auto-imported (#imports); the test harness resolves it via the
+// globalThis.__testUseRouter hook (see tests/unit/setup.ts), so override that —
+// vi.stubGlobal('useRouter', ...) does not intercept the auto-import.
+globalThis.__testUseRouter = () => ({
   push: mockRouterPush,
   currentRoute: { value: { path: '/give/mobile/photos' } },
-}))
+})
 
 const mockComposeAdd = vi.fn().mockReturnValue(42)
 const mockSetType = vi.fn()
