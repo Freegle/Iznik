@@ -13,6 +13,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\ItemService;
+use App\Services\Ripple\RippleReplyService;
 use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -1625,13 +1626,22 @@ class IncomingMailService
         // Create the chat message as TYPE_INTERESTED with refmsgid.
         // Reply-to addresses are first replies to posts, so use TYPE_INTERESTED
         // (not TYPE_DEFAULT which is for ongoing chat notification replies).
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $fromUser->id,
             $email,
             refMsgId: $messageId,
             type: ChatMessage::TYPE_INTERESTED
         );
+
+        // Rippling-out held replies (#3): email/TN replies bypass the in-app reply-
+        // eligibility gate (#2), so re-apply the same reach test here. If the post is still
+        // rippling out and this replier's area isn't covered yet, hold the reply (record a
+        // rippling_held_replies row) so the poster isn't notified until it reaches them.
+        // hasReach fails open, so before the reach engine is live nothing is held.
+        if ($chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser);
+        }
 
         // #7: Check if message has outcome (TAKEN/RECEIVED) - don't email if so
         $hasOutcome = DB::table('messages_outcomes')
@@ -1678,6 +1688,64 @@ class IncomingMailService
         ]);
 
         return RoutingResult::TO_USER;
+    }
+
+    /**
+     * Rippling-out (#3): hold an external reply when the post is still rippling out and
+     * the replier's area isn't covered yet. The replier's location is resolved as
+     * settings.mylocation else lastlocation — the SAME order the immediate mail and the
+     * digest reach-gate use, so the hold/read/notify paths agree on where the replier is.
+     * Records a rippling_held_replies row (status='held'); the delivery gate then withholds
+     * the poster notification until the post ripples to them (status→'released'). Inert until
+     * the reach engine populates rippling_reach (hasReach fails open before then).
+     */
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
+    {
+        $latlng = $this->resolveReplierLatLng($replier);
+        if ($latlng === null) {
+            return;
+        }
+
+        [$lat, $lng] = $latlng;
+        $service = app(RippleReplyService::class);
+
+        if ($service->shouldHold($msgid, $lat, $lng)) {
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng);
+            Log::info('ripple:held-external-reply', [
+                'msgid' => $msgid,
+                'chatid' => $chatId,
+                'chatmsgid' => $chatMsgId,
+                'replieruserid' => $replier->id,
+            ]);
+        }
+    }
+
+    /**
+     * Resolve a replier's point as settings.mylocation (both coords) else their lastlocation —
+     * the same order the immediate-mail recipient query and the digest reach-gate use, so the
+     * held point (and releaseCovered, which tests it) agree with the read/notify paths.
+     *
+     * @return array{0:float,1:float}|null [lat, lng]
+     */
+    private function resolveReplierLatLng(User $replier): ?array
+    {
+        $settings = $replier->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
+            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        }
+
+        if ($replier->lastlocation) {
+            $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
+            if ($loc && $loc->lat !== null && $loc->lng !== null) {
+                return [(float) $loc->lat, (float) $loc->lng];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1867,7 +1935,7 @@ class IncomingMailService
         ?float $spamScore = null,
         ?string $prependSubject = null,
         bool $skipStripQuoted = false
-    ): void {
+    ): ?int {
         // Get body text, converting HTML to plain text if no text part exists.
         // This handles email clients like Apple Mail that may send HTML-only emails.
         $body = $email->textBody;
@@ -2002,6 +2070,8 @@ class IncomingMailService
             'user_id' => $userId,
             'review_required' => $reviewRequired,
         ]);
+
+        return $chatMsg->id;
     }
 
     /**

@@ -156,7 +156,13 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		// Mods can see all messages including those held for review.
 		reviewFilter = "(reviewrejected = 0 OR userid = ?)"
 	} else {
-		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1))"
+		// Also gate rippling held replies: an email/TN reply from outside the post's reach is
+		// held (rippling_held_replies, status <> 'released') so it doesn't reach the poster early.
+		// The PHP notification paths honour this gate; the in-app chat fetch must too, or the
+		// poster reads the held reply here once chats:process-incoming flips processingsuccessful.
+		// The sender still sees their own message (userid = ? branch); only the poster is gated.
+		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
+			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	}
 
 	// Mods reviewing a chat must see messages from soft-deleted users (V1 parity:

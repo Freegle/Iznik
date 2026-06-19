@@ -117,6 +117,14 @@ if (config('freegle.ripple.enabled')) {
         ->runInBackground();
 }
 
+// Release/expire held external (email/TN) replies as posts ripple out (#3).
+// Inert until the reach engine is live -- nothing to release until a reply is held.
+Schedule::command('ripple:release-replies')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('ripple:release-replies'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
