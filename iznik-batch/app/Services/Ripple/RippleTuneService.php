@@ -263,7 +263,7 @@ class RippleTuneService
     }
 
     /** @return array<string,float> category => volume delta vs prior period (empty if no baseline) */
-    private function categoryVolumeDeltas(string $periodStart): array
+    protected function categoryVolumeDeltas(string $periodStart): array
     {
         // Uses the offline simulator's per-category figures if present; otherwise no proposals.
         if (!Schema::hasTable('ripple_algorithm_metrics')) {

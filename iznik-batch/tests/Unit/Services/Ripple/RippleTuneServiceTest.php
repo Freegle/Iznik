@@ -18,6 +18,7 @@ class RippleTuneServiceTest extends TestCase
         $this->service = new RippleTuneService();
         DB::statement('DELETE FROM rippling_hotspots');
         DB::statement('DELETE FROM rippling_live_metrics');
+        DB::statement('DELETE FROM rippling_params');
     }
 
     /** The centrepiece: an area that is a robust outlier is flagged; normal areas are not. */
@@ -95,6 +96,76 @@ class RippleTuneServiceTest extends TestCase
         $this->assertTrue(
             DB::table('rippling_live_metrics')->where('stratum_type', 'overall')->where('metric', 'volume_posts_p90')->exists(),
             'overall percentile metrics are recorded'
+        );
+    }
+
+    /** tune() runs the full weekly pipeline (rollup, hotspot detection, advisory proposals). */
+    public function test_tune_runs_the_full_pipeline_and_returns_counts(): void
+    {
+        $start = now()->subDays(7);
+        $end = now();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->seedApprovedPosts($groupA->id, 3, now()->subDays(2));
+        $this->seedApprovedPosts($groupB->id, 1, now()->subDays(2));
+
+        $result = $this->service->tune($start->toDateString(), $end->toDateString());
+
+        $this->assertSame($start->toDateString(), $result['period_start']);
+        $this->assertArrayHasKey('metrics', $result);
+        $this->assertArrayHasKey('hotspots', $result);
+        $this->assertArrayHasKey('proposals', $result);
+        $this->assertGreaterThan(0, $result['metrics'], 'rollup wrote metrics for the seeded groups');
+        $this->assertTrue(
+            DB::table('rippling_live_metrics')->where('stratum_key', (string) $groupA->id)->exists(),
+            'tune persisted the rollup metrics'
+        );
+    }
+
+    /** tune() with no arguments defaults to the trailing 7-day window and still runs cleanly. */
+    public function test_tune_defaults_to_the_trailing_week(): void
+    {
+        $result = $this->service->tune();
+
+        $this->assertArrayHasKey('period_start', $result);
+        $this->assertArrayHasKey('metrics', $result);
+        $this->assertIsInt($result['hotspots']);
+        // proposeParams is an advisory stub, so it never proposes regardless of DB state.
+        $this->assertSame(0, $result['proposals']);
+    }
+
+    /** proposeParams proposes nothing while the per-category delta source is an advisory stub. */
+    public function test_propose_params_proposes_nothing_while_deltas_are_unwired(): void
+    {
+        $this->assertSame(0, $this->service->proposeParams('2026-06-11'));
+        $this->assertSame(0, DB::table('rippling_params')->where('status', 'proposed')->count());
+    }
+
+    /** Out-of-band categories are proposed (tighten/widen); in-band ones are left alone. */
+    public function test_propose_params_writes_guard_railed_proposals_for_out_of_band_categories(): void
+    {
+        // The production categoryVolumeDeltas is an advisory stub; inject deltas to exercise the
+        // proposal logic: one above the band (tighten), one below (widen), one inside (ignored).
+        $service = new class extends RippleTuneService
+        {
+            protected function categoryVolumeDeltas(string $periodStart): array
+            {
+                return ['urban' => 0.80, 'rural' => -0.30, 'suburban' => 0.10];
+            }
+        };
+
+        $written = $service->proposeParams('2026-06-11');
+
+        $this->assertSame(2, $written, 'only the two out-of-band categories are proposed');
+        $urban = DB::table('rippling_params')->where('ons_category', 'urban')->where('status', 'proposed')->first();
+        $this->assertNotNull($urban);
+        $this->assertSame(25, (int) $urban->max_minutes, 'high volume tightens reach to 25 min');
+        $rural = DB::table('rippling_params')->where('ons_category', 'rural')->where('status', 'proposed')->first();
+        $this->assertSame(35, (int) $rural->max_minutes, 'low volume widens reach to 35 min');
+        $this->assertSame(
+            0,
+            DB::table('rippling_params')->where('ons_category', 'suburban')->count(),
+            'the in-band category is left alone'
         );
     }
 
