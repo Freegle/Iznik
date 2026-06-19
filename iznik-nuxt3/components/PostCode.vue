@@ -209,7 +209,16 @@ async function select(pc) {
       const locs = await locationStore.typeahead(pc.name)
 
       if (locs?.length) {
-        pc = locs[0]
+        // Only upgrade to the resolved record when the name matches exactly.
+        // Picking locs[0] blindly would silently replace a partial/area code
+        // (e.g. "BB4") with an arbitrary full postcode (e.g. "BB4 5AA") when
+        // the typeahead returns multiple results, corrupting the saved location.
+        const exact = locs.find(
+          (l) => l.name.toLowerCase() === pc.name.toLowerCase()
+        )
+        if (exact) {
+          pc = exact
+        }
       }
     }
     emit('selected', pc)

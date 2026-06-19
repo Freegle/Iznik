@@ -336,6 +336,36 @@ describe('PostCode', () => {
     })
   })
 
+  describe('onMounted value resolution', () => {
+    it('does not replace a partial postcode with the first typeahead result when multiple matches exist', async () => {
+      // "BB4" is an area-level outward code; typeahead returns many full postcodes
+      // but none are named exactly "BB4". The mounted component must NOT silently
+      // swap the original name to locs[0].name (Discourse 9481/585).
+      mockTypeahead.mockResolvedValue([
+        { name: 'BB4 5AA', id: 1 },
+        { name: 'BB4 5AB', id: 2 },
+      ])
+
+      const wrapper = createWrapper({ value: 'BB4' })
+      await flushPromises()
+
+      const emitted = wrapper.emitted('selected')
+      expect(emitted).toBeTruthy()
+      expect(emitted[emitted.length - 1][0].name).toBe('BB4')
+    })
+
+    it('resolves a full postcode to its location record when the typeahead returns an exact name match', async () => {
+      mockTypeahead.mockResolvedValue([{ name: 'SW1A 1AA', id: 456 }])
+
+      const wrapper = createWrapper({ value: 'SW1A 1AA' })
+      await flushPromises()
+
+      const emitted = wrapper.emitted('selected')
+      expect(emitted).toBeTruthy()
+      expect(emitted[emitted.length - 1][0]).toMatchObject({ name: 'SW1A 1AA', id: 456 })
+    })
+  })
+
   describe('source computed', () => {
     it('returns API typeahead URL', () => {
       const wrapper = createWrapper()
