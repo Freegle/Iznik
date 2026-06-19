@@ -477,13 +477,20 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	db := database.DBConn
 
 	var history []UserMessageHistory
+	// Use a correlated subquery to get the most recent posting date for each
+	// (message, group) pair instead of LEFT JOIN messages_postings.  The JOIN
+	// approach fans out: N messages_postings rows per message produce N result
+	// rows, causing duplicated entries in the posting-history modal when a message
+	// has been reposted (Discourse #9672).  The subquery filters by groupid so
+	// postings for one group never contaminate the arrival date of another group.
 	db.Raw("SELECT m.id, m.subject, m.type, "+
-		"GREATEST(COALESCE(mp.date, m.arrival), COALESCE(mp.date, m.arrival)) AS arrival, "+
+		"COALESCE("+
+		"(SELECT MAX(mp.date) FROM messages_postings mp WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), "+
+		"m.arrival) AS arrival, "+
 		"mg.groupid, mg.collection, "+
 		"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome "+
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
-		"LEFT JOIN messages_postings mp ON mp.msgid = m.id "+
 		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
 		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
 
