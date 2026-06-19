@@ -1275,9 +1275,11 @@ async function save() {
     }
 
     if (editmessage.value.item && editmessage.value.location) {
-      // Well-structured message
+      // Well-structured message. Pass the selected group so the rebuilt
+      // subject uses that group's keyword (e.g. a group overriding OFFER).
       await messageStore.patch({
         id: editmessage.value.id,
+        groupid: editgroup.value,
         msgtype: editmessage.value.type,
         item: editmessage.value.item.name,
         location: editmessage.value.location.name,
@@ -1469,7 +1471,7 @@ function cancelEdit() {
 }
 
 async function backToPending(callback) {
-  await messageStore.backToPending(message.value.id)
+  await messageStore.backToPending(message.value.id, groupid.value)
   callback()
 }
 

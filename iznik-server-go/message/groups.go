@@ -32,7 +32,12 @@ func Groups(c *fiber.Ctx) error {
 
 	// We want to include our own messages, so that it is less obvious if a message is delayed for approval and
 	// hasn't made it into messages_spatial yet.
-	db.Raw("SELECT * FROM ("+
+	//
+	// messages_spatial is per-group, so a message on several of the member's groups
+	// appears once per group; the ROW_NUMBER() wrapper collapses it to a single row
+	// (its most relevant: unseen first, then newest arrival).
+	db.Raw("SELECT lat, lng, id, successful, promised, groupid, type, arrival, unseen FROM ("+
+		"SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.id ORDER BY t.unseen DESC, t.arrival DESC) AS rn FROM ("+
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
 		"messages_spatial.msgid AS id, "+
@@ -61,7 +66,7 @@ func Groups(c *fiber.Ctx) error {
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
 		"WHERE fromuser = ? AND messages_groups.arrival >= ? "+
 		"AND messages_outcomes.id IS NULL "+
-		") t "+
+		") t) d WHERE d.rn = 1 "+
 		"ORDER BY unseen DESC, arrival DESC, id DESC;",
 		myid, utils.MESSAGE_LIKES_VIEW,
 		myid,

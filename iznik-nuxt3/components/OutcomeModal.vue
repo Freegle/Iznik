@@ -202,6 +202,7 @@ import { ref, computed } from 'vue'
 import OutcomeBy from './OutcomeBy'
 import SpinButton from './SpinButton'
 import { useMessageStore } from '~/stores/message'
+import { useAuthStore } from '~/stores/auth'
 import NoticeMessage from '~/components/NoticeMessage'
 import { useOurModal } from '~/composables/useOurModal'
 
@@ -225,6 +226,7 @@ const props = defineProps({
 const emit = defineEmits(['hidden'])
 
 const messageStore = useMessageStore()
+const authStore = useAuthStore()
 const { modal, hide } = useOurModal()
 
 const { $bus } = useNuxtApp()
@@ -297,14 +299,21 @@ const submitDisabled = computed(() => {
   return ret
 })
 
+// Outcomes themselves are global (a physical item is taken everywhere), but
+// the donation-ask modal that listens to the `outcome` bus event needs ONE
+// group to render its fundraising context. Pick the message group the user
+// is also a member of, preferring most-recent arrival; fall back to the
+// message's first group when there's no overlap.
 const groupid = computed(() => {
-  let ret = null
-
-  if (message.value && message.value.groups && message.value.groups.length) {
-    ret = message.value.groups[0].groupid
-  }
-
-  return ret
+  const groups = message.value?.groups || []
+  if (!groups.length) return null
+  const myGroupIds = new Set(
+    (authStore.groups || []).map((g) => Number.parseInt(g.groupid))
+  )
+  const shared = groups
+    .filter((g) => myGroupIds.has(Number.parseInt(g.groupid)))
+    .sort((a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0))
+  return (shared[0] || groups[0]).groupid
 })
 
 const buttonLabel = computed(() => {

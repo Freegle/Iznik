@@ -1021,7 +1021,7 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NULL "+
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL "+
 					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&pending)
 				// Held pending in active groups → pendingother (blue).
@@ -1030,7 +1030,7 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NOT NULL "+
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL "+
 					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&heldActive)
 				pendingother += heldActive

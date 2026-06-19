@@ -328,4 +328,179 @@ class MessageSpatialServiceTest extends TestCase
 
         $this->service->updateSpatialIndex();
     }
+
+    public function test_crosspost_gets_one_spatial_row_per_group(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: bookcase (London)',
+            'textbody' => 'A bookcase.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupA->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+
+        // First run inserts one row per group.
+        $this->service->updateSpatialIndex();
+
+        $groupids = DB::table('messages_spatial')->where('msgid', $message->id)->pluck('groupid')->all();
+        sort($groupids);
+        $expected = [$groupA->id, $groupB->id];
+        sort($expected);
+        $this->assertEquals($expected, $groupids, 'a cross-post should be indexed once per group');
+
+        // Second run must not flip-flop the groupid or change the row set (the old
+        // single-row schema re-wrote the stored groupid on every reconciler run).
+        $upserted = $this->service->updateSpatialIndex()['upserted_recent'];
+        $groupidsAfter = DB::table('messages_spatial')->where('msgid', $message->id)->pluck('groupid')->all();
+        sort($groupidsAfter);
+        $this->assertEquals($expected, $groupidsAfter, 'the per-group rows must be stable across runs');
+        $this->assertEquals(0, $this->countUpsertsForMessage($message->id), 'no per-group row should need re-upserting on the second run');
+        $this->assertGreaterThanOrEqual(0, $upserted);
+    }
+
+    public function test_per_group_non_approval_removes_only_that_group(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: desk (London)',
+            'textbody' => 'A desk.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        // Still approved on A; no longer approved on B (e.g. held/pending there).
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupA->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subDays(5),
+        ]);
+
+        // Seed spatial rows for both groups (as if both had been approved before).
+        foreach ([$groupA->id, $groupB->id] as $gid) {
+            DB::statement(
+                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+                [$message->id, $gid, Message::TYPE_OFFER, now()->subDays(5)]
+            );
+        }
+
+        // The message is still live on group A, so the external spatial server must
+        // NOT be told to drop the msgid.
+        $this->spatialAdmin->expects($this->never())->method('removeItems');
+
+        $this->service->updateSpatialIndex();
+
+        $groupids = DB::table('messages_spatial')->where('msgid', $message->id)->pluck('groupid')->all();
+        $this->assertEquals([$groupA->id], array_values($groupids), 'only the still-approved group keeps its spatial row');
+    }
+
+    public function test_crosspost_withdrawn_removes_all_rows_and_notifies_external_once(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: wardrobe (London)',
+            'textbody' => 'A wardrobe.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        foreach ([$groupA->id, $groupB->id] as $gid) {
+            MessageGroup::create([
+                'msgid' => $message->id,
+                'groupid' => $gid,
+                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(5),
+            ]);
+            DB::statement(
+                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+                [$message->id, $gid, Message::TYPE_OFFER, now()->subDays(5)]
+            );
+        }
+
+        // Withdraw is a whole-message outcome, so every per-group spatial row must go.
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id,
+            'outcome' => Message::OUTCOME_WITHDRAWN,
+        ]);
+
+        // The external spatial server is keyed by msgid (one location per message), so a
+        // cross-post that is fully withdrawn must trigger exactly ONE removeItems call —
+        // not one per group row.
+        $this->spatialAdmin
+            ->expects($this->once())
+            ->method('removeItems')
+            ->with('messages', $this->containsEqual($message->id));
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'all per-group spatial rows should be removed when the message is withdrawn'
+        );
+    }
+
+    private function countUpsertsForMessage(int $msgid): int
+    {
+        // A stable per-group set means upsertRecentMessages finds nothing to change
+        // for this message: every (msgid, groupid) row already matches.
+        $cutoff = date('Y-m-d', strtotime('Midnight 31 days ago'));
+
+        return DB::table('messages')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->leftJoin('messages_spatial', function ($join) {
+                $join->on('messages_spatial.msgid', '=', 'messages_groups.msgid')
+                    ->on('messages_spatial.groupid', '=', 'messages_groups.groupid');
+            })
+            ->where('messages.id', $msgid)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.arrival', '>=', $cutoff)
+            ->where(function ($q) {
+                $q->whereNull('messages_spatial.msgid')
+                    ->orWhereRaw('ST_X(messages_spatial.point) != messages.lng')
+                    ->orWhereRaw('ST_Y(messages_spatial.point) != messages.lat')
+                    ->orWhereRaw('messages_groups.arrival != messages_spatial.arrival');
+            })
+            ->count();
+    }
 }

@@ -22,17 +22,24 @@ func (d *MessagesDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 
 // ApplyDelta loads messages modified since `since`.
 // Rows with successful=1 are removed; new/modified rows are upserted.
+//
+// messages_spatial is per-group (one row per (msgid, groupid)), but the spatial
+// index is a per-message point index keyed by msgid — a message has a single
+// location regardless of how many groups it is on. GROUP BY ms.msgid collapses the
+// per-group rows to one item so the same msgid isn't inserted multiple times (which
+// would orphan R-tree rows via INSERT OR REPLACE).
 func (d *MessagesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
 	rows, err := mysqlDB.Query(`
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
 		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
-		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised,
-		       ms.successful
+		       MAX(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised,
+		       MAX(ms.successful) AS successful
 		FROM messages_spatial ms
 		LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
 		WHERE ms.modified > ?
+		GROUP BY ms.msgid
 	`, since.UTC())
 	if err != nil {
 		return fmt.Errorf("messages delta query: %w", err)
@@ -100,16 +107,21 @@ func (d *MessagesDataset) Within(idx *Index, params QueryParams) ([]int64, error
 }
 
 func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
+	// messages_spatial is per-group; the index is a per-message point index keyed by
+	// msgid (one location per message). GROUP BY ms.msgid collapses the per-group
+	// rows to one item so a cross-posted message isn't inserted multiple times.
 	query := `
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
 		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
-		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised
+		       MAX(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised
 		FROM messages_spatial ms
 		LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
 		WHERE ms.successful = 0
-	` + extraWhere
+	` + extraWhere + `
+		GROUP BY ms.msgid
+	`
 
 	rows, err := mysqlDB.Query(query)
 	if err != nil {
