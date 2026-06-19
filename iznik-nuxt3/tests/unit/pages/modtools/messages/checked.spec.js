@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed } from 'vue'
-import CheckedPage from '~/modtools/pages/messages/checked/[[id]]/[[term]].vue'
+import CheckedPage from '~/modtools/pages/messages/checked/[[id]].vue'
 
 const mockBusy = ref(false)
 const mockContext = ref(null)
@@ -83,13 +83,14 @@ globalThis.__testUseRouter = () => ({
   currentRoute: { value: { path: '/' } },
 })
 
-describe('messages/checked/[[id]]/[[term]].vue page', () => {
+describe('messages/checked/[[id]].vue page', () => {
   function mountComponent() {
     return mount(CheckedPage, {
       global: {
         plugins: [createPinia()],
         stubs: {
           'client-only': { template: '<div><slot /></div>' },
+          ModHelpChecked: { template: '<div class="mod-help-checked" />' },
           ScrollToTop: { template: '<div class="scroll-to-top" />' },
           ModGroupSelect: {
             template: '<div class="mod-group-select" />',

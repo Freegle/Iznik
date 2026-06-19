@@ -1239,7 +1239,7 @@ const countdownLabel = computed(() => {
   const totalMins = Math.floor(secsLeft / 60)
   const secs = secsLeft % 60
   if (totalMins >= 60) {
-    const hrs = Math.floor(totalMins / 60)
+    const hrs = Math.round(totalMins / 60)
     return { text: `Auto-approves in ~${hrs}h`, cls: 'text-muted' }
   }
   return {
