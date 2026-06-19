@@ -51,8 +51,8 @@
                 <ComposeGroup />
               </div>
               <p class="community-hint">
-                This is the Freegle community for your area. Your post starts
-                here and spreads out to people further away over time.
+                This is the Freegle community for your area, chosen from your
+                location.
               </p>
             </div>
             <PostPersonalInfoWarning :group="group" :text="postText" />
