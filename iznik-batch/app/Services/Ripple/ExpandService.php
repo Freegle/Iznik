@@ -38,7 +38,7 @@ class ExpandService
     {
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
-            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0,
+            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
         ];
 
         // Master activation switch. While rippling is disabled, do nothing: no reach is computed and
@@ -156,6 +156,8 @@ class ExpandService
                         ]
                     );
                     $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
+                    $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
+                        ->mailNewlyReachedForPost((int) $row->msgid);
                 }
 
                 $stats['initialized']++;
@@ -230,6 +232,8 @@ class ExpandService
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
                     $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
+                    $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
+                        ->mailNewlyReachedForPost((int) $row->msgid);
                 }
 
                 $stats['expanded']++;
@@ -280,6 +284,16 @@ class ExpandService
             );
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
+                // §15/§16 instrumentation: count groups a post was rippled into.
+                try {
+                    DB::statement(
+                        'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
+                        . 'ON DUPLICATE KEY UPDATE count = count + ?',
+                        ['rippled_in', $n, $n]
+                    );
+                } catch (\Throwable $e) {
+                    // best-effort; never affect the expander
+                }
             }
         } catch (\Throwable $e) {
             $stats['errors']++;

@@ -324,6 +324,9 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('Pending', $b->collection);
         $this->assertSame(Message::TYPE_OFFER, $b->msgtype);
         $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+        // §15/§16: the ripple-in is also recorded in the event metrics.
+        $this->assertGreaterThanOrEqual(1, (int) DB::table('rippling_event_metrics')
+            ->where('day', now()->toDateString())->where('event', 'rippled_in')->value('count'));
 
         // A non-Freegle / not-onhere group is never rippled into, even inside the reach.
         $this->assertNull(

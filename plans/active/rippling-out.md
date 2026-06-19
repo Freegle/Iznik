@@ -31,11 +31,42 @@
 | A7 | Code-quality review + validate against running worktree | ⬜ | |
 | A8 | Push branch, open PR (deps stated), get CI green, adversarial review + fixes | ⬜ | not merged |
 
-## PR B — immediate mails on expansion (next)
-Branch off `feature/rippling-reach-engine` (depends on A). Pattern to copy:
-`iznik-batch/app/Console/Commands/Push/SendDailyPostsPushCommand.php` — sends immediate mail to all newly-reached members (no allowlist, no dark flag — gated by merge order). Newly-reached members with
-`User::SIMPLE_MAIL_FULL` get an immediate "new post near you" mail.
+## PR B — immediate mails on expansion (RE-SCOPED — see discovery below)
+Branch `feature/rippling-immediate-mails` off A (rebased onto latest A: rippleIntoNewGroups #6 + fixes).
+**B1 done:** `rippling_reach_notified` ledger + prod SQL.
 
+**DISCOVERY:** a standalone "ripple immediate mail" would **double-mail**.
+`UnifiedDigestService::processGroupImmediate` already mails a group's immediate-eligible members
+(`memberships.emailfrequency = IMMEDIATE`) when a post arrives on that group — and rippling adds
+the post to new groups (#6), so that existing path fires there too. So immediate-mail-by-reach is
+NOT additive; it must dedup via the ledger.
+
+**FURTHER (adversarial review):** the reach gate must NOT live in the immediate digest's per-group
+**cursor** loop — the cursor advances once, so members the reach reaches at tick 2+ are never
+re-evaluated → silently dropped. CORRECT = **expander-driven**: `ExpandService` mails newly-reached
+members on each reach write (init + every tick), reach-gated + ledger-deduped (re-evaluated each
+tick, no cursor); and the cursor digest **excludes** rippling posts (`NOT EXISTS rippling_reach`)
+so it never double-mails. Member point = `COALESCE(settings.mylocation, lastlocation→locations)`,
+resolved atomically (both lat+lng or fall back). `ST_Contains(mr.polygon, ST_SRID(POINT(lng,lat),3857))`.
+
+**Decision:** keep B1 (the ledger) as the committed foundation. Fold the immediate-mail-by-reach
+recipient change INTO the digest PR (now **PR F: reach-gated digest selection, immediate + daily
+modes**) so immediate and daily are changed together and can't double-send. The ledger serves the
+immediate-mode dedup there. Mark B "ledger only; mailing folded into F".
+
+Also note (member-vs-non-member): immediate mail stays **members-only** (don't cold-email
+non-members about groups they haven't joined); non-members within reach get the post via **browse
+(#1)** and the **daily digest (F)**, not an immediate cold email.
+
+## Re-sequenced remaining PRs
+- **C** — held external replies (`rippling_held_replies`): self-contained backend; next buildable.
+- **D** — mod-UI: #6 ripple-in banner + secondary-rejection (no poster notify + clip + track) +
+  #7 reach map + #4 modal carry-over + multi-group edit warning.
+- **E** — browse: #1 filter/order/map + #2 reply-eligibility + #8 FAQ (consumer, late).
+- **F** — reach-gated digest selection (immediate + daily) + #5 ordering (email, late). Absorbs B's mailing.
+- **G** — observability/self-tuning (#9).
+- **#10** — postcode-driven single-group posting + TN main-group-only (latest, after rippling live).
+- Then the two moderator-audience change docs.
 | # | Task | Status | Notes |
 |---|------|--------|-------|
 | B1 | `rippling_reach_notified` ledger table (msgid,userid,notified_at) — avoid re-mailing | ⬜ | per design #0 "notified ledger" |
