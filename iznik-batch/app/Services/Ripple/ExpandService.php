@@ -225,6 +225,10 @@ class ExpandService
                          WHERE msgid = ?',
                         [$entry['wkt'], $target, $next, $status, $row->msgid]
                     );
+                    // The polygon was just overwritten from the cached schedule, which does NOT
+                    // include any secondary-group rejection clips. Re-subtract every rejected
+                    // group so a secondary "out of area" rejection survives expansion (#9).
+                    $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
                     $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
                 }
 
@@ -301,6 +305,36 @@ class ExpandService
         }
 
         return $best ?? ($ticks[0] ?? null);
+    }
+
+    /**
+     * Re-subtract every secondary-group rejection from a post's reach after the polygon has
+     * been rewritten from the cached schedule (which is clip-unaware). Mirrors the Go
+     * ClipReachForRejectedGroup partial-clip; never deletes the row (advanceDue must not
+     * resurrect it via initialiseNew), so a fully-clipped post keeps its last partial reach.
+     *
+     * @param string|null $rejectedGroupsJson JSON array of rejected group ids, or null.
+     */
+    private function reapplyClips(int $msgid, ?string $rejectedGroupsJson): void
+    {
+        if ($rejectedGroupsJson === null) {
+            return;
+        }
+        $gids = json_decode($rejectedGroupsJson, true);
+        if (!is_array($gids) || empty($gids)) {
+            return;
+        }
+        foreach ($gids as $gid) {
+            DB::statement(
+                'UPDATE rippling_reach mr JOIN `groups` g ON g.id = ?
+                 SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)
+                 WHERE mr.msgid = ? AND g.polyindex IS NOT NULL
+                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                   AND ST_Intersects(mr.polygon, g.polyindex)
+                   AND NOT ST_Within(mr.polygon, g.polyindex)',
+                [(int) $gid, $msgid]
+            );
+        }
     }
 
     /**
