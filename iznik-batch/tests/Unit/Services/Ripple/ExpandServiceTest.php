@@ -18,6 +18,8 @@ class ExpandServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Rippling is OFF by default (ships dark); enable it so the engine actually does work here.
+        config(['freegle.ripple.enabled' => true]);
         // Short, deterministic hazard schedule (3 ticks) + always-active window.
         config(['freegle.ripple.hazard_hours' => [1, 3, 6]]);
         config(['freegle.ripple.active_start_hour' => 0]);
@@ -78,6 +80,23 @@ class ExpandServiceTest extends TestCase
         Http::fake(['*ripple-schedule*' => Http::response([
             'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
         ], 200)]);
+    }
+
+    /** Master switch off: process() is inert - no reach computed, nothing rippled in (ships dark). */
+    public function test_process_is_inert_when_rippling_is_disabled(): void
+    {
+        config(['freegle.ripple.enabled' => false]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'no reach is initialised while rippling is off');
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no rippling_reach rows are written while rippling is off'
+        );
     }
 
     public function test_initialises_reach_for_new_spatial_post(): void

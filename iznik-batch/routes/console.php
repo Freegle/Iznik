@@ -105,11 +105,17 @@ Schedule::command('messages:contentcheck')
 // Maintain rippling-out reach (rippling_reach) for active posts.
 // Computes per-post reach via the routing server and advances it over time per
 // the hazard schedule. Dark until browse/digest/reply-eligibility read it.
-Schedule::command('ripple:expand')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('ripple:expand'))
-    ->runInBackground();
+//
+// Gated by the master activation switch: while ripple.enabled is false the cron is not scheduled at
+// all, so no reach is computed, nothing is rippled into new groups, and every reach consumer stays
+// inert. This lets the whole feature ship dark and be turned on later with just RIPPLE_ENABLED=true.
+if (config('freegle.ripple.enabled')) {
+    Schedule::command('ripple:expand')
+        ->everyMinute()
+        ->withoutOverlapping()
+        ->sendOutputTo(cronLog('ripple:expand'))
+        ->runInBackground();
+}
 
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.

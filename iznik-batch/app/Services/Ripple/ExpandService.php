@@ -41,6 +41,13 @@ class ExpandService
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0,
         ];
 
+        // Master activation switch. While rippling is disabled, do nothing: no reach is computed and
+        // nothing is rippled into new groups. The cron is also unscheduled when off (routes/console.php),
+        // so this is defence-in-depth that also covers a manual `artisan ripple:expand`.
+        if (!config('freegle.ripple.enabled')) {
+            return $stats;
+        }
+
         // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
         $stats['removed'] = $this->removeStale($dryRun);
 

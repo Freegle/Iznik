@@ -270,6 +270,11 @@ return [
 
     // Rippling-out reach engine parameters (ripple:expand / ReachService).
     'ripple' => [
+        // Master activation switch for the whole rippling-out feature. Ships DARK (false) so all the
+        // server + app code can deploy (and clear the app stores) ahead of go-live; flip
+        // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
+        // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
+        'enabled' => (bool) env('RIPPLE_ENABLED', false),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.
