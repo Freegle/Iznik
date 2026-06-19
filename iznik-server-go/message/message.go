@@ -1213,14 +1213,24 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 	}
 
 	// Batch query: latest chat activity for all candidate messages.
+	//
+	// Recency is measured by the latest chat message that actually REFERENCES the
+	// post (chat_messages.date where refmsgid = the post), NOT chat_rooms.latestmessage.
+	// Freegle user-to-user rooms are one long-lived room per pair of people, so the
+	// room's overall latest message reflects any conversation between them. Using it
+	// pinned years-old posts in the member's active My Posts whenever the two users
+	// had chatted about anything else recently (Discourse 9481/583): the reported
+	// posts' own chat reference was from 2020, but the shared room had a message 3
+	// days ago, so the room-level check kept them "active" indefinitely. The per-post
+	// reference date is the real "is this post still being discussed" signal.
 	type chatLatest struct {
 		Refmsgid uint64     `gorm:"column:refmsgid"`
 		Latest   *time.Time `gorm:"column:latest"`
 	}
 	var chatResults []chatLatest
-	db.Raw("SELECT chat_messages.refmsgid, MAX(latestmessage) AS latest "+
-		"FROM chat_rooms INNER JOIN chat_messages ON chat_rooms.id = chat_messages.chatid "+
-		"WHERE chat_messages.refmsgid IN (?) GROUP BY chat_messages.refmsgid", candidateIDs).Scan(&chatResults)
+	db.Raw("SELECT refmsgid, MAX(date) AS latest "+
+		"FROM chat_messages "+
+		"WHERE refmsgid IN (?) GROUP BY refmsgid", candidateIDs).Scan(&chatResults)
 
 	recentChat := map[uint64]bool{}
 	for _, cr := range chatResults {

@@ -364,6 +364,55 @@ func TestExpiredMessageWithRecentChatKeptActive(t *testing.T) {
 	assert.True(t, found, "Old message with recent chat should remain active")
 }
 
+func TestExpiredMessageHeldActiveByUnrelatedRoomChatAgedOut(t *testing.T) {
+	// An old post must NOT be kept in active My Posts merely because the chat ROOM
+	// that once referenced it has had recent UNRELATED activity. Freegle user-to-user
+	// rooms are one long-lived room per pair of people, so chat_rooms.latestmessage
+	// tracks any conversation between them. Recency must be judged by the chat message
+	// that actually references the post (refmsgid), not the room's overall last
+	// message — otherwise old posts get pinned active whenever the two users chat
+	// about anything else (Discourse 9481/583). Companion to
+	// TestExpiredMessageWithRecentChatKeptActive: same shape, but the reference is OLD
+	// while the room is recent, so this one must age out.
+	db := database.DBConn
+	prefix := uniquePrefix("roomchat")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	otherID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Old message (200 days) — past expiry.
+	msgID := CreateTestMessageWithArrival(t, userID, groupID, "OFFER: "+prefix+" stale shared-room item", 55.9533, -3.1883, 200)
+
+	// Long-lived room whose LATEST message is recent (unrelated chat), but the chat
+	// message that references THIS post is old — the discussion of this post ended
+	// long ago.
+	var chatID uint64
+	db.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, 'User2User', NOW())", userID, otherID)
+	db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND user2 = ? AND chattype = 'User2User'", userID, otherID).Scan(&chatID)
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'interested long ago', 'Default', ?, DATE_SUB(NOW(), INTERVAL 200 DAY), 1, 0, 0)",
+		chatID, otherID, msgID)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+		db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+	})
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	found := false
+	for _, m := range msgs {
+		if m.ID == msgID {
+			found = true
+		}
+	}
+	assert.False(t, found, "Old post must age out of active My Posts despite recent UNRELATED chat in the shared room (Discourse 9481/583)")
+}
+
 func TestNonSpatialMessageMarkedOldInInactiveQuery(t *testing.T) {
 	// Messages without a spatial entry (not publicly visible) should be marked
 	// hasoutcome=true in the active=false response so the client's old/active
