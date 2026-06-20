@@ -1636,15 +1636,20 @@ class UnifiedDigestServiceTest extends TestCase
      * Long-inactive members and daily members must not get immediate
      * per-post emails (Discourse topic 9728 posts 11-12: member 39318461
      * "no recent activity"; support flooded). processGroupImmediate gates
-     * recipients on a 90-day lastaccess window and on emailfrequency=-1.
+     * recipients on the same V1-parity inactivity window the daily path uses
+     * (Engage::USER_INACTIVE = 365*12*3600 = 182.5 days) and on
+     * emailfrequency=-1. It must NOT use a stricter 90-day cutoff: that
+     * silently dropped members inactive for 90-182.5 days (member 41020747,
+     * lastaccess 111 days) even though V1 and the daily digest still mail them.
      *
-     * Four-user group:
-     *   poster        emailfrequency=-1, active → receives (V1 parity: own post loops back)
-     *   immediateUser emailfrequency=-1, active → receives
-     *   dailyUser     emailfrequency=24, active → excluded (emailfrequency filter)
-     *   inactiveUser  emailfrequency=-1, lastaccess 2 years ago → excluded (90-day lastaccess gate)
+     * Five-user group:
+     *   poster         emailfrequency=-1, active → receives (V1 parity: own post loops back)
+     *   immediateUser  emailfrequency=-1, active → receives
+     *   deadZoneUser   emailfrequency=-1, lastaccess 120 days ago → receives (inside 182.5d)
+     *   dailyUser      emailfrequency=24, active → excluded (emailfrequency filter)
+     *   inactiveUser   emailfrequency=-1, lastaccess 2 years ago → excluded (182.5d gate)
      *
-     * So exactly the poster + immediateUser receive: 2 emails.
+     * So poster + immediateUser + deadZoneUser receive: 3 emails.
      */
     public function test_inactive_and_daily_users_must_not_receive_immediate_individual_emails(): void
     {
@@ -1655,11 +1660,18 @@ class UnifiedDigestServiceTest extends TestCase
         // Active immediate-frequency member — receives (alongside the poster).
         $immediateUser = $this->createTestUser();
 
+        // Immediate-frequency member inactive for 120 days — inside the 182.5-day
+        // V1-parity window, so must still receive. A 90-day cutoff would wrongly
+        // drop them (the member 41020747 regression).
+        $deadZoneUser = $this->createTestUser();
+        $deadZoneUser->lastaccess = now()->subDays(120);
+        $deadZoneUser->save();
+
         // Active daily-digest member — correctly excluded by the emailfrequency filter.
         $dailyUser = $this->createTestUser();
 
-        // Long-inactive immediate-frequency member (lastaccess 2 years ago).
-        // Should be excluded once processGroupImmediate adds a lastaccess gate.
+        // Long-inactive immediate-frequency member (lastaccess 2 years ago) —
+        // beyond the 182.5-day window, correctly excluded.
         $inactiveUser = $this->createTestUser();
         $inactiveUser->lastaccess = now()->subYears(2);
         $inactiveUser->save();
@@ -1667,6 +1679,7 @@ class UnifiedDigestServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($poster, $group);
         $this->createMembership($immediateUser, $group);
+        $this->createMembership($deadZoneUser, $group);
         $this->createMembership($dailyUser, $group, [
             'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
         ]);
@@ -1678,10 +1691,10 @@ class UnifiedDigestServiceTest extends TestCase
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
-        // poster + immediateUser receive; dailyUser (freq) and inactiveUser
-        // (90-day lastaccess gate) are excluded.
-        $this->assertEquals(2, $stats['emails_sent']);
-        $this->assertEquals(2, $stats['users_processed']);
+        // poster + immediateUser + deadZoneUser receive; dailyUser (freq) and
+        // inactiveUser (182.5-day gate) are excluded.
+        $this->assertEquals(3, $stats['emails_sent']);
+        $this->assertEquals(3, $stats['users_processed']);
     }
 
     // ─── V1-PARITY: per-group emailfrequency is authoritative ────────────
