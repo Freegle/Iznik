@@ -99,6 +99,12 @@ return [
         'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteersupport@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
+        // TrashNothing contact that receives the monthly LoveJunk invoice request
+        // (V1 TN_ADDR). Held in env as it's a partner contact; no committed default.
+        'tn_invoice_addr' => env('FREEGLE_TN_INVOICE_ADDR', ''),
+        // Treasurer address quoted in the invoice body — where TN should send the
+        // PDF invoice (V1 TREASURER_ADDR).
+        'treasurer_addr' => env('FREEGLE_TREASURER_ADDR', 'treasurer@ilovefreegle.org'),
         // Modbot email — the automated moderator account; excluded from mod-welfare checks.
         'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modbot@users.ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection

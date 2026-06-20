@@ -5,7 +5,9 @@ namespace Tests\Unit\Mail;
 use App\Mail\Digest\UnifiedDigest;
 use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Carbon\Carbon;
 use Illuminate\Mail\Mailable;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
@@ -757,5 +759,81 @@ class UnifiedDigestTest extends TestCase
         // Verify tracking does not indicate AMP.
         $tracking = $mail->getTracking();
         $this->assertFalse($tracking->has_amp);
+    }
+
+    public function test_card_meta_shows_distance_when_user_has_location(): void
+    {
+        // haversineDistance() and the distance branch in prepareCard() are only
+        // reached when the digest recipient has a lastlocation set. Without a
+        // lastlocation both $userLat and $userLng remain null and the distance
+        // block is skipped entirely.
+        $locationId = DB::table('locations')->insertGetId([
+            'name' => 'TestUserLocation',
+            'type' => 'Point',
+            'lat'  => 51.55,    // ~3 miles north of the default group/message lat
+            'lng'  => -0.1278,
+        ]);
+
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(); // defaults: lat=51.5074, lng=-0.1278
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Bicycle (London)',
+        ]);
+
+        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html    = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        // The distance text rendered by haversineDistance() must appear in the
+        // compiled HTML (e.g. "3 miles" or "< 1 mile").
+        $this->assertMatchesRegularExpression(
+            '/(?:[0-9]+ miles?|&lt; 1 mile|< 1 mile)/',
+            $html,
+            'Distance text must appear in the digest card when the user has a lastlocation'
+        );
+    }
+
+    public function test_card_shows_first_posted_when_message_was_reposted(): void
+    {
+        // The "First posted" line in _card.blade.php is only emitted when
+        // prepareCard() sets firstPostedFormatted — which only happens when
+        // messages.date is > 60 minutes before the pivot arrival date (i.e. the
+        // item was reposted). Without this test the firstPostedFormatted branch
+        // in UnifiedDigest::prepareCard() was never covered.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $originalDate = Carbon::now()->subDays(3);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Bookshelf (London)',
+            'date'    => $originalDate,
+            'arrival' => Carbon::now(),
+        ]);
+
+        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html    = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        // The "First posted" line must appear since the item was reposted 3 days
+        // after its original posting date.
+        $this->assertStringContainsString(
+            'First posted',
+            $html,
+            'A reposted message must render the "First posted" date line'
+        );
     }
 }
