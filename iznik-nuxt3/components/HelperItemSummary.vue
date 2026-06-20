@@ -6,6 +6,9 @@
     <b-badge v-if="summary.pool" variant="warning" class="me-1" data-testid="sum-pool">
       {{ summary.pool }} ready to decide
     </b-badge>
+    <b-badge v-if="summary.needsyou" variant="danger" class="me-1" data-testid="sum-needsyou">
+      {{ summary.needsyou }} needs you
+    </b-badge>
     <b-badge v-if="summary.outreach" variant="info" class="me-1" data-testid="sum-outreach">
       {{ summary.outreach }} being contacted
     </b-badge>

@@ -79,6 +79,48 @@ describe('ClearanceManageItem — Helper overlay', () => {
     const w = mountItem()
     expect(w.vm.decisionRows.map((r) => r.userid).sort()).toEqual([3, 7])
     expect(w.vm.outreachRows.map((r) => r.userid)).toEqual([4])
+    expect(w.vm.needsYouRows).toEqual([])
+  })
+
+  it('surfaces an escalated candidate into the needs-you group with its reason', () => {
+    const esc = {
+      id: 80,
+      userid: 8,
+      state: 'ESCALATED',
+      escalation_reason: 'Asked for photos',
+      item_states: [{ bulkitemid: 10, state: 'ESCALATED', score: null }],
+    }
+    const w = mount(ClearanceManageItem, {
+      props: {
+        message: {
+          id: 1,
+          bulkitems: [
+            {
+              id: 10,
+              name: 'Chairs',
+              quantity: 10,
+              attachments: [],
+              interest: [{ userid: 8, quantity: 1, state: 'Interested' }],
+            },
+          ],
+        },
+        item: { id: 10, name: 'Chairs', quantity: 10, attachments: [], interest: [{ userid: 8, quantity: 1, state: 'Interested' }] },
+        index: 0,
+        helperByUser: { 8: esc },
+        sentUsers: new Set(),
+      },
+      global: {
+        stubs: {
+          'b-badge': { template: '<span><slot /></span>' },
+          'b-button': { template: '<button><slot /></button>' },
+          'b-progress': true,
+          'b-progress-bar': true,
+        },
+      },
+    })
+    expect(w.vm.needsYouRows.map((r) => r.userid)).toEqual([8])
+    expect(w.vm.decisionRows).toEqual([])
+    expect(w.vm.noteFor(8)).toBe('Asked for photos')
   })
 
   it('orders decision candidates by Helper score (highest first)', () => {

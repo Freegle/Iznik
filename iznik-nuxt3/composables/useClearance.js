@@ -19,7 +19,9 @@ export const CLEARANCE_STATE_META = {
   Interested: { label: 'Wants it', variant: 'secondary' },
   Reserved: { label: 'Allocated', variant: 'success' },
   Collected: { label: 'Collected', variant: 'primary' },
-  Rejected: { label: 'Declined', variant: 'danger' },
+  // "Excluded" not "Declined": the offerer set them aside, but the polite note is
+  // only sent when allocations are finalised — until then they can be restored.
+  Rejected: { label: 'Excluded', variant: 'danger' },
   Withdrawn: { label: 'Withdrew', variant: 'light' },
 }
 
@@ -76,7 +78,7 @@ export function clearanceActions(state) {
     case 'Interested':
       return [
         { state: 'Reserved', label: 'Allocate', variant: 'success' },
-        { state: 'Rejected', label: 'Decline', variant: 'outline-danger' },
+        { state: 'Rejected', label: 'Exclude', variant: 'outline-danger' },
       ]
     case 'Reserved':
       return [
@@ -115,15 +117,11 @@ export function clearanceActions(state) {
 export const HELPER_GROUP_ALLOCATED = ['ALLOCATED', 'CONFIRMED', 'COLLECTED']
 // Ready for a human decision — the scoring pool.
 export const HELPER_GROUP_POOL = ['QUALIFIED']
-// The Helper is still working these (contacted / chasing / parked / escalated).
+// The AI couldn't handle the chat and needs the offerer — surfaced, never collapsed.
+export const HELPER_GROUP_NEEDSYOU = ['ESCALATED']
+// The Helper is still working these (contacted / chasing / parked).
 // On the page these are "outreach": collapsed until the person replies.
-export const HELPER_GROUP_OUTREACH = [
-  'NEW',
-  'GATHERING',
-  'ESCALATED',
-  'PARKED_REPLIED',
-  'PARKED_QUIET',
-]
+export const HELPER_GROUP_OUTREACH = ['NEW', 'GATHERING', 'PARKED_REPLIED', 'PARKED_QUIET']
 export const HELPER_GROUP_INACTIVE = ['TIMED_OUT', 'WITHDRAWN', 'REJECTED']
 
 export const HELPER_STATE_META = {
@@ -135,10 +133,10 @@ export const HELPER_STATE_META = {
   COLLECTED: { label: 'Collected', variant: 'primary', group: 'allocated' },
   PARKED_REPLIED: { label: 'Fallback', variant: 'secondary', group: 'outreach' },
   PARKED_QUIET: { label: 'Fallback', variant: 'secondary', group: 'outreach' },
-  ESCALATED: { label: 'Needs you', variant: 'danger', group: 'outreach' },
+  ESCALATED: { label: 'Needs you', variant: 'danger', group: 'needsyou' },
   TIMED_OUT: { label: 'No reply', variant: 'light', group: 'inactive' },
   WITHDRAWN: { label: 'Withdrew', variant: 'light', group: 'inactive' },
-  REJECTED: { label: 'Declined', variant: 'light', group: 'inactive' },
+  REJECTED: { label: 'Excluded', variant: 'light', group: 'inactive' },
 }
 
 export function helperStateLabel(state) {
@@ -157,6 +155,30 @@ export function isOutreachState(state) {
   return helperStateGroup(state) === 'outreach'
 }
 
+export function isNeedsYouState(state) {
+  return helperStateGroup(state) === 'needsyou'
+}
+
+// The single decision-relevant status chip for a candidate row. Merges the
+// authoritative interest state with the Helper FSM state so the row shows ONE
+// status, not two competing badges:
+//  - Reserved/Collected/Rejected (Withdrawn) -> the clearance outcome wins.
+//  - otherwise -> the Helper FSM state (Ready to decide / Gathering info / Needs
+//    you), or null when the Helper isn't running (nothing to add beyond "wants it",
+//    which is implied by being listed).
+export function candidateStatus(interestState, helperState) {
+  if (interestState && interestState !== 'Interested') {
+    return {
+      label: clearanceStateLabel(interestState),
+      variant: clearanceStateVariant(interestState),
+    }
+  }
+  if (helperState) {
+    return { label: helperStateLabel(helperState), variant: helperStateVariant(helperState) }
+  }
+  return null
+}
+
 // Format a 0–100 Helper score for display. Null/undefined → ''.
 export function formatScore(score) {
   if (score === null || score === undefined || score === '') return ''
@@ -168,7 +190,7 @@ export function formatScore(score) {
 // for the per-item summary shown at the top of each item. `states` is an array of
 // item-state objects (each with a `state`).
 export function summariseItemStates(states = []) {
-  const summary = { allocated: 0, pool: 0, outreach: 0, inactive: 0, total: 0 }
+  const summary = { allocated: 0, pool: 0, needsyou: 0, outreach: 0, inactive: 0, total: 0 }
   for (const s of states) {
     const g = helperStateGroup(s.state)
     if (summary[g] === undefined) continue

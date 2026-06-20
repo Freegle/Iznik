@@ -49,17 +49,16 @@
     <!-- Allocated recipients (Reserved / Collected). -->
     <div v-if="allocatedRows.length" class="clearance-item__group">
       <h6 class="clearance-item__grouphead">Allocated to</h6>
-      <ClearanceCandidate
-        v-for="row in allocatedRows"
-        :key="row.userid"
-        :message-id="message.id"
-        :bulkitemid="item.id"
-        :interest="row"
-        :other-allocations="otherAllocationsFor(row.userid)"
-        :helper-state="helperStateFor(row.userid)"
-        :score="scoreFor(row.userid)"
-        :ai-sent="aiSentFor(row.userid)"
-      />
+      <ClearanceCandidate v-for="row in allocatedRows" :key="row.userid" v-bind="candProps(row)" />
+    </div>
+
+    <!-- Needs you: the AI couldn't handle these chats. Always shown (never
+         collapsed) — these are the ones to deal with. -->
+    <div v-if="needsYouRows.length" class="clearance-item__group clearance-item__group--needsyou">
+      <h6 class="clearance-item__grouphead">
+        <v-icon icon="circle-exclamation" class="me-1" />Needs you ({{ needsYouRows.length }})
+      </h6>
+      <ClearanceCandidate v-for="row in needsYouRows" :key="row.userid" v-bind="candProps(row)" />
     </div>
 
     <!-- Everyone ready for a decision (Helper QUALIFIED, or no Helper running).
@@ -67,19 +66,9 @@
          Helper's priority score when available. -->
     <div v-if="decisionRows.length" class="clearance-item__group">
       <h6 class="clearance-item__grouphead">
-        {{ allocatedRows.length ? 'Fallback recipients' : 'Interested' }}
+        {{ allocatedRows.length ? 'Fallback recipients' : 'Ready to decide' }}
       </h6>
-      <ClearanceCandidate
-        v-for="row in decisionRows"
-        :key="row.userid"
-        :message-id="message.id"
-        :bulkitemid="item.id"
-        :interest="row"
-        :other-allocations="otherAllocationsFor(row.userid)"
-        :helper-state="helperStateFor(row.userid)"
-        :score="scoreFor(row.userid)"
-        :ai-sent="aiSentFor(row.userid)"
-      />
+      <ClearanceCandidate v-for="row in decisionRows" :key="row.userid" v-bind="candProps(row)" />
     </div>
 
     <!-- Outreach: people the Helper is still gathering from. Listed but collapsed
@@ -96,17 +85,7 @@
         being contacted by Helper
       </b-button>
       <template v-if="showOutreach">
-        <ClearanceCandidate
-          v-for="row in outreachRows"
-          :key="row.userid"
-          :message-id="message.id"
-          :bulkitemid="item.id"
-          :interest="row"
-          :other-allocations="otherAllocationsFor(row.userid)"
-          :helper-state="helperStateFor(row.userid)"
-          :score="scoreFor(row.userid)"
-          :ai-sent="aiSentFor(row.userid)"
-        />
+        <ClearanceCandidate v-for="row in outreachRows" :key="row.userid" v-bind="candProps(row)" />
       </template>
     </div>
 
@@ -114,7 +93,7 @@
       No-one's asked for this yet.
     </p>
 
-    <!-- Declined / withdrawn, tucked away. -->
+    <!-- Excluded / withdrawn, tucked away. -->
     <div v-if="inactiveRows.length" class="clearance-item__group">
       <b-button
         variant="link"
@@ -124,19 +103,10 @@
         @click="showInactive = !showInactive"
       >
         {{ showInactive ? 'Hide' : 'Show' }} {{ inactiveRows.length }}
-        declined/withdrawn
+        excluded/withdrawn
       </b-button>
       <template v-if="showInactive">
-        <ClearanceCandidate
-          v-for="row in inactiveRows"
-          :key="row.userid"
-          :message-id="message.id"
-          :bulkitemid="item.id"
-          :interest="row"
-          :helper-state="helperStateFor(row.userid)"
-          :score="scoreFor(row.userid)"
-          :ai-sent="aiSentFor(row.userid)"
-        />
+        <ClearanceCandidate v-for="row in inactiveRows" :key="row.userid" v-bind="candProps(row)" />
       </template>
     </div>
   </div>
@@ -152,6 +122,7 @@ import {
   isInactiveState,
   allocatedQuantity,
   isOutreachState,
+  isNeedsYouState,
 } from '~/composables/useClearance'
 
 const props = defineProps({
@@ -191,8 +162,31 @@ function scoreFor(userid) {
   const s = helperItemStateFor(userid)
   return s ? s.score : null
 }
+function scoreBreakdownFor(userid) {
+  const s = helperItemStateFor(userid)
+  return s ? s.score_breakdown : null
+}
 function aiSentFor(userid) {
   return props.sentUsers?.has ? props.sentUsers.has(userid) : false
+}
+// Why the AI handed this conversation over (shown on a "Needs you" row).
+function noteFor(userid) {
+  return props.helperByUser[userid]?.escalation_reason || null
+}
+
+// All the per-candidate props in one place, so each row binds cleanly.
+function candProps(row) {
+  return {
+    messageId: props.message.id,
+    bulkitemid: props.item.id,
+    interest: row,
+    otherAllocations: otherAllocationsFor(row.userid),
+    helperState: helperStateFor(row.userid),
+    score: scoreFor(row.userid),
+    scoreBreakdown: scoreBreakdownFor(row.userid),
+    aiSent: aiSentFor(row.userid),
+    note: noteFor(row.userid),
+  }
 }
 
 // All helper item_states for THIS item, for the per-item FSM summary.
@@ -209,6 +203,11 @@ const itemStates = computed(() => {
 function isOutreachCandidate(userid) {
   const st = helperStateFor(userid)
   return st ? isOutreachState(st) : false
+}
+// Did the AI escalate this candidate's chat to the human?
+function isNeedsYouCandidate(userid) {
+  const st = helperStateFor(userid)
+  return st ? isNeedsYouState(st) : false
 }
 
 const allocatedRows = computed(() =>
@@ -242,10 +241,15 @@ const poolRows = computed(() =>
     })
 )
 
-// Pool split: candidates ready for a decision vs those the Helper is still
-// gathering from (outreach — collapsed until they reply).
+// Pool split: escalations the AI couldn't handle (surfaced) vs ready-to-decide vs
+// still being gathered (outreach — collapsed until they reply).
+const needsYouRows = computed(() =>
+  poolRows.value.filter((i) => isNeedsYouCandidate(i.userid))
+)
 const decisionRows = computed(() =>
-  poolRows.value.filter((i) => !isOutreachCandidate(i.userid))
+  poolRows.value.filter(
+    (i) => !isOutreachCandidate(i.userid) && !isNeedsYouCandidate(i.userid)
+  )
 )
 const outreachRows = computed(() =>
   poolRows.value.filter((i) => isOutreachCandidate(i.userid))
@@ -291,6 +295,7 @@ defineExpose({
   allocatedRows,
   poolRows,
   decisionRows,
+  needsYouRows,
   outreachRows,
   inactiveRows,
   activeRows,
@@ -300,7 +305,10 @@ defineExpose({
   itemStates,
   helperStateFor,
   scoreFor,
+  scoreBreakdownFor,
+  noteFor,
   aiSentFor,
+  candProps,
   showOutreach,
 })
 </script>
@@ -320,6 +328,16 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* "Needs you" is the attention group — give it a clear left border. */
+.clearance-item__group--needsyou {
+  border-left: 3px solid #dc3545;
+  padding-left: 0.5rem;
+  margin: 0.4rem 0;
+}
+.clearance-item__group--needsyou .clearance-item__grouphead {
+  color: #b02a37;
 }
 
 .clearance-item__photo {

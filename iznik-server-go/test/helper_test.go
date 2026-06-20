@@ -164,6 +164,8 @@ func TestHelperSendRecordsSentMessage(t *testing.T) {
 	db.Raw("SELECT userid, message FROM chat_messages WHERE id = ?", chatmsgid).Row().Scan(&fromUser, &body)
 	assert.Equal(t, ownerID, fromUser)
 	assert.Contains(t, body, "When could you collect")
+	// The FIRST auto-sent message carries the automated-assistant disclosure.
+	assert.Contains(t, body, "automated assistant")
 
 	// It's recorded as a Helper-sent message (auto).
 	var auto int
@@ -171,6 +173,16 @@ func TestHelperSendRecordsSentMessage(t *testing.T) {
 	db.Raw("SELECT auto, kind FROM helper_sent_messages WHERE chatmsgid = ?", chatmsgid).Row().Scan(&auto, &kind)
 	assert.Equal(t, 1, auto)
 	assert.Equal(t, "gathering", kind)
+
+	// A SECOND auto-send to the same replier must NOT repeat the disclosure.
+	_, out2 := postHelper(t, ownerToken, map[string]interface{}{
+		"action": "Send", "msgid": msgID, "userid": replierUserID,
+		"body": "Quick nudge — still keen?", "kind": "nudge",
+	})
+	chatmsgid2 := uint64(out2["chatmsgid"].(float64))
+	var body2 string
+	db.Raw("SELECT message FROM chat_messages WHERE id = ?", chatmsgid2).Scan(&body2)
+	assert.NotContains(t, body2, "automated assistant")
 }
 
 // TestHelperProposalAndResolveAllocation: an allocation proposal, when sent by the

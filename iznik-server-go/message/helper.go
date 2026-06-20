@@ -27,6 +27,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// helperDisclosure is appended to the FIRST message the Helper auto-sends to a
+// replier, so an automated conversation is never fully silent about it.
+const helperDisclosure = "Just to let you know, some of these messages may come from our automated assistant."
+
 // ---------------------------------------------------------------------------
 // Read models (also the JSON shape returned to the management page).
 // ---------------------------------------------------------------------------
@@ -570,7 +574,19 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 	if req.Auto != nil {
 		auto = *req.Auto
 	}
-	cmid := insertHelperChat(db, batchid, chatid, offerer, req.Msgid, replierid, strings.TrimSpace(*req.Body), kind, auto, nil)
+	body := strings.TrimSpace(*req.Body)
+	// On the FIRST message the Helper auto-sends to a replier, append a light-touch
+	// disclosure so the conversation isn't silently automated. Only once per
+	// replier, and only for auto-sends (human-confirmed sends are the offerer's
+	// own words).
+	if auto && replierid > 0 {
+		var priorAuto int
+		db.Raw("SELECT COUNT(*) FROM helper_sent_messages WHERE batchid = ? AND replierid = ? AND auto = 1", batchid, replierid).Scan(&priorAuto)
+		if priorAuto == 0 {
+			body += "\n\n" + helperDisclosure
+		}
+	}
+	cmid := insertHelperChat(db, batchid, chatid, offerer, req.Msgid, replierid, body, kind, auto, nil)
 	if cmid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not send message")
 	}
