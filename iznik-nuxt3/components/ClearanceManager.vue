@@ -19,6 +19,34 @@
     </NoticeMessage>
 
     <template v-else>
+      <!-- The AI concierge status + pause control. Shown whenever the Helper has
+           been started for this clearance. -->
+      <HelperStatusBar
+        v-if="helperBatch"
+        :batch="helperBatch"
+        @pause="setStatus('paused')"
+        @resume="setStatus('active')"
+      />
+
+      <!-- Decisions the Helper wants the human to confirm/edit/send. -->
+      <div
+        v-if="pendingProposals.length"
+        class="clearance-manager__proposals"
+        data-testid="helper-proposals"
+      >
+        <h5 class="clearance-manager__proposalhead">
+          <v-icon icon="bell" class="me-1" />
+          {{ pendingProposals.length }}
+          {{ pendingProposals.length === 1 ? 'decision' : 'decisions' }} for you
+        </h5>
+        <HelperProposalCard
+          v-for="p in pendingProposals"
+          :key="p.id"
+          :proposal="p"
+          @resolve="onResolve"
+        />
+      </div>
+
       <div class="clearance-manager__head">
         <h2 class="clearance-manager__title">{{ message.subject }}</h2>
         <p class="clearance-manager__totals" data-testid="clearance-totals">
@@ -54,6 +82,8 @@
         :message="message"
         :item="item"
         :index="idx"
+        :helper-by-user="helperByUser"
+        :sent-users="sentUsers"
       />
     </template>
   </div>
@@ -66,6 +96,8 @@ import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
 import NoticeMessage from '~/components/NoticeMessage'
 import ClearanceManageItem from '~/components/ClearanceManageItem'
+import HelperStatusBar from '~/components/HelperStatusBar'
+import HelperProposalCard from '~/components/HelperProposalCard'
 import {
   allocatedQuantity,
   distinctInterestedUsers,
@@ -99,6 +131,52 @@ const canManage = computed(
 
 const peopleInterested = computed(() => distinctInterestedUsers(items.value))
 
+// --- Freegle Helper (AI concierge) overlay ---------------------------------
+const helper = computed(() => messageStore.helperById?.(props.id))
+const helperBatch = computed(() => helper.value?.batch || null)
+
+const pendingProposals = computed(() =>
+  (helper.value?.proposals || []).filter((p) => p.status === 'pending')
+)
+
+// userid -> helper replier record (with item_states), for the candidate rows.
+const helperByUser = computed(() => {
+  const map = {}
+  for (const r of helper.value?.repliers || []) {
+    map[r.userid] = r
+  }
+  return map
+})
+
+// Set of userids the Helper has messaged, so candidate rows show an "AI" badge.
+// sent rows carry replierid; resolve back to userid via the replier records.
+const sentUsers = computed(() => {
+  const byReplierId = {}
+  for (const r of helper.value?.repliers || []) byReplierId[r.id] = r.userid
+  const set = new Set()
+  for (const s of helper.value?.sent || []) {
+    const uid = byReplierId[s.replierid]
+    if (uid) set.add(uid)
+  }
+  return set
+})
+
+async function setStatus(status) {
+  try {
+    await messageStore.helperSetStatus(props.id, status)
+  } catch (e) {
+    console.error('Failed to change Helper status', e)
+  }
+}
+
+async function onResolve({ id, decision, text }) {
+  try {
+    await messageStore.helperResolveProposal(props.id, id, decision, text)
+  } catch (e) {
+    console.error('Failed to resolve proposal', e)
+  }
+}
+
 const fullyAllocated = computed(
   () =>
     items.value.filter(
@@ -124,6 +202,13 @@ async function load() {
   if (ids.size) {
     await userStore.fetchMultiple([...ids])
   }
+  // Load the Helper state (batch/repliers/proposals/sent). Tolerate absence —
+  // the Helper may not have been started for this clearance.
+  try {
+    await messageStore.fetchHelper(props.id)
+  } catch (e) {
+    // No Helper state yet; the page renders without the AI overlay.
+  }
 }
 
 onMounted(load)
@@ -137,6 +222,12 @@ defineExpose({
   peopleInterested,
   fullyAllocated,
   load,
+  helperBatch,
+  pendingProposals,
+  helperByUser,
+  sentUsers,
+  setStatus,
+  onResolve,
 })
 </script>
 

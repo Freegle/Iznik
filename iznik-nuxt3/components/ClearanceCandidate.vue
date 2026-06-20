@@ -34,6 +34,35 @@
 
     <div class="clearance-candidate__badges">
       <b-badge :variant="stateVariant">{{ stateLabel }}</b-badge>
+      <!-- Freegle Helper's FSM state for this candidate, when the Helper is on. -->
+      <b-badge
+        v-if="helperState"
+        :variant="helperVariant"
+        class="ms-1"
+        data-testid="helper-state"
+      >
+        {{ helperLabel }}
+      </b-badge>
+      <!-- Helper priority score (0–100). -->
+      <b-badge
+        v-if="scoreText"
+        variant="dark"
+        class="ms-1"
+        title="Freegle Helper priority score"
+        data-testid="helper-score"
+      >
+        <v-icon icon="star" class="me-1" />{{ scoreText }}
+      </b-badge>
+      <!-- Marks candidates the Helper has messaged on the offerer's behalf. -->
+      <b-badge
+        v-if="aiSent"
+        variant="info"
+        class="ms-1"
+        title="Freegle Helper has messaged this person"
+        data-testid="ai-badge"
+      >
+        <v-icon icon="robot" class="me-1" />AI
+      </b-badge>
       <!-- Cross-item hint: this person is already collecting other items in the
            same clearance, so giving them this one saves a separate visit. -->
       <b-badge
@@ -84,6 +113,9 @@ import {
   clearanceStateVariant,
   clearanceActions,
   isInactiveState,
+  helperStateLabel,
+  helperStateVariant,
+  formatScore,
 } from '~/composables/useClearance'
 
 const props = defineProps({
@@ -96,6 +128,12 @@ const props = defineProps({
   // Names of OTHER items in this clearance this person is already allocated, so
   // we can flag a single-visit collector.
   otherAllocations: { type: Array, default: () => [] },
+  // Freegle Helper FSM state for this candidate/item (null when Helper is off).
+  helperState: { type: String, default: null },
+  // Helper priority score (0–100) for this candidate/item.
+  score: { type: [Number, String], default: null },
+  // Whether the Helper has messaged this person.
+  aiSent: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['changed'])
@@ -125,6 +163,10 @@ const stateVariant = computed(() => clearanceStateVariant(props.interest.state))
 const actions = computed(() => clearanceActions(props.interest.state))
 const inactive = computed(() => isInactiveState(props.interest.state))
 
+const helperLabel = computed(() => helperStateLabel(props.helperState))
+const helperVariant = computed(() => helperStateVariant(props.helperState))
+const scoreText = computed(() => formatScore(props.score))
+
 // Transition this interest to a new state. The store refetches the message
 // afterwards, so the parent's grouping/totals update reactively.
 async function setState(state) {
@@ -145,7 +187,16 @@ async function setState(state) {
   }
 }
 
-defineExpose({ setState, actions, displayName, inactive, busy })
+defineExpose({
+  setState,
+  actions,
+  displayName,
+  inactive,
+  busy,
+  helperLabel,
+  helperVariant,
+  scoreText,
+})
 </script>
 
 <style scoped lang="scss">

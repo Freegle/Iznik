@@ -103,3 +103,77 @@ export function clearanceActions(state) {
       return []
   }
 }
+
+// ---------------------------------------------------------------------------
+// Freegle Helper (AI concierge) FSM. The helper_repliers / helper_item_states
+// `state` column uses these values. The management page shows the same FSM the
+// Helper reasons over, so these helpers map each state to an offerer-facing label,
+// a badge variant, and a coarse group used to lay out the page.
+// ---------------------------------------------------------------------------
+
+// Coarse groups for page layout.
+export const HELPER_GROUP_ALLOCATED = ['ALLOCATED', 'CONFIRMED', 'COLLECTED']
+// Ready for a human decision — the scoring pool.
+export const HELPER_GROUP_POOL = ['QUALIFIED']
+// The Helper is still working these (contacted / chasing / parked / escalated).
+// On the page these are "outreach": collapsed until the person replies.
+export const HELPER_GROUP_OUTREACH = [
+  'NEW',
+  'GATHERING',
+  'ESCALATED',
+  'PARKED_REPLIED',
+  'PARKED_QUIET',
+]
+export const HELPER_GROUP_INACTIVE = ['TIMED_OUT', 'WITHDRAWN', 'REJECTED']
+
+export const HELPER_STATE_META = {
+  NEW: { label: 'New reply', variant: 'info', group: 'outreach' },
+  GATHERING: { label: 'Gathering info', variant: 'info', group: 'outreach' },
+  QUALIFIED: { label: 'Ready to decide', variant: 'warning', group: 'pool' },
+  ALLOCATED: { label: 'Allocated', variant: 'success', group: 'allocated' },
+  CONFIRMED: { label: 'Confirmed', variant: 'success', group: 'allocated' },
+  COLLECTED: { label: 'Collected', variant: 'primary', group: 'allocated' },
+  PARKED_REPLIED: { label: 'Fallback', variant: 'secondary', group: 'outreach' },
+  PARKED_QUIET: { label: 'Fallback', variant: 'secondary', group: 'outreach' },
+  ESCALATED: { label: 'Needs you', variant: 'danger', group: 'outreach' },
+  TIMED_OUT: { label: 'No reply', variant: 'light', group: 'inactive' },
+  WITHDRAWN: { label: 'Withdrew', variant: 'light', group: 'inactive' },
+  REJECTED: { label: 'Declined', variant: 'light', group: 'inactive' },
+}
+
+export function helperStateLabel(state) {
+  return HELPER_STATE_META[state]?.label || state || 'Unknown'
+}
+
+export function helperStateVariant(state) {
+  return HELPER_STATE_META[state]?.variant || 'secondary'
+}
+
+export function helperStateGroup(state) {
+  return HELPER_STATE_META[state]?.group || 'outreach'
+}
+
+export function isOutreachState(state) {
+  return helperStateGroup(state) === 'outreach'
+}
+
+// Format a 0–100 Helper score for display. Null/undefined → ''.
+export function formatScore(score) {
+  if (score === null || score === undefined || score === '') return ''
+  const n = Number(score)
+  return Number.isFinite(n) ? String(Math.round(n)) : ''
+}
+
+// Given the helper item_states for ONE bulk item, count candidates per FSM group,
+// for the per-item summary shown at the top of each item. `states` is an array of
+// item-state objects (each with a `state`).
+export function summariseItemStates(states = []) {
+  const summary = { allocated: 0, pool: 0, outreach: 0, inactive: 0, total: 0 }
+  for (const s of states) {
+    const g = helperStateGroup(s.state)
+    if (summary[g] === undefined) continue
+    summary[g]++
+    summary.total++
+  }
+  return summary
+}

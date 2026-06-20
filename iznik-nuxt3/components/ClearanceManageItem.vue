@@ -43,6 +43,9 @@
       </span>
     </div>
 
+    <!-- Freegle Helper's per-item summary, grouped by FSM state. -->
+    <HelperItemSummary :item-states="itemStates" />
+
     <!-- Allocated recipients (Reserved / Collected). -->
     <div v-if="allocatedRows.length" class="clearance-item__group">
       <h6 class="clearance-item__grouphead">Allocated to</h6>
@@ -53,23 +56,58 @@
         :bulkitemid="item.id"
         :interest="row"
         :other-allocations="otherAllocationsFor(row.userid)"
+        :helper-state="helperStateFor(row.userid)"
+        :score="scoreFor(row.userid)"
+        :ai-sent="aiSentFor(row.userid)"
       />
     </div>
 
-    <!-- Everyone still in the pool. Once something's been allocated these are
-         the fallbacks the offerer can fall back on. -->
-    <div v-if="poolRows.length" class="clearance-item__group">
+    <!-- Everyone ready for a decision (Helper QUALIFIED, or no Helper running).
+         Once something's been allocated these are the fallbacks. Sorted by the
+         Helper's priority score when available. -->
+    <div v-if="decisionRows.length" class="clearance-item__group">
       <h6 class="clearance-item__grouphead">
         {{ allocatedRows.length ? 'Fallback recipients' : 'Interested' }}
       </h6>
       <ClearanceCandidate
-        v-for="row in poolRows"
+        v-for="row in decisionRows"
         :key="row.userid"
         :message-id="message.id"
         :bulkitemid="item.id"
         :interest="row"
         :other-allocations="otherAllocationsFor(row.userid)"
+        :helper-state="helperStateFor(row.userid)"
+        :score="scoreFor(row.userid)"
+        :ai-sent="aiSentFor(row.userid)"
       />
+    </div>
+
+    <!-- Outreach: people the Helper is still gathering from. Listed but collapsed
+         until they've replied enough to be a real candidate. -->
+    <div v-if="outreachRows.length" class="clearance-item__group">
+      <b-button
+        variant="link"
+        size="sm"
+        class="p-0 clearance-item__inactivetoggle"
+        data-testid="toggle-outreach"
+        @click="showOutreach = !showOutreach"
+      >
+        {{ showOutreach ? 'Hide' : 'Show' }} {{ outreachRows.length }}
+        being contacted by Helper
+      </b-button>
+      <template v-if="showOutreach">
+        <ClearanceCandidate
+          v-for="row in outreachRows"
+          :key="row.userid"
+          :message-id="message.id"
+          :bulkitemid="item.id"
+          :interest="row"
+          :other-allocations="otherAllocationsFor(row.userid)"
+          :helper-state="helperStateFor(row.userid)"
+          :score="scoreFor(row.userid)"
+          :ai-sent="aiSentFor(row.userid)"
+        />
+      </template>
     </div>
 
     <p v-if="!activeRows.length" class="text-muted small mb-0">
@@ -95,6 +133,9 @@
           :message-id="message.id"
           :bulkitemid="item.id"
           :interest="row"
+          :helper-state="helperStateFor(row.userid)"
+          :score="scoreFor(row.userid)"
+          :ai-sent="aiSentFor(row.userid)"
         />
       </template>
     </div>
@@ -104,11 +145,13 @@
 <script setup>
 import { ref, computed } from 'vue'
 import ClearanceCandidate from '~/components/ClearanceCandidate'
+import HelperItemSummary from '~/components/HelperItemSummary'
 import {
   isAllocatedState,
   isPoolState,
   isInactiveState,
   allocatedQuantity,
+  isOutreachState,
 } from '~/composables/useClearance'
 
 const props = defineProps({
@@ -118,11 +161,55 @@ const props = defineProps({
   item: { type: Object, required: true },
   // Zero-based position, for the #N reference shown to the offerer.
   index: { type: Number, default: 0 },
+  // userid -> Freegle Helper replier record (with item_states). Empty when the
+  // Helper isn't running for this clearance.
+  helperByUser: { type: Object, default: () => ({}) },
+  // Set of userids the Helper has messaged (for the AI badge).
+  sentUsers: { type: Object, default: () => new Set() },
 })
 
 const showInactive = ref(false)
+const showOutreach = ref(false)
 
 const interest = computed(() => props.item.interest || [])
+
+// --- Helper (AI) overlay lookups for this item -----------------------------
+// The per-item FSM state for a user: prefer the item-specific helper state, else
+// fall back to the replier's overall state.
+function helperItemStateFor(userid) {
+  const r = props.helperByUser[userid]
+  if (!r) return null
+  const s = (r.item_states || []).find((x) => x.bulkitemid === props.item.id)
+  return s || null
+}
+function helperStateFor(userid) {
+  const s = helperItemStateFor(userid)
+  if (s) return s.state
+  return props.helperByUser[userid]?.state || null
+}
+function scoreFor(userid) {
+  const s = helperItemStateFor(userid)
+  return s ? s.score : null
+}
+function aiSentFor(userid) {
+  return props.sentUsers?.has ? props.sentUsers.has(userid) : false
+}
+
+// All helper item_states for THIS item, for the per-item FSM summary.
+const itemStates = computed(() => {
+  const out = []
+  for (const r of Object.values(props.helperByUser)) {
+    const s = (r.item_states || []).find((x) => x.bulkitemid === props.item.id)
+    if (s) out.push(s)
+  }
+  return out
+})
+
+// Is this pool candidate one the Helper is still gathering from (outreach)?
+function isOutreachCandidate(userid) {
+  const st = helperStateFor(userid)
+  return st ? isOutreachState(st) : false
+}
 
 const allocatedRows = computed(() =>
   // Reserved before Collected, so "still to collect" sits at the top.
@@ -135,17 +222,33 @@ const allocatedRows = computed(() =>
     )
 )
 
+// Everyone still in the interest pool (not allocated, not declined), sorted by the
+// Helper's priority score first (the prioritisation it reasoned out), then bulk
+// collectors, those who gave a collection time, then quantity.
 const poolRows = computed(() =>
-  // Bulk collectors first (fewer collection visits), then those who gave a
-  // collection time, then by quantity.
   interest.value
     .filter((i) => isPoolState(i.state))
     .slice()
-    .sort(
-      (a, b) =>
+    .sort((a, b) => {
+      const sa = scoreFor(a.userid)
+      const sb = scoreFor(b.userid)
+      if (sa != null && sb != null && sa !== sb) return sb - sa
+      if (sa != null && sb == null) return -1
+      if (sa == null && sb != null) return 1
+      return (
         (b.cancollect ? 1 : 0) - (a.cancollect ? 1 : 0) ||
         (b.quantity || 0) - (a.quantity || 0)
-    )
+      )
+    })
+)
+
+// Pool split: candidates ready for a decision vs those the Helper is still
+// gathering from (outreach — collapsed until they reply).
+const decisionRows = computed(() =>
+  poolRows.value.filter((i) => !isOutreachCandidate(i.userid))
+)
+const outreachRows = computed(() =>
+  poolRows.value.filter((i) => isOutreachCandidate(i.userid))
 )
 
 const inactiveRows = computed(() =>
@@ -187,11 +290,18 @@ function brokenImage(event) {
 defineExpose({
   allocatedRows,
   poolRows,
+  decisionRows,
+  outreachRows,
   inactiveRows,
   activeRows,
   allocated,
   remaining,
   otherAllocationsFor,
+  itemStates,
+  helperStateFor,
+  scoreFor,
+  aiSentFor,
+  showOutreach,
 })
 </script>
 

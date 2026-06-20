@@ -136,6 +136,19 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
+  // Freegle Helper (AI concierge) state for a bulk offer: batch, per-replier FSM
+  // knowledge records with per-item state/score, queued proposals, and the ids of
+  // Helper-sent chat messages. Offerer/mod only.
+  getHelper(msgid, logError = true) {
+    return this.$getv2('/helper/' + msgid, {}, logError)
+  }
+
+  // Helper actions. The page uses SetStatus (pause/resume/stop) and
+  // ResolveProposal (confirm/edit/send or dismiss); the driver uses the rest.
+  helper(payload) {
+    return this.$postv2('/helper', payload)
+  }
+
   async getIllustration(item) {
     try {
       const result = await this.$getv2(

@@ -25,6 +25,10 @@ export const useMessageStore = defineStore({
 
     // The context from the last fetch, used for fetchMore (ModTools)
     context: null,
+
+    // Freegle Helper (AI concierge) state per bulk-offer msgid:
+    // { batch, repliers, proposals, sent }. Loaded by the clearance management page.
+    helper: {},
   }),
   actions: {
     init(config) {
@@ -323,6 +327,32 @@ export const useMessageStore = defineStore({
       const message = await this.fetch(id, true)
       this.list[id] = message
       return data
+    },
+    // Load Freegle Helper state for a bulk offer (offerer/mod only). Stores it
+    // keyed by msgid; returns it. Never throws for "no batch yet" — the API
+    // returns batch:null, which the page renders as "Helper not started".
+    async fetchHelper(msgid) {
+      const ret = await api(this.config).message.getHelper(msgid, false)
+      this.helper[msgid] = ret
+      return ret
+    },
+    // Offerer: pause/resume/stop the Helper, then refresh helper state.
+    async helperSetStatus(msgid, status) {
+      await api(this.config).message.helper({ action: 'SetStatus', msgid, status })
+      return await this.fetchHelper(msgid)
+    },
+    // Offerer: confirm/edit/send or dismiss a proposed decision, then refresh both
+    // the helper state and the message (an allocation changes interest states too).
+    async helperResolveProposal(msgid, proposalid, decision, text) {
+      await api(this.config).message.helper({
+        action: 'ResolveProposal',
+        proposalid,
+        decision,
+        ...(text != null ? { text } : {}),
+      })
+      const message = await this.fetch(msgid, true)
+      this.list[msgid] = message
+      return await this.fetchHelper(msgid)
     },
     async update(params) {
       const authStore = useAuthStore()
@@ -733,6 +763,9 @@ export const useMessageStore = defineStore({
   getters: {
     byId: (state) => {
       return (id) => state.list[id]
+    },
+    helperById: (state) => {
+      return (id) => state.helper[id]
     },
     inBounds: (state) => (swlat, swlng, nelat, nelng, groupid) => {
       const key =
