@@ -147,5 +147,5 @@ Driver authenticates as the offerer (existing JWT). Page calls as the logged-in 
 | 1 | helper_* migrations + Laravel test | ✅ | 5 tables; HelperSchemaTest; iznik migrated on boot |
 | 2 | Go Helper API + helper_test.go | ✅ | /helper GET+POST; 6 tests green; full Go suite green |
 | 3 | FSM driver scripts + prompt | ✅ | helper/ dir: poll/run-loop/driver/prompt/haversine |
-| 4 | Frontend rework + vitest | 🔄 | components done; 19 new specs green; full suite running |
-| 5 | Validate + screenshots + PR | 🔄 | Go✅ vitest(new)✅; laravel+full-vitest running; screenshots+PR next |
+| 4 | Frontend rework + vitest | ✅ | 29 new specs + full suite (13356) green |
+| 5 | Validate + screenshots + PR | ✅ | PR #838; screenshots from dev-local (local apiv2); sass+icon bugs fixed |
