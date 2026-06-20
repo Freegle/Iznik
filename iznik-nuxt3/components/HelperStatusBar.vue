@@ -47,15 +47,29 @@ defineEmits(['pause', 'resume'])
 
 const status = computed(() => props.batch?.status || 'inactive')
 
-// A pause is only CONFIRMED once the driver's heartbeat (lastpolledat) has advanced
-// past the moment we paused (pausedat) — i.e. the background loop has observed the
-// pause and gone idle. Until then we're "Pausing…". If there's no heartbeat at all
-// (lastpolledat null) there's no running driver to stop, so treat it as confirmed.
+// How long without a heartbeat before we consider the driver loop NOT running.
+// The loop pings every poll cycle (~30s); 2 min of silence means it's dead or was
+// never started.
+const HEARTBEAT_STALE_MS = 120000
+
+// Whether a driver loop is actually alive right now (recent heartbeat).
+const driverAlive = computed(() => {
+  const polled = props.batch?.lastpolledat
+  if (!polled) return false
+  return Date.now() - new Date(polled).getTime() < HEARTBEAT_STALE_MS
+})
+
+// A pause is CONFIRMED when either:
+//  - the live driver's heartbeat has advanced past the moment we paused (it has
+//    observed the pause and gone idle), OR
+//  - there is no live driver at all (never started, or dead) — nothing to wait
+//    for, so the pause is effective immediately.
+// We only show "Pausing…" while a driver IS alive but hasn't acknowledged yet.
 const pauseConfirmed = computed(() => {
   if (status.value !== 'paused') return false
+  if (!driverAlive.value) return true
   const paused = props.batch?.pausedat
   const polled = props.batch?.lastpolledat
-  if (!polled) return true
   if (!paused) return true
   return new Date(polled).getTime() >= new Date(paused).getTime()
 })
@@ -97,7 +111,7 @@ const lastrun = computed(() => {
   return d.toLocaleString()
 })
 
-defineExpose({ status, statusLabel, statusVariant, lastrun, pausing, pauseConfirmed })
+defineExpose({ status, statusLabel, statusVariant, lastrun, pausing, pauseConfirmed, driverAlive })
 </script>
 
 <style scoped lang="scss">

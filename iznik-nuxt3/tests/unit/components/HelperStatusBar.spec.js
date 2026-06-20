@@ -43,34 +43,25 @@ describe('HelperStatusBar', () => {
     expect(w.vm.statusLabel).toBe('Not started')
   })
 
-  it('shows "Pausing…" until the driver heartbeat confirms the pause', () => {
-    // Paused, but the driver last polled BEFORE we paused → not yet confirmed.
+  const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString()
+
+  it('shows "Pausing…" only while a LIVE driver has not yet acknowledged', () => {
+    // Driver pinged 3s ago (alive), but BEFORE we paused 1s ago → not yet confirmed.
     const w = mount(HelperStatusBar, {
       ...mountOpts,
-      props: {
-        batch: {
-          status: 'paused',
-          pausedat: '2026-06-20T10:00:05Z',
-          lastpolledat: '2026-06-20T10:00:00Z',
-        },
-      },
+      props: { batch: { status: 'paused', pausedat: iso(1000), lastpolledat: iso(3000) } },
     })
+    expect(w.vm.driverAlive).toBe(true)
     expect(w.vm.pausing).toBe(true)
     expect(w.vm.pauseConfirmed).toBe(false)
     expect(w.vm.statusLabel).toContain('Pausing')
     expect(w.find('[data-testid="pausing-spinner"]').exists()).toBe(true)
   })
 
-  it('confirms the pause once the heartbeat advances past it', () => {
+  it('confirms the pause once the live heartbeat advances past it', () => {
     const w = mount(HelperStatusBar, {
       ...mountOpts,
-      props: {
-        batch: {
-          status: 'paused',
-          pausedat: '2026-06-20T10:00:00Z',
-          lastpolledat: '2026-06-20T10:00:30Z',
-        },
-      },
+      props: { batch: { status: 'paused', pausedat: iso(5000), lastpolledat: iso(1000) } },
     })
     expect(w.vm.pausing).toBe(false)
     expect(w.vm.pauseConfirmed).toBe(true)
@@ -80,8 +71,19 @@ describe('HelperStatusBar', () => {
   it('treats a pause as effective when there is no driver heartbeat at all', () => {
     const w = mount(HelperStatusBar, {
       ...mountOpts,
-      props: { batch: { status: 'paused', pausedat: '2026-06-20T10:00:00Z' } },
+      props: { batch: { status: 'paused', pausedat: iso(1000) } },
     })
+    expect(w.vm.pauseConfirmed).toBe(true)
+    expect(w.vm.pausing).toBe(false)
+  })
+
+  it('confirms the pause when the loop is NOT running (stale heartbeat)', () => {
+    // Heartbeat is 10 min old → loop dead/stopped → nothing to wait for.
+    const w = mount(HelperStatusBar, {
+      ...mountOpts,
+      props: { batch: { status: 'paused', pausedat: iso(1000), lastpolledat: iso(600000) } },
+    })
+    expect(w.vm.driverAlive).toBe(false)
     expect(w.vm.pauseConfirmed).toBe(true)
     expect(w.vm.pausing).toBe(false)
   })
