@@ -228,11 +228,15 @@ class UnifiedDigestService
             return ['emails' => 0, 'users' => []];
         }
 
-        // Recipients: members at emailfrequency=-1, active in the last 90 days,
-        // plus allowlist gate. NULL lastaccess (new users who have never logged
-        // in) are included; users whose lastaccess is older than 90 days are
-        // excluded to prevent long-inactive accounts from receiving per-post
-        // emails (matches the daily-digest eligibility threshold).
+        // Recipients: members at emailfrequency=-1, plus allowlist gate. The
+        // inactivity gate must match the daily path's V1-parity threshold
+        // (getUsersForDigest: Engage::USER_INACTIVE = 365*12*3600 = 182.5 days),
+        // NOT a stricter 90-day cutoff. A 90-day window silently dropped members
+        // who are inactive for 90-182.5 days from per-post emails even though V1
+        // (Digest.php recipient query had no lastaccess filter at all) and the
+        // daily digest would still mail them. NULL lastaccess (new users who have
+        // never logged in) are included so a brand-new immediate member gets posts
+        // right away.
         $memberQuery = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupid)
@@ -241,7 +245,7 @@ class UnifiedDigestService
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 $q->whereNull('users.lastaccess')
-                  ->orWhere('users.lastaccess', '>', now()->subDays(90));
+                  ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
             });
 
         if ($userFilter) {

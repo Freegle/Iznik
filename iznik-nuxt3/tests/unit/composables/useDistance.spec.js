@@ -19,6 +19,13 @@ describe('milesAway', () => {
     expect(d).toBeLessThan(60)
   })
 
+  it('computes an east-west distance correctly', () => {
+    // NR29 (Norfolk) -> CB1 (Cambridge), ~72 miles almost due west.
+    const d = milesAway(52.679929, 1.688231, 52.196389, 0.182197)
+    expect(d).toBeGreaterThan(65)
+    expect(d).toBeLessThan(78)
+  })
+
   it('returns 0 for the same point', () => {
     expect(milesAway(51.5, -0.1, 51.5, -0.1)).toBe(0)
   })
