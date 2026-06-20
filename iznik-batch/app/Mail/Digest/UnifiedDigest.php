@@ -864,7 +864,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $originalDate = $message->date instanceof Carbon
             ? $message->date
             : ($message->date ? Carbon::parse($message->date) : null);
-        if ($originalDate && $arrival->diffInMinutes($originalDate) > 60) {
+        if ($originalDate && $arrival->diffInMinutes($originalDate, true) > 60) {
             $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
         }
 
