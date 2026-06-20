@@ -96,7 +96,7 @@ defineExpose({ status, statusLabel, statusVariant, lastrun })
   border: 1px solid $color-gray--lighter;
   border-radius: 6px;
   margin-bottom: 0.75rem;
-  background-color: $color-gray--lightest;
+  background-color: $color-gray--lighter;
 }
 
 .helper-status--paused {

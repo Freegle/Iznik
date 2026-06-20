@@ -127,7 +127,7 @@ defineExpose({ text, hasText, typeLabel, send, dismiss, busy })
 
 .helper-proposal {
   border: 1px solid $color-gray--lighter;
-  border-left: 3px solid $color-green;
+  border-left: 3px solid $color-green--dark;
   border-radius: 6px;
   padding: 0.6rem 0.75rem;
   margin-bottom: 0.5rem;
