@@ -3,7 +3,14 @@ import { mount } from '@vue/test-utils'
 import HelperStatusBar from '~/components/HelperStatusBar.vue'
 
 const mountOpts = {
-  global: { stubs: { 'b-button': true, 'b-badge': true } },
+  global: {
+    stubs: {
+      'b-button': true,
+      // Render the badge slot so the spinner inside it is testable.
+      'b-badge': { template: '<span><slot /></span>' },
+      'b-spinner': true,
+    },
+  },
 }
 
 describe('HelperStatusBar', () => {
@@ -34,6 +41,49 @@ describe('HelperStatusBar', () => {
     const w = mount(HelperStatusBar, { ...mountOpts, props: { batch: null } })
     expect(w.vm.status).toBe('inactive')
     expect(w.vm.statusLabel).toBe('Not started')
+  })
+
+  it('shows "Pausing…" until the driver heartbeat confirms the pause', () => {
+    // Paused, but the driver last polled BEFORE we paused → not yet confirmed.
+    const w = mount(HelperStatusBar, {
+      ...mountOpts,
+      props: {
+        batch: {
+          status: 'paused',
+          pausedat: '2026-06-20T10:00:05Z',
+          lastpolledat: '2026-06-20T10:00:00Z',
+        },
+      },
+    })
+    expect(w.vm.pausing).toBe(true)
+    expect(w.vm.pauseConfirmed).toBe(false)
+    expect(w.vm.statusLabel).toContain('Pausing')
+    expect(w.find('[data-testid="pausing-spinner"]').exists()).toBe(true)
+  })
+
+  it('confirms the pause once the heartbeat advances past it', () => {
+    const w = mount(HelperStatusBar, {
+      ...mountOpts,
+      props: {
+        batch: {
+          status: 'paused',
+          pausedat: '2026-06-20T10:00:00Z',
+          lastpolledat: '2026-06-20T10:00:30Z',
+        },
+      },
+    })
+    expect(w.vm.pausing).toBe(false)
+    expect(w.vm.pauseConfirmed).toBe(true)
+    expect(w.vm.statusLabel).toContain('stopped')
+  })
+
+  it('treats a pause as effective when there is no driver heartbeat at all', () => {
+    const w = mount(HelperStatusBar, {
+      ...mountOpts,
+      props: { batch: { status: 'paused', pausedat: '2026-06-20T10:00:00Z' } },
+    })
+    expect(w.vm.pauseConfirmed).toBe(true)
+    expect(w.vm.pausing).toBe(false)
   })
 
   it('formats a last-run timestamp when present', () => {

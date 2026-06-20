@@ -97,13 +97,21 @@
         size="sm"
         class="ms-1 mb-1"
         :disabled="!interest.chatid"
-        :to="interest.chatid ? '/chats/' + interest.chatid : undefined"
         :title="interest.chatid ? 'Open the chat with this person' : 'No chat yet'"
         data-testid="open-chat"
+        @click="showChat = true"
       >
         <v-icon icon="comments" class="me-1" />Open chat
       </b-button>
     </div>
+
+    <!-- Chat opens in a modal so the offerer stays on the management page. -->
+    <ClearanceChatModal
+      v-if="interest.chatid"
+      v-model="showChat"
+      :chatid="interest.chatid"
+      :title="'Chat with ' + displayName"
+    />
 
     <!-- Escalation reason: why the AI handed this conversation to you. -->
     <div v-if="needsYou && note" class="cand__note" data-testid="escalation-note">
@@ -127,6 +135,7 @@
 import { ref, computed, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
+import ClearanceChatModal from '~/components/ClearanceChatModal'
 import {
   clearanceActions,
   isInactiveState,
@@ -158,6 +167,7 @@ const userStore = useUserStore()
 
 const busy = ref(false)
 const showBreakdown = ref(false)
+const showChat = ref(false)
 const qty = ref(props.interest.quantity)
 watch(() => props.interest.quantity, (v) => (qty.value = v))
 
@@ -247,6 +257,7 @@ defineExpose({
   scoreText,
   breakdown,
   showBreakdown,
+  showChat,
 })
 </script>
 

@@ -56,6 +56,10 @@ curl -s --max-time 15 -X POST "$APIV2/helper?jwt=$JWT" -H 'Content-Type: applica
 last_tick=0
 while true; do
   now=$(date +%s)
+  # Heartbeat: ping EnsureBatch every cycle so the page can see the loop is alive
+  # and confirm a pause once this advances past pausedat.
+  curl -s --max-time 15 -X POST "$APIV2/helper?jwt=$JWT" -H 'Content-Type: application/json' \
+    -d "{\"action\":\"EnsureBatch\",\"msgid\":$MSGID}" >/dev/null 2>&1 || true
   changed="$(./poll.sh 2>/dev/null || true)"
   due_tick=0
   if [ $(( now - last_tick )) -ge "$TIMEOUT_TICK" ]; then due_tick=1; fi

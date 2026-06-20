@@ -90,7 +90,7 @@
 </template>
 
 <script setup>
-import { computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
@@ -211,8 +211,31 @@ async function load() {
   }
 }
 
-onMounted(load)
+// Poll the Helper state so the page reflects the background loop live — AI activity
+// and, importantly, the pause heartbeat (so "Pausing…" flips to "Paused — stopped"
+// once the driver has acknowledged). Light: only refetches the helper overlay.
+let pollTimer = null
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(() => {
+    if (canManage.value) {
+      messageStore.fetchHelper(props.id).catch(() => {})
+    }
+  }, 12000)
+}
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+onMounted(() => {
+  load()
+  startPolling()
+})
 watch(() => props.id, load)
+onUnmounted(stopPolling)
 
 defineExpose({
   message,

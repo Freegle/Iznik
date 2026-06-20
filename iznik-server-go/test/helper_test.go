@@ -185,6 +185,28 @@ func TestHelperSendRecordsSentMessage(t *testing.T) {
 	assert.NotContains(t, body2, "automated assistant")
 }
 
+// TestHelperSendRefusedWhenPaused: once paused, an auto-send is refused server-side
+// (closes the timing window where an in-flight brain run messages after the human
+// stepped in).
+func TestHelperSendRefusedWhenPaused(t *testing.T) {
+	_, replierUserID, msgID, _, ownerToken := helperFixture(t, uniquePrefix("helppause"))
+
+	code, _ := postHelper(t, ownerToken, map[string]interface{}{"action": "SetStatus", "msgid": msgID, "status": "paused"})
+	require.Equal(t, 200, code)
+
+	code, _ = postHelper(t, ownerToken, map[string]interface{}{
+		"action": "Send", "msgid": msgID, "userid": replierUserID, "body": "should not send", "kind": "gathering",
+	})
+	assert.Equal(t, 409, code, "auto-send must be refused while paused")
+
+	// Resuming re-enables sending.
+	postHelper(t, ownerToken, map[string]interface{}{"action": "SetStatus", "msgid": msgID, "status": "active"})
+	code, _ = postHelper(t, ownerToken, map[string]interface{}{
+		"action": "Send", "msgid": msgID, "userid": replierUserID, "body": "now ok", "kind": "gathering",
+	})
+	assert.Equal(t, 200, code)
+}
+
 // TestHelperProposalAndResolveAllocation: an allocation proposal, when sent by the
 // human, reserves the interest, records a promise, sends the (edited) message and
 // marks the proposal sent.

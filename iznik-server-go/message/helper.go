@@ -338,6 +338,10 @@ func helperEnsureBatch(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest
 	if batchid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not create batch")
 	}
+	// The driver pings EnsureBatch every loop cycle, so lastpolledat doubles as a
+	// heartbeat: the page treats a pause as confirmed once lastpolledat advances
+	// past pausedat (the loop has observed the pause and gone idle).
+	db.Exec("UPDATE helper_batches SET lastpolledat = NOW() WHERE id = ?", batchid)
 	if req.Briefing != nil {
 		db.Exec("UPDATE helper_batches SET briefing = ? WHERE id = ?", *req.Briefing, batchid)
 	}
@@ -556,14 +560,36 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 		return fiber.NewError(fiber.StatusBadRequest, "userid and body are required")
 	}
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
+
+	// Pause is enforced HERE, not just in the driver loop: if the offerer has
+	// paused (or stopped) the Helper, an auto-send is refused even when the brain
+	// is mid-cycle. This closes the timing window where an in-flight run could
+	// message a replier after the human stepped in.
+	var status string
+	db.Raw("SELECT status FROM helper_batches WHERE id = ?", batchid).Scan(&status)
+	if status != "active" {
+		return fiber.NewError(fiber.StatusConflict, "Helper is paused — auto-send refused")
+	}
+
 	chatid := findOrCreateUser2UserRoom(db, offerer, *req.Userid)
 	if chatid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not open chat")
 	}
-	// Link the chat to the replier record if one exists.
+	// Ensure a replier record exists (create if the driver is sending before it
+	// recorded one) and link the chat. A valid replierid is needed so the
+	// first-message disclosure can be deduped per replier.
 	var replierid uint64
 	db.Raw("SELECT id FROM helper_repliers WHERE batchid = ? AND userid = ?", batchid, *req.Userid).Scan(&replierid)
-	if replierid > 0 {
+	if replierid == 0 {
+		if sqlDB, e := db.DB(); e == nil {
+			if res, e2 := sqlDB.Exec("INSERT INTO helper_repliers (batchid, userid, chatid, state) VALUES (?, ?, ?, 'NEW') "+
+				"ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), chatid = VALUES(chatid)", batchid, *req.Userid, chatid); e2 == nil {
+				if id, e3 := res.LastInsertId(); e3 == nil {
+					replierid = uint64(id)
+				}
+			}
+		}
+	} else {
 		db.Exec("UPDATE helper_repliers SET chatid = ? WHERE id = ?", chatid, replierid)
 	}
 	kind := "other"

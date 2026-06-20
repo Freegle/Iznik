@@ -4,6 +4,7 @@
       <v-icon icon="robot" class="me-2" />
       <span class="helper-status__title">Freegle Helper</span>
       <b-badge :variant="statusVariant" class="ms-2" data-testid="helper-status-badge">
+        <b-spinner v-if="pausing" small class="me-1" data-testid="pausing-spinner" />
         {{ statusLabel }}
       </b-badge>
       <span v-if="lastrun" class="helper-status__lastrun small text-muted ms-2">
@@ -46,12 +47,28 @@ defineEmits(['pause', 'resume'])
 
 const status = computed(() => props.batch?.status || 'inactive')
 
+// A pause is only CONFIRMED once the driver's heartbeat (lastpolledat) has advanced
+// past the moment we paused (pausedat) — i.e. the background loop has observed the
+// pause and gone idle. Until then we're "Pausing…". If there's no heartbeat at all
+// (lastpolledat null) there's no running driver to stop, so treat it as confirmed.
+const pauseConfirmed = computed(() => {
+  if (status.value !== 'paused') return false
+  const paused = props.batch?.pausedat
+  const polled = props.batch?.lastpolledat
+  if (!polled) return true
+  if (!paused) return true
+  return new Date(polled).getTime() >= new Date(paused).getTime()
+})
+
+const pausing = computed(() => status.value === 'paused' && !pauseConfirmed.value)
+
 const statusLabel = computed(() => {
+  if (pausing.value) return 'Pausing… (Helper is finishing its current task)'
   switch (status.value) {
     case 'active':
       return 'Working on your replies'
     case 'paused':
-      return 'Paused — you’re in control'
+      return 'Paused — Helper has stopped, you’re in control'
     case 'stopped':
       return 'Stopped'
     default:
@@ -60,11 +77,12 @@ const statusLabel = computed(() => {
 })
 
 const statusVariant = computed(() => {
+  if (pausing.value) return 'warning'
   switch (status.value) {
     case 'active':
       return 'success'
     case 'paused':
-      return 'warning'
+      return 'secondary'
     default:
       return 'secondary'
   }
@@ -79,7 +97,7 @@ const lastrun = computed(() => {
   return d.toLocaleString()
 })
 
-defineExpose({ status, statusLabel, statusVariant, lastrun })
+defineExpose({ status, statusLabel, statusVariant, lastrun, pausing, pauseConfirmed })
 </script>
 
 <style scoped lang="scss">

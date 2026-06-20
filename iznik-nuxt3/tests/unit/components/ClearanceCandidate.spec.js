@@ -23,7 +23,7 @@ import ClearanceCandidate from '~/components/ClearanceCandidate.vue'
 
 const mountOpts = {
   global: {
-    stubs: { 'b-button': true, 'b-badge': true },
+    stubs: { 'b-button': true, 'b-badge': true, 'b-form-input': true, ClearanceChatModal: true },
   },
 }
 

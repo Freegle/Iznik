@@ -25,9 +25,11 @@ const mountRow = (props) =>
     },
     global: {
       stubs: {
-        'b-button': true,
+        // Forwarding stub so @click + data-testid reach a real element.
+        'b-button': { template: '<button v-bind="$attrs"><slot /></button>', inheritAttrs: false },
         'b-form-input': true,
         'b-badge': { template: '<span class="badge-stub"><slot /></span>' },
+        ClearanceChatModal: true,
       },
     },
   })
@@ -75,6 +77,16 @@ describe('ClearanceCandidate — Helper overlay', () => {
   it('shows the AI badge only when the Helper has messaged them', () => {
     expect(mountRow({ aiSent: true }).find('[data-testid="ai-badge"]').exists()).toBe(true)
     expect(mountRow({ aiSent: false }).find('[data-testid="ai-badge"]').exists()).toBe(false)
+  })
+
+  it('opens the chat in a modal (stays on the page) rather than navigating', async () => {
+    const w = mountRow({ helperState: 'QUALIFIED', score: 90 })
+    expect(w.vm.showChat).toBe(false)
+    // The button is a click handler, not a router link.
+    const btn = w.find('[data-testid="open-chat"]')
+    expect(btn.attributes('to')).toBeUndefined()
+    await btn.trigger('click')
+    expect(w.vm.showChat).toBe(true)
   })
 
   it('surfaces the escalation reason for a Needs-you candidate', () => {
