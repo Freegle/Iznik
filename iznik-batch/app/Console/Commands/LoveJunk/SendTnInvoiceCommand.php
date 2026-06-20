@@ -25,7 +25,13 @@ class SendTnInvoiceCommand extends Command
         $this->info("{$prefix}TN invoice amount: £{$result['tn_amount']}");
 
         if (!$dryRun && $result['tn_amount'] > 0) {
-            $this->info('Invoice email sent.');
+            if (!empty($result['sent'])) {
+                $this->info("Invoice email sent to {$result['recipient']}.");
+            } else {
+                $this->error('Invoice NOT sent: freegle.mail.tn_invoice_addr (FREEGLE_TN_INVOICE_ADDR) is not configured.');
+
+                return self::FAILURE;
+            }
         } elseif (!$dryRun && $result['tn_amount'] === 0.0) {
             $this->warn('No LoveJunk data for this period — no email sent.');
         }
