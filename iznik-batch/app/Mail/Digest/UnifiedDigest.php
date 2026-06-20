@@ -1008,6 +1008,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->values();
         $postedToText = $groupNames->count() > 1 ? $groupNames->implode(', ') : null;
 
+        $bulkItems = $this->prepareBulkItems($message);
+
         return [
             'message' => $message,
             // True when this post is the recipient's own — used by both the
@@ -1047,8 +1049,34 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // went cards override this to "Taken/Received · <date>" (see
             // prepareCompletedPosts()). Defaulted here so every card carries it.
             'metaText' => null,
-            'bulkItems' => $this->prepareBulkItems($message),
+            'bulkItems' => $bulkItems,
+            // Short one-line summary for the compact daily cards, precomputed so the
+            // templates stay logic-free (avoids fragile inline blade loops).
+            'bulkSummary' => $this->bulkSummaryLine($bulkItems),
         ];
+    }
+
+    /**
+     * One-line clearance summary for compact (daily) digest cards, e.g.
+     * "12 items to choose from: 2× Desk; 1× Chair; 4× Lamp and 9 more". Null for
+     * ordinary single-item posts.
+     */
+    protected function bulkSummaryLine(array $items): ?string
+    {
+        if (empty($items)) {
+            return null;
+        }
+        $count = count($items);
+        $parts = array_map(
+            fn ($bi) => $bi['quantity'] . "\u{00d7} " . $bi['name'],
+            array_slice($items, 0, 3)
+        );
+        $line = $count . ' items to choose from: ' . implode('; ', $parts);
+        if ($count > 3) {
+            $line .= ' and ' . ($count - 3) . ' more';
+        }
+
+        return $line;
     }
 
     /**
@@ -1062,7 +1090,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->where('msgid', $message->id)
             ->orderBy('position')
             ->orderBy('id')
-            ->get(['id', 'name', 'quantity', 'condition', 'dimensions', 'photourl']);
+            ->get(['id', 'name', 'quantity', 'condition', 'dimensions', 'photourl', 'description']);
 
         if ($rows->isEmpty()) {
             return [];
@@ -1099,6 +1127,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'quantity' => (int) $row->quantity,
                 'condition' => $condition,
                 'dimensions' => $row->dimensions,
+                'description' => $row->description ?? null,
                 'thumbUrl' => $thumb,
             ];
         }

@@ -34,7 +34,7 @@ We've limited this to {{ \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP }} posts,
 Location: {!! $post['locationName'] !!}
 @endif
 {!! $post['distanceText'] ? $post['distanceText'].' away, ' : '' !!}{!! $post['arrivalFormatted'] !!}
-@if($post['messageText'])
+@if($post['messageText'] && empty($post['bulkItems']))
 
 {!! $isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 200) !!}
 @endif
@@ -42,7 +42,7 @@ Location: {!! $post['locationName'] !!}
 
 {{ count($post['bulkItems']) }} items in this offer:
 @foreach($post['bulkItems'] as $i => $bi)
-  {{ $i + 1 }}) {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif
+  {{ $i + 1 }}) {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif{!! !empty($bi['description']) ? ' - '.\Illuminate\Support\Str::limit($bi['description'], 80) : '' !!}
 
 @endforeach
 @endif
