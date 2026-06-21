@@ -65,8 +65,42 @@ class DailyPostsPushTest extends TestCase
         $this->assertSame('Sofa', $payload['title'],
             'Single-post title must be the bare item name (stripped prefix + location)');
         $this->assertSame('1', $payload['count']);
-        $this->assertSame('1', $payload['badge']);
+        // The badge reflects the user's unread chats + notifications, NOT the
+        // number of posts in the digest. This fresh user has neither, so 0.
+        $this->assertSame('0', $payload['badge']);
         $this->assertSame('0', $payload['moreCount']);
+    }
+
+    public function test_badge_is_user_unread_not_post_count(): void
+    {
+        // The daily "new posts near you" digest is informational and must not
+        // inflate the app-icon badge with the post count. The badge must equal
+        // the user's actual unread items (unseen notifications + unread chats).
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // Three posts in the digest...
+        $msgs = [
+            $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)'),
+            $this->createApprovedMessage($user, $group, 'WANTED: Bike (Surbiton)'),
+            $this->createApprovedMessage($user, $group, 'OFFER: Lamp (Kingston)'),
+        ];
+        $posts = $this->buildPostsArray($msgs);
+
+        // ...but two genuinely unseen notifications for the recipient.
+        for ($i = 0; $i < 2; $i++) {
+            DB::table('users_notifications')->insert([
+                'touser' => $user->id,
+                'type' => 'Exhort',
+                'seen' => 0,
+                'timestamp' => now(),
+            ]);
+        }
+
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
+
+        $this->assertSame('3', $payload['count'], 'count reflects the posts in the digest');
+        $this->assertSame('2', $payload['badge'], 'badge reflects unread items, not the post count');
     }
 
     public function test_multi_post_title_is_count_new_things(): void
