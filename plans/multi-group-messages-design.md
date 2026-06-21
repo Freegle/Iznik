@@ -103,9 +103,20 @@ Allow a single message to exist on multiple Freegle groups simultaneously. The d
 - `messages_history` (already has groupid, unique on `(msgid, groupid)`)
 - `messages_postings` (already has groupid)
 - `messages_popular` (already has groupid)
-- `messages_spatial` (already has groupid)
 - `messages_index` (already has groupid)
 - `newsfeed` (already has groupid)
+
+### Tables needing a per-group key change
+
+- `messages_spatial` — **had a `groupid` column but a `UNIQUE(msgid)` key**, so a
+  cross-posted message could only ever be indexed on ONE group. The browse/map/search
+  queries filter by `messages_spatial.groupid`, so a message would appear on whichever
+  single group happened to win the upsert and be invisible on the others. Fixed by
+  migration `2026_06_17_000001_make_messages_spatial_per_group.php` (unique key changed to
+  `(msgid, groupid)`), plus the writers/reconcilers updated to insert one row per approved
+  group (Go `addApprovedMessageToSpatialIndex`, batch `MessageSpatialService`). The external
+  spatial-go R-tree index stays one-row-per-msgid (it is location-only KNN) and is only
+  evicted when the last group row is gone. See audit §G1 / TODO H1.
 
 ## Go API Changes
 
@@ -125,6 +136,10 @@ Allow a single message to exist on multiple Freegle groups simultaneously. The d
 | `handleMove()` | DELETE all groups, INSERT one | Redesign as add-to-group / remove-from-group |
 | `logAndNotifyMods()` | Logs to primary group, notifies all | Log to the specific group the action was taken on |
 | `getPrimaryGroupForMessage()` | Used as fallback everywhere | Reduce usage; most callers should use explicit groupid from request context |
+| Repost scheduling (`message.go:727`) | Uses `MessageGroups[0].Arrival` | Evaluate per-group — each group has its own arrival and `autoreposts` counter |
+| `convertToDraft()` (`message.go:2225`) | Uses primary group, deletes ALL `messages_groups` rows | Use `req.Groupid`; delete only that group's row; soft-delete message only when last group removed |
+| Edit subject keyword rebuild (`message.go:2695`) | Uses primary group's keyword | Use contextual `req.Groupid` — keywords vary across groups (e.g. OFFER vs OFFERED) |
+| Mod-delete audit log (`message.go:3067`) | Logs to primary group | Log to the group the action was taken on |
 
 ### Functions already correct (no changes)
 

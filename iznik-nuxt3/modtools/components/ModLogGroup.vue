@@ -61,13 +61,16 @@ const loggroup = computed(() => {
 
   if (log.value.group) {
     return log.value.group
-  } else if (
-    log.value.message &&
-    log.value.message.groups &&
-    log.value.message.groups.length
-  ) {
-    return log.value.message.groups[0]
   } else if (log.value.groupid) {
+    // A log entry is about a specific group. If the message is on that group,
+    // use its group object; otherwise resolve the groupid via the stores.
+    const mg = log.value.message?.groups?.find(
+      (g) => Number.parseInt(g.groupid) === Number.parseInt(log.value.groupid)
+    )
+    if (mg) {
+      return mg
+    }
+
     let ret = scanUserForGroup(log.value.user)
 
     if (!ret) {
@@ -85,6 +88,14 @@ const loggroup = computed(() => {
     }
 
     return ret
+  } else if (
+    log.value.message &&
+    log.value.message.groups &&
+    log.value.message.groups.length
+  ) {
+    // Last resort: no group or groupid on the log — fall back to the message's
+    // first group.
+    return log.value.message.groups[0]
   } else {
     return null
   }

@@ -63,12 +63,12 @@ func Bounds(c *fiber.Ctx) error {
 		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"UNION "+
 		"SELECT messages.lat, messages.lng, messages.id, "+
-		"(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-		"(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-		"messages_groups.groupid, "+
+		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
+		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+		"MIN(messages_groups.groupid) AS groupid, "+
 		"messages.type,"+
-		"messages_groups.arrival, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+		"MAX(messages_groups.arrival) AS arrival, "+
+		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
 		"FROM messages "+
 		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
 		"INNER JOIN `groups` ON groups.id = messages_groups.groupid "+
@@ -79,6 +79,7 @@ func Bounds(c *fiber.Ctx) error {
 		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
 		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"AND messages_outcomes.id IS NULL "+
+		"GROUP BY messages.id "+
 		") t "+
 		"ORDER BY unseen DESC, arrival DESC, id DESC "+
 		limitq+";",

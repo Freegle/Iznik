@@ -720,35 +720,59 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				wgExtra.Add(1)
 				go func() {
 					defer wgExtra.Done()
-					var repostStr []string
-					db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
 
-					var reposts []group.RepostSettings
+					// Reposting is per-group: each group has its own arrival and
+					// its own repost settings. Fetch the settings keyed by group
+					// so we can pair each group's interval with that group's
+					// arrival rather than collapsing onto the first group.
+					type repostRow struct {
+						Groupid uint64
+						Reposts string
+					}
+					var rows []repostRow
+					db.Raw("SELECT messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Scan(&rows)
 
-					for _, r := range repostStr {
+					settingsByGroup := make(map[uint64]group.RepostSettings, len(rows))
+					for _, r := range rows {
 						var rs group.RepostSettings
-						json.Unmarshal([]byte(r), &rs)
-						reposts = append(reposts, rs)
+						json.Unmarshal([]byte(r.Reposts), &rs)
+						settingsByGroup[r.Groupid] = rs
 					}
 
-					for _, r := range reposts {
-						var interval int
-
-						if message.Type == utils.OFFER {
-							interval = r.Offer
-						} else {
-							interval = r.Wanted
+					// The message is only repostable when it is valid for
+					// reposting in EVERY group it's on — each group must have
+					// passed its own repost interval (measured from that group's
+					// own arrival). repostAt is therefore the LATEST per-group
+					// repost time: the point at which the last group becomes
+					// eligible. A group with interval >= 365 has reposting
+					// disabled, which blocks reposting across all groups.
+					canRepost = len(message.MessageGroups) > 0
+					for _, mg := range message.MessageGroups {
+						rs, ok := settingsByGroup[mg.Groupid]
+						if !ok {
+							canRepost = false
+							continue
 						}
 
-						if interval < 365 {
-							if len(message.MessageGroups) > 0 {
-								ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
-								repostAt = &ra
+						interval := rs.Wanted
+						if message.Type == utils.OFFER {
+							interval = rs.Offer
+						}
 
-								if repostAt.Before(time.Now()) {
-									canRepost = true
-								}
-							}
+						if interval >= 365 {
+							canRepost = false
+							continue
+						}
+
+						ra := mg.Arrival.AddDate(0, 0, interval)
+						if repostAt == nil || ra.After(*repostAt) {
+							raCopy := ra
+							repostAt = &raCopy
+						}
+						if ra.After(time.Now()) {
+							// This group hasn't reached its repost time yet, so
+							// the message isn't repostable everywhere.
+							canRepost = false
 						}
 					}
 				}()
@@ -1463,11 +1487,19 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
-	// Return results where Msgid is not 0
+	// Return results where Msgid is not 0, deduplicated by msgid. The keyword path
+	// merges an exact-match pass with a starts-with pass (res2); any exact match is
+	// also a starts-with match, so without this dedup essentially every match would be
+	// returned twice. A message cross-posted to several of the searched groups likewise
+	// yields one spatial row per group and must collapse to a single result. We keep the
+	// first occurrence (exact matches are appended first, so they win). This mirrors the
+	// dedup mergeHybrid already applies on the vector path.
 	filtered := []SearchResult{}
+	seen := make(map[uint64]bool, len(res))
 
 	for _, r := range res {
-		if r.Msgid != 0 {
+		if r.Msgid != 0 && !seen[r.Msgid] {
+			seen[r.Msgid] = true
 			filtered = append(filtered, r)
 		}
 	}
@@ -1611,7 +1643,14 @@ func logMessageReceived(db *gorm.DB, groupid uint64, fromuser uint64, msgid uint
 	}
 }
 
-// getPrimaryGroupForMessage returns the first groupid for a message.
+// getPrimaryGroupForMessage returns one groupid for a message.
+//
+// Deprecated: use a request-supplied groupid when available. Multi-group
+// messages have N groups; this function picks one arbitrarily. For per-group
+// moderation actions (hold/release/spam/delete) always use the groupid the
+// mod is acting on. Remaining legitimate callers are owner-initiated global
+// paths (draft conversion, JoinAndPost), mod context bootstrap, and submit
+// subject reconstruction — contexts where no explicit group is available.
 func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 	var groupid uint64
 	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? LIMIT 1", msgid).Scan(&groupid)
@@ -1791,20 +1830,24 @@ func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid 
 	}
 }
 
-// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial row for a
+// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial rows for a
 // message that has just become Approved, so it appears in browse/search immediately
 // instead of waiting for the every-5-minute reconciler (MessageSpatialService).
 // messages_spatial backs the public browse/map, so it must only contain Approved
 // messages with a location — Pending/Spam/Rejected must never be added here. The
 // query re-checks collection=Approved so this is a safe no-op if called otherwise.
+//
+// messages_spatial is keyed on (msgid, groupid): a cross-posted message gets one row
+// per group it is approved on, so it shows in browse/search on each of those groups.
 func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
-	var row struct {
+	type spatialRow struct {
 		Lat     float64
 		Lng     float64
 		Msgtype string
 		Groupid uint64
 		Arrival string
 	}
+	var rows []spatialRow
 	db.Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
 		"messages_groups.groupid AS groupid, "+
 		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
@@ -1814,19 +1857,21 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 		"WHERE messages.id = ? AND messages_groups.collection = ? "+
 		"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
 		"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
-		"AND messages_outcomes.id IS NULL "+
-		"ORDER BY messages_groups.arrival DESC LIMIT 1",
-		msgid, utils.COLLECTION_APPROVED).Scan(&row)
+		"AND messages_outcomes.id IS NULL",
+		msgid, utils.COLLECTION_APPROVED).Scan(&rows)
 
-	if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
-		return
+	for _, row := range rows {
+		if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
+			continue
+		}
+
+		// groupid is part of the unique key, so it is never updated on conflict.
+		db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
+			"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE point = VALUES(point), "+
+			"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
+			msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
 	}
-
-	db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
-		"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), "+
-		"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
-		msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
 }
 
 // handleApprove approves a pending message.
@@ -2453,42 +2498,77 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to convert this message to draft")
 	}
 
-	// Use a transaction: insert draft then delete from groups.
+	// Determine which groups to take back to draft.
+	//   - groupid in the request (a moderator acting on their own group):
+	//     that group only.
+	//   - no groupid (the owner withdrawing their own message): ALL groups
+	//     the message is on — a withdrawal is global to the poster.
+	var groupids []uint64
+	if req.Groupid != nil && *req.Groupid > 0 {
+		groupids = []uint64{*req.Groupid}
+	} else {
+		db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ?", req.ID).Scan(&groupids)
+	}
+	// Fallback for a message with no live group rows (e.g. already partially
+	// drafted): keep V1's behaviour of always producing a draft.
+	if len(groupids) == 0 {
+		if pg := getPrimaryGroupForMessage(db, req.ID); pg > 0 {
+			groupids = []uint64{pg}
+		}
+	}
+
+	// Use a transaction: insert draft(s) then remove the targeted group rows.
 	tx := db.Begin()
 	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction failed")
 	}
 
-	// Determine the group for the draft (use first group the message is in).
-	groupid := getPrimaryGroupForMessage(db, req.ID)
-
-	// Insert into messages_drafts (ignore if already a draft).
-	if err := tx.Exec("INSERT IGNORE INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
-		req.ID, groupid, myid).Error; err != nil {
-		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+	// messages_drafts is unique per msgid, so a message has at most one draft
+	// row. Record it against the first targeted group; on re-post via
+	// JoinAndPost the owner picks the destination group(s) again. INSERT IGNORE
+	// keeps an existing draft row intact.
+	if len(groupids) > 0 {
+		if err := tx.Exec("INSERT IGNORE INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
+			req.ID, groupids[0], myid).Error; err != nil {
+			tx.Rollback()
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+		}
 	}
 
-	// Remove from messages_groups.
-	if err := tx.Exec("DELETE FROM messages_groups WHERE msgid = ?", req.ID).Error; err != nil {
+	// Remove the targeted group rows. With a groupid this is just that group;
+	// without one it's every group the message was on. Any groups not in the
+	// set keep their live posting.
+	if err := tx.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?", req.ID, groupids).Error; err != nil {
 		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from groups")
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from group")
 	}
 
-	// Clear any previous outcome so the reposted message starts fresh.
-	// Without this, a message that was withdrawn still shows as "withdrawn"
-	// in posting history after reposting — the same wrong behaviour as V1.
-	if err := tx.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID).Error; err != nil {
+	// If the message is still live on other groups, leave its global state
+	// (outcomes, availability, deadline) alone — those are shared across all
+	// groups and the message is still active elsewhere. Only when this was the
+	// last group does the message become a fresh draft and need a full reset.
+	var remainingGroups int64
+	if err := tx.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", req.ID).Scan(&remainingGroups).Error; err != nil {
 		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to clear outcome")
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to count remaining groups")
 	}
-	tx.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
 
-	// Reset availablenow to availableinitially — if the item was promised to
-	// someone who never collected, the repost should offer the full quantity again.
-	// Also clear messages_by so there are no stale promise records.
-	tx.Exec("UPDATE messages SET availablenow = availableinitially WHERE id = ?", req.ID)
-	tx.Exec("DELETE FROM messages_by WHERE msgid = ?", req.ID)
+	if remainingGroups == 0 {
+		// Clear any previous outcome so the reposted message starts fresh.
+		// Without this, a message that was withdrawn still shows as "withdrawn"
+		// in posting history after reposting — the same wrong behaviour as V1.
+		if err := tx.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID).Error; err != nil {
+			tx.Rollback()
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to clear outcome")
+		}
+		tx.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
+
+		// Reset availablenow to availableinitially — if the item was promised to
+		// someone who never collected, the repost should offer the full quantity again.
+		// Also clear messages_by so there are no stale promise records.
+		tx.Exec("UPDATE messages SET availablenow = availableinitially WHERE id = ?", req.ID)
+		tx.Exec("DELETE FROM messages_by WHERE msgid = ?", req.ID)
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction commit failed")
@@ -2496,12 +2576,16 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Clear deadline if it's in the past or today — an old deadline is no longer
 	// relevant when reposting and would cause the message to appear expired.
-	var deadline *string
-	db.Raw("SELECT deadline FROM messages WHERE id = ?", req.ID).Scan(&deadline)
-	if deadline != nil && *deadline != "" {
-		today := time.Now().Format("2006-01-02")
-		if *deadline <= today {
-			db.Exec("UPDATE messages SET deadline = NULL WHERE id = ?", req.ID)
+	// Only when fully redrafted: while still live elsewhere the deadline applies
+	// to the active posting.
+	if remainingGroups == 0 {
+		var deadline *string
+		db.Raw("SELECT deadline FROM messages WHERE id = ?", req.ID).Scan(&deadline)
+		if deadline != nil && *deadline != "" {
+			today := time.Now().Format("2006-01-02")
+			if *deadline <= today {
+				db.Exec("UPDATE messages SET deadline = NULL WHERE id = ?", req.ID)
+			}
 		}
 	}
 
@@ -2922,8 +3006,17 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		locStr := constructLocationString(db, req.ID)
 
 		if itemName != nil && locStr != "" {
-			// Use the group keyword for the type (V1: group settings, defaults to uppercase).
-			groupid := getPrimaryGroupForMessage(db, req.ID)
+			// Use the group keyword for the type (V1: group settings, defaults to
+			// uppercase). Prefer the contextual group from the request — keywords
+			// can differ per group — falling back to the primary group for legacy
+			// callers that don't supply one.
+			groupid := uint64(0)
+			if req.Groupid != nil && *req.Groupid > 0 {
+				groupid = *req.Groupid
+			}
+			if groupid == 0 {
+				groupid = getPrimaryGroupForMessage(db, req.ID)
+			}
 			keyword := getGroupKeyword(db, groupid, msgType)
 			newSubject := keyword + ": " + *itemName + " (" + locStr + ")"
 			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, req.ID)
@@ -3311,9 +3404,14 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 
 	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgid)
 
-	// Write audit-log entry when a moderator deletes a message.
+	// Write audit-log entry when a moderator deletes a message. Log against the
+	// group the mod acted on when supplied (?groupid=), else fall back to the
+	// primary group.
 	if isMod {
-		groupid := getPrimaryGroupForMessage(db, msgid)
+		groupid := uint64(c.QueryInt("groupid", 0))
+		if groupid == 0 {
+			groupid = getPrimaryGroupForMessage(db, msgid)
+		}
 		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
 	}
 

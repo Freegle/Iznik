@@ -7,7 +7,7 @@
     >
       <client-only>
         <span :title="group.arrival" class="time"
-          >{{ grouparrivalago }}
+          >{{ grouparrivalago(group.arrival) }}
           <span v-if="showSummaryDetails">on </span>
         </span>
       </client-only>
@@ -200,9 +200,11 @@ const groups = computed(() => {
   return ret
 })
 
-const grouparrivalago = computed(() => {
-  return timeago(message.value?.groups[0]?.arrival, true)
-})
+// Each row in the v-for is a specific group, so show that group's own
+// arrival time rather than collapsing every row onto the first group.
+function grouparrivalago(arrival) {
+  return timeago(arrival, true)
+}
 
 const today = computed(() => {
   // MT

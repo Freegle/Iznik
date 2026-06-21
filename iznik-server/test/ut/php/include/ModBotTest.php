@@ -183,6 +183,38 @@ class ModBotTest extends IznikTestCase {
         $this->log("ModBot non-existent message test completed successfully");
     }
 
+    public function testMergedRulesIncludeAllGroups() {
+        $this->log(__METHOD__);
+
+        # GroupA has weapons=TRUE only; GroupB has alcohol=TRUE only.
+        list($groupA, $gidA) = $this->createTestGroup('testgroupA', Group::GROUP_FREEGLE);
+        $groupA->setPrivate('rules', json_encode(['weapons' => TRUE, 'alcohol' => FALSE]));
+
+        list($groupB, $gidB) = $this->createTestGroup('testgroupB', Group::GROUP_FREEGLE);
+        $groupB->setPrivate('rules', json_encode(['weapons' => FALSE, 'alcohol' => TRUE]));
+
+        $mockClient = new MockGeminiClient();
+        $modbot = new ModBot($this->dbhr, $this->dbhm, $mockClient);
+
+        $groups = [
+            ['groupid' => $gidA],
+            ['groupid' => $gidB],
+        ];
+
+        $merged = $modbot->getMergedRulesForGroups($groups);
+
+        # Both rules must appear in the merged set.
+        $this->assertArrayHasKey('weapons', $merged, 'weapons rule from groupA must be included');
+        $this->assertTrue($merged['weapons'], 'weapons should be enabled');
+        $this->assertArrayHasKey('alcohol', $merged, 'alcohol rule from groupB must be included');
+        $this->assertTrue($merged['alcohol'], 'alcohol should be enabled');
+
+        # Clean up.
+        $this->dbhm->preExec("DELETE FROM `groups` WHERE nameshort IN ('testgroupA', 'testgroupB')");
+
+        $this->log("ModBot multi-group rule merge test completed successfully");
+    }
+
     public function testCostEstimation() {
         $this->log(__METHOD__);
 

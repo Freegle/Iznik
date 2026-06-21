@@ -645,7 +645,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         }
 
         // Get the group for this message.
-        $group = $refMessage->groups()->first();
+        $userGroupIds = $this->recipient->memberships->pluck('groupid')->map(fn ($id) => (int) $id)->all();
+        $group = $refMessage->groups
+            ->filter(fn ($g) => in_array((int) $g->id, $userGroupIds, true))
+            ->sortByDesc(fn ($g) => $g->pivot->arrival ?? null)
+            ->first()
+            ?? $refMessage->groups->first();
         $groupName = $group?->namefull ?? $group?->nameshort ?? 'Freegle';
 
         return [

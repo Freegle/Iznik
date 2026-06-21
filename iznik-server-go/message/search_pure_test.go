@@ -203,7 +203,10 @@ func TestGroupFilter_NilSlice(t *testing.T) {
 func TestGroupFilter_SingleID(t *testing.T) {
 	result := groupFilter([]uint64{123})
 	assert.Contains(t, result, "123")
-	assert.Contains(t, result, "messages_spatial.groupid IN (")
+	// Group filtering routes through messages_groups (a message can be in several
+	// groups; messages_spatial stores only one), not messages_spatial.groupid.
+	assert.Contains(t, result, "messages_groups")
+	assert.Contains(t, result, "mg.groupid IN (")
 }
 
 func TestGroupFilter_MultipleIDs(t *testing.T) {
