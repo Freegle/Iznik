@@ -33,6 +33,17 @@ single community — those are unchanged in name. What's changed underneath:
   nearest-and-freshest order. They can still switch to "Newest posted" or "Nearby" if they
   prefer.
 
+### When they post, there's no group to choose
+When a member creates a post, they **no longer pick which community it goes to**. This is
+intentional. The post now simply reflects **where it actually is**, based on the postcode
+they give, and rippling out then shows it to the **right people, closest first**, spreading
+outwards over time.
+
+So members no longer need to think about "which group should I post to?" or post to a
+second group to get more eyes on an item - the system does that spreading for them
+automatically. They just say what they're offering and where it is, and rippling handles
+the rest.
+
 ### Occasionally, "you can't reply to this yet"
 Because posts spread outwards gradually, a member might sometimes see a post (under
 "All my communities", say) that **hasn't yet rippled out to their area**. If so, they'll
@@ -75,8 +86,9 @@ this in members' own terms. It's flagged as a new change. The wording is:
 - They **won't** see any of the moderation side — pending lists, held-reply reasons, or
   which community a post started on. To them it's simply "I can see this and reply" or
   "I'll be able to reply soon".
-- They **won't** have to change how they post or reply. They offer and request exactly as
-  before.
+- Aside from no longer choosing a group when posting (above), they **won't** have to change
+  how they post or reply. They offer and request much as before; they just give the location
+  and let the system do the spreading.
 
 ---
 
