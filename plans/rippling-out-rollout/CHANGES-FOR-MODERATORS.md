@@ -123,5 +123,5 @@ top: **don't reject a post just for being out of area** — that's the system wo
 intended.
 
 If you'd like the fuller explanation of how rippling out works, have a look at the
-**[/rippling](https://www.ilovefreegle.org/rippling)** page, or use the **"Learn more"**
-link on any rippled-in post.
+**Rippling** page in ModTools (the `/rippling` route), which lets you explore on a map
+how posts spread, or use the **"Learn more"** link on any rippled-in post.
