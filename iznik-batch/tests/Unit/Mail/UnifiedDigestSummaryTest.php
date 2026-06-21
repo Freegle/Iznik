@@ -262,6 +262,35 @@ class UnifiedDigestSummaryTest extends TestCase
         $this->assertStringNotContainsString('<details', $html);
     }
 
+    public function test_html_summary_lines_break_with_br_not_display_block_for_outlook(): void
+    {
+        // Discourse t/9363/31: Outlook Classic's Word engine ignores CSS
+        // display:block on inline <a>, so the summary items ran together. Each
+        // summary link is now separated with a trailing <br> — the most
+        // space-efficient block break Outlook honours (≈5 bytes/line vs ≈40 for a
+        // <div> wrapper, which matters in a digest of up to 200 posts under Gmail's
+        // ~102 KB clip). The compiled HTML must show each summary <a> followed by a
+        // <br>, and the summary <a> must not use display:block.
+        [$mail] = $this->buildDigest(4, UnifiedDigestService::MODE_DAILY);
+        $prepared = $this->preparedPostsOf($mail);
+        $firstUrl = htmlspecialchars($prepared->first()['summaryUrl'], ENT_QUOTES, 'UTF-8');
+
+        $html = $this->spoolAndLoad($mail, 'r@example.com')['html'] ?? '';
+
+        // The summary link is followed by a <br> block break.
+        $this->assertMatchesRegularExpression(
+            '/<a\s[^>]*href="'.preg_quote($firstUrl, '/').'"[^>]*>[^<]*<\/a>\s*<br\s*\/?>/i',
+            $html,
+            'Each summary link must be separated by <br> for Outlook line breaks (t/9363/31)'
+        );
+        // The summary link must NOT rely on display:block (Outlook silently ignores it).
+        $this->assertDoesNotMatchRegularExpression(
+            '/<a\s[^>]*href="'.preg_quote($firstUrl, '/').'"[^>]*style="[^"]*display:\s*block/i',
+            $html,
+            'Summary <a> must not use display:block — Outlook Classic ignores it (t/9363/31)'
+        );
+    }
+
     public function test_html_immediate_single_post_has_no_summary_index(): void
     {
         [$mail] = $this->buildDigest(1, UnifiedDigestService::MODE_IMMEDIATE);
