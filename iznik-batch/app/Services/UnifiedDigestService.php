@@ -988,9 +988,14 @@ class UnifiedDigestService
             $sent = 0;
             foreach ($deduplicatedPosts as $deduped) {
                 if (!$dryRun) {
-                    // Each immediate email is about one post on one group; carry
-                    // only that group's sponsors.
-                    $postGroupId = (int) ($deduped['postedToGroups'][0] ?? 0);
+                    // Each immediate email is about one post; carry that post's
+                    // sponsors. For a cross-post, prefer a group the recipient is a
+                    // member of (matching the digest header/byline group) rather
+                    // than an arbitrary first group.
+                    $postGroupId = (int) (UnifiedDigest::selectPreferredGroup(
+                        $deduped['postedToGroups'] ?? [],
+                        $user->memberships->pluck('groupid')->all()
+                    ) ?? 0);
                     $postSponsors = $this->getSponsorsForGroup($postGroupId);
                     app(\App\Services\EmailSpoolerService::class)->spool(
                         new UnifiedDigest($user, collect([$deduped]), $mode, $postSponsors),

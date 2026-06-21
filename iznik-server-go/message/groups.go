@@ -22,16 +22,44 @@ func Groups(c *fiber.Ctx) error {
 
 	gid, _ := strconv.ParseUint(c.Params("id"), 10, 64)
 
-	gstr := ""
+	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
+
+	// Build the EXISTS fragment for the spatial arm to filter by group membership
+	// without relying on messages_spatial.groupid (which stores only ONE group for
+	// multi-group messages).
+	var spatialGroupFilter string
+	var spatialArgs []interface{}
 
 	if gid > 0 {
-		gstr = " AND messages_spatial.groupid = " + strconv.FormatUint(gid, 10) + " "
+		// Specific group: message must be approved in that group.
+		// gid is safe to inline (parsed from uint64).
+		spatialGroupFilter = " AND EXISTS (" +
+			"SELECT 1 FROM messages_groups mg " +
+			"WHERE mg.msgid = messages_spatial.msgid " +
+			"AND mg.groupid = " + strconv.FormatUint(gid, 10) + " " +
+			"AND mg.collection = 'Approved' " +
+			"AND mg.deleted = 0" +
+			") "
+		// Placeholders for spatial arm: ?(likes userid), ?(likes type)
+		spatialArgs = []interface{}{myid, utils.MESSAGE_LIKES_VIEW}
+	} else {
+		// Combined browse (gid=0): message must be approved in some group the viewer belongs to.
+		spatialGroupFilter = " AND EXISTS (" +
+			"SELECT 1 FROM messages_groups mg " +
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid " +
+			"WHERE mg.msgid = messages_spatial.msgid " +
+			"AND mem.userid = ? " +
+			"AND mg.collection = 'Approved' " +
+			"AND mg.deleted = 0" +
+			") "
+		// Placeholders for spatial arm: ?(likes userid), ?(likes type), ?(mem.userid)
+		spatialArgs = []interface{}{myid, utils.MESSAGE_LIKES_VIEW, myid}
 	}
-
-	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
 	// We want to include our own messages, so that it is less obvious if a message is delayed for approval and
 	// hasn't made it into messages_spatial yet.
+	// The own-messages arm joins messages_groups and can produce one row per group for a cross-posted
+	// message; GROUP BY messages.id + MAX(arrival) collapses those into a single row.
 	db.Raw("SELECT * FROM ("+
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
@@ -43,17 +71,16 @@ func Groups(c *fiber.Ctx) error {
 		"messages_spatial.arrival, "+
 		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
 		"FROM messages_spatial "+
-		"INNER JOIN memberships ON memberships.groupid = messages_spatial.groupid "+
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE memberships.userid = ? "+gstr+
+		"WHERE 1=1 "+spatialGroupFilter+
 		"UNION "+
 		"SELECT lat, lng, messages.id, "+
-		"(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-		"(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-		"messages_groups.groupid, "+
+		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
+		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+		"ANY_VALUE(messages_groups.groupid) AS groupid, "+
 		"messages.type, "+
-		"messages_groups.arrival, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+		"MAX(messages_groups.arrival) AS arrival, "+
+		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
 		"FROM messages "+
 		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
 		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
@@ -61,15 +88,15 @@ func Groups(c *fiber.Ctx) error {
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
 		"WHERE fromuser = ? AND messages_groups.arrival >= ? "+
 		"AND messages_outcomes.id IS NULL "+
+		"GROUP BY messages.id "+
 		") t "+
 		"ORDER BY unseen DESC, arrival DESC, id DESC;",
-		myid, utils.MESSAGE_LIKES_VIEW,
-		myid,
-		utils.OUTCOME_TAKEN,
-		utils.OUTCOME_RECEIVED,
-		myid, utils.MESSAGE_LIKES_VIEW,
-		myid,
-		start).Scan(&msgs)
+		append(spatialArgs,
+			utils.OUTCOME_TAKEN,
+			utils.OUTCOME_RECEIVED,
+			myid, utils.MESSAGE_LIKES_VIEW,
+			myid,
+			start)...).Scan(&msgs)
 
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.

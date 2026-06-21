@@ -107,6 +107,35 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals("What's New (1 post) - Sofa", $envelope->subject);
     }
 
+    public function test_immediate_subject_prefers_recipients_group_for_cross_post(): void
+    {
+        // A post on groups A and B; the recipient is a member of B only. The
+        // immediate-digest subject prefix must name B (the recipient's group),
+        // not an arbitrary first group.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $groupBName = $groupB->namefull ?: $groupB->nameshort;
+        $groupAName = $groupA->namefull ?: $groupA->nameshort;
+        $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
+        $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
+    }
+
     public function test_subject_with_multiple_posts(): void
     {
         $user = $this->createTestUser();
@@ -381,6 +410,61 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('/explore/'.$group->id, $target);
     }
 
+    public function test_byline_uses_recipients_group_for_cross_post(): void
+    {
+        // Recipient is a member of group B only; the post is cross-posted to A and
+        // B (A listed first). The "Posted on …" byline must name B — the group the
+        // recipient is actually in — not the arbitrary first group A.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Sofa (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $card = $ref->getValue($mail)->first();
+
+        $this->assertSame($groupB->namefull, $card['groupName'], 'byline should name the recipient\'s group');
+        $this->assertNotSame($groupA->namefull, $card['groupName']);
+    }
+
+    public function test_byline_falls_back_to_first_group_when_recipient_in_neither(): void
+    {
+        // Edge case: the recipient is a member of NEITHER posted-to group (e.g. a
+        // cross-group digest, or membership changed). selectPreferredGroup must
+        // degrade gracefully to the first posted-to group — a real, non-empty group
+        // name — rather than group 0 / a blank byline.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        // Deliberately no membership of either group for $user.
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Lamp (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $card = $ref->getValue($mail)->first();
+
+        $this->assertSame($groupA->namefull, $card['groupName'], 'byline should fall back to the first posted-to group');
+        $this->assertNotEmpty($card['groupName'], 'byline group name must not be blank');
+    }
+
     public function test_cross_post_text_shown_for_multiple_groups(): void
     {
         $user = $this->createTestUser();
@@ -483,6 +567,32 @@ class UnifiedDigestTest extends TestCase
         // A daily digest spans the member's groups → not tied to one.
         $dailyMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $this->assertNull($dailyMail->getTracking()->groupid);
+    }
+
+    public function test_immediate_tracking_groupid_uses_recipients_group_for_cross_post(): void
+    {
+        // A post on groups A and B; the recipient is a member of B only. The
+        // immediate-digest tracking groupid must record B (the recipient's group),
+        // not an arbitrary first group.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals($groupB->id, $mail->getTracking()->groupid);
+        $this->assertNotEquals($groupA->id, $mail->getTracking()->groupid);
     }
 
     public function test_immediate_mode_envelope_from_is_noreply_for_amp(): void
