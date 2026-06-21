@@ -112,6 +112,17 @@ func (srv *server) rebuild(name string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("%s: rename index: %w", name, err)
 	}
+	// rename moved only the .db. Any -wal/-shm still on disk belong to the previous
+	// (now-replaced) index; if left in place OpenIndex would replay that stale WAL
+	// onto the fresh .db and corrupt it. The freshly built .db is already complete
+	// (Checkpoint above flushed its WAL), so drop the old sidecars now. The old live
+	// index keeps serving reads until swapIndex via its already-open fds (the inodes
+	// survive the unlink on Linux), so this is safe to do before the swap.
+	os.Remove(idxPath + "-wal")
+	os.Remove(idxPath + "-shm")
+	// Tidy any leftover WAL sidecars from the temp build path too.
+	os.Remove(tmpPath + "-wal")
+	os.Remove(tmpPath + "-shm")
 
 	live, err := OpenIndex(idxPath)
 	if err != nil {
