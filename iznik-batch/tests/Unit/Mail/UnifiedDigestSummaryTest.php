@@ -157,9 +157,6 @@ class UnifiedDigestSummaryTest extends TestCase
                 'heroImageUrl' => 'https://example.com/hero.png',
                 'displayImageUrl' => 'https://example.com/img.png',
                 'isPlaceholder' => false,
-                'postedToText' => null,
-                'metaText' => null,
-                'isOwnPost' => false,
             ]);
         }
 
@@ -186,7 +183,6 @@ class UnifiedDigestSummaryTest extends TestCase
             ])->toArray(),
             'ampApiUrl' => 'https://api.example.com/amp',
             'ampUserId' => 42,
-            'accentColor' => \App\Mail\Digest\DigestStyle::OFFER_GREEN,
         ];
     }
 
@@ -266,25 +262,32 @@ class UnifiedDigestSummaryTest extends TestCase
         $this->assertStringNotContainsString('<details', $html);
     }
 
-    public function test_html_summary_links_wrapped_in_div_for_outlook_compatibility(): void
+    public function test_html_summary_lines_break_with_br_not_display_block_for_outlook(): void
     {
-        // Discourse t/9363/31: Outlook Classic (Word HTML rendering engine) ignores
-        // CSS `display:block` on inline <a> elements, so summary items ran together
-        // with no visible line breaks. Fix: each summary <a> must be wrapped in a
-        // <div> block element, which Outlook's Word engine does respect.
-        // Uses direct view rendering (same pattern as AMP tests) since the MJML
-        // content inside <mj-text> is passed through verbatim to compiled HTML.
-        $mjml = view('emails.mjml.digest.unified', $this->summaryViewData(3))->render();
+        // Discourse t/9363/31: Outlook Classic's Word engine ignores CSS
+        // display:block on inline <a>, so the summary items ran together. Each
+        // summary link is now separated with a trailing <br> — the most
+        // space-efficient block break Outlook honours (≈5 bytes/line vs ≈40 for a
+        // <div> wrapper, which matters in a digest of up to 200 posts under Gmail's
+        // ~102 KB clip). The compiled HTML must show each summary <a> followed by a
+        // <br>, and the summary <a> must not use display:block.
+        [$mail] = $this->buildDigest(4, UnifiedDigestService::MODE_DAILY);
+        $prepared = $this->preparedPostsOf($mail);
+        $firstUrl = htmlspecialchars($prepared->first()['summaryUrl'], ENT_QUOTES, 'UTF-8');
 
-        $this->assertStringContainsString('In this digest', $mjml);
+        $html = $this->spoolAndLoad($mail, 'r@example.com')['html'] ?? '';
 
-        // Each visible summary link must appear as <div...><a href="..."> — not as
-        // a bare <a style="display:block"> that Outlook Classic silently ignores.
+        // The summary link is followed by a <br> block break.
         $this->assertMatchesRegularExpression(
-            '/<div[^>]*>\s*<a\s[^>]*href="https:\/\/example\.com\/message\/1000"/',
-            $mjml,
-            'Summary links must be wrapped in <div> for Outlook classic compatibility (t/9363/31); '
-            . 'bare <a style="display:block"> is ignored by Outlook\'s Word rendering engine'
+            '/<a\s[^>]*href="'.preg_quote($firstUrl, '/').'"[^>]*>[^<]*<\/a>\s*<br\s*\/?>/i',
+            $html,
+            'Each summary link must be separated by <br> for Outlook line breaks (t/9363/31)'
+        );
+        // The summary link must NOT rely on display:block (Outlook silently ignores it).
+        $this->assertDoesNotMatchRegularExpression(
+            '/<a\s[^>]*href="'.preg_quote($firstUrl, '/').'"[^>]*style="[^"]*display:\s*block/i',
+            $html,
+            'Summary <a> must not use display:block — Outlook Classic ignores it (t/9363/31)'
         );
     }
 

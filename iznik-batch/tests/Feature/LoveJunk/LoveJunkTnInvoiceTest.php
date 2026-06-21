@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\LoveJunk;
 
+use App\Services\EmailSpoolerService;
 use App\Services\LoveJunkInvoiceService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Mockery;
 use Tests\TestCase;
 
 class LoveJunkTnInvoiceTest extends TestCase
@@ -161,6 +163,54 @@ class LoveJunkTnInvoiceTest extends TestCase
         $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
 
         $this->assertSame(0, $result['tn']);
+    }
+
+    public function test_does_not_send_when_recipient_not_configured(): void
+    {
+        // Regression: with no tn_invoice_addr configured the command logged
+        // "Invoice email sent." but actually spooled nothing (the silent gap
+        // that meant the May 2026 invoice never reached TrashNothing).
+        config(['freegle.mail.tn_invoice_addr' => '']);
+
+        $spooler = Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldNotReceive('spool');
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', false);
+
+        $this->assertFalse($result['sent']);
+        $this->assertNull($result['recipient']);
+    }
+
+    public function test_sends_to_configured_recipient(): void
+    {
+        config(['freegle.mail.tn_invoice_addr' => 'partner@example.com']);
+
+        $spooler = Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->once();
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', false);
+
+        $this->assertTrue($result['sent']);
+        $this->assertSame('partner@example.com', $result['recipient']);
+    }
+
+    public function test_command_fails_when_recipient_not_configured(): void
+    {
+        config(['freegle.mail.tn_invoice_addr' => '']);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $this->artisan('lovejunk:send-tn-invoice', ['--period' => '2020-01'])
+            ->assertExitCode(1);
     }
 
     public function test_deduplicates_by_subject(): void

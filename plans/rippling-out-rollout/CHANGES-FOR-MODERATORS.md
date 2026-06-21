@@ -89,6 +89,32 @@ because the poster is from out of area.**
 
 ---
 
+## A note on what to expect
+
+None of us understands the current system in fine detail, moderators included, and
+you won't need to understand this new one in detail either. Most members simply accept
+what the site does and get on with freegling, and that's fine.
+
+When a change like this lands, two different kinds of reaction tend to arrive together,
+and it's worth telling them apart:
+
+- **Change aversion.** Some people will object simply because it's different from what
+  they're used to. That's a completely natural reaction, but it isn't the same as
+  something being wrong.
+- **Genuine bugs.** Some people will spot real problems, and those reports are genuinely
+  valuable. Please do pass them on so we can fix them.
+
+It also helps to remember that our *current* system already behaves in odd ways in
+certain situations: in extremely busy areas, in extremely quiet areas, and near the
+boundaries between groups. We've simply lived with those quirks for so long that we no
+longer notice them, so they don't feel like problems. Rippling out will have its own
+rough edges too, though not necessarily in the same places. The important point is that
+we have good statistical evidence that it works better for most people in most places.
+The aim isn't a perfect system, because the old one isn't perfect either; it's a better
+one overall.
+
+---
+
 ## That's it
 
 Nothing about your day-to-day moderation routine has to change. Approve and reject as you
@@ -96,5 +122,6 @@ always have, for the usual reasons. The only genuinely new habit to build is the
 top: **don't reject a post just for being out of area** — that's the system working as
 intended.
 
-If you'd like the fuller explanation of how rippling out works, use the **"Learn more"**
-link on any rippled-in post.
+If you'd like the fuller explanation of how rippling out works, have a look at the
+**Rippling** page in ModTools (the `/rippling` route), which lets you explore on a map
+how posts spread, or use the **"Learn more"** link on any rippled-in post.

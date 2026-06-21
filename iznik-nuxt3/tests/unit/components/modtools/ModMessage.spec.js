@@ -487,6 +487,30 @@ describe('ModMessage', () => {
       const wrapper = mountComponent({}, { subject: 'OFFER: Test Item' })
       expect(wrapper.vm.subjectClass).toBe('text-success')
     })
+
+    // Discourse 9481/594: with subject-colouring ON and the default subjreg
+    // (/^(OFFER|WANTED):/i, which does NOT match "REQUESTED"), a Wanted post shown
+    // with the custom/variant keyword "REQUESTED" must still be GREEN — it's a
+    // recognised Wanted keyword. Previously it was wrongly red.
+    it('keeps a REQUESTED (Wanted variant) subject green even when subjreg only knows OFFER/WANTED', async () => {
+      const wrapper = mountComponent(
+        {},
+        { subject: 'REQUESTED: Green House', type: 'Wanted' }
+      )
+      wrapper.vm.modconfig = { coloursubj: true, subjreg: /^(OFFER|WANTED):/i }
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.subjectClass).toBe('text-success')
+    })
+
+    it('still flags a subject with no recognised keyword (red) when colouring is on', async () => {
+      const wrapper = mountComponent(
+        {},
+        { subject: 'random junk with no keyword' }
+      )
+      wrapper.vm.modconfig = { coloursubj: true, subjreg: /^(OFFER|WANTED):/i }
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.subjectClass).toBe('text-danger')
+    })
   })
 
   describe('Expand/collapse', () => {

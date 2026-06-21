@@ -5,7 +5,9 @@ namespace Tests\Unit\Mail;
 use App\Mail\Digest\UnifiedDigest;
 use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Carbon\Carbon;
 use Illuminate\Mail\Mailable;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
@@ -156,6 +158,99 @@ class UnifiedDigestTest extends TestCase
         $tracking = $mail->getTracking();
         $this->assertNotNull($tracking);
         $this->assertEquals('UnifiedDigestDaily', $tracking->email_type);
+    }
+
+    /**
+     * Build a one-post daily digest for a recipient with the given email.
+     */
+    private function digestForRecipientEmail(string $email): UnifiedDigest
+    {
+        $user = $this->createTestUser(['email_preferred' => $email]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        return new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+    }
+
+    public function test_has_amp_column_set_for_amp_supported_recipient(): void
+    {
+        // The ModTools sysadmin AMP stats read the has_amp COLUMN. It was only
+        // ever passed as a metadata key, never as the 7th initTracking() argument,
+        // so it always defaulted to false and every digest "showed no AMP".
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@gmail.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertTrue((bool) $tracking->has_amp);
+    }
+
+    public function test_has_amp_column_not_set_for_unsupported_recipient(): void
+    {
+        // Matches ChatNotification: only count has_amp where the provider can
+        // actually use AMP, so the AMP-vs-HTML comparison is like with like.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@example.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertFalse((bool) $tracking->has_amp);
+    }
+
+    public function test_has_amp_column_not_set_when_amp_disabled(): void
+    {
+        // No secret configured => AMP is off => has_amp must be false even for a
+        // provider that supports AMP.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@gmail.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertFalse((bool) $tracking->has_amp);
+    }
+
+    public function test_build_renders_amp_when_enabled(): void
+    {
+        // With AMP enabled, build() renders the AMP variant. (The variant is
+        // rendered for every recipient; provider support only governs the has_amp
+        // tracking flag, not whether the AMP part is built.)
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        // $ampHtml is protected; read it via reflection to confirm the AMP
+        // variant was rendered.
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+        $ampHtml = $ref->getValue($mail);
+
+        $this->assertNotEmpty($ampHtml, 'AMP variant should be rendered when AMP is enabled');
+        $this->assertStringContainsString('amp4email', $ampHtml);
+    }
+
+    public function test_build_skips_amp_when_disabled(): void
+    {
+        // No secret => AMP disabled => no AMP variant rendered.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        $this->assertNull($ref->getValue($mail), 'No AMP should be rendered when AMP is disabled');
     }
 
     /**
@@ -757,5 +852,81 @@ class UnifiedDigestTest extends TestCase
         // Verify tracking does not indicate AMP.
         $tracking = $mail->getTracking();
         $this->assertFalse($tracking->has_amp);
+    }
+
+    public function test_card_meta_shows_distance_when_user_has_location(): void
+    {
+        // haversineDistance() and the distance branch in prepareCard() are only
+        // reached when the digest recipient has a lastlocation set. Without a
+        // lastlocation both $userLat and $userLng remain null and the distance
+        // block is skipped entirely.
+        $locationId = DB::table('locations')->insertGetId([
+            'name' => 'TestUserLocation',
+            'type' => 'Point',
+            'lat'  => 51.55,    // ~3 miles north of the default group/message lat
+            'lng'  => -0.1278,
+        ]);
+
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(); // defaults: lat=51.5074, lng=-0.1278
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Bicycle (London)',
+        ]);
+
+        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html    = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        // The distance text rendered by haversineDistance() must appear in the
+        // compiled HTML (e.g. "3 miles" or "< 1 mile").
+        $this->assertMatchesRegularExpression(
+            '/(?:[0-9]+ miles?|&lt; 1 mile|< 1 mile)/',
+            $html,
+            'Distance text must appear in the digest card when the user has a lastlocation'
+        );
+    }
+
+    public function test_card_shows_first_posted_when_message_was_reposted(): void
+    {
+        // The "First posted" line in _card.blade.php is only emitted when
+        // prepareCard() sets firstPostedFormatted — which only happens when
+        // messages.date is > 60 minutes before the pivot arrival date (i.e. the
+        // item was reposted). Without this test the firstPostedFormatted branch
+        // in UnifiedDigest::prepareCard() was never covered.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $originalDate = Carbon::now()->subDays(3);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Bookshelf (London)',
+            'date'    => $originalDate,
+            'arrival' => Carbon::now(),
+        ]);
+
+        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html    = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        // The "First posted" line must appear since the item was reposted 3 days
+        // after its original posting date.
+        $this->assertStringContainsString(
+            'First posted',
+            $html,
+            'A reposted message must render the "First posted" date line'
+        );
     }
 }

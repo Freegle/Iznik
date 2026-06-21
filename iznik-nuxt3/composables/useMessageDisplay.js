@@ -11,6 +11,7 @@ import {
   timeago,
 } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
+import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 /**
  * Shared composable for message display logic used by both
@@ -63,21 +64,9 @@ export function useMessageDisplay(messageId) {
 
   const strippedSubject = computed(() => {
     const subject = message.value?.subject || ''
-    // Build regex from group keywords if available, otherwise use defaults
-    const keywords = messageGroup.value?.settings?.keywords || {}
-    const keywordList = [
-      keywords.offer || 'OFFER',
-      'OFFERED', // Common variant
-      keywords.taken || 'TAKEN',
-      keywords.wanted || 'WANTED',
-      'REQUESTED', // Common variant for wanted
-      keywords.received || 'RECEIVED',
-    ]
-    // Escape any regex special chars and build pattern
-    const pattern = keywordList
-      .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join('|')
-    const regex = new RegExp(`^(${pattern}):\\s*`, 'i')
+    // Strip the keyword prefix using the group's configured keywords (+ common
+    // variants). Shared with the ModTools subject-colour check via buildKeywordRegex.
+    const regex = buildKeywordRegex(messageGroup.value?.settings?.keywords)
     return subject.replace(regex, '')
   })
 

@@ -164,4 +164,54 @@ class EmailHealthCommandTest extends TestCase
 
         Log::shouldNotHaveReceived('warning');
     }
+
+    /**
+     * Seed a healthy baseline (daytime, plenty of outgoing + incoming) so the
+     * only signal under test is the AMP-config check.
+     */
+    private function seedHealthyBaseline(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 5, 24, 12, 0, 0));
+        config(['freegle.email_health.outgoing_min_per_hour' => 2]);
+        $this->seedOutgoing(5);
+        $this->seedOutgoing(10);
+        $this->seedOutgoing(15);
+        $this->seedIncoming(30);
+    }
+
+    public function test_amp_enabled_without_secret_warns_but_does_not_fail(): void
+    {
+        // AMP is enabled but the secret is unset: every email ships without AMP
+        // and the AMP stats read zero. This must be surfaced as a warning, but
+        // it is NOT an outage, so the command still succeeds.
+        $this->seedHealthyBaseline();
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        Log::spy();
+
+        $this->artisan('monitor:email-health')
+            ->expectsOutputToContain('AMP CONFIG')
+            ->assertExitCode(0);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'AMP CONFIG')
+                && str_contains((string) $message, 'amp.secret is empty')
+            );
+    }
+
+    public function test_amp_configured_reports_ok_and_no_warning(): void
+    {
+        // AMP enabled with a secret present: no AMP-config warning.
+        $this->seedHealthyBaseline();
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'a-real-secret']);
+
+        Log::spy();
+
+        $this->artisan('monitor:email-health')
+            ->expectsOutputToContain('AMP config OK.')
+            ->assertExitCode(0);
+
+        Log::shouldNotHaveReceived('warning');
+    }
 }

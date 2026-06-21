@@ -2319,7 +2319,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'coverage_gate_decide',
-    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) PRs created this iteration → WRAP_UP; (4) else → WRITE_COVERAGE.',
+    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) PICKABLE (non-exhausted) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) PRs created this iteration → WRAP_UP; (4) else → WRITE_COVERAGE. Red PRs whose fix-attempt budget is exhausted are NOT counted as actionable CI (otherwise they ping-pong COVERAGE_GATE↔CI_ROUTER and starve coverage/Sentry).',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
@@ -2329,8 +2329,23 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const red = await redDef.handler({}, context)
       const v = verify as any
       const r = red as any
-      const redCount = Array.isArray(r.redPRs) ? r.redPRs.length : 0
+      const redPRs: Array<{ number: number }> = Array.isArray(r.redPRs) ? r.redPRs : []
+      const redCount = redPRs.length
       const prCount = typeof v.count === 'number' ? v.count : 0
+
+      // Exclude PRs whose fix-attempt budget is exhausted (mirrors ci_router_decide).
+      // An exhausted PR is permanently red (we've stopped trying to fix it, or it's
+      // being deliberately held) — counting it as actionable CI makes COVERAGE_GATE
+      // bounce straight back to CI_ROUTER forever, starving WRITE_COVERAGE and Sentry.
+      // Only route to CI_ROUTER when there is at least one PICKABLE red PR.
+      const MAX_FIX_ATTEMPTS = 3
+      const db = getDb()
+      const pickableRedCount = redPRs.filter(pr => {
+        const countStr = kvGet(db, `pr_fix_attempts_${pr.number}`)
+        const count = countStr ? parseInt(countStr, 10) : 0
+        return count < MAX_FIX_ATTEMPTS
+      }).length
+      const exhaustedRedCount = redCount - pickableRedCount
 
       // Check for PRs that need rebase (mergeStateStatus === 'DIRTY')
       const listRes = await sh('gh', [
@@ -2350,15 +2365,15 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
       const coverageJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
       let target: string
-      if (redCount > 0) target = 'CI_ROUTER'
+      if (pickableRedCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
       else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
-      else target = 'WRITE_COVERAGE'  // includes the coverage-jitter-boost path (see WRITE_COVERAGE STEP 0)
+      else target = 'WRITE_COVERAGE'  // all red PRs exhausted/held → coverage (incl. jitter-boost, see WRITE_COVERAGE STEP 0); lets Sentry run too
       if (coverageJitterPRs.length > 0) {
         out(`coverage_gate_decide: ${coverageJitterPRs.length} coverage-jitter PR(s) [${coverageJitterPRs.map((p: any) => '#' + p.number).join(', ')}] — booster will add genuine coverage to clear the noise floor`)
       }
-      return { count: prCount, redCount, pendingCount, dirtyPRs, coverageJitterPRs, verify, red, _transition: target }
+      return { count: prCount, redCount, pickableRedCount, exhaustedRedCount, pendingCount, dirtyPRs, coverageJitterPRs, verify, red, _transition: target }
     },
   },
 
