@@ -159,6 +159,58 @@ func TestDigestPositions_CTRByPosition(t *testing.T) {
 	assert.InDelta(t, 0.0, p2["ctr"].(float64), 0.01)
 }
 
+// TestDigestPositions_CompactPositionLabels verifies that the current compact
+// card label ("pN") is counted the same as the legacy "post_N" label - both mean
+// "clicked the card for the post at position N" - and that compact summary ("yN")
+// and image ("iN") links are excluded. Without this the stat only sees legacy
+// emails and silently under-reports, since compact "pN" clicks dominate.
+func TestDigestPositions_CompactPositionLabels(t *testing.T) {
+	prefix := uniquePrefix("dpcompact")
+	userID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, userID)
+
+	now := time.Now()
+	etype := uniqueDigestType()
+
+	// Two digests, each showing two posts (positions 0,1 → shown = 2 each).
+	idA := createDigestTrackingRecord(t, etype, now, 2)
+	idB := createDigestTrackingRecord(t, etype, now, 2)
+	defer cleanupTestTrackingByID([]uint64{idA, idB})
+
+	// Compact card click on position 0 in A; legacy card click on position 0 in
+	// B → position 0 should aggregate both schemes (emails_clicked = 2).
+	createPositionClick(t, idA, "p0", now)
+	createPositionClick(t, idB, "post_0", now)
+	// Summary ("yN") and image ("iN") clicks must be ignored.
+	createPositionClick(t, idA, "y1", now)
+	createPositionClick(t, idA, "i1", now)
+
+	start := now.AddDate(0, 0, -1).Format("2006-01-02")
+	end := now.AddDate(0, 0, 1).Format("2006-01-02")
+
+	url := "/api/modtools/email/stats/digestpositions?jwt=" + token + "&type=" + etype + "&start=" + start + "&end=" + end
+	resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	data := result["data"].([]interface{})
+	assert.Equal(t, 2, len(data)) // positions 0,1
+
+	p0 := data[0].(map[string]interface{})
+	assert.Equal(t, float64(0), p0["position"])
+	assert.Equal(t, float64(2), p0["shown"])
+	// Both the compact "p0" and legacy "post_0" clicks count.
+	assert.Equal(t, float64(2), p0["emails_clicked"])
+	assert.InDelta(t, 100.0, p0["ctr"].(float64), 0.01)
+
+	p1 := data[1].(map[string]interface{})
+	assert.Equal(t, float64(1), p1["position"])
+	assert.Equal(t, float64(2), p1["shown"])
+	// y1 (summary) and i1 (image) must NOT count as position-1 card clicks.
+	assert.Equal(t, float64(0), p1["emails_clicked"])
+}
+
 // TestDigestPositions_CumulativeShownAcrossSizes verifies that the "shown"
 // denominator is cumulative: a digest with K posts contributes to positions 0..K-1.
 func TestDigestPositions_CumulativeShownAcrossSizes(t *testing.T) {

@@ -161,6 +161,99 @@ class UnifiedDigestTest extends TestCase
     }
 
     /**
+     * Build a one-post daily digest for a recipient with the given email.
+     */
+    private function digestForRecipientEmail(string $email): UnifiedDigest
+    {
+        $user = $this->createTestUser(['email_preferred' => $email]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        return new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+    }
+
+    public function test_has_amp_column_set_for_amp_supported_recipient(): void
+    {
+        // The ModTools sysadmin AMP stats read the has_amp COLUMN. It was only
+        // ever passed as a metadata key, never as the 7th initTracking() argument,
+        // so it always defaulted to false and every digest "showed no AMP".
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@gmail.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertTrue((bool) $tracking->has_amp);
+    }
+
+    public function test_has_amp_column_not_set_for_unsupported_recipient(): void
+    {
+        // Matches ChatNotification: only count has_amp where the provider can
+        // actually use AMP, so the AMP-vs-HTML comparison is like with like.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@example.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertFalse((bool) $tracking->has_amp);
+    }
+
+    public function test_has_amp_column_not_set_when_amp_disabled(): void
+    {
+        // No secret configured => AMP is off => has_amp must be false even for a
+        // provider that supports AMP.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@gmail.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertFalse((bool) $tracking->has_amp);
+    }
+
+    public function test_build_renders_amp_when_enabled(): void
+    {
+        // With AMP enabled, build() renders the AMP variant. (The variant is
+        // rendered for every recipient; provider support only governs the has_amp
+        // tracking flag, not whether the AMP part is built.)
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        // $ampHtml is protected; read it via reflection to confirm the AMP
+        // variant was rendered.
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+        $ampHtml = $ref->getValue($mail);
+
+        $this->assertNotEmpty($ampHtml, 'AMP variant should be rendered when AMP is enabled');
+        $this->assertStringContainsString('amp4email', $ampHtml);
+    }
+
+    public function test_build_skips_amp_when_disabled(): void
+    {
+        // No secret => AMP disabled => no AMP variant rendered.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        $this->assertNull($ref->getValue($mail), 'No AMP should be rendered when AMP is disabled');
+    }
+
+    /**
      * Fabricate the minimal data the digest templates need so they can be
      * rendered standalone (empty posts skips the per-post loop; jobs/sponsors
      * blocks are gated only on $jobAds / $sponsors).

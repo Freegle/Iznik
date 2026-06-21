@@ -1466,7 +1466,18 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		}
 	}
 
-	// 2. Numerator: clicks on post_N links, grouped by position label.
+	// 2. Numerator: clicks on a post CARD at position N, grouped by position label.
+	//
+	// Two label schemes coexist:
+	//   - "post_N": the legacy (verbose) digest card link.
+	//   - "pN":     the current compact card link (TrackableEmail compact form,
+	//               UnifiedDigest emits "p{index}" for the per-post Reply CTA).
+	// Both mean "clicked the card for the post shown at vertical position N", so
+	// both must be counted - otherwise this stat only sees old emails and silently
+	// under-reports (compact "pN" clicks dominate live traffic). We deliberately
+	// exclude the summary-index links ("yN") and image links ("iN"): the summary
+	// sits at the top of the email, so a "yN" click is not a signal about the
+	// post's vertical position.
 	clickQuery := `
 		SELECT c.link_position AS link_position,
 		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
@@ -1475,7 +1486,7 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		JOIN email_tracking e ON c.email_tracking_id = e.id
 		LEFT JOIN users u ON e.userid = u.id
 		WHERE ` + cohort + `
-		  AND c.link_position REGEXP '^post_[0-9]+$'
+		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
 		GROUP BY c.link_position`
 	clickArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
 
@@ -1489,12 +1500,18 @@ func DigestClickPositions(c *fiber.Ctx) error {
 	emailsClickedByPos := make(map[int]int64)
 	clicksByPos := make(map[int]int64)
 	for _, r := range clickRows {
-		// link_position is "post_N"; extract the integer position.
-		idx := strings.LastIndex(r.LinkPosition, "_")
-		if idx < 0 || idx+1 >= len(r.LinkPosition) {
+		// link_position is "post_N" or "pN"; extract the trailing integer
+		// position regardless of the prefix/separator.
+		s := r.LinkPosition
+		i := len(s)
+		for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+			i--
+		}
+		if i == len(s) {
+			// No trailing digits - not a positional label.
 			continue
 		}
-		n, err := strconv.Atoi(r.LinkPosition[idx+1:])
+		n, err := strconv.Atoi(s[i:])
 		if err != nil || n < 0 {
 			continue
 		}
