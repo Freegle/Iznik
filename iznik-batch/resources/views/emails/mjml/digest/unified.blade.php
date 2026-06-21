@@ -236,7 +236,14 @@
             $summaryPosts = collect($posts);
             $summaryVisible = \App\Mail\Digest\DigestStyle::SUMMARY_VISIBLE_LINES;
             $summaryHidden = $summaryPosts->slice($summaryVisible);
-            $summaryLink = 'color: ' . \App\Mail\Digest\DigestStyle::OFFER_GREEN . '; text-decoration: none; display: block; margin-bottom: 4px;';
+            // Each summary line is broken with a trailing <br> rather than
+            // display:block on the <a>: Outlook's Word engine ignores display:block
+            // on inline elements, so items ran together (Discourse t/9363/31). <br>
+            // is the most space-efficient block break Outlook honours - about 5 bytes
+            // per line vs ~40 for a <div> wrapper or a <table> row - which matters in
+            // a digest that lists up to 200 posts, near Gmail's ~102KB clip. Vertical
+            // spacing comes from the mj-text line-height.
+            $summaryLink = 'color: ' . \App\Mail\Digest\DigestStyle::OFFER_GREEN . '; text-decoration: none;';
         @endphp
         @if($summaryPosts->count() >= 2)
         <mj-section background-color="#ffffff" padding="16px 20px 4px">
@@ -246,14 +253,14 @@
                 </mj-text>
                 <mj-text font-size="14px" color="#212529" line-height="1.6" padding="0">
                     @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
-                    <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                    <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a><br>
                     @endforeach
                     @if($summaryHidden->isNotEmpty())
                     <details style="margin-top: 2px;">
                         <summary style="cursor: pointer; color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; font-weight: 600;">Show {{ $summaryHidden->count() }} more</summary>
                         <div style="margin-top: 6px;">
                             @foreach($summaryHidden as $summaryPost)
-                            <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a>
+                            <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a><br>
                             @endforeach
                         </div>
                     </details>

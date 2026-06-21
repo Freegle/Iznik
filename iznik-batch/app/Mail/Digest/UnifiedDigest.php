@@ -11,6 +11,7 @@ use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
+use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
 use Carbon\Carbon;
 use Illuminate\Mail\Mailables\Address;
@@ -89,8 +90,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 // this only the rare clicked post can be attributed.
                 'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
                 'digest_number' => $this->digestNumber,
-                'has_amp' => $this->isAmpEnabled(),
-            ]
+                'has_amp' => $this->ampForRecipient(),
+            ],
+            // The has_amp COLUMN (not just the metadata key above) is what the
+            // ModTools sysadmin AMP stats read. This 7th argument was previously
+            // omitted, so every digest recorded has_amp=0 even though AMP was
+            // delivered - the digest "showed no AMP" in the stats. Pass it.
+            $this->ampForRecipient()
         );
 
         // Prepare posts with tracking URLs and decoded text.
@@ -302,6 +308,23 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
+     * Whether AMP is genuinely usable by this digest's recipient - used to set
+     * the has_amp TRACKING flag.
+     *
+     * AMP is enabled AND the recipient's email provider actually supports AMP for
+     * Email. This matches ChatNotification's has_amp semantics so the column
+     * reflects AMP the recipient can actually engage with and the AMP-vs-HTML
+     * stats compare like with like. (The AMP part itself is still rendered for
+     * every recipient when AMP is enabled - see build() - so this only governs
+     * what we COUNT, not what we send.)
+     */
+    protected function ampForRecipient(): bool
+    {
+        return $this->isAmpEnabled()
+            && AmpEmailSupport::isSupported($this->user->email_preferred ?? '');
+    }
+
+    /**
      * Build the message.
      */
     public function build(): static
@@ -448,7 +471,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         });
 
-        // Render AMP variant if enabled.
+        // Render AMP variant if enabled. (Rendered for all recipients; whether
+        // it's COUNTED as usable AMP is gated on provider support - see
+        // ampForRecipient()/has_amp tracking.)
         if ($this->isAmpEnabled()) {
             $ampPosts = $this->prepareAmpPosts();
 

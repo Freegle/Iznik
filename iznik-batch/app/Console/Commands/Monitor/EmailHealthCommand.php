@@ -133,6 +133,23 @@ class EmailHealthCommand extends Command
             $failures[] = "MAIL RETRY DEAD-LETTER: {$deadLetterCount} SpoolMail job(s) in failed_jobs";
         }
 
+        // --- AMP configuration sanity (runs 24/7) ---
+        // AMP email is gated on a non-empty secret (see AmpEmail::isAmpEnabled).
+        // If AMP is enabled but the secret is unset, every email silently ships
+        // WITHOUT its AMP part and the sysadmin AMP stats read zero - a
+        // degradation that previously went unnoticed for months. Surface it as a
+        // warning, NOT a hard failure: AMP being off degrades engagement but
+        // doesn't stop mail flowing, and we don't want to conflate it with a
+        // smarthost outage or page on-call for a config issue.
+        if (config('freegle.amp.enabled', true) && empty(config('freegle.amp.secret'))) {
+            $ampMsg = 'AMP CONFIG: amp.enabled is true but amp.secret is empty - '
+                . 'all email ships without AMP and the AMP stats read zero (set AMP_SECRET)';
+            $this->warn($ampMsg);
+            Log::warning("[EmailHealth] {$ampMsg}");
+        } else {
+            $this->info('AMP config OK.');
+        }
+
         // --- Result ---
         if (! empty($failures)) {
             foreach ($failures as $f) {
