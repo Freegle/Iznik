@@ -22,7 +22,11 @@ import {
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 
-export async function setupRipplingExplorer({ props, digestModal, legendMode }) {
+export async function setupRipplingExplorer({
+  props,
+  digestModal,
+  legendMode,
+}) {
   await import('leaflet/dist/leaflet.css')
   const L = (await import('leaflet')).default
 
@@ -31,7 +35,9 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
 
   function apiUrl(path) {
     const sep = path.includes('?') ? '&' : '?'
-    return `${props.spatialUrl}${path}${sep}jwt=${encodeURIComponent(props.jwt)}`
+    return `${props.spatialUrl}${path}${sep}jwt=${encodeURIComponent(
+      props.jwt
+    )}`
   }
 
   const QCOLORS = ['', '#d73027', '#fc8d59', '#fee08b', '#91cf60', '#1a9850']
@@ -61,6 +67,10 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   let layers = {}
   let debounceTimer = null
   let isochroneGeneration = 0
+  // Bumped on every location change. Any async fetch tied to a location captures
+  // this at the start and discards its result if it no longer matches, so a slow
+  // response for the previous spot can't repaint stale data over the new one.
+  let locationGeneration = 0
   let fitViewOnNextIsochrone = false
   // Local deprivation baseline: fraction of Q1–Q3 freeglers within the 30-min
   // drive standard isochrone (fairness=0) for the current location.
@@ -134,20 +144,28 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     const inbound = viewMode === 'inbound'
     // Hide outbound-only controls in inbound mode — except the time
     // slider, which both views need to control the maximum reach.
-    document.querySelectorAll('#rippling-panel-body > .rpl-slider-row, .rpl-ripple-row, #rippling-freegler-bar').forEach((el) => {
-      if (el.id === 'rippling-inbound-row') return
-      if (el.id === 'rippling-time-row') {
-        el.style.display = ''  // always shown
-        return
-      }
-      el.style.display = inbound ? 'none' : ''
-    })
+    document
+      .querySelectorAll(
+        '#rippling-panel-body > .rpl-slider-row, .rpl-ripple-row, #rippling-freegler-bar'
+      )
+      .forEach((el) => {
+        if (el.id === 'rippling-inbound-row') return
+        if (el.id === 'rippling-time-row') {
+          el.style.display = '' // always shown
+          return
+        }
+        el.style.display = inbound ? 'none' : ''
+      })
     // Hide the deprivation/freeglers/groups toggles in inbound mode — they
     // describe outbound layers.
-    const layerToggles = document.querySelector('#rippling-panel-body > div[style*="flex-wrap"]')
+    const layerToggles = document.querySelector(
+      '#rippling-panel-body > div[style*="flex-wrap"]'
+    )
     if (layerToggles) layerToggles.style.display = inbound ? 'none' : ''
     // Also the walk/cycle/drive travel-mode row is outbound-only.
-    const travelModeRow = document.querySelector('#rippling-panel-body > .rpl-mode-row:not(#rippling-view-mode)')
+    const travelModeRow = document.querySelector(
+      '#rippling-panel-body > .rpl-mode-row:not(#rippling-view-mode)'
+    )
     if (travelModeRow) travelModeRow.style.display = inbound ? 'none' : ''
     inboundRow.style.display = inbound ? '' : 'none'
     // Swap the legend via the reactive Vue component.
@@ -208,9 +226,18 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
 
   // ── Digest-simulator sliders ──────────────────────────────────────
   const knobs = {
-    close:  { input: document.getElementById('rippling-w-close'),  val: document.getElementById('rippling-w-close-val') },
-    budget: { input: document.getElementById('rippling-w-budget'), val: document.getElementById('rippling-w-budget-val') },
-    anchor: { input: document.getElementById('rippling-w-anchor'), val: document.getElementById('rippling-w-anchor-val') },
+    close: {
+      input: document.getElementById('rippling-w-close'),
+      val: document.getElementById('rippling-w-close-val'),
+    },
+    budget: {
+      input: document.getElementById('rippling-w-budget'),
+      val: document.getElementById('rippling-w-budget-val'),
+    },
+    anchor: {
+      input: document.getElementById('rippling-w-anchor'),
+      val: document.getElementById('rippling-w-anchor-val'),
+    },
   }
   const showDigestBtn = document.getElementById('rippling-show-digest')
   const simSummaryEl = document.getElementById('rippling-sim-summary')
@@ -279,11 +306,16 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   function updateInboxHomeSummary(data, parts) {
     const homeSummary = document.getElementById('rippling-home-summary')
     const total = data.pool_size || 0
-    const homeHead = data.home_groups && data.home_groups.length
-      ? `<strong>Home:</strong> ${data.home_groups.map((g) => g.name).join(', ')}`
-      : `<strong>No home group at this point.</strong>`
+    const homeHead =
+      data.home_groups && data.home_groups.length
+        ? `<strong>Home:</strong> ${data.home_groups
+            .map((g) => g.name)
+            .join(', ')}`
+        : `<strong>No home group at this point.</strong>`
     homeSummary.innerHTML =
-      `<div style="font-size:13px;font-weight:700;color:#333;margin-bottom:2px">${total} post${total === 1 ? '' : 's'} in digest</div>` +
+      `<div style="font-size:13px;font-weight:700;color:#333;margin-bottom:2px">${total} post${
+        total === 1 ? '' : 's'
+      } in digest</div>` +
       `${homeHead}<br>` +
       `<span style="color:#27ae60">●</span> ${parts.activeHome.length} active home-group · ` +
       `<span style="color:#1f77b4">●</span> ${parts.activeCross.length} rippled in<br>` +
@@ -296,9 +328,12 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       { count: parts.taken.length, color: '#888' },
     ])
     // Lower summary: cluster note only, when there are any clusters.
-    simSummaryEl.innerHTML = data.poster_groups && data.poster_groups.length
-      ? `<strong>${data.poster_groups.length}</strong> same-poster cluster${data.poster_groups.length === 1 ? '' : 's'}.`
-      : ''
+    simSummaryEl.innerHTML =
+      data.poster_groups && data.poster_groups.length
+        ? `<strong>${data.poster_groups.length}</strong> same-poster cluster${
+            data.poster_groups.length === 1 ? '' : 's'
+          }.`
+        : ''
   }
 
   // Draws each home-group polygon on the map, lazily creating the inbox
@@ -360,10 +395,13 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     buckets.forEach((bucketPosts) => {
       const minRank = bucketPosts[0]._rank
       const color = colorFor(bucketPosts[0])
-      const t = totalRanked > 1 ? (minRank - 1) / Math.max(totalRanked - 1, 1) : 0
+      const t =
+        totalRanked > 1 ? (minRank - 1) / Math.max(totalRanked - 1, 1) : 0
       const baseOpacity = 0.95 - 0.45 * t
       const dotOpacity =
-        bucketPosts[0].successful || bucketPosts[0].promised ? 0.85 : baseOpacity
+        bucketPosts[0].successful || bucketPosts[0].promised
+          ? 0.85
+          : baseOpacity
       // Truncate the label list at 6 ranks to avoid overflow.
       const ranks = bucketPosts.map((p) => p._rank)
       let label = ranks.slice(0, 6).join(',')
@@ -555,7 +593,9 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
 
   async function applyUrlInit() {
     if (pendingView === 'inbound' || pendingView === 'outbound') {
-      const btn = document.querySelector(`.rpl-mode-btn[data-view="${pendingView}"]`)
+      const btn = document.querySelector(
+        `.rpl-mode-btn[data-view="${pendingView}"]`
+      )
       if (btn) btn.click()
     }
     if (!isNaN(pendingLat) && !isNaN(pendingLng)) {
@@ -596,8 +636,50 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     }
   }, 0)
 
+  // Drastic reset of everything tied to the previous location. Called from
+  // setLocation before the new spot is drawn, so the panel never shows a mix of
+  // old and new (e.g. the previous location's group list). A page reload has the
+  // same effect from a clean slate; this gives the in-place equivalent.
+  function resetForNewLocation() {
+    // Map overlays from the old location.
+    clearOutboundLayers() // isochrone + quintile layers, and freegler dots (via event)
+    clearInboundLayers() // digest inbox + its isochrone
+    Object.values(groupLayerMap).forEach((l) => map.removeLayer(l))
+    groupLayerMap = {}
+    if (morphLayer && map.hasLayer(morphLayer)) {
+      map.removeLayer(morphLayer)
+      morphLayer = null
+    }
+    // Cached datasets / derived state for the old spot.
+    groupFeatures = []
+    homeGroupIds = new Set()
+    lastIsoData = null
+    lastRanked = []
+    allFreeglers = []
+    freeglersGrid = []
+    totalLocatedFromServer = 0
+    localBaselineReady = false
+    rippleFrames = []
+    crossPostingDetected = false
+    rippleMaxImbalance = null
+    // Derived panels that would otherwise keep showing the old answer.
+    const groupsList = document.getElementById('rippling-groups-list')
+    if (groupsList) groupsList.innerHTML = ''
+    const groupsSection = document.getElementById('rippling-groups-section')
+    if (groupsSection) groupsSection.style.display = 'none'
+    const statsEl = document.getElementById('rippling-stats')
+    if (statsEl) statsEl.innerHTML = ''
+  }
+
   function setLocation(lat, lng, fly) {
     if (ripplePlaying || rippleFrames.length > 0) stopRipple()
+    // A new location invalidates everything derived from the old one. Bump the
+    // generation (so in-flight fetches drop their late results) and wipe the
+    // cached datasets, map overlays and derived panels straight away, so nothing
+    // from the previous spot lingers. Without this a slow groups fetch for the
+    // old location could repaint its group list over the new one.
+    locationGeneration++
+    resetForNewLocation()
     currentLat = lat
     currentLng = lng
     syncUrl()
@@ -610,7 +692,7 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       // can sit on top of the SVG circle and hide the red dot.
       if (!map.getPane('locationPane')) {
         const p = map.createPane('locationPane')
-        p.style.zIndex = 700  // above markerPane (600) and overlayPane (400)
+        p.style.zIndex = 700 // above markerPane (600) and overlayPane (400)
       }
       marker = L.marker([lat, lng], {
         pane: 'locationPane',
@@ -654,16 +736,22 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   // (slider-set) reach deviates from that regional mix, so the needle
   // should sit dead-centre when the slider is cranked to the top.
   async function fetchLocalBaseline(lat, lng) {
+    const gen = locationGeneration
     const maxReach = Number(timeSlider.max) || 60
     // New location: the previous area's baseline no longer applies.
     localBaselineReady = false
     try {
       const url = apiUrl(
-        `/v1/fairness?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&minutes=${maxReach}&mode=drive&fairness=0`
+        `/v1/fairness?lat=${lat.toFixed(6)}&lng=${lng.toFixed(
+          6
+        )}&minutes=${maxReach}&mode=drive&fairness=0`
       )
       const r = await fetch(url)
+      // Discard a late baseline for a location we've since moved away from.
+      if (gen !== locationGeneration) return
       if (!r.ok) return
       const data = await r.json()
+      if (gen !== locationGeneration) return
       if (data.fairness_score !== undefined && data.fairness_score >= 0) {
         localBaseline = Math.round(data.fairness_score * 100)
         localBaselineReady = true
@@ -728,8 +816,15 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
           const allRings = allIsoRings(data)
           if (allRings.length > 0) {
             const allCoords = allRings.flat()
-            const bounds = L.latLngBounds(allCoords.map(([lng, lat]) => [lat, lng]))
-            if (bounds.isValid()) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 13, animate: false })
+            const bounds = L.latLngBounds(
+              allCoords.map(([lng, lat]) => [lat, lng])
+            )
+            if (bounds.isValid())
+              map.fitBounds(bounds, {
+                padding: [60, 60],
+                maxZoom: 13,
+                animate: false,
+              })
           }
         }
         await fetchFreeglers()
@@ -851,7 +946,11 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
           el.style.transition = dDur > 0 ? `d ${dDur}ms ease-out` : 'none'
         }
         existing.setLatLngs(coords)
-        existing.setStyle({ ...opts, fillOpacity: targetFill, opacity: targetOpacity })
+        existing.setStyle({
+          ...opts,
+          fillOpacity: targetFill,
+          opacity: targetOpacity,
+        })
         existing.setTooltipContent(tooltip)
         newLayers[key] = existing
         delete outgoing[key]
@@ -882,7 +981,6 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     requestAnimationFrame(() => requestAnimationFrame(updateFairnessClip))
     map.once('moveend', updateFairnessClip)
   }
-
 
   function updateFairnessClip() {
     const svgEl = map.getPane('overlayPane').querySelector('svg')
@@ -1084,9 +1182,13 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   async function fetchFreeglers(minutesOverride) {
     if (currentLat === null) return
     const minutes =
-      minutesOverride !== undefined ? minutesOverride : parseInt(timeSlider.value)
+      minutesOverride !== undefined
+        ? minutesOverride
+        : parseInt(timeSlider.value)
     const url = apiUrl(
-      `/v1/nearby-freeglers?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}`
+      `/v1/nearby-freeglers?lat=${currentLat.toFixed(
+        6
+      )}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}`
     )
     try {
       const r = await fetch(url)
@@ -1109,8 +1211,8 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
 
   map.on('moveend zoomend', () => {
     drawGroupsOverlay()
-    drawFreeglersLayer()  // always re-apply zoom gate (clears dots when zoomed out)
-    if (ripplePlaying) return  // skip expensive re-fetch during animation
+    drawFreeglersLayer() // always re-apply zoom gate (clears dots when zoomed out)
+    if (ripplePlaying) return // skip expensive re-fetch during animation
     clearTimeout(freeglersMapTimer)
     freeglersMapTimer = setTimeout(async () => {
       await fetchFreeglers()
@@ -1140,7 +1242,7 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     // deprivation percentage even when dots are hidden (toggle off or zoom < 11).
     buildFreeglersGrid()
     if (!showFreeglers) return
-    if (viewMode === 'inbound') return  // freegler dots are outbound-only
+    if (viewMode === 'inbound') return // freegler dots are outbound-only
     if (map.getZoom() < FREEGLER_DOT_MIN_ZOOM) return
     freeglersGrid.forEach((g) => {
       const m = L.circleMarker([g.lat, g.lng], {
@@ -1179,7 +1281,11 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   // otherwise scale the sampled inside-count back up to the population, or
   // fall back to the full located total in static view.
   function estimateNotifiedCount(data, insideCount) {
-    if (data && data.cumulative_users !== undefined && data.cumulative_users !== null)
+    if (
+      data &&
+      data.cumulative_users !== undefined &&
+      data.cumulative_users !== null
+    )
       return data.cumulative_users
     const totalLocated = totalLocatedFromServer || allFreeglers.length
     const sampleSize = allFreeglers.length
@@ -1199,7 +1305,9 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       bar.style.display = 'none'
       return
     }
-    const totalEstimate = Math.round(estimatedInsideLocated / (1 - UNLOCATED_FRACTION))
+    const totalEstimate = Math.round(
+      estimatedInsideLocated / (1 - UNLOCATED_FRACTION)
+    )
     const unlocatedShare = totalEstimate - estimatedInsideLocated
     bar.innerHTML =
       `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
@@ -1244,6 +1352,7 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   let homeGroupIds = new Set()
 
   async function fetchAndDrawGroups(lat, lng) {
+    const gen = locationGeneration
     Object.values(groupLayerMap).forEach((l) => map.removeLayer(l))
     groupLayerMap = {}
     groupFeatures = []
@@ -1253,8 +1362,12 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
         `/v1/groups/nearby?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}`
       )
       const r = await fetch(url)
+      // A newer location superseded this fetch while it was in flight — drop the
+      // result so the old spot's groups can't overwrite the current ones.
+      if (gen !== locationGeneration) return
       if (!r.ok) return
       const data = await r.json()
+      if (gen !== locationGeneration) return
       groupFeatures = data.features || []
       groupFeatures.forEach((f) => {
         if (f.properties.contains) homeGroupIds.add(f.properties.id)
@@ -1351,7 +1464,7 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
         color: '#27ae60',
         weight: isHome ? 3 : 2,
         fillColor: '#27ae60',
-        fillOpacity: isHome ? 0.10 : 0.05,
+        fillOpacity: isHome ? 0.1 : 0.05,
         dashArray: null,
       })
         .addTo(map)
@@ -1605,15 +1718,15 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   // This is physically correct (each ray sweeps outward as drive time grows)
   // and works regardless of source-frame vertex counts.
   // ---------------------------------------------------------------------------
-  const RIPPLE_FRAMES = 30          // 30 keyframes = 1 per drive-minute
+  const RIPPLE_FRAMES = 30 // 30 keyframes = 1 per drive-minute
   const RIPPLE_STEP_MINS = 1
-  const N_ANGLES = 360              // resolution of the radial parameterisation
+  const N_ANGLES = 360 // resolution of the radial parameterisation
 
   let rippleFrames = []
   let rippleStep = 0
   let ripplePlaying = false
   let crossPostingDetected = false
-  let rippleMaxImbalance = null  // {pct, minute} — worst affluence bias seen during animation
+  let rippleMaxImbalance = null // {pct, minute} — worst affluence bias seen during animation
 
   // rAF playback state.  rippleAnchorFrame + rippleAnchorTime define the
   // reference point for "current playback position"; current frame fraction
@@ -1804,9 +1917,13 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   async function fetchRippleSchedule() {
     const curveShape = 'step-70'
     const scheduleURL = apiUrl(
-      `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
+      `/v1/ripple-schedule?lat=${currentLat.toFixed(
         6
-      )}&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${RIPPLE_FRAMES * RIPPLE_STEP_MINS}&curve=${curveShape}`
+      )}&lng=${currentLng.toFixed(
+        6
+      )}&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${
+        RIPPLE_FRAMES * RIPPLE_STEP_MINS
+      }&curve=${curveShape}`
     )
     try {
       return await fetch(scheduleURL).then((r) => r.json())
@@ -1846,7 +1963,11 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     prepareRippleUI(btn)
 
     const scheduleResp = await fetchRippleSchedule()
-    if (!scheduleResp || !scheduleResp.schedule || scheduleResp.schedule.length === 0) {
+    if (
+      !scheduleResp ||
+      !scheduleResp.schedule ||
+      scheduleResp.schedule.length === 0
+    ) {
       document.getElementById('rippling-info').textContent =
         'No ripple data — try a different location'
       btn.disabled = false
@@ -1864,7 +1985,8 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       cumulative_users: entry.cumulative_users,
       tick: entry.tick,
     }))
-    totalLocatedFromServer = scheduleResp.total_freeglers || totalLocatedFromServer
+    totalLocatedFromServer =
+      scheduleResp.total_freeglers || totalLocatedFromServer
 
     // Reparameterise every keyframe's standard ring as a radii array, once,
     // so the rAF hot path is pure arithmetic.
@@ -2005,7 +2127,8 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   // initial 24-hour "self" period.
   function maybeMarkCrossPosting(frameA, data) {
     if (crossPostingDetected) return
-    if (!groupFeatures.length || !data.standard || !hasRing(data.standard)) return
+    if (!groupFeatures.length || !data.standard || !hasRing(data.standard))
+      return
     const hours = frameToHours(frameA, rippleFrames.length)
     if (hours < 24) return
     const hit = checkCrossPosting(data.standard.geometry.coordinates[0])
