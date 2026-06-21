@@ -289,7 +289,15 @@ class PushNotificationService
      * Exhort: title/body/route taken from the notification, EXHORT category/tips
      * channel).
      */
-    public function buildUserNotificationPayload(int $userId): array
+    /**
+     * The unread counts that make up a consumer's app-icon badge: unseen
+     * on-site notifications + unread User2User/User2Mod chats. This is the
+     * "actionable items" count the badge should reflect - NOT informational
+     * pushes such as the daily "new posts near you" digest.
+     *
+     * @return array{0:int,1:int} [chatcount, notifcount]
+     */
+    public function consumerUnreadCounts(int $userId): array
     {
         $notifcount = (int) DB::table('users_notifications')
             ->where('touser', $userId)
@@ -307,6 +315,13 @@ class PushNotificationService
                 WHERE cm.chatid = cr.chatid AND cm.userid <> ?
             ))', [$userId])
             ->count();
+
+        return [$chatcount, $notifcount];
+    }
+
+    public function buildUserNotificationPayload(int $userId): array
+    {
+        [$chatcount, $notifcount] = $this->consumerUnreadCounts($userId);
 
         $total = $chatcount + $notifcount;
 
@@ -1309,6 +1324,15 @@ class PushNotificationService
         }
         $imageUrl = $imageUrls[0] ?? null;
 
+        // The app-icon badge must reflect the user's actionable unread items
+        // (unread chats + unseen notifications), NOT the number of posts in this
+        // informational digest. Previously this was `(string) $count`, so a daily
+        // "new posts near you" push set the FD badge to the post count and made it
+        // look like there was unread activity to deal with. Use the real unread
+        // total so the digest never inflates the badge.
+        [$chatcount, $notifcount] = $this->consumerUnreadCounts($userId);
+        $badge = $chatcount + $notifcount;
+
         return [
             'channel_id'        => 'new_posts',
             'category'          => self::CATEGORY_NEW_POSTS,
@@ -1323,7 +1347,7 @@ class PushNotificationService
             'summary'           => 'Freegle • ' . $count . ' new post' . ($count === 1 ? '' : 's'),
             'moreCount'         => (string) $moreCount,
             'timestamp'         => (string) time(),
-            'badge'             => (string) $count,
+            'badge'             => (string) $badge,
             'content-available' => '1',
             'modtools'          => 'false',
         ];
