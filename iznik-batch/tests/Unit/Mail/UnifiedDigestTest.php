@@ -219,12 +219,11 @@ class UnifiedDigestTest extends TestCase
         $this->assertFalse((bool) $tracking->has_amp);
     }
 
-    public function test_build_renders_amp_for_supported_recipient(): void
+    public function test_build_renders_amp_when_enabled(): void
     {
-        // AMP enabled + a provider that supports AMP → build() renders the AMP
-        // variant. This also exercises the AMP-render block, which the other
-        // build() tests no longer reach now that AMP is domain-gated (they use
-        // @test.com addresses).
+        // With AMP enabled, build() renders the AMP variant. (The variant is
+        // rendered for every recipient; provider support only governs the has_amp
+        // tracking flag, not whether the AMP part is built.)
         config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
 
         $mail = $this->digestForRecipientEmail('recipient@gmail.com');
@@ -236,23 +235,22 @@ class UnifiedDigestTest extends TestCase
         $ref->setAccessible(true);
         $ampHtml = $ref->getValue($mail);
 
-        $this->assertNotEmpty($ampHtml, 'AMP variant should be rendered for an AMP-supported recipient');
+        $this->assertNotEmpty($ampHtml, 'AMP variant should be rendered when AMP is enabled');
         $this->assertStringContainsString('amp4email', $ampHtml);
     }
 
-    public function test_build_skips_amp_for_unsupported_recipient(): void
+    public function test_build_skips_amp_when_disabled(): void
     {
-        // A provider that does not support AMP must NOT get an AMP variant, even
-        // with AMP enabled - we don't ship AMP parts clients will ignore.
-        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+        // No secret => AMP disabled => no AMP variant rendered.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
 
-        $mail = $this->digestForRecipientEmail('recipient@example.com');
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
         $mail->build();
 
         $ref = new \ReflectionProperty($mail, 'ampHtml');
         $ref->setAccessible(true);
 
-        $this->assertNull($ref->getValue($mail), 'No AMP should be rendered for an unsupported recipient');
+        $this->assertNull($ref->getValue($mail), 'No AMP should be rendered when AMP is disabled');
     }
 
     /**

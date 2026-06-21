@@ -308,14 +308,15 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
-     * Whether this digest should include (and record) AMP for its recipient.
+     * Whether AMP is genuinely usable by this digest's recipient - used to set
+     * the has_amp TRACKING flag.
      *
-     * AMP is rendered, and the has_amp tracking flag set, only when AMP is
-     * enabled AND the recipient's email provider actually supports AMP for Email.
-     * This matches ChatNotification so the has_amp column reflects what is
-     * genuinely usable by the recipient and the AMP-vs-HTML stats compare like
-     * with like; sending an AMP part to a provider that ignores it (e.g. Outlook)
-     * only bloats the message.
+     * AMP is enabled AND the recipient's email provider actually supports AMP for
+     * Email. This matches ChatNotification's has_amp semantics so the column
+     * reflects AMP the recipient can actually engage with and the AMP-vs-HTML
+     * stats compare like with like. (The AMP part itself is still rendered for
+     * every recipient when AMP is enabled - see build() - so this only governs
+     * what we COUNT, not what we send.)
      */
     protected function ampForRecipient(): bool
     {
@@ -470,8 +471,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         });
 
-        // Render AMP variant if enabled and the recipient's provider supports it.
-        if ($this->ampForRecipient()) {
+        // Render AMP variant if enabled. (Rendered for all recipients; whether
+        // it's COUNTED as usable AMP is gated on provider support - see
+        // ampForRecipient()/has_amp tracking.)
+        if ($this->isAmpEnabled()) {
             $ampPosts = $this->prepareAmpPosts();
 
             // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to
