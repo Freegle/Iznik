@@ -66,6 +66,11 @@ post once it has rippled out to their area, so members are never nudged about so
 can't yet act on. The notification arrives when the post reaches them, at which point they can
 reply straight away.
 
+A nice side effect: because what they're shown is now driven by where they actually are and
+spreads closest-first, the posts in their **"what's new" digest will feel more relevant** -
+more genuinely local and worth a look, and less of the far-away clutter they'd have skimmed
+past before.
+
 ### A short note in Help
 There's a new entry in **Help** called **"Which posts do I see?"** that explains all of
 this in members' own terms. It's flagged as a new change. The wording is:
