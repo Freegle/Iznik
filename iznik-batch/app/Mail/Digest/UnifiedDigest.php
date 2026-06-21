@@ -11,6 +11,7 @@ use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
+use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
 use Carbon\Carbon;
 use Illuminate\Mail\Mailables\Address;
@@ -89,8 +90,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 // this only the rare clicked post can be attributed.
                 'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
                 'digest_number' => $this->digestNumber,
-                'has_amp' => $this->isAmpEnabled(),
-            ]
+                'has_amp' => $this->ampForRecipient(),
+            ],
+            // The has_amp COLUMN (not just the metadata key above) is what the
+            // ModTools sysadmin AMP stats read. This 7th argument was previously
+            // omitted, so every digest recorded has_amp=0 even though AMP was
+            // delivered - the digest "showed no AMP" in the stats. Pass it.
+            $this->ampForRecipient()
         );
 
         // Prepare posts with tracking URLs and decoded text.
@@ -302,6 +308,22 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
+     * Whether this digest should include (and record) AMP for its recipient.
+     *
+     * AMP is rendered, and the has_amp tracking flag set, only when AMP is
+     * enabled AND the recipient's email provider actually supports AMP for Email.
+     * This matches ChatNotification so the has_amp column reflects what is
+     * genuinely usable by the recipient and the AMP-vs-HTML stats compare like
+     * with like; sending an AMP part to a provider that ignores it (e.g. Outlook)
+     * only bloats the message.
+     */
+    protected function ampForRecipient(): bool
+    {
+        return $this->isAmpEnabled()
+            && AmpEmailSupport::isSupported($this->user->email_preferred ?? '');
+    }
+
+    /**
      * Build the message.
      */
     public function build(): static
@@ -448,8 +470,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         });
 
-        // Render AMP variant if enabled.
-        if ($this->isAmpEnabled()) {
+        // Render AMP variant if enabled and the recipient's provider supports it.
+        if ($this->ampForRecipient()) {
             $ampPosts = $this->prepareAmpPosts();
 
             // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to
