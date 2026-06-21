@@ -219,6 +219,42 @@ class UnifiedDigestTest extends TestCase
         $this->assertFalse((bool) $tracking->has_amp);
     }
 
+    public function test_build_renders_amp_for_supported_recipient(): void
+    {
+        // AMP enabled + a provider that supports AMP → build() renders the AMP
+        // variant. This also exercises the AMP-render block, which the other
+        // build() tests no longer reach now that AMP is domain-gated (they use
+        // @test.com addresses).
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        // $ampHtml is protected; read it via reflection to confirm the AMP
+        // variant was rendered.
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+        $ampHtml = $ref->getValue($mail);
+
+        $this->assertNotEmpty($ampHtml, 'AMP variant should be rendered for an AMP-supported recipient');
+        $this->assertStringContainsString('amp4email', $ampHtml);
+    }
+
+    public function test_build_skips_amp_for_unsupported_recipient(): void
+    {
+        // A provider that does not support AMP must NOT get an AMP variant, even
+        // with AMP enabled - we don't ship AMP parts clients will ignore.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $mail = $this->digestForRecipientEmail('recipient@example.com');
+        $mail->build();
+
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        $this->assertNull($ref->getValue($mail), 'No AMP should be rendered for an unsupported recipient');
+    }
+
     /**
      * Fabricate the minimal data the digest templates need so they can be
      * rendered standalone (empty posts skips the per-post loop; jobs/sponsors
