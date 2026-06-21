@@ -104,10 +104,6 @@ export async function setupRipplingExplorer({
   let inboxLayer = null
   let inboxIsoLayer = null
   let lastRanked = [] // last digest-simulator response, used by the mock-up modal
-  let lastHomeGroups = []
-  let lastActiveCount = 0
-  let lastPromisedCount = 0
-  let lastTakenCount = 0
   const inboundRow = document.getElementById('rippling-inbound-row')
 
   document.querySelectorAll('.rpl-mode-btn[data-view]').forEach((btn) => {
@@ -457,10 +453,6 @@ export async function setupRipplingExplorer({
     if (!data) return
     const parts = partitionInboxData(data)
     lastRanked = parts.ranked
-    lastActiveCount = parts.active.length
-    lastPromisedCount = parts.promised.length
-    lastTakenCount = parts.taken.length
-    lastHomeGroups = data.home_groups || []
 
     updateInboxHomeSummary(data, parts)
     drawHomeGroupPolygons(data.home_groups)
@@ -1115,6 +1107,11 @@ export async function setupRipplingExplorer({
         <div id="rpl-swing-label" style="font-size:14px;font-weight:700;color:#888;margin:2px 0 4px">Loading Freegler data…</div>
         <div id="rpl-swing-pct" style="font-size:11px;color:#888;line-height:1.5">Waiting for Freegler data…</div>
       </div>`
+    // Populate the needle label and bias text. updateStats only renders the
+    // gauge markup (with placeholder labels); setSwingometer fills in the actual
+    // reading from the area baseline, so without this call the swingometer is
+    // stuck on "Loading Freegler data…" in every area that has deprivation data.
+    setSwingometer(roadPct)
   }
 
   document
