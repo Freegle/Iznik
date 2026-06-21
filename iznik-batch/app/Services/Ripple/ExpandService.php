@@ -87,6 +87,18 @@ class ExpandService
 
     private function initialiseNew(bool $dryRun, int $limit, array &$stats): void
     {
+        // Go-live flood guard: only posts that arrived on or after the configured
+        // cutoff ever start rippling, so flipping RIPPLE_ENABLED on does not make the
+        // entire historical pending backlog eligible at once. Empty config = no cutoff.
+        $enabledAt = config('freegle.ripple.enabled_at');
+        $cutoffSql = '';
+        $params = [];
+        if (!empty($enabledAt)) {
+            $cutoffSql = ' AND ms.arrival >= ?';
+            $params[] = $enabledAt;
+        }
+        $params[] = $limit;
+
         $rows = DB::select(
             'SELECT ms.msgid AS msgid,
                     ANY_VALUE(ST_Y(ms.point)) AS lat,
@@ -94,10 +106,10 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL
+             WHERE mr.msgid IS NULL' . $cutoffSql . '
              GROUP BY ms.msgid
              LIMIT ?',
-            [$limit]
+            $params
         );
 
         foreach ($rows as $row) {
