@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\IrishGridConverter;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -19,6 +20,13 @@ use RuntimeException;
  */
 class DeprivationDataService
 {
+    /**
+     * Identify ourselves on outbound requests. Some open-data endpoints (notably
+     * OpenDataNI) reject requests with no User-Agent with HTTP 403, so every fetch
+     * sends this header.
+     */
+    private const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Freegle-SpatialData/1.0';
+
     /**
      * Build the quintile CSV and write it to $outputPath.
      * Each row: lat,lng,quintile
@@ -58,7 +66,7 @@ class DeprivationDataService
     private function downloadImdLookup(): array
     {
         $url = 'https://raw.githubusercontent.com/mysociety/composite_uk_imd/master/data/uk_index/UK_IMD_E.csv';
-        $response = Http::timeout(60)->get($url);
+        $response = Http::timeout(60)->withHeaders(['User-Agent' => self::USER_AGENT])->get($url);
 
         if (!$response->successful()) {
             throw new RuntimeException("Failed to download IMD CSV: HTTP {$response->status()}");
@@ -123,7 +131,7 @@ class DeprivationDataService
         $offset = 0;
 
         while (true) {
-            $response = Http::timeout(60)->get($url, [
+            $response = Http::timeout(60)->withHeaders(['User-Agent' => self::USER_AGENT])->get($url, [
                 'where'             => '1=1',
                 'outFields'         => 'lsoa11cd',
                 'returnGeometry'    => 'true',
@@ -178,7 +186,7 @@ class DeprivationDataService
         $lastOid = 0;
 
         while (true) {
-            $response = Http::timeout(60)->get($url, [
+            $response = Http::timeout(60)->withHeaders(['User-Agent' => self::USER_AGENT])->get($url, [
                 'where'             => "objectid > {$lastOid}",
                 'outFields'         => 'objectid,datazone',
                 'returnGeometry'    => 'true',
@@ -233,7 +241,7 @@ class DeprivationDataService
         $url = 'https://admin.opendatani.gov.uk/dataset/678697e1-ae71-41f3-abba-0ef5f3f352c2'
              . '/resource/80392e82-8bee-42de-a1e3-82d1cbaa983f/download/soa2001.json';
 
-        $response = Http::timeout(120)->get($url);
+        $response = Http::timeout(120)->withHeaders(['User-Agent' => self::USER_AGENT])->get($url);
         if (!$response->successful()) {
             throw new RuntimeException("NI OpenData API failed: HTTP {$response->status()}");
         }
