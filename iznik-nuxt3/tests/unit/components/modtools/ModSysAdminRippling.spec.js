@@ -120,4 +120,153 @@ describe('ModSysAdminRippling', () => {
     expect(wrapper.html()).toContain('No hotspots flagged')
     expect(wrapper.html()).toContain('No proposals')
   })
+
+  // §16.1/§16.2 — volume & reach weekly rollup
+  describe('live_metrics section', () => {
+    it('shows "No rollup data yet" when live_metrics is empty or absent', async () => {
+      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('No rollup data yet')
+    })
+
+    it('renders live metric rows returned by the API', async () => {
+      mockFetchMetrics.mockResolvedValue({
+        totals: [],
+        recent: [],
+        live_metrics: [
+          {
+            period_start: '2026-06-16',
+            metric: 'volume_posts_p50',
+            value: 42.5,
+            sample_size: 80,
+          },
+        ],
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const html = wrapper.html()
+      expect(html).toContain('volume_posts_p50')
+      expect(html).toContain('42.5')
+      expect(html).toContain('2026-06-16')
+    })
+  })
+
+  // §16.3 — cross-group reach summary
+  describe('cross_group_summary section', () => {
+    it('renders the cross-group reach heading', async () => {
+      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('Cross-group reach')
+    })
+
+    it('shows the rippled-in count and cross_group_pct from the API', async () => {
+      mockFetchMetrics.mockResolvedValue({
+        totals: [],
+        recent: [],
+        cross_group_summary: {
+          period_days: 30,
+          rippled_in: 57,
+          total: 300,
+          cross_group_pct: 19.0,
+          approval_rate: 72.0,
+        },
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const html = wrapper.html()
+      expect(html).toContain('57')
+      expect(html).toContain('19.0%')
+    })
+
+    it('shows — for approval_rate when rippled_in is zero', async () => {
+      mockFetchMetrics.mockResolvedValue({
+        totals: [],
+        recent: [],
+        cross_group_summary: {
+          period_days: 30,
+          rippled_in: 0,
+          total: 100,
+          cross_group_pct: 0,
+          approval_rate: 0,
+        },
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('—')
+    })
+  })
+
+  // §16.4 — timing / capture from offline simulator
+  describe('capture_summary section', () => {
+    it('shows "No simulator data yet" when week_start is empty', async () => {
+      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('No simulator data yet')
+    })
+
+    it('renders capture rate and curve when data is present', async () => {
+      mockFetchMetrics.mockResolvedValue({
+        totals: [],
+        recent: [],
+        capture_summary: {
+          week_start: '2026-06-09',
+          curve: 'front-heavy',
+          pairs_total: 200,
+          pairs_in_time: 150,
+          pairs_late: 40,
+          capture_rate: 75.0,
+          reply_p50_hours: 2.5,
+          reply_p75_hours: 6.0,
+        },
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const html = wrapper.html()
+      expect(html).toContain('front-heavy')
+      expect(html).toContain('75.0%')
+      expect(html).toContain('2.5h')
+      expect(html).toContain('2026-06-09')
+    })
+  })
+
+  // §15/§16.5 — held-reply friction summary
+  describe('held_reply_summary section', () => {
+    it('renders the held external replies heading', async () => {
+      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('Held external replies')
+    })
+
+    it('shows "No held replies recorded yet" when the list is empty', async () => {
+      mockFetchMetrics.mockResolvedValue({
+        totals: [],
+        recent: [],
+        held_reply_summary: [],
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('No held replies recorded yet')
+    })
+
+    it('renders held/released rows with counts from the API', async () => {
+      mockFetchMetrics.mockResolvedValue({
+        totals: [],
+        recent: [],
+        held_reply_summary: [
+          { status: 'held', count: 3, median_hold_hours: 0 },
+          { status: 'released', count: 1, median_hold_hours: 4.2 },
+        ],
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const html = wrapper.html()
+      expect(html).toContain('held')
+      expect(html).toContain('released')
+      expect(html).toContain('4.2')
+    })
+  })
 })

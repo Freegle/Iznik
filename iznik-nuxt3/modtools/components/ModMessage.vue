@@ -157,14 +157,6 @@
                 :key="g.groupid"
               >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
             </div>
-            <div
-              v-if="canShowReach"
-              class="small mt-1"
-            >
-              <a href="#" @click.prevent="reachMapModal?.show()">
-                <v-icon icon="map-marked-alt" /> Who can see this?
-              </a>
-            </div>
             <NoticeMessage
               v-if="isRippledInToContextGroup"
               variant="info"
@@ -484,6 +476,15 @@
               :boundary="group.poly || group.polyofficial"
               :height="150"
             />
+            <b-button
+              v-if="canShowReach"
+              variant="white"
+              size="sm"
+              class="mt-2 w-100"
+              @click="reachMapModal?.show()"
+            >
+              <v-icon icon="map-marker-alt" /> View rippling reach
+            </b-button>
           </b-col>
           <b-col cols="12" lg="3">
             <div
@@ -692,7 +693,9 @@
     <ModMessageReachMap
       v-if="message && message.id"
       ref="reachMapModal"
-      :messageid="message.id"
+      :lat="position?.lat"
+      :lng="position?.lng"
+      :arrival="reachArrival"
     />
     <div ref="bottom" />
   </div>
@@ -878,6 +881,19 @@ const otherGroups = computed(() => {
 const canShowReach = computed(
   () => message.value?.type === 'Offer' || message.value?.type === 'Wanted'
 )
+
+// When the post entered the rippling system: the earliest arrival across its groups
+// (a repost ripples from the repost time, not the original post date). The engine uses
+// MIN(messages_spatial.arrival); mirror that so the reach opens at the right point.
+const reachArrival = computed(() => {
+  const arrivals = (message.value?.groups || [])
+    .map((g) => g.arrival)
+    .filter(Boolean)
+  if (arrivals.length) {
+    return arrivals.reduce((a, b) => (new Date(a) <= new Date(b) ? a : b))
+  }
+  return message.value?.date || null
+})
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group we're viewing it under, so it is "starting to become available" to this group's

@@ -24,29 +24,33 @@ import (
 // =============================================================================
 
 type ChatMessage struct {
-	ID                 uint64          `json:"id" gorm:"primary_key"`
-	Chatid             uint64          `json:"chatid"`
-	Userid             uint64          `json:"userid"`
-	Type               string          `json:"type"`
-	Refmsgid           *uint64         `json:"refmsgid"`
-	Refchatid          *uint64         `json:"refchatid"`
-	Imageid            *uint64         `json:"imageid"`
-	Image              *ChatAttachment `json:"image" gorm:"-"`
-	Date               time.Time       `json:"date"`
-	Message            string          `json:"message"`
-	Seenbyall          bool            `json:"seenbyall"`
-	Mailedtoall        bool            `json:"mailedtoall"`
-	Replyexpected      bool            `json:"replyexpected"`
-	Replyreceived      bool            `json:"replyreceived"`
+	ID                   uint64          `json:"id" gorm:"primary_key"`
+	Chatid               uint64          `json:"chatid"`
+	Userid               uint64          `json:"userid"`
+	Type                 string          `json:"type"`
+	Refmsgid             *uint64         `json:"refmsgid"`
+	Refchatid            *uint64         `json:"refchatid"`
+	Imageid              *uint64         `json:"imageid"`
+	Image                *ChatAttachment `json:"image" gorm:"-"`
+	Date                 time.Time       `json:"date"`
+	Message              string          `json:"message"`
+	Seenbyall            bool            `json:"seenbyall"`
+	Mailedtoall          bool            `json:"mailedtoall"`
+	Replyexpected        bool            `json:"replyexpected"`
+	Replyreceived        bool            `json:"replyreceived"`
 	Reportreason         *string         `json:"reportreason"`
 	Reviewrequired       bool            `json:"reviewrequired"`
 	Reviewrejected       bool            `json:"reviewrejected"`
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
-	Addressid          *uint64         `json:"addressid" gorm:"-"`
-	Modnote            bool            `json:"modnote" gorm:"-"`
-	Archived           int             `json:"-" gorm:"-"`
-	Deleted            bool            `json:"-"`
+	// HeldByRippling is true when this message is held by the rippling reply-hold engine
+	// (a non-released row exists in rippling_held_replies). Only populated for moderators;
+	// stripped from responses to normal users along with other review fields.
+	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
+	Addressid      *uint64 `json:"addressid" gorm:"-"`
+	Modnote        bool    `json:"modnote" gorm:"-"`
+	Archived       int     `json:"-" gorm:"-"`
+	Deleted        bool    `json:"-"`
 }
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the
@@ -202,6 +206,29 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 	messages := []ChatMessageQuery{}
 	db.Raw(query, args...).Scan(&messages)
+
+	// For moderators, flag messages that are held by the rippling reply-hold engine.
+	// Non-released rows in rippling_held_replies mean the message is delivery-blocked
+	// (not a manual mod hold — that is chat_messages_held). Batch lookup to avoid N+1.
+	if modAccess && len(messages) > 0 {
+		msgIDs := make([]string, 0, len(messages))
+		idxByID := make(map[uint64]int, len(messages))
+		for ix, m := range messages {
+			msgIDs = append(msgIDs, fmt.Sprintf("%d", m.ID))
+			idxByID[m.ID] = ix
+		}
+		type ripplingHeld struct {
+			Chatmsgid uint64 `gorm:"column:chatmsgid"`
+		}
+		var held []ripplingHeld
+		db.Raw("SELECT chatmsgid FROM rippling_held_replies WHERE chatmsgid IN (" +
+			strings.Join(msgIDs, ",") + ") AND status <> 'released'").Scan(&held)
+		for _, h := range held {
+			if ix, ok := idxByID[h.Chatmsgid]; ok {
+				messages[ix].HeldByRippling = true
+			}
+		}
+	}
 
 	// Process images and deleted messages
 	for ix, a := range messages {
@@ -1010,9 +1037,9 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			ids = append(ids, strconv.FormatUint(id, 10))
 		}
 		var heldInfos []heldUserInfo
-		db.Raw("SELECT u.id, u.fullname AS name, "+
-			"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email "+
-			"FROM users u WHERE u.id IN ("+strings.Join(ids, ",")+")").Scan(&heldInfos)
+		db.Raw("SELECT u.id, u.fullname AS name, " +
+			"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email " +
+			"FROM users u WHERE u.id IN (" + strings.Join(ids, ",") + ")").Scan(&heldInfos)
 		for _, h := range heldInfos {
 			heldUsers[h.ID] = h
 		}

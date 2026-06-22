@@ -73,6 +73,17 @@
             think it should be released.
           </span>
         </NoticeMessage>
+        <NoticeMessage
+          v-if="message.heldbyrippling"
+          class="mb-2"
+          variant="warning"
+          data-testid="rippling-held-notice"
+        >
+          <v-icon icon="pause-circle" class="me-1" />
+          Held: rippling out - this reply arrived before the post's reach grew to
+          cover the sender's location. It will be delivered automatically once the
+          reach expands far enough.
+        </NoticeMessage>
         <div class="rounded bg-white p-2 fw-bold border border-warning mb-2">
           <ChatMessage
             :id="message.id"

@@ -5,7 +5,6 @@ import ModMessageReachMap from '~/modtools/components/ModMessageReachMap.vue'
 
 const mockShow = vi.fn()
 const mockHide = vi.fn()
-const mockFetchReach = vi.fn()
 
 vi.mock('~/composables/useOurModal', () => ({
   useOurModal: () => ({
@@ -15,52 +14,36 @@ vi.mock('~/composables/useOurModal', () => ({
   }),
 }))
 
-vi.mock('~/composables/useMap', () => ({
-  attribution: () => 'attr',
-  osmtile: () => 'tileurl',
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ jwt: 'jwt-token' }),
 }))
 
-vi.mock('~/stores/message', () => ({
-  useMessageStore: () => ({
-    fetchReach: mockFetchReach,
+vi.mock('#imports', () => ({
+  useRuntimeConfig: () => ({
+    public: { SPATIAL_SERVER_URL: 'http://spatial.test' },
   }),
 }))
 
-vi.mock('@vue-leaflet/vue-leaflet', () => ({
-  LGeoJson: { template: '<div class="l-geo-json" />' },
-}))
+const ExplorerStub = {
+  name: 'RipplingExplorer',
+  props: ['minimal', 'initialLat', 'initialLng', 'initialView', 'spatialUrl', 'jwt'],
+  template:
+    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" />',
+}
 
-function mountComponent() {
+function mountComponent(props = { lat: 51.5, lng: -0.1 }) {
   return mount(ModMessageReachMap, {
-    props: { messageid: 42 },
+    props,
     global: {
       stubs: {
         'b-modal': {
-          template:
-            '<div class="b-modal"><slot name="default" /><slot name="footer" /></div>',
-          props: ['title', 'size'],
+          template: '<div class="b-modal"><slot name="default" /></div>',
+          props: ['title', 'fullscreen'],
         },
-        'b-button': {
-          template: '<button @click="$emit(\'click\')"><slot /></button>',
-        },
-        'b-spinner': { template: '<span class="spinner" />' },
-        NoticeMessage: {
-          template: '<div class="notice"><slot /></div>',
-          props: ['variant'],
-        },
-        'l-map': { template: '<div class="l-map"><slot /></div>' },
-        'l-tile-layer': { template: '<div class="l-tile-layer" />' },
-        'l-marker': { template: '<div class="l-marker" />' },
-        'v-icon': { template: '<i />' },
+        RipplingExplorer: ExplorerStub,
       },
     },
   })
-}
-
-// Build a MySQL-style UTC timestamp string a given number of hours from now.
-function utcTimestampInHours(hours) {
-  const d = new Date(Date.now() + hours * 3600 * 1000)
-  return d.toISOString().slice(0, 19).replace('T', ' ')
 }
 
 describe('ModMessageReachMap', () => {
@@ -68,82 +51,39 @@ describe('ModMessageReachMap', () => {
     vi.clearAllMocks()
   })
 
-  it('shows a "not rippling yet" notice when the post has no reach', async () => {
-    mockFetchReach.mockResolvedValue({ rippling: false, msgid: 42 })
-    const wrapper = mountComponent()
-    await wrapper.vm.show()
-    await flushPromises()
-
-    expect(mockFetchReach).toHaveBeenCalledWith(42)
-    expect(mockShow).toHaveBeenCalled()
-    expect(wrapper.find('.notice').exists()).toBe(true)
-    expect(wrapper.find('.notice').text()).toContain("isn't rippling out yet")
-    expect(wrapper.find('.l-map').exists()).toBe(false)
-  })
-
-  it('renders the reach map and details when the post is rippling', async () => {
-    mockFetchReach.mockResolvedValue({
-      rippling: true,
-      msgid: 42,
-      lat: 51.5,
-      lng: -0.1,
-      tick: 3,
-      totalticks: 9,
-      status: 'expanding',
-      nextexpansionat: utcTimestampInHours(3),
-      polygon: { type: 'Polygon', coordinates: [[[0, 0]]] },
-    })
-    const wrapper = mountComponent()
-    await wrapper.vm.show()
-    await flushPromises()
-
-    expect(wrapper.find('.l-map').exists()).toBe(true)
-    expect(wrapper.find('.l-geo-json').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Step 3 of 9')
-    expect(wrapper.text()).toContain('Still rippling out')
-  })
-
-  it('surfaces when the next ripple-out is due, in hours', async () => {
-    mockFetchReach.mockResolvedValue({
-      rippling: true,
-      msgid: 42,
-      lat: 51.5,
-      lng: -0.1,
-      tick: 3,
-      totalticks: 9,
-      status: 'expanding',
-      nextexpansionat: utcTimestampInHours(3),
-      polygon: { type: 'Polygon', coordinates: [[[0, 0]]] },
-    })
-    const wrapper = mountComponent()
-    await wrapper.vm.show()
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Due in about 3 hours')
-  })
-
-  it('says fully rippled out when expansion is done', async () => {
-    mockFetchReach.mockResolvedValue({
-      rippling: true,
-      msgid: 42,
-      lat: 51.5,
-      lng: -0.1,
-      tick: 9,
-      totalticks: 9,
-      status: 'done',
-      nextexpansionat: null,
-      polygon: { type: 'Polygon', coordinates: [[[0, 0]]] },
-    })
-    const wrapper = mountComponent()
-    await wrapper.vm.show()
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Fully rippled out')
-  })
-
-  it('exposes show and hide', async () => {
+  it('exposes show and hide', () => {
     const wrapper = mountComponent()
     expect(typeof wrapper.vm.show).toBe('function')
     expect(typeof wrapper.vm.hide).toBe('function')
+  })
+
+  it('does not render the explorer until shown', () => {
+    const wrapper = mountComponent()
+    expect(wrapper.find('.explorer-stub').exists()).toBe(false)
+  })
+
+  it('renders the explorer seeded at the post point when shown', async () => {
+    const wrapper = mountComponent({ lat: 55.95, lng: -3.19 })
+    await wrapper.vm.show()
+    await flushPromises()
+
+    expect(mockShow).toHaveBeenCalled()
+    const explorer = wrapper.find('.explorer-stub')
+    expect(explorer.exists()).toBe(true)
+    expect(explorer.attributes('data-lat')).toBe('55.95')
+    expect(explorer.attributes('data-lng')).toBe('-3.19')
+    expect(explorer.attributes('data-view')).toBe('outbound')
+    // minimal mode: no panel / tunable controls, just map + scrubber.
+    expect(explorer.attributes('data-minimal')).toBeTruthy()
+    expect(explorer.attributes('data-spatial')).toBe('http://spatial.test')
+  })
+
+  it('shows a no-location message instead of the map when the post has no location', async () => {
+    const wrapper = mountComponent({ lat: null, lng: null })
+    await wrapper.vm.show()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain("no location")
+    expect(wrapper.find('.explorer-stub').exists()).toBe(false)
   })
 })
