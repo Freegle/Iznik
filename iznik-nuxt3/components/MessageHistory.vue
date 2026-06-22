@@ -1,7 +1,7 @@
 <template>
   <div>
     <div
-      v-for="group in message?.groups"
+      v-for="group in displayGroups"
       :key="'message-' + message.id + '-' + group.id"
       class="text--small"
     >
@@ -112,6 +112,23 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // When set (mod multi-group view), show only this group's arrival line instead of
+  // listing every group the post is on - the mod administers one group's copy at a time.
+  onlyGroupid: {
+    type: Number,
+    required: false,
+    default: null,
+  },
+})
+
+// The groups to list: just the current group when onlyGroupid is set, else all of them.
+// `message` is a computed declared below; the closure resolves it at access time.
+const displayGroups = computed(() => {
+  const groups = message.value?.groups || []
+  if (props.onlyGroupid) {
+    return groups.filter((g) => parseInt(g.groupid) === props.onlyGroupid)
+  }
+  return groups
 })
 
 const groupStore = useGroupStore()

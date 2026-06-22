@@ -39,12 +39,14 @@
       <ModMessageButton
         :messageid="message.id"
         :groupid="groupid"
+        :is-home-group="isHomeGroup"
         variant="warning"
         icon="times"
         reject
         label="Reject"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -71,6 +73,7 @@
         label="Release"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -89,6 +92,7 @@
         label="Blank Reply"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -97,6 +101,7 @@
         label="Delete"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -206,6 +211,14 @@ const props = defineProps({
     type: Number,
     required: false,
     default: null,
+  },
+  // Delete / Delete as Spam remove the post itself (across all its groups), so they're only
+  // offered on the post's home/origin group - not on a rippled-in copy. Defaults true so
+  // non-rippling contexts are unaffected.
+  isHomeGroup: {
+    type: Boolean,
+    required: false,
+    default: true,
   },
 })
 

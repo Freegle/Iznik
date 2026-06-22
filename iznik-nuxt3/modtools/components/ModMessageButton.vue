@@ -40,9 +40,30 @@
       :stdmsgid="stdmsgId"
       :stdmsgaction="stdmsgAction"
       :messageid="message?.id"
+      :groupid="groupid"
       :autosend="autosend"
       @hidden="showStdMsgModal = false"
     />
+    <ConfirmModal
+      v-if="showRejectNoMsgModal"
+      ref="rejectNoMsgConfirm"
+      title="Stop this post appearing on your community"
+      @confirm="rejectFromGroupConfirmed"
+      @hidden="showRejectNoMsgModal = false"
+    >
+      <template #default>
+        <p>
+          This post first appeared on another community and rippled in to yours.
+          Rejecting here just stops it appearing on
+          <strong>{{ groupName || 'your community' }}</strong> - it stays on the
+          community where it was first posted.
+        </p>
+        <p class="mb-0">
+          The freegler won't be told, because they don't need to know unless it's
+          rejected on their home community. So there's no message to send.
+        </p>
+      </template>
+    </ConfirmModal>
   </div>
 </template>
 <script setup>
@@ -141,6 +162,14 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Whether the group being moderated is the post's home/origin group. On a
+  // rippled-in (non-home) group a Reject just removes the post from this group
+  // and sends no message to the freegler, so we skip the compose modal.
+  isHomeGroup: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
 })
 
 const messageStore = useMessageStore()
@@ -177,6 +206,7 @@ const stdmodal = ref(null)
 const showDeleteModal = ref(false)
 const showStdMsgModal = ref(false)
 const showSpamModal = ref(false)
+const showRejectNoMsgModal = ref(false)
 const stdmsgId = ref(null)
 const stdmsgAction = ref(null)
 
@@ -189,6 +219,13 @@ const groupid = computed(() => {
   }
 
   return null
+})
+
+const groupName = computed(() => {
+  const g = message.value?.groups?.find(
+    (grp) => parseInt(grp.groupid) === parseInt(groupid.value)
+  )
+  return g?.namedisplay || null
 })
 
 const spinclass = computed(() => {
@@ -229,6 +266,15 @@ async function spamConfirmed() {
     id: message.value.id,
     groupid: groupid.value,
   })
+  refreshFromUser()
+  checkWorkDeferGetMessages()
+}
+
+async function rejectFromGroupConfirmed() {
+  // Rippled-in (non-home) reject: just remove the post from this group, with no
+  // message to the freegler (the server suppresses it anyway - they only need to
+  // hear about a rejection on their home community).
+  await messageStore.reject(message.value.id, groupid.value, '', null, '')
   refreshFromUser()
   checkWorkDeferGetMessages()
 }
@@ -287,6 +333,13 @@ async function click(callback) {
     // We want to show a modal.
     stdmsgId.value = null
     stdmsgAction.value = null
+
+    if (props.reject && !props.isHomeGroup) {
+      // Rippled-in reject: confirm a no-message removal instead of composing one.
+      showRejectNoMsgModal.value = true
+      if (callback) callback()
+      return
+    }
 
     if (props.reject) {
       stdmsgAction.value = 'Reject'

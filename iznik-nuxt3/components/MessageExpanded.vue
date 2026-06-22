@@ -329,9 +329,6 @@
               <div v-if="poster" class="section-header section-header--poster">
                 <span>
                   <span class="section-header-text">POSTED BY</span>
-                  <span class="section-header-name">{{
-                    poster.displayname
-                  }}</span>
                 </span>
                 <span
                   class="section-id-link"
@@ -390,6 +387,20 @@
                   @click.stop.prevent
                 />
                 <v-icon icon="chevron-right" class="poster-chevron" />
+              </div>
+              <div v-if="messageGroups.length" class="posted-on-groups">
+                On:
+                <template
+                  v-for="(g, idx) in messageGroups"
+                  :key="g.id"
+                  ><NuxtLink
+                    no-prefetch
+                    :to="'/explore/' + g.nameshort"
+                    class="posted-on-group-link"
+                    @click.stop
+                    >{{ g.namedisplay }}</NuxtLink
+                  ><span v-if="idx < messageGroups.length - 1">, </span></template
+                >
               </div>
             </client-only>
           </div>
@@ -590,6 +601,7 @@ import {
 import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
+import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { action } from '~/composables/useClientLog'
@@ -642,6 +654,7 @@ const emit = defineEmits(['zoom', 'close'])
 
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
+const groupStore = useGroupStore()
 const { me, loggedIn } = useMe()
 
 // Use shared composable for common message display logic
@@ -665,6 +678,16 @@ const {
   categoryIcon,
   poster,
 } = useMessageDisplay(props.id)
+
+// All the communities this post is on (it can be on several once it has rippled
+// out or been cross-posted). Resolve each to the group record for its display
+// name + explore link; drop any not yet in the group store.
+const messageGroups = computed(() => {
+  if (!message.value?.groups?.length) return []
+  return message.value.groups
+    .map((g) => groupStore.get(g.groupid))
+    .filter(Boolean)
+})
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
@@ -1956,6 +1979,24 @@ onUnmounted(() => {
   @media (max-width: 320px) {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+/* "On: <communities>" line under the poster box - greyed, with clickable group links. */
+.posted-on-groups {
+  margin-top: 0.5rem;
+  padding: 0 1rem;
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.posted-on-group-link {
+  color: #6c757d;
+  text-decoration: underline;
+
+  &:hover {
+    color: #495057;
+    text-decoration: underline;
   }
 }
 
