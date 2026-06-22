@@ -118,6 +118,139 @@
           </b-tr>
         </b-tbody>
       </b-table-simple>
+
+      <!-- §16.1/§16.2 Volume + reach: overall weekly rollup from ripple:tune -->
+      <h6 class="mt-3">Volume &amp; reach — weekly rollup (last 2 weeks)</h6>
+      <p class="text-muted small mb-1">
+        Written by <code>ripple:tune</code> each week. Guard-rail band: &minus;10% to +50%
+        vs each group's own baseline (ripple-thresholds). Empty until the first tune run.
+      </p>
+      <b-table-simple hover responsive small>
+        <b-thead>
+          <b-tr>
+            <b-th>Period start</b-th>
+            <b-th>Metric</b-th>
+            <b-th>Value</b-th>
+            <b-th>Sample size</b-th>
+          </b-tr>
+        </b-thead>
+        <b-tbody>
+          <b-tr v-for="(m, ix) in liveMetrics" :key="ix">
+            <b-td class="text-nowrap">{{ m.period_start }}</b-td>
+            <b-td>
+              <code>{{ m.metric }}</code>
+            </b-td>
+            <b-td>{{ m.value }}</b-td>
+            <b-td>{{ m.sample_size }}</b-td>
+          </b-tr>
+          <b-tr v-if="!liveMetrics.length">
+            <b-td colspan="4" class="text-muted">No rollup data yet.</b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
+
+      <!-- §16.3 Cross-group reach -->
+      <h6 class="mt-3">Cross-group reach (last 30 days)</h6>
+      <p class="text-muted small mb-1">
+        Fraction of post appearances that were rippled in by the engine to a group the poster
+        was not a member of, and how many of those were subsequently approved.
+      </p>
+      <b-table-simple small>
+        <b-tbody>
+          <b-tr>
+            <b-th>Post appearances (total)</b-th>
+            <b-td>{{ crossGroupSummary.total }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-th>Rippled-in appearances</b-th>
+            <b-td>{{ crossGroupSummary.rippled_in }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-th>Cross-group %</b-th>
+            <b-td>{{ crossGroupSummary.cross_group_pct != null ? crossGroupSummary.cross_group_pct.toFixed(1) + '%' : '—' }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-th>Approval rate (rippled-in)</b-th>
+            <b-td>{{ crossGroupSummary.rippled_in > 0 ? crossGroupSummary.approval_rate.toFixed(1) + '%' : '—' }}</b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
+
+      <!-- §16.4 Timing / capture from offline simulator -->
+      <h6 class="mt-3">Timing &amp; capture — latest simulator week</h6>
+      <p class="text-muted small mb-1">
+        From <code>rippling_algorithm_metrics</code> ('all' group). Capture rate = repliers
+        notified before they replied / total repliers. Empty until the first simulator run.
+      </p>
+      <div v-if="captureSummary.week_start">
+        <b-table-simple small>
+          <b-tbody>
+            <b-tr>
+              <b-th>Week</b-th>
+              <b-td class="text-nowrap">{{ captureSummary.week_start }}</b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>Curve</b-th>
+              <b-td>
+                <code>{{ captureSummary.curve }}</code>
+              </b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>Pairs total</b-th>
+              <b-td>{{ captureSummary.pairs_total }}</b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>In-time</b-th>
+              <b-td>{{ captureSummary.pairs_in_time }}</b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>Late</b-th>
+              <b-td>{{ captureSummary.pairs_late }}</b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>Capture rate</b-th>
+              <b-td>{{ captureSummary.capture_rate.toFixed(1) }}%</b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>Reply p50</b-th>
+              <b-td>{{ captureSummary.reply_p50_hours.toFixed(1) }}h</b-td>
+            </b-tr>
+            <b-tr>
+              <b-th>Reply p75</b-th>
+              <b-td>{{ captureSummary.reply_p75_hours.toFixed(1) }}h</b-td>
+            </b-tr>
+          </b-tbody>
+        </b-table-simple>
+      </div>
+      <p v-else class="text-muted small">No simulator data yet.</p>
+
+      <!-- §15 / §16.5 Held-reply friction -->
+      <h6 class="mt-3">Held external replies — status breakdown</h6>
+      <p class="text-muted small mb-1">
+        External (email / TrashNothing) replies held because the post had not yet rippled to
+        the replier's location. Avg hold duration shown for released rows.
+      </p>
+      <b-table-simple hover responsive small>
+        <b-thead>
+          <b-tr>
+            <b-th>Status</b-th>
+            <b-th>Count</b-th>
+            <b-th>Avg hold (h)</b-th>
+          </b-tr>
+        </b-thead>
+        <b-tbody>
+          <b-tr v-for="(h, ix) in heldReplySummary" :key="ix">
+            <b-td>
+              <code>{{ h.status }}</code>
+            </b-td>
+            <b-td>{{ h.count }}</b-td>
+            <b-td>{{ h.median_hold_hours > 0 ? h.median_hold_hours.toFixed(1) : '—' }}</b-td>
+          </b-tr>
+          <b-tr v-if="!heldReplySummary.length">
+            <b-td colspan="3" class="text-muted">No held replies recorded yet.</b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
     </div>
   </div>
 </template>
@@ -134,6 +267,11 @@ const totals = ref([])
 const recent = ref([])
 const hotspots = ref([])
 const proposedParams = ref([])
+// §16 rollout-health metrics
+const liveMetrics = ref([])
+const heldReplySummary = ref([])
+const crossGroupSummary = ref({ period_days: 30, rippled_in: 0, total: 0, cross_group_pct: 0, approval_rate: 0 })
+const captureSummary = ref({ week_start: '', curve: '', pairs_total: 0, pairs_in_time: 0, pairs_late: 0, capture_rate: 0, reply_p50_hours: 0, reply_p75_hours: 0 })
 
 async function fetchMetrics() {
   loading.value = true
@@ -144,6 +282,14 @@ async function fetchMetrics() {
     recent.value = result?.recent || []
     hotspots.value = result?.hotspots || []
     proposedParams.value = result?.proposed_params || []
+    liveMetrics.value = result?.live_metrics || []
+    heldReplySummary.value = result?.held_reply_summary || []
+    if (result?.cross_group_summary) {
+      crossGroupSummary.value = result.cross_group_summary
+    }
+    if (result?.capture_summary) {
+      captureSummary.value = result.capture_summary
+    }
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {

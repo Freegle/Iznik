@@ -577,11 +577,16 @@ export async function setupRipplingExplorer({
   // references variables (ripplePlaying, freeglersMarkers) that are declared
   // further down this onMounted body and live in the temporal dead zone
   // until we reach them.
+  // The per-post reach modal seeds the location via props; otherwise fall back to
+  // URL params (bookmarkable explorer) and finally geolocation.
   const urlParams = new URLSearchParams(window.location.search)
-  const pendingView = urlParams.get('view')
-  const pendingLat = parseFloat(urlParams.get('lat'))
-  const pendingLng = parseFloat(urlParams.get('lng'))
+  const pendingView = props.initialView || urlParams.get('view')
+  const pendingLat =
+    props.initialLat != null ? props.initialLat : parseFloat(urlParams.get('lat'))
+  const pendingLng =
+    props.initialLng != null ? props.initialLng : parseFloat(urlParams.get('lng'))
   const pendingPostcode = urlParams.get('postcode') || urlParams.get('q')
+  const seededFromProps = props.initialLat != null && props.initialLng != null
 
   async function applyUrlInit() {
     if (pendingView === 'inbound' || pendingView === 'outbound') {
@@ -592,6 +597,12 @@ export async function setupRipplingExplorer({
     }
     if (!isNaN(pendingLat) && !isNaN(pendingLng)) {
       setLocation(pendingLat, pendingLng, true)
+      // Seeded from props (per-post reach modal): show the reach STATICALLY at the
+      // post's current point (how far it has already rippled), with the scrubber, and
+      // let the user drag forwards/backwards. No animation.
+      if (seededFromProps) {
+        startRipple(props.initialElapsedHours != null ? props.initialElapsedHours : 0)
+      }
       return true
     }
     if (pendingPostcode) {
@@ -1529,6 +1540,51 @@ export async function setupRipplingExplorer({
 
     syncGroupPolygons(visibleIds, nearestGroupId)
     renderGroupSidebar(listEl, sortRelevantGroups(isRelevant), reached)
+
+    // Minimal mode (per-post reach modal): also list the groups the CURRENT reach
+    // frame hits, bottom-left, so mods see which communities it has reached.
+    if (props.minimal && rippleFrames.length) {
+      renderMinimalGroupsHit(rippleFrames[rippleStep])
+      markCrossPostingStatic()
+    }
+  }
+
+  // Renders, into #rippling-reach-groups, the names of the groups the given reach
+  // frame overlaps (home first). Used only by the minimal per-post reach modal.
+  function renderMinimalGroupsHit(data) {
+    const el = document.getElementById('rippling-reach-groups')
+    if (!el) return
+    const reached = reachedGroupIds(data)
+    const esc = (s) =>
+      String(s).replace(
+        /[&<>]/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])
+      )
+    const hits = groupFeatures
+      .filter((f) => reached.has(f.properties.id))
+      .map((f) => ({
+        name: f.properties.nameshort || 'Group',
+        home: !!f.properties.contains,
+      }))
+      .sort(
+        (a, b) =>
+          (b.home ? 1 : 0) - (a.home ? 1 : 0) || a.name.localeCompare(b.name)
+      )
+    if (!hits.length) {
+      el.innerHTML =
+        '<div class="rpl-rg-title">Groups reached</div>' +
+        '<div class="rpl-rg-empty">None yet</div>'
+      return
+    }
+    // Home group gets the house; every other reached group is a cross-post (⚡).
+    el.innerHTML =
+      `<div class="rpl-rg-title">Groups reached (${hits.length})</div>` +
+      hits
+        .map(
+          (g) =>
+            `<div class="rpl-rg-item">${g.home ? '🏠 ' : '⚡ '}${esc(g.name)}</div>`
+        )
+        .join('')
   }
 
   function checkCrossPosting(isoRing) {
@@ -1612,6 +1668,70 @@ export async function setupRipplingExplorer({
     }
   }
 
+  // Static mode (per-post reach modal): the animation never runs, so add the
+  // cross-posting ⚡ tick to the timeline up-front. Adds only the tick mark (does
+  // not touch the elapsed label or flash a polygon, unlike markCrossPosting).
+  let staticCrossMarked = false
+  function addCrossPostingTick(hours) {
+    const pct = hoursToLogPct(hours)
+    const layer = document.getElementById('rippling-tl-tick-layer')
+    if (!layer) return
+    const mark = document.createElement('div')
+    mark.className = 'rpl-tick-mark'
+    mark.style.cssText = `left:${pct}%;background:#e07000;height:10px;top:-8px;width:2px`
+    layer.appendChild(mark)
+    const label = document.createElement('div')
+    const xform =
+      pct < 15 ? 'translateX(0)' : pct > 80 ? 'translateX(-100%)' : 'translateX(-50%)'
+    label.style.cssText = `position:absolute;left:${pct}%;top:-22px;color:#e07000;font-size:11px;font-weight:700;white-space:nowrap;transform:${xform}`
+    label.textContent = '⚡'
+    layer.appendChild(label)
+  }
+  function markCrossPostingStatic() {
+    if (staticCrossMarked || !rippleFrames.length) return
+    // Groups load asynchronously; if they aren't here yet, retry on the next
+    // drawGroupsOverlay (which fires when they arrive).
+    if (!groupFeatures.length) return
+    const n = rippleFrames.length
+    for (let i = 0; i < n; i++) {
+      const f = rippleFrames[i]
+      if (!hasRing(f.standard)) continue
+      const hours = frameToHours(i, n)
+      if (hours < 24) continue // match the animation's initial 24h self period
+      if (checkCrossPosting(f.standard.geometry.coordinates[0])) {
+        addCrossPostingTick(hours)
+        break
+      }
+    }
+    staticCrossMarked = true
+  }
+
+  // Static mode: mark where the reach SHOULD be ("up to", expected — bottom) and, only when
+  // the engine is behind, where it ACTUALLY is ("now", actual — top). When they match we show
+  // just "up to", so a visible "now" means the post hasn't rippled as far as it should.
+  function addReachMarker(layer, hours, text, color, where) {
+    const pct = hoursToLogPct(Math.max(0, Math.min(hours, MAX_HOURS)))
+    const mark = document.createElement('div')
+    mark.className = 'rpl-tick-mark'
+    mark.style.cssText = `left:${pct}%;background:${color};height:16px;top:-11px;width:2px`
+    layer.appendChild(mark)
+    const label = document.createElement('div')
+    const xform =
+      pct < 12 ? 'translateX(0)' : pct > 88 ? 'translateX(-100%)' : 'translateX(-50%)'
+    const top = where === 'top' ? '-28px' : '16px'
+    label.style.cssText = `position:absolute;left:${pct}%;top:${top};color:${color};font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`
+    label.textContent = text
+    layer.appendChild(label)
+  }
+  function renderReachMarkers() {
+    const layer = document.getElementById('rippling-tl-tick-layer')
+    if (!layer || props.initialElapsedHours == null) return
+    addReachMarker(layer, props.initialElapsedHours, '▼ up to', '#2c7be5', 'bottom')
+    if (props.actualElapsedHours != null) {
+      addReachMarker(layer, props.actualElapsedHours, 'now ▲', '#e07000', 'top')
+    }
+  }
+
   const EXPANSION_HOURS = [0, 1, 3, 6, 12, 24, 48, 72, 120, 168, 336, 720]
   const MAX_HOURS = 720
   let timelineBuilt = false
@@ -1666,7 +1786,10 @@ export async function setupRipplingExplorer({
 
   function updateTimeline(frameIdx, totalFrames) {
     const hours = frameToHours(frameIdx, totalFrames)
-    const pct = hoursToLogPct(hours)
+    // The fill must end at the slider THUMB, which a native range input positions
+    // linearly by value (frameIdx). Using the log scale here made the green bar run
+    // ahead of the thumb. (The hour tick marks remain log-positioned for resolution.)
+    const pct = totalFrames > 1 ? (frameIdx / (totalFrames - 1)) * 100 : 0
     const slider = document.getElementById('rippling-tl-slider')
     slider.value = frameIdx
     slider.style.setProperty('--tl-pct', pct.toFixed(2) + '%')
@@ -1948,7 +2071,10 @@ export async function setupRipplingExplorer({
     rippleRafId = requestAnimationFrame(animateRipple)
   }
 
-  async function startRipple() {
+  // staticAtHours: when non-null, don't animate — build the scrubber and jump to the
+  // frame for that many elapsed hours (the per-post reach modal opens here). When null,
+  // play the ripple animation from the start (the explorer's "Animate ripple" button).
+  async function startRipple(staticAtHours = null) {
     if (currentLat === null) {
       showStatus('Click a location first', false)
       return
@@ -1994,6 +2120,22 @@ export async function setupRipplingExplorer({
     await fetchFreeglers(RIPPLE_FRAMES * RIPPLE_STEP_MINS)
     drawFreeglersLayer()
     ensureMorphLayer()
+
+    if (staticAtHours != null) {
+      // Static mode: show the scrubber and jump to the frame for how long the post has
+      // already been live, without animating. Dragging the scrubber works as normal.
+      staticCrossMarked = false
+      buildTimeline(rippleFrames.length)
+      document.getElementById('rippling-timeline').style.display = ''
+      btn.disabled = false
+      btn.textContent = '▶ Animate ripple'
+      const maxIdx = rippleFrames.length - 1
+      const clamped = Math.max(0, Math.min(staticAtHours, MAX_HOURS))
+      jumpToFrame(Math.round((clamped / MAX_HOURS) * maxIdx))
+      markCrossPostingStatic()
+      renderReachMarkers()
+      return
+    }
 
     beginRippleAnimation(btn)
   }

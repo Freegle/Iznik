@@ -101,6 +101,7 @@ import { useAuthStore } from '~/stores/auth'
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css'
 import '~/assets/css/gesture-handling.css'
 import { useMe } from '~/composables/useMe'
+import { smoothGeoJSON } from '~/composables/useReachPolygon'
 
 const props = defineProps({
   showIsochrones: {
@@ -356,9 +357,11 @@ const isochroneGEOJSONs = computed(() => {
     const wkt = new Wkt.Wkt()
     try {
       wkt.read(i.polygon)
+      // Apply Chaikin smoothing so the reach boundary matches the rippling
+      // explorer's rounded appearance (3 iterations, same as the mod tool).
       ret.push({
         id: i.id,
-        json: wkt.toJson(),
+        json: smoothGeoJSON(wkt.toJson()),
       })
     } catch (e) {
       console.log('WKT error', location, e)
@@ -369,11 +372,15 @@ const isochroneGEOJSONs = computed(() => {
 })
 
 const isochroneOptions = computed(() => {
+  // Faded fill so post pins remain clearly visible; soft border echoes the
+  // rippling explorer's reach polygon style.
   return {
-    fillColor: 'darkblue',
+    fillColor: '#3388cc',
     fill: true,
-    fillOpacity: 0.2,
-    color: 'darkblue',
+    fillOpacity: 0.12,
+    color: '#3388cc',
+    weight: 2,
+    opacity: 0.5,
   }
 })
 

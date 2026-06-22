@@ -694,6 +694,47 @@ describe('ModChatReview', () => {
     })
   })
 
+  describe('rippling held notice', () => {
+    it('shows the rippling held notice when heldbyrippling is true', () => {
+      const wrapper = mountComponent({ heldbyrippling: true })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+    })
+
+    it('does not show the rippling held notice when heldbyrippling is false', () => {
+      const wrapper = mountComponent({ heldbyrippling: false })
+      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('does not show the rippling held notice when heldbyrippling is absent', () => {
+      const wrapper = mountComponent({})
+      // defaultMessage has no heldbyrippling key → should not render the notice
+      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('can show both manual hold notice and rippling held notice together', () => {
+      const wrapper = mountComponent({
+        heldbyrippling: true,
+        held: {
+          id: 888,
+          name: 'Other Mod',
+          email: 'other@example.com',
+          timestamp: '2025-01-01T10:00:00Z',
+        },
+      })
+      const notices = wrapper.findAll('.notice-message')
+      expect(notices.length).toBeGreaterThanOrEqual(2)
+      const fullText = wrapper.text()
+      expect(fullText).toContain('Held: rippling out')
+      expect(fullText).toContain('Held by')
+    })
+  })
+
   describe('edge cases', () => {
     it('handles message without group', () => {
       const wrapper = mountComponent({ group: null })

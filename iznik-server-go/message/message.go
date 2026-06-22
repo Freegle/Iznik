@@ -829,6 +829,10 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		blockedSet := make(map[uint64]bool)
 
 		// Reach-blocked: rippled out but not yet to the viewer's location.
+		// LIMITATION (multi-location, deferred): this tests only the viewer's primary
+		// location. A member with several saved locations (e.g. home + relatives) should
+		// be reach-eligible if ANY of them is within the post's reach. Extending this to
+		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
 		if latlng.Lat != 0 || latlng.Lng != 0 {
 			var reachBlocked []struct {
