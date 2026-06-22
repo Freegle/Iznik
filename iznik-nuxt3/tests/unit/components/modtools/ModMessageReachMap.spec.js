@@ -5,6 +5,7 @@ import ModMessageReachMap from '~/modtools/components/ModMessageReachMap.vue'
 
 const mockShow = vi.fn()
 const mockHide = vi.fn()
+const mockFetchReach = vi.fn(() => Promise.resolve({ rippling: false }))
 
 vi.mock('~/composables/useOurModal', () => ({
   useOurModal: () => ({
@@ -16,6 +17,10 @@ vi.mock('~/composables/useOurModal', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({ jwt: 'jwt-token' }),
+}))
+
+vi.mock('~/stores/message', () => ({
+  useMessageStore: () => ({ fetchReach: mockFetchReach }),
 }))
 
 vi.mock('#imports', () => ({
@@ -31,11 +36,18 @@ const ExplorerStub = {
     initialLat: { default: null },
     initialLng: { default: null },
     initialView: { default: null },
+    initialElapsedHours: { default: null },
+    actualElapsedHours: { default: null },
     spatialUrl: { default: null },
     jwt: { default: null },
   },
   template:
-    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" />',
+    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" :data-actual="actualElapsedHours" />',
+}
+
+// arrival N hours ago, as an ISO string.
+function hoursAgo(n) {
+  return new Date(Date.now() - n * 3600 * 1000).toISOString()
 }
 
 function mountComponent(props = { lat: 51.5, lng: -0.1 }) {
@@ -83,6 +95,51 @@ describe('ModMessageReachMap', () => {
     // minimal mode: no panel / tunable controls, just map + scrubber.
     expect(explorer.attributes('data-minimal')).toBeTruthy()
     expect(explorer.attributes('data-spatial')).toBe('http://spatial.test')
+  })
+
+  it('passes a "now" (actual) point only when the engine is behind expected', async () => {
+    // Post ~14h old -> expected tick 4 (12h band). Actual tick 2 (3h) = behind.
+    mockFetchReach.mockResolvedValueOnce({ rippling: true, tick: 2, totalticks: 9 })
+    const wrapper = mountComponent({
+      messageid: 42,
+      lat: 55.95,
+      lng: -3.19,
+      arrival: hoursAgo(14),
+    })
+    await wrapper.vm.show()
+    await flushPromises()
+    expect(mockFetchReach).toHaveBeenCalledWith(42, false)
+    // actual = HAZARD_HOURS[tick-1] = HAZARD_HOURS[1] = 3
+    expect(wrapper.find('.explorer-stub').attributes('data-actual')).toBe('3')
+  })
+
+  it('does NOT pass a "now" point when the engine is up to date', async () => {
+    // Post ~14h old -> expected tick 4. Actual tick 4 = caught up.
+    mockFetchReach.mockResolvedValueOnce({ rippling: true, tick: 4, totalticks: 9 })
+    const wrapper = mountComponent({
+      messageid: 42,
+      lat: 55.95,
+      lng: -3.19,
+      arrival: hoursAgo(14),
+    })
+    await wrapper.vm.show()
+    await flushPromises()
+    const a = wrapper.find('.explorer-stub').attributes('data-actual')
+    expect(a === undefined || a === '').toBe(true)
+  })
+
+  it('does NOT pass a "now" point when the post is not rippling (dark)', async () => {
+    mockFetchReach.mockResolvedValueOnce({ rippling: false, reason: 'disabled' })
+    const wrapper = mountComponent({
+      messageid: 42,
+      lat: 55.95,
+      lng: -3.19,
+      arrival: hoursAgo(14),
+    })
+    await wrapper.vm.show()
+    await flushPromises()
+    const a = wrapper.find('.explorer-stub').attributes('data-actual')
+    expect(a === undefined || a === '').toBe(true)
   })
 
   it('shows a no-location message instead of the map when the post has no location', async () => {
