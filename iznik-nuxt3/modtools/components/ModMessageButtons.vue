@@ -39,6 +39,7 @@
       <ModMessageButton
         :messageid="message.id"
         :groupid="groupid"
+        :is-home-group="isHomeGroup"
         variant="warning"
         icon="times"
         reject

@@ -159,35 +159,33 @@
               >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
             </div>
             <NoticeMessage
-              v-if="onMultipleOfMyGroups"
-              variant="warning"
+              v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
+              variant="info"
               class="mt-1 mb-2"
               data-test="multi-group-mod-warning"
             >
-              This post is on several of your communities. You're moderating for
-              <strong>{{ currentGroupName || 'this group' }}</strong> - approving
-              or rejecting here affects
-              <strong>{{ currentGroupName || 'this group' }}</strong> only.
-            </NoticeMessage>
-            <NoticeMessage
-              v-if="isRippledInToContextGroup"
-              variant="info"
-              class="mt-1 mb-2"
-            >
-              This post has rippled out to some of your group members from a
-              neighbouring community - that's expected<span
-                v-if="pending"
-                data-test="ripple-out-of-area-reject-warning"
-                >, so
-                <strong class="text-danger"
-                  >please don't reject it just for being "out of area"</strong
-                >
-                (only reject for the usual reasons: spam, breaks the rules,
-                wrong sort of thing)</span
-              >.
-              <a href="#" @click.prevent="ripplingExplanationModal?.show()">
-                Learn more
-              </a>
+              <span v-if="onMultipleOfMyGroups">
+                This post is on several of your communities. You're moderating
+                for <strong>{{ currentGroupName || 'this group' }}</strong> -
+                approving or rejecting here affects
+                <strong>{{ currentGroupName || 'this group' }}</strong> only.
+              </span>
+              <span v-if="isRippledInToContextGroup">
+                This post has rippled out to some of your group members from a
+                neighbouring community - that's expected<span
+                  v-if="pending"
+                  data-test="ripple-out-of-area-reject-warning"
+                  >, so
+                  <strong class="text-danger"
+                    >please don't reject it just for being "out of area"</strong
+                  >
+                  (only reject for the usual reasons: spam, breaks the rules,
+                  wrong sort of thing)</span
+                >.
+                <a href="#" @click.prevent="ripplingExplanationModal?.show()">
+                  Learn more
+                </a>
+              </span>
             </NoticeMessage>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
@@ -302,7 +300,7 @@
                   </p>
                   <ModMessageButton
                     :messageid="message.id"
-                    :groupid="groupid"
+                    :groupid="currentGroupid"
                     variant="warning"
                     icon="play"
                     release
@@ -505,7 +503,7 @@
                 :message="message"
                 :userid="fromUserId"
                 modinfo
-                :groupid="groupid"
+                :groupid="currentGroupid"
               />
               <div v-else-if="fromUserId && !fromUser">
                 <Spinner :size="20" />
@@ -603,7 +601,7 @@
             <ModMemberActions
               v-if="showActions && message.groups && message.groups.length"
               :userid="fromUserId"
-              :groupid="groupid"
+              :groupid="currentGroupid"
               @commentadded="updateComments"
             />
           </b-col>
@@ -664,7 +662,7 @@
             !editing
           "
           :messageid="message.id"
-          :groupid="groupid"
+          :groupid="currentGroupid"
           :modconfigid="configid"
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
@@ -1447,7 +1445,7 @@ async function save() {
 function settingsChange(param, val) {
   const params = {
     userid: fromUserId.value,
-    groupid: groupid.value,
+    groupid: currentGroupid.value,
   }
   params[param] = val
   memberStore.update(params)
@@ -1596,7 +1594,7 @@ function cancelEdit() {
 }
 
 async function backToPending(callback) {
-  await messageStore.backToPending(message.value.id, groupid.value)
+  await messageStore.backToPending(message.value.id, currentGroupid.value)
   callback()
 }
 

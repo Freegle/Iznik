@@ -49,7 +49,7 @@ describe('RipplingExplanationModal', () => {
       'ripplingExplanationModal'
     )
     expect(wrapper.find('.b-modal').attributes('title')).toBe(
-      'How does this work?'
+      'What rippling out means'
     )
   })
 

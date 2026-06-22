@@ -272,6 +272,15 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // The group this action applies to. Defaults to null → falls back to the
+  // message's first group (legacy single-group behaviour). Passed in so a
+  // Reject/Approve/Delete on a multi-group post hits the group being moderated,
+  // not whichever group happens to be first on the post.
+  groupid: {
+    type: Number,
+    required: false,
+    default: null,
+  },
 })
 
 const { modal, show, hide } = useOurModal()
@@ -353,6 +362,9 @@ const membership = computed(() => {
 })
 
 const groupid = computed(() => {
+  if (props.groupid) {
+    return props.groupid
+  }
   if (membership.value) {
     return membership.value.groupid
   }
