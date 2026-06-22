@@ -1125,6 +1125,11 @@ class UnifiedDigestService
         $query = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
             ->selectRaw('EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id) AS has_outcome')
             ->selectRaw("EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id AND mo.outcome IN ($successList)) AS has_success")
+            // Engagement signal for the rippling 'budget' (underexposure) score term;
+            // mirrors iznik-routing-go/digest_simulator.go (views = SUM of 'View'
+            // like counts; replies = approved 'Interested' chat replies).
+            ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
+            ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->whereIn('messages_groups.groupid', $groupIds)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)

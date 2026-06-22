@@ -1896,4 +1896,60 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertCount(0, $eligible->all(), 'simplemail=Full alone must not select a user who has no immediate-frequency memberships');
     }
+
+    // -----------------------------------------------------------------------
+    // Task 3: Engagement counts in the post query
+    // -----------------------------------------------------------------------
+
+    private function callPrivate(object $obj, string $method, array $args = []): mixed
+    {
+        $ref = new \ReflectionMethod($obj, $method);
+        $ref->setAccessible(true);
+        return $ref->invokeArgs($obj, $args);
+    }
+
+    public function test_get_posts_for_user_exposes_engagement_counts(): void
+    {
+        $recipient = $this->createTestUser();
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Counted (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        // 3 'View' likes (the count column is SUMmed) and 1 approved 'Interested' reply.
+        DB::table('messages_likes')->insert([
+            'msgid' => $msg->id, 'userid' => $recipient->id, 'type' => 'View', 'count' => 3,
+            'timestamp' => now(),
+        ]);
+        // chat_messages has a FK on chatid; create a real chat room to satisfy it.
+        $room = $this->createTestChatRoom($recipient, $poster);
+        DB::table('chat_messages')->insert([
+            'refmsgid' => $msg->id, 'userid' => $poster->id, 'chatid' => $room->id,
+            'type' => 'Interested', 'message' => 'Interested',
+            'reviewrejected' => 0, 'reviewrequired' => 0, 'date' => now(),
+            'processingrequired' => 0, 'processingsuccessful' => 1,
+            'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
+        ]);
+
+        $tracker = UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgdate' => null,
+        ]);
+
+        $posts = $this->service->getPostsForUser(
+            $recipient, $tracker, UnifiedDigestService::MODE_DAILY
+        );
+
+        $row = $posts->firstWhere('id', $msg->id);
+        $this->assertNotNull($row);
+        $this->assertSame(3, (int) $row->views);
+        $this->assertSame(1, (int) $row->replies);
+    }
 }
