@@ -1725,10 +1725,12 @@ export async function setupRipplingExplorer({
   }
   function renderReachMarkers() {
     const layer = document.getElementById('rippling-tl-tick-layer')
-    if (!layer || props.initialElapsedHours == null) return
-    addReachMarker(layer, props.initialElapsedHours, '▼ up to', '#2c7be5', 'bottom')
+    if (!layer) return
+    // The scrubber opens at — and the map shows — the EXPECTED point, so the thumb itself
+    // is the "up to" indicator (no separate marker needed). Only when the engine is BEHIND
+    // do we add an "actually here" marker, so the gap to the thumb is the lag.
     if (props.actualElapsedHours != null) {
-      addReachMarker(layer, props.actualElapsedHours, 'now ▲', '#e07000', 'top')
+      addReachMarker(layer, props.actualElapsedHours, 'actually here ▲', '#e07000', 'top')
     }
   }
 
@@ -1742,6 +1744,12 @@ export async function setupRipplingExplorer({
 
   function hoursToLogPct(hours) {
     return (Math.log10(hours + 1) / Math.log10(MAX_HOURS + 1)) * 100
+  }
+
+  // Inverse of hoursToLogPct: a log-scale slider position (0..100) back to hours. The
+  // scrubber is on this log scale so the thumb lines up with the hour ticks and markers.
+  function logPctToHours(pct) {
+    return Math.pow(10, (pct / 100) * Math.log10(MAX_HOURS + 1)) - 1
   }
 
   function formatElapsed(hours) {
@@ -1758,7 +1766,9 @@ export async function setupRipplingExplorer({
     if (timelineBuilt) return
     timelineBuilt = true
     const slider = document.getElementById('rippling-tl-slider')
-    slider.max = totalFrames - 1
+    // Slider domain is a 0..1000 LOG-percent (×10) so the thumb shares the log axis with
+    // the hour ticks/markers, rather than being linear in frame index.
+    slider.max = 1000
     const layer = document.getElementById('rippling-tl-tick-layer')
     layer.innerHTML = ''
     const n = EXPANSION_HOURS.length
@@ -1786,12 +1796,12 @@ export async function setupRipplingExplorer({
 
   function updateTimeline(frameIdx, totalFrames) {
     const hours = frameToHours(frameIdx, totalFrames)
-    // The fill must end at the slider THUMB, which a native range input positions
-    // linearly by value (frameIdx). Using the log scale here made the green bar run
-    // ahead of the thumb. (The hour tick marks remain log-positioned for resolution.)
-    const pct = totalFrames > 1 ? (frameIdx / (totalFrames - 1)) * 100 : 0
+    // Put the thumb + fill on the SAME log scale as the hour ticks and the reach
+    // markers, so the thumb sits directly under the elapsed time it represents (and the
+    // green fill ends exactly at the thumb).
+    const pct = hoursToLogPct(hours)
     const slider = document.getElementById('rippling-tl-slider')
-    slider.value = frameIdx
+    slider.value = Math.round(pct * 10) // domain 0..1000
     slider.style.setProperty('--tl-pct', pct.toFixed(2) + '%')
     document.getElementById('rippling-tl-elapsed').textContent =
       formatElapsed(hours)
@@ -1981,7 +1991,11 @@ export async function setupRipplingExplorer({
   document
     .getElementById('rippling-tl-slider')
     .addEventListener('input', function () {
-      const frameIdx = parseInt(this.value)
+      // Slider is on the log scale (0..1000): convert back to hours, then to the nearest frame.
+      const hours = logPctToHours(parseInt(this.value) / 10)
+      const frameIdx = Math.round(
+        (hours / MAX_HOURS) * (rippleFrames.length - 1)
+      )
       if (ripplePlaying) {
         if (rippleRafId !== null) {
           cancelAnimationFrame(rippleRafId)
