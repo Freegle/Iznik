@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\Ripple\ExpandService;
@@ -375,6 +376,185 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(
             1,
             (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->count()
+        );
+    }
+
+    /**
+     * When the isochrone covers >=90% of the origin group's polyindex the stored
+     * polygon must cover the whole group area (union applied).
+     */
+    public function test_union_with_origin_group_area_when_isochrone_covers_90_percent(): void
+    {
+        // The fake routing polygon is POLYGON((-0.10...-0.20, 51.50...51.60)), a 0.10° × 0.10° box.
+        // The origin group's area is a slightly smaller box fully inside it — so the isochrone
+        // covers 100% of the group area (>= 90%), triggering the union.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // Set the origin group's polyindex to a box fully contained within the fake reach polygon.
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        // Inner box: lng -0.18..-0.12, lat 51.52..51.58 — entirely inside the reach.
+        $groupPolyWkt = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
+        DB::statement(
+            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            [$groupPolyWkt, $originGid]
+        );
+
+        $this->service()->process(false, 500);
+
+        // The stored polygon must contain a point inside the group area.
+        $containsGroupPoint = (int) DB::selectOne(
+            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(-0.15, 51.55), 3857)), 0) AS c
+             FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->c;
+        $this->assertSame(1, $containsGroupPoint, 'stored polygon covers a point inside the origin group area');
+
+        // The stored polygon must also contain a point outside the group but inside the reach,
+        // confirming the union (not just the group area alone) was stored.
+        $containsReachPoint = (int) DB::selectOne(
+            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(-0.105, 51.505), 3857)), 0) AS c
+             FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->c;
+        $this->assertSame(1, $containsReachPoint, 'stored polygon also covers the original reach beyond the group');
+    }
+
+    /**
+     * A test/playground group (nameshort LIKE '%playground%') must never be rippled into
+     * even when the reach polygon fully covers its area.
+     */
+    public function test_playground_group_is_not_rippled_into(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // Playground group: nameshort contains 'playground', area fully inside the reach.
+        $uniqueId = uniqid('', true);
+        $playgroundGroup = Group::create([
+            'nameshort' => 'FreeglePlayground_' . $uniqueId,
+            'namefull'  => 'Freegle Playground ' . $uniqueId,
+            'type'      => Group::TYPE_FREEGLE,
+            'region'    => 'TestRegion',
+            'lat'       => 51.55,
+            'lng'       => -0.15,
+            'onhere'    => 1,
+            'publish'   => 1,
+        ]);
+        DB::statement(
+            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $playgroundGroup->id]
+        );
+
+        // Normal group with same area — must ripple in (confirms the reach does cover the area).
+        $normalGroup = $this->createTestGroup();
+        DB::statement(
+            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $normalGroup->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        // The normal group is rippled into — proves the reach covers the area.
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $normalGroup->id)->first(),
+            'normal group within reach is rippled into'
+        );
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+
+        // The playground group must NOT be rippled into despite the reach covering its area.
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $playgroundGroup->id)->first(),
+            'playground group is never rippled into even when the reach covers it'
+        );
+    }
+
+    /**
+     * A TN post (tnpostid IS NOT NULL AND tnpostid != '') must never be rippled into
+     * new groups. TN still cross-posts the same item to multiple Freegle groups itself,
+     * so rippling in would duplicate the post across even more groups.
+     */
+    public function test_tn_post_is_not_rippled_into_new_groups(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // Mark the message as a TN post.
+        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => 'TN12345']);
+
+        // Group whose area intersects the fake reach — would normally get the post.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['rippled_in'], 'TN post must not be rippled into any new group');
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'TN post is not inserted into a new group via rippling'
+        );
+    }
+
+    /**
+     * A non-TN post (tnpostid IS NULL) must be rippled into new groups normally.
+     * This is the baseline confirming the guard only fires for TN posts.
+     */
+    public function test_non_tn_post_null_tnpostid_is_rippled_into_new_groups(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // tnpostid is NULL by default (not a TN post).
+        $this->assertNull(
+            DB::table('messages')->where('id', $msgid)->value('tnpostid'),
+            'pre-condition: tnpostid is null'
+        );
+
+        // Group whose area intersects the fake reach.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'non-TN post is rippled into the new group');
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'non-TN post (tnpostid NULL) is inserted into the intersecting group'
+        );
+    }
+
+    /**
+     * A post with tnpostid = '' (empty string) is treated as non-TN and must be
+     * rippled into new groups normally. The guard is `tnpostid != ''` so an empty
+     * string does not trigger it.
+     */
+    public function test_empty_tnpostid_is_treated_as_non_tn_and_ripples(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // tnpostid = '' → not a real TN post per the canonical detection rule.
+        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => '']);
+
+        // Group whose area intersects the fake reach.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'empty-tnpostid post is rippled in (not TN)');
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post with empty tnpostid is inserted into the intersecting group'
         );
     }
 }
