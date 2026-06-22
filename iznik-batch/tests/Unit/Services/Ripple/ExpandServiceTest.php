@@ -24,6 +24,8 @@ class ExpandServiceTest extends TestCase
         config(['freegle.ripple.hazard_hours' => [1, 3, 6]]);
         config(['freegle.ripple.active_start_hour' => 0]);
         config(['freegle.ripple.active_end_hour' => 24]);
+        // Disable the go-live arrival cutoff so fixtures with back-dated arrivals still ripple.
+        config(['freegle.ripple.enabled_at' => '']);
         DB::statement('DELETE FROM rippling_reach');
         DB::statement('DELETE FROM messages_spatial');
     }
@@ -116,6 +118,30 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(
             'POLYGON',
             DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
+        );
+    }
+
+    public function test_enabled_at_cutoff_excludes_posts_that_arrived_before_it(): void
+    {
+        $this->fakeRouting(3);
+        // Go-live cutoff is "1 hour ago": a post from 2 hours ago is pre-cutoff and
+        // must be left alone; a post from 30 minutes ago is post-cutoff and ripples.
+        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
+        $oldMsgid = $this->seedSpatialPost(now()->subHours(2));
+        $newMsgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'only the post-cutoff post is initialised');
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $oldMsgid)->count(),
+            'a post that arrived before the cutoff never starts rippling'
+        );
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $newMsgid)->count(),
+            'a post that arrived after the cutoff ripples normally'
         );
     }
 

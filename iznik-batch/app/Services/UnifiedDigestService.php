@@ -9,6 +9,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Services\Ripple\DigestPostScorer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -27,6 +28,9 @@ class UnifiedDigestService
     use FeatureFlags;
 
     public const EMAIL_TYPE = 'UnifiedDigest';
+
+    /** Per-run cache of post reach radius in metres, keyed by msgid. */
+    private array $reachRadiusCache = [];
 
     /**
      * Digest mode constants.
@@ -228,11 +232,15 @@ class UnifiedDigestService
             return ['emails' => 0, 'users' => []];
         }
 
-        // Recipients: members at emailfrequency=-1, active in the last 90 days,
-        // plus allowlist gate. NULL lastaccess (new users who have never logged
-        // in) are included; users whose lastaccess is older than 90 days are
-        // excluded to prevent long-inactive accounts from receiving per-post
-        // emails (matches the daily-digest eligibility threshold).
+        // Recipients: members at emailfrequency=-1, plus allowlist gate. The
+        // inactivity gate must match the daily path's V1-parity threshold
+        // (getUsersForDigest: Engage::USER_INACTIVE = 365*12*3600 = 182.5 days),
+        // NOT a stricter 90-day cutoff. A 90-day window silently dropped members
+        // who are inactive for 90-182.5 days from per-post emails even though V1
+        // (Digest.php recipient query had no lastaccess filter at all) and the
+        // daily digest would still mail them. NULL lastaccess (new users who have
+        // never logged in) are included so a brand-new immediate member gets posts
+        // right away.
         $memberQuery = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupid)
@@ -241,7 +249,7 @@ class UnifiedDigestService
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 $q->whereNull('users.lastaccess')
-                  ->orWhere('users.lastaccess', '>', now()->subDays(90));
+                  ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
             });
 
         if ($userFilter) {
@@ -943,6 +951,15 @@ class UnifiedDigestService
         // completed  = a Taken/Received outcome (the "came and went" list, daily only)
         // withdrawn/expired (has_outcome && !has_success) appear in neither.
         $posts = $allPosts->filter(fn ($p) => !$p->has_outcome)->values();
+
+        // Order the live posts by the rippling digest-preview score (nearer +
+        // newer + less-seen float up), matching the /rippling "Digest preview".
+        // Daily only — immediate mode stays chronological (single-group, real-time).
+        // Dedup runs after, so the kept cross-post representative is the top-scoring one.
+        if ($mode === self::MODE_DAILY) {
+            $posts = $this->scoreAndSortAvailable($posts, $this->resolveUserLatLng($user));
+        }
+
         $completedPosts = $mode === self::MODE_DAILY
             ? $this->deduplicateCompletedPosts($allPosts->filter(fn ($p) => $p->has_success)->values())
             : collect();
@@ -984,9 +1001,14 @@ class UnifiedDigestService
             $sent = 0;
             foreach ($deduplicatedPosts as $deduped) {
                 if (!$dryRun) {
-                    // Each immediate email is about one post on one group; carry
-                    // only that group's sponsors.
-                    $postGroupId = (int) ($deduped['postedToGroups'][0] ?? 0);
+                    // Each immediate email is about one post; carry that post's
+                    // sponsors. For a cross-post, prefer a group the recipient is a
+                    // member of (matching the digest header/byline group) rather
+                    // than an arbitrary first group.
+                    $postGroupId = (int) (UnifiedDigest::selectPreferredGroup(
+                        $deduped['postedToGroups'] ?? [],
+                        $user->memberships->pluck('groupid')->all()
+                    ) ?? 0);
                     $postSponsors = $this->getSponsorsForGroup($postGroupId);
                     app(\App\Services\EmailSpoolerService::class)->spool(
                         new UnifiedDigest($user, collect([$deduped]), $mode, $postSponsors),
@@ -1116,6 +1138,11 @@ class UnifiedDigestService
         $query = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
             ->selectRaw('EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id) AS has_outcome')
             ->selectRaw("EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id AND mo.outcome IN ($successList)) AS has_success")
+            // Engagement signal for the rippling 'budget' (underexposure) score term;
+            // mirrors iznik-routing-go/digest_simulator.go (views = SUM of 'View'
+            // like counts; replies = approved 'Interested' chat replies).
+            ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
+            ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->whereIn('messages_groups.groupid', $groupIds)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
@@ -1176,6 +1203,139 @@ class UnifiedDigestService
         }
 
         return null;
+    }
+
+    /**
+     * The post's reach extent in metres: the greatest great-circle distance from
+     * the post origin (rippling_reach.lat/lng) to any vertex of its reach polygon.
+     * Used as the closeness denominator in the digest score.
+     *
+     * rippling_reach.polygon stores lng/lat DEGREES (tagged SRID 3857 by Freegle
+     * convention — the coordinates are WGS84 degrees, not projected metres), so we
+     * parse the WKT ring and measure each vertex against the origin with haversine
+     * to get true metres. The recipient->post distance (see scoreAndSortAvailable)
+     * is measured the same way, so close = 1 - dist/reach is a consistent
+     * true-metre ratio and the configured default (~30km) is meaningful.
+     *
+     * Posts with no rippling_reach row (rippling dark, or backlog posts arriving
+     * before the go-live cutoff) fall back to the configured default. Cached per
+     * run because many recipients share the same posts.
+     */
+    private function reachRadiusMetres(int $msgid): float
+    {
+        if (array_key_exists($msgid, $this->reachRadiusCache)) {
+            return $this->reachRadiusCache[$msgid];
+        }
+
+        $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
+
+        $row = DB::selectOne(
+            'SELECT rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
+               FROM rippling_reach rr WHERE rr.msgid = ?',
+            [$msgid]
+        );
+
+        if (!$row || $row->poly_wkt === null) {
+            return $this->reachRadiusCache[$msgid] = $default;
+        }
+
+        // Parse the WKT exterior ring in PHP and take the greatest great-circle
+        // distance (metres) from the origin to any vertex. Parsing in PHP is more
+        // portable than MySQL geometry functions and avoids SRID-transform issues.
+        // WKT form: POLYGON((lng1 lat1,lng2 lat2,...,lng1 lat1)) — x is lng, y is lat.
+        $oLng = (float) $row->ox;
+        $oLat = (float) $row->oy;
+        $wkt = $row->poly_wkt;
+
+        // Extract the coordinate pairs from the exterior ring.
+        if (!preg_match('/POLYGON\s*\(\s*\(([^)]+)\)/', $wkt, $m)) {
+            return $this->reachRadiusCache[$msgid] = $default;
+        }
+
+        $maxDist = 0.0;
+        foreach (explode(',', $m[1]) as $pair) {
+            $parts = preg_split('/\s+/', trim($pair));
+            if (count($parts) < 2) {
+                continue;
+            }
+            $vLng = (float) $parts[0];
+            $vLat = (float) $parts[1];
+            $dist = $this->haversineMetres($oLat, $oLng, $vLat, $vLng);
+            if ($dist > $maxDist) {
+                $maxDist = $dist;
+            }
+        }
+
+        $r = $maxDist > 0 ? $maxDist : $default;
+        return $this->reachRadiusCache[$msgid] = $r;
+    }
+
+    /**
+     * Score the available (live) posts with the rippling digest-preview algorithm
+     * and return them ordered by score descending. See DigestPostScorer for the
+     * formula and the haversine/drive-time performance approximation.
+     *
+     * When the recipient's location is unknown we cannot compute closeness, so we
+     * leave the posts in their incoming (arrival) order — fail open, no regression.
+     */
+    private function scoreAndSortAvailable(Collection $posts, ?array $latlng): Collection
+    {
+        if ($latlng === null || $posts->count() < 2) {
+            return $posts->values();
+        }
+
+        $scorer = app(DigestPostScorer::class);
+        $weights = (array) config('freegle.ripple.score.weights');
+        $env = [
+            'window_hours' => (float) config('freegle.ripple.score.window_hours', 24),
+            'budget_decay' => (float) config('freegle.ripple.score.budget_decay', 25),
+        ];
+
+        $now = now();
+        foreach ($posts as $post) {
+            $reach = $this->reachRadiusMetres((int) $post->id);
+            // Post origin: messages.lat/lng (already on the row via messages.* select).
+            // Great-circle metres recipient -> post, the same unit as the reach radius.
+            $dist = $this->haversineMetres(
+                $latlng[0],
+                $latlng[1],
+                (float) $post->lat,
+                (float) $post->lng
+            );
+            $arrival = $post->arrival instanceof \DateTimeInterface
+                ? $post->arrival
+                : \Illuminate\Support\Carbon::parse($post->arrival);
+            $ageH = max(0.0, $now->floatDiffInHours($arrival));
+            $s = $scorer->score(
+                $dist,
+                $reach,
+                $ageH,
+                (int) ($post->views ?? 0),
+                (int) ($post->replies ?? 0),
+                false, // anchor/home-group not yet implemented; see /rippling (digest_simulator.go homeGroups). Default weight 0.
+                $weights,
+                $env
+            );
+            $post->_score = $s['total'];
+        }
+
+        return $posts->sortByDesc('_score')->values();
+    }
+
+    /**
+     * Great-circle distance in metres between two (lat,lng) points in degrees.
+     * Used for both the recipient->post distance and the post reach radius, so the
+     * close = 1 - dist/reach ratio is a consistent true-metre ratio.
+     */
+    private function haversineMetres(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $r = 6371000.0; // mean Earth radius (metres)
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 
     /**

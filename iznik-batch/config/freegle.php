@@ -99,6 +99,12 @@ return [
         'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteersupport@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
+        // TrashNothing contact that receives the monthly LoveJunk invoice request
+        // (V1 TN_ADDR). Held in env as it's a partner contact; no committed default.
+        'tn_invoice_addr' => env('FREEGLE_TN_INVOICE_ADDR', ''),
+        // Treasurer address quoted in the invoice body — where TN should send the
+        // PDF invoice (V1 TREASURER_ADDR).
+        'treasurer_addr' => env('FREEGLE_TREASURER_ADDR', 'treasurer@ilovefreegle.org'),
         // Modbot email — the automated moderator account; excluded from mod-welfare checks.
         'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modbot@users.ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
@@ -275,6 +281,13 @@ return [
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
         'enabled' => (bool) env('RIPPLE_ENABLED', false),
+        // Go-live arrival cutoff (server local time). Only posts that arrived on or
+        // after this instant ever START rippling; older pending posts are left alone.
+        // This is the flood guard: when RIPPLE_ENABLED first flips on, every historical
+        // pending post would otherwise become eligible at once and fan out a wall of
+        // mail. With the cutoff, only recent posts ripple, so go-live is a trickle.
+        // Empty string disables the cutoff (ripple everything, e.g. in tests).
+        'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-21'),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.
@@ -289,6 +302,22 @@ return [
         // exclusive end. Outside this window, due expansions wait.
         'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
         'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+        // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
+        // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
+        'score' => [
+            'weights' => [
+                'close'  => (float) env('RIPPLE_DIGEST_W_CLOSE', 1.0),
+                'fresh'  => (float) env('RIPPLE_DIGEST_W_FRESH', 0.0),
+                'budget' => (float) env('RIPPLE_DIGEST_W_BUDGET', 1.0),
+                'anchor' => (float) env('RIPPLE_DIGEST_W_ANCHOR', 0.0),
+            ],
+            'window_hours' => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
+            'budget_decay' => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+            // ~30km, the 30-min drive-isochrone analogue. Used for posts with no
+            // rippling_reach row (the dominant case while rippling is dark, and for
+            // all backlog posts after go-live).
+            'default_reach_metres' => (float) env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000),
+        ],
     ],
 
     /*

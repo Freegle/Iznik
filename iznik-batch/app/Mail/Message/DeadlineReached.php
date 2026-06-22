@@ -5,7 +5,6 @@ namespace App\Mail\Message;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
-use App\Models\Group;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Mail\Mailables\Address;
@@ -48,7 +47,7 @@ class DeadlineReached extends MjmlMailable
             ? Message::OUTCOME_TAKEN
             : Message::OUTCOME_RECEIVED;
 
-        $group = $message->groups->first();
+        $group = $this->recipientGroupForMessage($message, $user);
 
         $this->initTracking(
             'DeadlineReached',
@@ -61,12 +60,29 @@ class DeadlineReached extends MjmlMailable
     }
 
     /**
+     * Pick the group most relevant to the recipient for a message.
+     *
+     * Prefers a group the recipient is a member of, sorted by most-recent
+     * arrival. Falls back to the first group if there is no overlap.
+     */
+    protected function recipientGroupForMessage(Message $message, User $user): ?object
+    {
+        $userGroupIds = $user->memberships->pluck('groupid')->map(fn ($id) => (int) $id)->all();
+
+        return $message->groups
+            ->filter(fn ($g) => in_array((int) $g->id, $userGroupIds, true))
+            ->sortByDesc(fn ($g) => $g->pivot->arrival ?? null)
+            ->first()
+            ?? $message->groups->first();
+    }
+
+    /**
      * Build the message.
      */
     public function build(): static
     {
         $userSite = config('freegle.sites.user');
-        $group = $this->message->groups->first();
+        $group = $this->recipientGroupForMessage($this->message, $this->user);
         $groupName = $group?->nameshort ?? 'Freegle';
 
         return $this->to($this->user->email_preferred, $this->user->displayname)

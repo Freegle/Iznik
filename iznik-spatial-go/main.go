@@ -427,6 +427,14 @@ func main() {
 			return c.JSON(fiber.Map{"upserted": 0})
 		}
 
+		// Upsert is the integration-test seeding path and must work even when no
+		// index was built at startup (e.g. an empty test DB), which otherwise
+		// leaves state.idx nil and 503s. Lazily create an empty index to seed into;
+		// this never SERVES an empty index (the row is inserted right after).
+		if err := state.ensureIndex(); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
 		err := state.withIndex(func(idx *Index) error {
 			return InsertItems(idx, items, nil)
 		})

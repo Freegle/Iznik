@@ -6,8 +6,8 @@ export function milesAway(flat, flng, tlat, tlng) {
 
   if ((flat || flng) && (tlat || tlng)) {
     ret = turfdistance(
-      turfpoint([flat, flng]),
-      turfpoint([tlat, tlng]),
+      turfpoint([flng, flat]),
+      turfpoint([tlng, tlat]),
       'miles'
     )
 

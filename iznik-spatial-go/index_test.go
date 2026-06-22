@@ -1,9 +1,11 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/peterstace/simplefeatures/geom"
 	"github.com/stretchr/testify/assert"
@@ -41,6 +43,71 @@ func TestRebuildFlow_CheckpointSurvivesRename(t *testing.T) {
 	cnt, err := reopened.CountRows()
 	require.NoError(t, err)
 	assert.Equal(t, int64(n), cnt)
+}
+
+// fakeDataset is a Dataset whose Load inserts a fixed set of points and ignores
+// MySQL, so server.rebuild() can be exercised without a live DB.
+type fakeDataset struct {
+	name  string
+	items []Item
+}
+
+func (d *fakeDataset) Name() string                                  { return d.name }
+func (d *fakeDataset) Load(_ *sql.DB, idx *Index) error              { return InsertItems(idx, d.items, nil) }
+func (d *fakeDataset) ApplyDelta(_ *sql.DB, _ *Index, _ time.Time) error { return nil }
+func (d *fakeDataset) Query(_ *Index, _ QueryParams) ([]QueryResult, error) { return nil, nil }
+func (d *fakeDataset) Within(_ *Index, _ QueryParams) ([]int64, error)     { return nil, nil }
+func (d *fakeDataset) RebuildInterval() time.Duration                { return time.Hour }
+func (d *fakeDataset) DeltaInterval() time.Duration                  { return time.Minute }
+
+func pointItems(start, n int) []Item {
+	items := make([]Item, n)
+	for i := 0; i < n; i++ {
+		lng := -2 + float64(i)/1000
+		lat := 53 + float64(i)/1000
+		items[i] = Item{ExtID: int64(start + i), MinLng: lng, MaxLng: lng, MinLat: lat, MaxLat: lat}
+	}
+	return items
+}
+
+// TestRebuild_RemovesOrphanedWAL is a regression test for the messages-index
+// corruption seen in production (2026-06-16): rebuild() renames only the .db
+// over the old file, so the OLD -wal/-shm are left on disk. SQLite then replays
+// that stale WAL onto the freshly built .db on reopen and corrupts it — every
+// subsequent delta upsert/delete fails with "database disk image is malformed".
+// rebuild() must delete the orphaned sidecars before reopening.
+func TestRebuild_RemovesOrphanedWAL(t *testing.T) {
+	dir := t.TempDir()
+	ds := &fakeDataset{name: "msgs", items: pointItems(1, 3)}
+	srv := newServer(nil, dir, []Dataset{ds})
+
+	// First build: opens dir/msgs.db as the live index (WAL mode).
+	require.NoError(t, srv.rebuild("msgs"))
+
+	// Dirty the live index's WAL the way real delta upserts do, and leave it
+	// un-checkpointed so dir/msgs.db-wal is non-empty when the next rebuild runs.
+	state := srv.datasets["msgs"]
+	require.NoError(t, InsertItems(state.idx, pointItems(1000, 50), nil))
+	walPath := filepath.Join(dir, "msgs.db-wal")
+	if fi, err := os.Stat(walPath); err != nil || fi.Size() == 0 {
+		t.Fatalf("expected a non-empty orphan-able WAL before rebuild (err=%v)", err)
+	}
+
+	// Second build replaces the .db. Without the sidecar cleanup, reopening
+	// replays the stale WAL and the index is corrupt / has the wrong rows.
+	ds.items = pointItems(1, 7)
+	require.NoError(t, srv.rebuild("msgs"), "rebuild must not fail on an orphaned WAL")
+
+	cnt, err := state.idx.CountRows()
+	require.NoError(t, err, "reopened index must be readable (no malformed disk image)")
+	assert.Equal(t, int64(7), cnt, "index must reflect only the fresh build, not stale WAL pages")
+
+	// The orphaned sidecars from the previous index must be gone (a fresh WAL
+	// for the new live index may exist, but it must belong to the new .db).
+	for _, suffix := range []string{".building-wal", ".building-shm"} {
+		_, err := os.Stat(filepath.Join(dir, "msgs.db"+suffix))
+		assert.True(t, os.IsNotExist(err), "temp build sidecar %s must be cleaned up", suffix)
+	}
 }
 
 // mustGeom parses a WKT string into a geom.Geometry, failing the test on error.

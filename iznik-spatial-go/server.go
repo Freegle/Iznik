@@ -49,6 +49,29 @@ func (s *datasetState) swapIndex(newIdx *Index) {
 	}
 }
 
+// ensureIndex guarantees a live index exists for the admin upsert (integration-
+// test seeding) endpoint. When startupLoad/rebuild could not produce a non-empty
+// index — e.g. the test database has no source rows — state.idx is nil and
+// withIndex would reject the seed with errIndexNotReady. Lazily create an empty
+// in-memory index here: upsert populates it immediately, so KNN never sees a
+// 0-row index by this path, and the production guards that refuse to SERVE an
+// empty index built from MySQL (rebuild/startupLoad) are untouched. In-memory
+// keeps it off disk, so it can't be adopted by a later startupLoad and can't
+// race a rebuild's file rename.
+func (s *datasetState) ensureIndex() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.idx != nil {
+		return nil
+	}
+	idx, err := CreateIndex(":memory:")
+	if err != nil {
+		return err
+	}
+	s.idx = idx
+	return nil
+}
+
 // server manages all datasets and the MySQL connection.
 type server struct {
 	datasets map[string]*datasetState
@@ -99,6 +122,23 @@ func (srv *server) rebuild(name string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("%s: load: %w", name, err)
 	}
+	// A zero-row build almost always means a transient problem (DB unreachable, a
+	// failing geometry query) rather than a genuinely empty dataset — these
+	// datasets are never empty in practice. Serving an empty index is silently
+	// dangerous: callers like the postcode remap get absurd far-away "nearest"
+	// results and write them to the DB. So refuse to swap in an empty index; keep
+	// the previous good one live (if any) and surface the failure loudly.
+	if n, cErr := newIdx.CountRows(); cErr != nil {
+		newIdx.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("%s: count rows: %w", name, cErr)
+	} else if n == 0 {
+		newIdx.Close()
+		os.Remove(tmpPath)
+		os.Remove(tmpPath + "-wal")
+		os.Remove(tmpPath + "-shm")
+		return fmt.Errorf("%s: build produced 0 rows; refusing to replace live index", name)
+	}
 	// Flush the WAL into the main .db before close+rename — rename moves only the
 	// .db file, so anything still in the -wal would be lost (large indexes).
 	if err := newIdx.Checkpoint(); err != nil {
@@ -112,6 +152,17 @@ func (srv *server) rebuild(name string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("%s: rename index: %w", name, err)
 	}
+	// rename moved only the .db. Any -wal/-shm still on disk belong to the previous
+	// (now-replaced) index; if left in place OpenIndex would replay that stale WAL
+	// onto the fresh .db and corrupt it. The freshly built .db is already complete
+	// (Checkpoint above flushed its WAL), so drop the old sidecars now. The old live
+	// index keeps serving reads until swapIndex via its already-open fds (the inodes
+	// survive the unlink on Linux), so this is safe to do before the swap.
+	os.Remove(idxPath + "-wal")
+	os.Remove(idxPath + "-shm")
+	// Tidy any leftover WAL sidecars from the temp build path too.
+	os.Remove(tmpPath + "-wal")
+	os.Remove(tmpPath + "-shm")
 
 	live, err := OpenIndex(idxPath)
 	if err != nil {
@@ -146,8 +197,20 @@ func (srv *server) startupLoad(forceRebuild bool) {
 
 		idxPath := srv.idxPath(name)
 		if existing, err := OpenIndex(idxPath); err == nil {
-			state.idx = existing
-			log.Printf("spatial-server: %s opened existing index from %s", name, idxPath)
+			// An on-disk index can open cleanly yet be empty — e.g. a previous
+			// build was interrupted or produced 0 rows. Adopting it would report
+			// ready with count 0 and silently serve wrong results, so verify it
+			// has rows; if not, discard it and rebuild from MySQL.
+			if n, cErr := existing.CountRows(); cErr == nil && n > 0 {
+				state.idx = existing
+				log.Printf("spatial-server: %s opened existing index from %s (%d rows)", name, idxPath, n)
+			} else {
+				existing.Close()
+				log.Printf("spatial-server: existing index for %s is empty/unreadable (rows=%d err=%v), rebuilding...", name, n, cErr)
+				if err := srv.rebuild(name); err != nil {
+					log.Printf("spatial-server: WARNING: rebuild of %s failed (%v); starting with no index", name, err)
+				}
+			}
 		} else {
 			log.Printf("spatial-server: no usable index for %s (%v), building...", name, err)
 			if err := srv.rebuild(name); err != nil {

@@ -328,4 +328,151 @@ class MessageSpatialServiceTest extends TestCase
 
         $this->service->updateSpatialIndex();
     }
+
+    public function test_crosspost_approved_on_two_groups_yields_one_spatial_row(): void
+    {
+        // messages_spatial has UNIQUE(msgid) — one row per message regardless of how many
+        // groups it is approved on.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: bookcase (London)',
+            'textbody' => 'A bookcase.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupA->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            1,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'a message approved on two groups must produce exactly one messages_spatial row'
+        );
+
+        // A second run must not add a second row (ON DUPLICATE KEY UPDATE is idempotent).
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            1,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'the single spatial row must be stable across repeated reconciler runs'
+        );
+    }
+
+    public function test_spatial_row_removed_when_stored_group_moves_to_non_approved(): void
+    {
+        // The single spatial row stores the groupid it was written for. When that
+        // messages_groups row moves to a non-Approved collection, removeNonApprovedMessages
+        // (which joins on both msgid AND groupid) must remove the spatial row.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: desk (London)',
+            'textbody' => 'A desk.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subDays(5),
+        ]);
+
+        // Seed the spatial row as if the group was previously Approved.
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'the spatial row must be removed when the stored group moves to a non-Approved collection'
+        );
+    }
+
+    public function test_withdrawal_removes_single_spatial_row_and_notifies_external_once(): void
+    {
+        // A message approved on two groups has ONE spatial row. Withdrawing the message
+        // must remove that single row and notify the external spatial server exactly once
+        // (not once per messages_groups row).
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: wardrobe (London)',
+            'textbody' => 'A wardrobe.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        foreach ([$groupA->id, $groupB->id] as $gid) {
+            MessageGroup::create([
+                'msgid' => $message->id,
+                'groupid' => $gid,
+                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(5),
+            ]);
+        }
+
+        // One spatial row (the one-row model).
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $groupA->id, Message::TYPE_OFFER, now()->subDays(5)]
+        );
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id,
+            'outcome' => Message::OUTCOME_WITHDRAWN,
+        ]);
+
+        // The external spatial server is keyed by msgid, so exactly one removeItems call
+        // is expected regardless of how many groups the message belonged to.
+        $this->spatialAdmin
+            ->expects($this->once())
+            ->method('removeItems')
+            ->with('messages', $this->containsEqual($message->id));
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'the single spatial row must be removed when the message is withdrawn'
+        );
+    }
 }

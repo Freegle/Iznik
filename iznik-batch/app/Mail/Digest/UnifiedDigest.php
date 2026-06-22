@@ -11,6 +11,7 @@ use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
+use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
 use Carbon\Carbon;
 use Illuminate\Mail\Mailables\Address;
@@ -68,7 +69,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // isn't tied to one, so leave it null.
         $trackingGroupId = null;
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
-            $trackingGroupId = $this->posts->first()['postedToGroups'][0] ?? null;
+            $trackingGroupId = $this->preferredGroupForPost($this->posts->first());
         }
 
         $this->initTracking(
@@ -89,8 +90,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 // this only the rare clicked post can be attributed.
                 'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
                 'digest_number' => $this->digestNumber,
-                'has_amp' => $this->isAmpEnabled(),
-            ]
+                'has_amp' => $this->ampForRecipient(),
+            ],
+            // The has_amp COLUMN (not just the metadata key above) is what the
+            // ModTools sysadmin AMP stats read. This 7th argument was previously
+            // omitted, so every digest recorded has_amp=0 even though AMP was
+            // delivered - the digest "showed no AMP" in the stats. Pass it.
+            $this->ampForRecipient()
         );
 
         // Prepare posts with tracking URLs and decoded text.
@@ -254,7 +260,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $mode = $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE;
         $service = app(UnifiedDigestService::class);
         if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
-            $groupId = (int) ($descriptor['posts'][0]['groups'][0] ?? 0);
+            $postGroups = $descriptor['posts'][0]['groups'] ?? [];
+            $userGroupIds = $user->memberships->pluck('groupid')->all();
+            $groupId = self::selectPreferredGroup($postGroups, $userGroupIds) ?? 0;
             $sponsors = $service->getSponsorsForGroup($groupId);
         } else {
             $sponsors = $service->getSponsorsForUser($user);
@@ -275,6 +283,57 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $sponsors,
             $completed
         );
+    }
+
+    /**
+     * Read-only accessor for the deduplicated posts this digest carries.
+     * Exposed for assertions in tests (the backing property stays protected
+     * so callers can't mutate the post set after construction).
+     */
+    public function getPosts(): Collection
+    {
+        return $this->posts;
+    }
+
+    /**
+     * Select a preferred group from a list, given the user's memberships.
+     *
+     * Prefer a group the user is a member of; fall back to the first group.
+     * Static + public so it can be used in both instance and static contexts,
+     * including from UnifiedDigestService when scoping a per-post group.
+     */
+    public static function selectPreferredGroup(array $groups, array $userGroupIds): ?int
+    {
+        if (empty($groups)) {
+            return null;
+        }
+        if (count($groups) === 1) {
+            return $groups[0];
+        }
+
+        foreach ($groups as $groupId) {
+            if (in_array($groupId, $userGroupIds, true)) {
+                return $groupId;
+            }
+        }
+
+        return $groups[0];
+    }
+
+    /**
+     * Choose the single group to feature for a post in this recipient's digest.
+     *
+     * A post can be cross-posted to several groups, but the subject prefix and
+     * footer can only name one. Prefer a group the recipient is actually a
+     * member of; fall back to the first posted-to group. Today the immediate
+     * path supplies a single-group postedToGroups so this is unambiguous, but
+     * this keeps the choice correct if digests become cross-group.
+     */
+    protected function preferredGroupForPost(array $post): ?int
+    {
+        $groups = $post['postedToGroups'] ?? [];
+        $myGroupIds = $this->user->memberships->pluck('groupid')->all();
+        return self::selectPreferredGroup($groups, $myGroupIds);
     }
 
     /**
@@ -299,6 +358,23 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     protected function isSinglePost(): bool
     {
         return $this->mode === UnifiedDigestService::MODE_IMMEDIATE;
+    }
+
+    /**
+     * Whether AMP is genuinely usable by this digest's recipient - used to set
+     * the has_amp TRACKING flag.
+     *
+     * AMP is enabled AND the recipient's email provider actually supports AMP for
+     * Email. This matches ChatNotification's has_amp semantics so the column
+     * reflects AMP the recipient can actually engage with and the AMP-vs-HTML
+     * stats compare like with like. (The AMP part itself is still rendered for
+     * every recipient when AMP is enabled - see build() - so this only governs
+     * what we COUNT, not what we send.)
+     */
+    protected function ampForRecipient(): bool
+    {
+        return $this->isAmpEnabled()
+            && AmpEmailSupport::isSupported($this->user->email_preferred ?? '');
     }
 
     /**
@@ -352,7 +428,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $primaryGroupName = null;
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
             $firstPost = $this->posts->first();
-            $groupId = $firstPost['postedToGroups'][0] ?? null;
+            $groupId = $this->preferredGroupForPost($firstPost);
             if ($groupId) {
                 $row = $this->groupRow($groupId);
                 $primaryGroupName = $row ? ($row->namefull ?: $row->nameshort) : null;
@@ -448,7 +524,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         });
 
-        // Render AMP variant if enabled.
+        // Render AMP variant if enabled. (Rendered for all recipients; whether
+        // it's COUNTED as usable AMP is gated on provider support - see
+        // ampForRecipient()/has_amp tracking.)
         if ($this->isAmpEnabled()) {
             $ampPosts = $this->prepareAmpPosts();
 
@@ -584,7 +662,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     {
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
             $firstPost = $this->posts->first();
-            $groupId = $firstPost['postedToGroups'][0] ?? null;
+            $groupId = $this->preferredGroupForPost($firstPost);
             $groupRow = $this->groupRow($groupId);
             $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
             // Decode HTML entities: the DB stores subjects HTML-encoded (e.g.
@@ -729,10 +807,15 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $isOffer = $message->type === 'Offer';
 
         // Primary group name (friendly full name) + /explore link for the
-        // "Posted by … on <group>" byline.
+        // "Posted by … on <group>" byline. For a cross-post, prefer a group the
+        // recipient is a member of (matching the digest header/subject group)
+        // rather than an arbitrary first group.
         $groupName = null;
         $groupUrl = null;
-        $primaryGroupId = $postedToGroups[0] ?? null;
+        $primaryGroupId = self::selectPreferredGroup(
+            $postedToGroups,
+            $this->user->memberships->pluck('groupid')->all()
+        );
         if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
             $g = $this->groupLookup[$primaryGroupId];
             $groupName = $g->namefull ?: $g->nameshort;
@@ -864,7 +947,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $originalDate = $message->date instanceof Carbon
             ? $message->date
             : ($message->date ? Carbon::parse($message->date) : null);
-        if ($originalDate && $arrival->diffInMinutes($originalDate) > 60) {
+        if ($originalDate && $arrival->diffInMinutes($originalDate, true) > 60) {
             $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
         }
 

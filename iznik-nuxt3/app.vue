@@ -145,6 +145,7 @@ import { computed, onMounted, useRoute } from '#imports'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 import { useConfigStore } from '~/stores/config'
+import { badgeTitle } from '~/composables/useTitleBadge'
 
 const route = useRoute()
 const loadingIndicatorThrottle = ref(5000)
@@ -368,17 +369,12 @@ if (process.client) {
 
   useHead({
     titleTemplate: (titleChunk) => {
+      // Read the count refs' .value here (inside the reactive titleTemplate) so
+      // the badge updates as chats/notifications arrive. totalCount is a plain
+      // number - the previous code checked totalCount.value (undefined), so the
+      // count was never shown on the Freegle site (Discourse 9806/6).
       const totalCount = notificationCount.value + chatCount.value
-
-      if (titleChunk) {
-        if (titleChunk.charAt(0) !== '(' && totalCount.value > 0) {
-          return '(' + totalCount.value + ') ' + titleChunk
-        } else {
-          return titleChunk
-        }
-      } else {
-        return null
-      }
+      return badgeTitle(titleChunk, totalCount)
     },
   })
 }

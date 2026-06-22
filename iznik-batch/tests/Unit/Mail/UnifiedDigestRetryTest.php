@@ -163,6 +163,47 @@ class UnifiedDigestRetryTest extends TestCase
         $this->assertEquals('Retry Sponsor', $sponsors->first()->name);
     }
 
+    public function test_rebuild_uses_recipients_group_for_sponsors_on_cross_post(): void
+    {
+        // A cross-post to groups A and B; recipient is only a member of B.
+        // rebuildFromDescriptor must pick B for the sponsors lookup (not A).
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($recipient, $groupB);
+        $message = $this->createTestMessage($poster, $groupA);
+
+        \Illuminate\Support\Facades\DB::table('groups_sponsorship')->insert([
+            'groupid' => $groupB->id,
+            'name' => 'GroupB Sponsor',
+            'linkurl' => 'https://groupb.example.com',
+            'imageurl' => 'https://groupb.example.com/logo.png',
+            'tagline' => 'GroupB sponsor',
+            'startdate' => now()->subDay(),
+            'enddate' => now()->addMonth(),
+            'contactname' => 'B',
+            'contactemail' => 'b@example.com',
+            'amount' => 100,
+            'visible' => TRUE,
+        ]);
+
+        $rebuilt = UnifiedDigest::rebuildFromDescriptor([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_IMMEDIATE,
+            'posts' => [['msgid' => $message->id, 'groups' => [$groupA->id, $groupB->id]]],
+        ]);
+
+        $this->assertInstanceOf(UnifiedDigest::class, $rebuilt);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'sponsors');
+        $ref->setAccessible(true);
+        $sponsors = $ref->getValue($rebuilt);
+
+        $this->assertCount(1, $sponsors);
+        $this->assertEquals('GroupB Sponsor', $sponsors->first()->name);
+    }
+
     public function test_rebuild_returns_null_for_unknown_user(): void
     {
         $rebuilt = UnifiedDigest::rebuildFromDescriptor([

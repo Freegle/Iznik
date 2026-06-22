@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Freegle Impact Report 2025</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --green:#338808; --green-dark:#1d6607; --green-deep:#0e3500; --green-bg:#61AE24; --green-mid:#8cc45a;
+  --green-light:#E6ffE6; --surface:#f0f7ed; --cyan:#00A1CB; --cyan-dark:#0a7d9c; --amber:#e38d13; --amber-dark:#b46a00;
+  --ink:#16210e; --ink-soft:#46513c; --paper:#fbfaf6; --rule:#d9e2cf;
+  --display:"Fraunces",Georgia,"Times New Roman",serif;
+  --body:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:var(--body);color:var(--ink);background:#9aa0a6;line-height:1.5;-webkit-font-smoothing:antialiased;font-size:13.5px}
+@page{size:A4;margin:0}
+.page{position:relative;width:210mm;min-height:297mm;background:var(--paper);margin:0 auto;overflow:hidden;page-break-after:always}
+.page:last-child{page-break-after:auto}
+.pad{padding:20mm 19mm 22mm}
+@media screen{ body{padding:18px 0} .page{box-shadow:0 8px 40px rgba(0,0,0,.28);margin-bottom:22px} }
+
+h1,h2,h3,h4{font-family:var(--display);font-weight:600;line-height:1.06;margin:0;letter-spacing:-.01em}
+.eyebrow{font-family:var(--body);font-weight:700;text-transform:uppercase;letter-spacing:.2em;font-size:10.5px}
+p{margin:0 0 10px}
+.lede{font-size:15.5px;line-height:1.55;color:var(--ink-soft)}
+.small{font-size:11px;color:var(--ink-soft)}
+strong{font-weight:700}
+a{color:var(--green-dark);text-decoration:none}
+sup.fn{font-size:9px;color:var(--green);font-weight:700;vertical-align:super}
+
+.mark{display:inline-flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:19px}
+.mark svg{width:26px;height:26px;flex:0 0 auto}
+.mark.on-green{color:#fff}
+
+.section-head{display:flex;align-items:baseline;gap:13px;margin-bottom:7px}
+.section-no{font-family:var(--display);font-weight:700;font-size:14px;color:var(--green);letter-spacing:.02em}
+.section-head h2{font-size:30px}
+.foot{position:absolute;bottom:11mm;left:19mm;right:19mm;display:flex;justify-content:space-between;font-size:9.5px;color:#8a937d;border-top:1px solid var(--rule);padding-top:7px;letter-spacing:.02em}
+
+/* COVER */
+.cover{color:#fff;background:
+  radial-gradient(120% 80% at 82% -12%, rgba(97,174,36,.55), transparent 60%),
+  radial-gradient(90% 70% at -12% 112%, rgba(0,161,203,.30), transparent 55%),
+  linear-gradient(155deg,#1d6607 0%,#256d08 42%,#0e3500 100%);}
+.cover::after{content:"";position:absolute;inset:0;opacity:.13;mix-blend-mode:overlay;background-image:radial-gradient(rgba(255,255,255,.9) 1px, transparent 1.4px);background-size:14px 14px}
+.cover .pad{position:relative;z-index:1;height:297mm;display:flex;flex-direction:column;padding:24mm 22mm}
+.cover-top{display:flex;justify-content:space-between;align-items:flex-start}
+.cover-year{font-family:var(--display);font-weight:500;font-size:14px;letter-spacing:.3em;opacity:.85}
+.cover-mid{margin-top:auto}
+.cover h1{font-size:70px;font-weight:600;letter-spacing:-.02em}
+.cover h1 .big{display:block;font-size:80px;font-weight:900;color:#bff58a}
+.cover-sub{font-size:18px;max-width:17em;margin-top:16px;color:#eafbe0;line-height:1.4}
+.cover-strip{display:flex;gap:26px;margin-top:26px;padding-top:20px;border-top:2px solid rgba(191,245,138,.45);flex-wrap:wrap}
+.cover-strip .n{font-family:var(--display);font-weight:900;font-size:26px;color:#bff58a;line-height:1}
+.cover-strip .l{font-size:11px;opacity:.85;margin-top:4px}
+.cover-bottom{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;padding-top:28px}
+.cover-tag{font-size:14px;opacity:.9;max-width:21em;line-height:1.45}
+.cover-badge{text-align:right;font-size:12px;opacity:.85;letter-spacing:.03em;line-height:1.5}
+
+/* STAT CARDS */
+.glance-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin:18px 0 10px}
+.stat{border:1px solid var(--rule);border-radius:14px;padding:18px 18px 16px;background:#fff;position:relative;overflow:hidden}
+.stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--green)}
+.stat .num{font-family:var(--display);font-weight:900;font-size:40px;line-height:1;color:var(--green-dark);letter-spacing:-.02em}
+.stat .unit{font-family:var(--display);font-weight:600;font-size:15px;color:var(--green);margin-top:3px}
+.stat .desc{font-size:11.5px;color:var(--ink-soft);margin-top:8px;line-height:1.4}
+.stat.amber::before{background:var(--amber)} .stat.amber .num{color:var(--amber-dark)}
+.stat.purple::before{background:#7a5bb0} .stat.purple .num{color:#5b3f8c}
+.mini-row{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-top:12px}
+.mini{padding:13px 13px;border-radius:11px;background:var(--surface)}
+.mini .n{font-family:var(--display);font-weight:700;font-size:22px;color:var(--green-dark);line-height:1;white-space:nowrap}
+.stat .num,.cs-hero .row .n,.strip .cell .n,.callout .big{white-space:nowrap}
+.mini .l{font-size:10.5px;color:var(--ink-soft);margin-top:6px;line-height:1.35}
+.note{font-size:9.5px;color:#76806b;margin-top:13px;border-top:1px solid var(--rule);padding-top:8px;line-height:1.5}
+
+/* strips to fill pages */
+.strip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.strip.four{grid-template-columns:repeat(4,1fr)}
+.strip .cell{background:var(--green-deep);color:#eafbe0;border-radius:11px;padding:14px 15px}
+.strip .cell .n{font-family:var(--display);font-weight:800;font-size:21px;color:#bff58a;line-height:1}
+.strip .cell .l{font-size:10.5px;margin-top:5px;opacity:.9;line-height:1.35}
+
+.usp{margin-top:16px;background:linear-gradient(135deg,var(--green-light),#fff);border:1px solid var(--rule);border-left:5px solid var(--green);border-radius:14px;padding:16px 19px}
+.usp h3{font-size:19px;color:var(--green-dark);margin-bottom:5px}
+.usp p{font-size:13px;color:var(--ink-soft);margin:0}
+.callout{background:var(--surface);border-radius:13px;padding:15px 17px;margin:13px 0}
+.callout.green{background:var(--green-light)}
+.callout.dark{background:var(--green-deep);color:#eafbe0}
+.callout.dark .big{color:#bff58a}
+.callout .big{font-family:var(--display);font-weight:900;font-size:29px;color:var(--green-dark);line-height:1.05}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:17px}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+.pull{font-family:var(--display);font-weight:500;font-size:18.5px;line-height:1.34;color:var(--green-dark);border-left:4px solid var(--green);padding:3px 0 3px 15px;margin:13px 0}
+.pull .who{display:block;font-family:var(--body);font-weight:600;font-size:11.5px;color:var(--ink-soft);margin-top:7px;font-style:normal}
+.tag{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#fff;background:var(--green);border-radius:20px;padding:4px 12px;margin-bottom:9px}
+
+ul.ticks{list-style:none;padding:0;margin:7px 0}
+ul.ticks li{position:relative;padding:3px 0 3px 21px;font-size:12.5px}
+ul.ticks li::before{content:"";position:absolute;left:0;top:7px;width:10px;height:5.5px;border-left:2.5px solid var(--green);border-bottom:2.5px solid var(--green);transform:rotate(-45deg)}
+
+table.data{width:100%;border-collapse:collapse;margin:9px 0;font-size:12px}
+table.data th{text-align:left;font-family:var(--body);font-weight:700;color:var(--green-dark);border-bottom:2px solid var(--green);padding:6px 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+table.data td{padding:6px 8px;border-bottom:1px solid var(--rule)}
+table.data tr:last-child td{border-bottom:none}
+table.data td.r{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--green-dark)}
+
+.cs-hero{background:var(--green-deep);color:#eafbe0;border-radius:14px;padding:20px 22px;margin-bottom:12px;position:relative;overflow:hidden}
+.cs-hero::after{content:"";position:absolute;right:-30px;top:-30px;width:160px;height:160px;border-radius:50%;background:rgba(191,245,138,.12)}
+.cs-hero h3{color:#fff;font-size:23px;position:relative}
+.cs-hero .row{display:flex;gap:22px;margin-top:13px;position:relative;flex-wrap:wrap}
+.cs-hero .row .n{font-family:var(--display);font-weight:900;font-size:25px;color:#bff58a;line-height:1}
+.cs-hero .row .l{font-size:10px;opacity:.85;margin-top:3px;max-width:9em}
+.cs-hero.amber{background:linear-gradient(140deg,#8a5200,#3d2400)} .cs-hero.amber .row .n{color:#ffd58a}
+.cs-hero.teal{background:linear-gradient(140deg,#0a6a52,#063a2c)}
+
+.chart{margin:6px 0}
+.bar-row{display:flex;align-items:flex-end;gap:6px;height:118px;padding-top:16px}
+.bar{flex:1;background:linear-gradient(180deg,#51a91e,#338808);border-radius:4px 4px 0 0;position:relative;min-height:3px}
+.bar span{position:absolute;top:-14px;left:-2px;right:-2px;text-align:center;font-size:8px;color:var(--ink-soft);font-weight:600}
+.bar-x{display:flex;gap:6px;margin-top:5px}
+.bar-x div{flex:1;text-align:center;font-size:8px;color:#8a937d}
+.legend{font-size:10px;color:var(--ink-soft);margin-top:7px}
+
+.hier{display:flex;flex-direction:column;gap:9px;margin:11px 0}
+.hier-row{display:grid;grid-template-columns:78px 1fr 64px;align-items:center;gap:10px}
+.hier-row .lab{font-size:11.5px;font-weight:600}
+.hier-bar{height:21px;border-radius:5px}
+.hier-row .val{font-size:11px;text-align:right;font-weight:700;color:var(--green-dark)}
+
+/* cumulative area chart (since 2016) */
+.cum{position:relative;height:90px;margin:8px 0 2px;border-bottom:1.5px solid var(--rule)}
+.cum svg{display:block;width:100%;height:90px}
+
+.partner{color:#fff;background:radial-gradient(100% 100% at 100% 0%, rgba(0,161,203,.35), transparent 55%),linear-gradient(150deg,#1d6607,#0e3500)}
+.partner .pad{position:relative;z-index:1}
+.partner h2{color:#fff;font-size:32px}
+.partner .eyebrow{color:#bff58a}
+.partner .box{background:rgba(255,255,255,.08);border:1px solid rgba(191,245,138,.28);border-radius:13px;padding:15px 17px}
+.partner .box h4{color:#bff58a;font-size:14.5px;margin-bottom:4px}
+.partner .box p{font-size:12px;color:#eafbe0;margin:0}
+.ask{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.ask .a{background:rgba(255,255,255,.07);border:1px solid rgba(191,245,138,.28);border-radius:12px;padding:14px 15px}
+.ask .a .amt{font-family:var(--display);font-weight:800;font-size:20px;color:#bff58a}
+.ask .a h5{margin:6px 0 4px;font-size:13px;color:#fff;font-family:var(--body);font-weight:700}
+.ask .a p{font-size:11px;color:#dff3d2;margin:0}
+
+.flow{display:flex;align-items:center;gap:8px;margin:10px 0 14px;flex-wrap:wrap}
+.flow .step{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:9px 12px;font-size:11px;font-weight:600;color:var(--green-dark);flex:1;text-align:center;min-width:90px}
+.flow .arrow{color:var(--green);font-weight:800}
+/* real freegler photos */
+.photo{display:block;border-radius:13px;object-fit:cover;width:100%;box-shadow:0 6px 20px rgba(14,53,0,.18)}
+.faces{display:flex;gap:8px;margin-top:20px}
+.faces img{width:100%;height:128px;object-fit:cover;object-position:center top;border-radius:11px;border:3px solid rgba(191,245,138,.65)}
+.voice{background:var(--surface);border-radius:13px;padding:14px 16px;border-left:4px solid var(--green-bg)}
+.voice p{margin:0;font-family:var(--display);font-weight:500;font-size:14px;line-height:1.36;color:var(--green-dark)}
+.voice .who{display:block;font-family:var(--body);font-weight:600;font-size:11px;color:var(--ink-soft);margin-top:7px}
+.pcard{position:relative;border-radius:13px;overflow:hidden;box-shadow:0 6px 20px rgba(14,53,0,.18)}
+.pcard img{display:block;width:100%;height:170px;object-fit:cover;object-position:center top}
+.pcard .cap{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(14,53,0,.85));color:#eafbe0;font-size:10px;padding:18px 12px 9px;font-weight:600}
+/* ---- visual flair ---- */
+.section-head h2{position:relative;padding-bottom:9px}
+.section-head h2::after{content:"";position:absolute;left:0;bottom:0;width:52px;height:4px;border-radius:3px;background:var(--green-bg)}
+.stat .num{font-size:46px}
+.cover-strip .n{font-size:28px}
+.cover h1 .big{position:relative;display:inline-block}
+.tag{box-shadow:0 3px 10px rgba(51,136,8,.3)}
+/* giant full-width number band */
+.bigband{position:relative;overflow:hidden;border-radius:16px;margin:16px 0;padding:24px 28px;color:#fff;display:flex;align-items:center;gap:28px;
+  background:radial-gradient(130% 160% at 88% -20%,rgba(97,174,36,.55),transparent 60%),linear-gradient(135deg,#1d6607,#0e3500)}
+.bigband::after{content:"";position:absolute;inset:0;opacity:.10;mix-blend-mode:overlay;background-image:radial-gradient(rgba(255,255,255,.9) 1px,transparent 1.4px);background-size:13px 13px}
+.bigband .huge{position:relative;font-family:var(--display);font-weight:900;font-size:66px;line-height:.86;color:#bff58a;letter-spacing:-.02em;white-space:nowrap}
+.bigband .txt{position:relative;font-size:14.5px;color:#eafbe0;max-width:24em;line-height:1.45}
+.bigband .txt strong{color:#fff}
+/* tall feature portrait (shows whole person) */
+.feature-photo{border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(14,53,0,.25);border:3px solid #fff}
+.feature-photo img{display:block;width:100%;height:100%;object-fit:cover;object-position:center top}
+</style>
+</head>
+<body>
+
+<!-- ============ 01 COVER ============ -->
+<section class="page cover">
+  <div class="pad">
+    <div class="cover-top">
+      <span class="mark on-green">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 28S3.5 20.4 3.5 11.9C3.5 7.9 6.7 5 10.4 5c2.4 0 4.5 1.3 5.6 3.2C17.1 6.3 19.2 5 21.6 5c3.7 0 6.9 2.9 6.9 6.9C28.5 20.4 16 28 16 28Z" fill="#bff58a"/></svg>
+        Freegle
+      </span>
+      <span class="cover-year">SOCIAL IMPACT REPORT &middot; 2025</span>
+    </div>
+    <div class="cover-mid">
+      <p class="eyebrow" style="color:#bff58a">The quiet reuse revolution</p>
+      <h1>10,910 tonnes,<span class="big">kept in use.</span></h1>
+      <p class="cover-sub">Neighbours giving and getting good stuff for free, saving councils money and keeping it out of the bin.</p>
+      <div class="cover-strip">
+        <div><div class="n">£1.3m+</div><div class="l">saved for local authorities</div></div>
+        <div><div class="n">£11.1m</div><div class="l">of value created</div></div>
+        <div><div class="n">5,564&nbsp;t</div><div class="l">CO<sub>2</sub>e avoided</div></div>
+        <div><div class="n">4.8m</div><div class="l">members nationwide</div></div>
+      </div>
+      <div class="faces">
+        <img src="@@FREEGLER2@@" alt=""><img src="@@FREEGLER7@@" alt=""><img src="@@FREEGLER11@@" alt=""><img src="@@FREEGLER16@@" alt=""><img src="@@FREEGLER18@@" alt=""><img src="@@FREEGLER24@@" alt="">
+      </div>
+    </div>
+    <div class="cover-bottom">
+      <div class="cover-tag">Freegle is the UK's biggest free reuse network. Like online dating for stuff, run by and for local communities since 2009.</div>
+      <div class="cover-badge">ilovefreegle.org<br>Free &middot; Local &middot; Not-for-profit</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 WELCOME ============ -->
+<section class="page">
+  <div class="pad">
+    <div class="section-head"><span class="section-no">&#9829;</span><h2>Welcome</h2></div>
+    <p class="lede">Every day in the UK, more than 35,000 reusable items are thrown away at council tips. Over six million people cannot afford essential furniture. And councils face acute financial pressure. Freegle sits at the meeting point of all three problems, and quietly solves a piece of each.</p>
+    <div class="two" style="margin-top:13px">
+      <div>
+        <p>We are a free, volunteer-run network that helps people give and get things for free, locally. There is no shop, no van and no charge. A member offers something they no longer need; a neighbour who needs it replies; they arrange the handover themselves. Multiply that simple act across nearly five million members and around 500 local communities, and it becomes one of the largest reuse movements in the country.</p>
+        <p>In 2025 that movement kept <strong>10,910 tonnes</strong> of usable stuff in use, avoided <strong>5,564 tonnes</strong> of carbon, saved local authorities an estimated <strong>£1.3 million</strong> in disposal costs, and put <strong>£11.1 million</strong> of value back into people's hands, almost all of it for free.</p>
+        <p>This report sets out that impact, how we measure it, and why we believe Freegle is one of the most cost-effective pieces of social and environmental infrastructure in the UK.</p>
+      </div>
+      <div>
+        <div class="usp" style="margin-top:0">
+          <h3>Our mission</h3>
+          <p>To reduce waste and alleviate poverty by increasing reuse, creating more sustainable and resilient communities across the UK.</p>
+        </div>
+        <div class="callout dark" style="margin-top:13px">
+          <p style="margin:0 0 3px;font-size:11.5px;opacity:.85">The number that says it all</p>
+          <div class="big">£110 : £1</div>
+          <p style="margin:5px 0 0;font-size:12px;color:#dff3d2">For every £1 of cash income we receive, Freegle generates over £110 of reuse value. Few organisations anywhere are this efficient.</p>
+        </div>
+      </div>
+    </div>
+    <div class="strip four">
+      <div class="cell"><div class="n">404,220</div><div class="l">successful gifts between neighbours in 2025</div></div>
+      <div class="cell"><div class="n">256,535</div><div class="l">people joined for the first time</div></div>
+      <div class="cell"><div class="n">252</div><div class="l">active volunteer moderators (of ~450 volunteers)</div></div>
+      <div class="cell"><div class="n">16 yrs</div><div class="l">serving every part of the UK since 2009</div></div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>02</span></div>
+</section>
+
+<!-- ============ 03 AT A GLANCE ============ -->
+<section class="page">
+  <div class="pad">
+    <div class="section-head"><span class="section-no">01</span><h2>Our 2025, in numbers</h2></div>
+    <p class="lede">Every figure below is calculated from real activity on the Freegle network, using WRAP's established methodology for the benefits of reuse. Because members do not always tell us when an exchange worked, these are conservative, likely under-stated, totals.</p>
+    <div class="glance-grid">
+      <div class="stat"><div class="num">10,910</div><div class="unit">tonnes reused</div>
+        <div class="desc">Usable items passed neighbour-to-neighbour and kept out of the waste stream in 2025.</div></div>
+      <div class="stat amber"><div class="num">£1.3m+</div><div class="unit">saved for councils</div>
+        <div class="desc">Avoided waste-disposal costs to local authorities, rising to £1.8m for bulky items.</div></div>
+      <div class="stat purple"><div class="num">5,564</div><div class="unit">tonnes CO<sub>2</sub>e avoided</div>
+        <div class="desc">Carbon kept out of the atmosphere by reusing instead of buying new.</div></div>
+    </div>
+    <div class="mini-row">
+      <div class="mini"><div class="n">£11.1m</div><div class="l">of value created (WRAP benefit of reuse)</div></div>
+      <div class="mini"><div class="n">404,220</div><div class="l">successful gifts between neighbours</div></div>
+      <div class="mini"><div class="n">4.84m</div><div class="l">community memberships<sup class="fn">&dagger;</sup></div></div>
+      <div class="mini"><div class="n">&gt;8 in 10</div><div class="l">offers find a home (where confirmed)</div></div>
+    </div>
+    <div class="bigband">
+      <div class="huge">89,000<span style="font-size:26px;display:block;font-weight:600;letter-spacing:0">tonnes since 2016</span></div>
+      <div class="txt"><strong>Sixteen years, and counting.</strong> Since tracking began in 2016, Freegle members have kept an estimated <strong>89,000 tonnes</strong> of usable goods in use, avoided around <strong>45,000 tonnes</strong> of CO<sub>2</sub>e and generated roughly <strong>£90 million</strong> of value. Not a pilot or a campaign, but durable national infrastructure.</div>
+    </div>
+    <p class="note">Source: Freegle dashboard data, calendar year 2025 (the same data behind ilovefreegle.org/stats). Benefit of reuse uses WRAP's Benefits of Reuse tool, with WRAP's 2011 value of £711/tonne uprated by Freegle to 2025 prices using the ONS Consumer Price Index (about £1,019/tonne); carbon uses WRAP's factor of 0.51 tonnes CO<sub>2</sub>e per tonne reused. &dagger; 4.84m is the total of community memberships across ~500 local communities as at June 2026 (one person may belong to several); around 1.9 million members are active in a typical month.</p>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>03</span></div>
+</section>
+
+<!-- ============ 04 USP ============ -->
+<section class="page">
+  <div class="pad">
+    <div class="section-head"><span class="section-no">02</span><h2>What makes Freegle different</h2></div>
+    <p class="lede">There are many ways to move on unwanted stuff: the tip, the skip, the charity shop, the resale app. Freegle is none of these, and that is exactly the point.</p>
+    <div class="two" style="margin-top:11px">
+      <div>
+        <h4 style="font-size:16px;color:var(--green-dark);margin-bottom:5px">Free at both ends, and local</h4>
+        <p>The charity shop charges. Vinted and eBay take a cut. The council skip costs you money and a trip. Freegle is the only national reuse service that is <strong>completely free at both ends</strong> and matches people <strong>within their own neighbourhood</strong>. Nothing is sold, so 100% of the value stays with the giver, the receiver and the local community. That removes the biggest barrier to reuse for people on the lowest incomes.</p>
+        <h4 style="font-size:16px;color:var(--green-dark);margin:12px 0 5px">It runs on almost nothing</h4>
+        <p>Because the members do the work, Freegle delivers millions of pounds of value on a cash budget of around £100,000 a year. No other model in the reuse sector comes close on cost-effectiveness.</p>
+        <h4 style="font-size:16px;color:var(--green-dark);margin:12px 0 5px">Infrastructure, not a project</h4>
+        <p>Freegle has run continuously for 16 years, in every part of the UK. It is always on, needs no premises, and scales with demand at zero marginal cost. A partner is not buying a pilot; they are plugging into a network that already exists in their area.</p>
+      </div>
+      <div>
+        <div class="callout dark">
+          <p style="margin:0 0 3px;font-size:11.5px;opacity:.85">The one-line version</p>
+          <p style="font-family:var(--display);font-weight:600;font-size:21px;color:#fff;margin:0">"It's like online dating for stuff."</p>
+        </div>
+        <p style="margin-top:12px;font-size:12px;color:var(--ink-soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">How Freegle works</p>
+        <ul class="ticks">
+          <li>A member <strong>offers</strong> something, or asks for something they <strong>want</strong></li>
+          <li>Neighbours reply; the member chooses who to give it to</li>
+          <li>They arrange a doorstep handover themselves, for free</li>
+          <li>Local volunteers keep each community welcoming and safe</li>
+        </ul>
+        <div class="callout green" style="margin-top:8px">
+          <p style="margin:0;font-size:12px;color:var(--ink-soft)"><strong>National reach.</strong> National Reuse Day 2024 carried Freegle's message to millions through ITV regional news in 8+ regions, BBC News, The Guardian, Radio 4, Radio 2 and Money Saving Expert. Freegle's work has been recognised by the Ashden Awards, the National Recycling Awards and the Green Apple Awards.</p>
+        </div>
+      </div>
+    </div>
+    <p class="pull" style="margin-top:4px">Reuse sits above recycling on the waste hierarchy, yet it gets a fraction of the attention. Freegle's job is to make the highest, hardest tier the easy, obvious, everyday choice, for free.</p>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>04</span></div>
+</section>
+
+<!-- ============ 05 LA SAVINGS (LEAD) ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Value to the public purse</span>
+    <div class="section-head"><span class="section-no">03</span><h2>The money we save local authorities</h2></div>
+    <p class="lede">Every item reused through Freegle is an item a council never has to collect, handle, treat or dispose of. At a time of acute budget pressure, that is real money saved, with no service for the council to run and nothing for it to pay.</p>
+    <div class="two" style="margin-top:11px">
+      <div>
+        <table class="data">
+          <tr><th>Avoided cost to a council</th><th>Per tonne</th></tr>
+          <tr><td>Energy-from-Waste gate fee (standard)</td><td class="r">£121</td></tr>
+          <tr><td>Energy-from-Waste gate fee (bulky items)</td><td class="r">£164</td></tr>
+          <tr><td>Landfill tax alone (from April 2025)</td><td class="r">£126</td></tr>
+          <tr><td>Plus bulky-waste collection</td><td class="r">£80&ndash;150</td></tr>
+          <tr><td>Plus fly-tipping clearance</td><td class="r">~£11</td></tr>
+        </table>
+        <p class="small">Sources: WRAP UK Gate Fees Report 2024-25; HMRC landfill tax 2025-26; Defra fly-tipping statistics 2024-25. Many Freegle items are bulky upholstered furniture, for which the relevant gate fee is the higher £164/tonne.</p>
+        <div class="callout green" style="margin-top:6px">
+          <p style="margin:0;font-size:12px;color:var(--ink-soft)"><strong>The clincher.</strong> A typical local Freegle community diverts ~30 tonnes a year, saving roughly £3,600 in gate fees, against a support cost of just £250&ndash;850. Councils routinely save <strong>5 to 15 times</strong> what it costs them to back Freegle.</p>
+        </div>
+      </div>
+      <div>
+        <div class="callout" style="margin-top:0">
+          <p style="margin:0 0 4px;font-size:11.5px;color:var(--ink-soft)">Applied to Freegle's 10,910 tonnes reused in 2025:</p>
+          <div class="big">£1.3m to £1.8m</div>
+          <p style="margin:5px 0 0;font-size:12px;color:var(--ink-soft)">saved for UK local authorities in avoided disposal costs in 2025 (£121/t standard to £164/t bulky), before collection and fly-tipping savings. The true figure is higher.</p>
+        </div>
+        <p class="pull" style="margin-top:13px;font-size:16px">"Every tonne of bulky waste diverted by this freegling activity saves between £120 and £160 in disposal costs. Local residents initiated the groups, Freegle set them up, and all we had to do was link to them."
+          <span class="who">Michael Singham, Waste Strategy Manager, Richmond &amp; Wandsworth Councils</span></p>
+      </div>
+    </div>
+    <h4 style="font-size:15px;color:var(--green-dark);margin:12px 0 5px">Fewer fly-tips, too</h4>
+    <p style="font-size:12.5px">Items that find a new home are items that are not dumped. A 2019 analysis carried out with Defra statisticians, using Freegle and government waste data, estimated that Freegle activity saved councils around <strong>£167,910</strong> in fly-tipping clearance that year (range £112,000 to £235,000, on 2019 volumes). With fly-tipping incidents up 9% in 2024-25 to 1.26 million, of which 62% is household waste, the case is only stronger. We can report tonnes diverted for any council area so you can calculate your own borough's saving.</p>
+    <div class="bigband" style="margin-top:16px">
+      <div class="huge">£1.3m+<span style="font-size:23px;display:block;font-weight:600;letter-spacing:0">saved for councils, 2025</span></div>
+      <div class="txt"><strong>The bottom line for a finance officer.</strong> Freegle takes bulky, expensive-to-handle items out of the waste stream before they ever reach a council, rising to <strong>£1.8m</strong> for upholstered furniture. The more it grows, the more you save, and it costs almost nothing to back.</div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>05</span></div>
+</section>
+
+<!-- ============ 06 WASTE & CARBON ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Environment</span>
+    <div class="section-head"><span class="section-no">04</span><h2>Waste avoided, carbon saved</h2></div>
+    <p class="lede">Reuse is the second rung of the waste hierarchy, above recycling and far above disposal, because it keeps the whole object and all its embodied carbon in use. In 2025 Freegle did this at scale, month after month.</p>
+    <div class="two" style="margin-top:11px">
+      <div>
+        <p style="font-weight:700;color:var(--green-dark);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:0">Tonnes reused each month, 2025</p>
+        <div class="chart">
+          <div class="bar-row">
+            <div class="bar" style="height:87%"><span>886</span></div>
+            <div class="bar" style="height:80%"><span>813</span></div>
+            <div class="bar" style="height:96%"><span>985</span></div>
+            <div class="bar" style="height:97%"><span>989</span></div>
+            <div class="bar" style="height:99%"><span>1009</span></div>
+            <div class="bar" style="height:89%"><span>905</span></div>
+            <div class="bar" style="height:93%"><span>948</span></div>
+            <div class="bar" style="height:100%"><span>1021</span></div>
+            <div class="bar" style="height:87%"><span>892</span></div>
+            <div class="bar" style="height:88%"><span>899</span></div>
+            <div class="bar" style="height:81%"><span>831</span></div>
+            <div class="bar" style="height:70%"><span>716</span></div>
+          </div>
+          <div class="bar-x"><div>Jan</div><div>Feb</div><div>Mar</div><div>Apr</div><div>May</div><div>Jun</div><div>Jul</div><div>Aug</div><div>Sep</div><div>Oct</div><div>Nov</div><div>Dec</div></div>
+          <p class="legend">Most months between 880 and 1,020 tonnes, peaking in August. Monthly figures rounded; full-year total 10,910 tonnes.</p>
+        </div>
+        <div class="three" style="margin-top:11px">
+          <div class="mini"><div class="n">5,564</div><div class="l">tonnes CO<sub>2</sub>e avoided in 2025</div></div>
+          <div class="mini"><div class="n">~89,000</div><div class="l">tonnes reused since 2016</div></div>
+          <div class="mini"><div class="n">~45,000</div><div class="l">tonnes CO<sub>2</sub>e saved since 2016</div></div>
+        </div>
+      </div>
+      <div>
+        <h4 style="font-size:15px;color:var(--green-dark);margin:0 0 5px">How we measure it, honestly</h4>
+        <p style="font-size:12.5px">Freegle records the weight of items as members complete exchanges, then applies WRAP's Benefits of Reuse tool to convert weight into carbon and value. Carbon is counted at <strong>0.51 tonnes CO<sub>2</sub>e per tonne reused</strong>, a conservative whole-life figure; a sofa or fridge saves several times more.</p>
+        <p style="font-size:12.5px">We deliberately count conservatively. The factor already assumes only about half of reused items prevent a genuinely new purchase (the rest would have been met another way). And members often forget to confirm a successful handover, so the real totals are higher than we claim. Weight is the single number everything else is built on, and we would rather under-state it than over-claim.</p>
+        <div class="callout">
+          <p style="margin:0;font-size:12px;color:var(--ink-soft)"><strong>Carbon in money terms.</strong> Valued at the Government's central carbon price (~£260/tonne CO<sub>2</sub>e), the 5,564 tonnes avoided in 2025 represents around <strong>£1.4 million</strong> of climate value to society. We show this to illustrate the scale of the externality; we do not add it to the £11.1m benefit, with which it may partly overlap.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>06</span></div>
+</section>
+
+<!-- ============ 07 ECONOMY & JOBS ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Local economy &amp; jobs</span>
+    <div class="section-head"><span class="section-no">05</span><h2>Money in pockets, jobs in the economy</h2></div>
+    <p class="lede">Reuse is not only the greenest way to handle stuff, it is the most economically productive. It saves households money directly and supports the most job-rich end of the resource economy.</p>
+    <div class="two" style="margin-top:11px">
+      <div>
+        <h4 style="font-size:15px;color:var(--green-dark);margin:0 0 5px">A lifeline in the cost-of-living crisis</h4>
+        <p style="font-size:12.5px">For a family that cannot afford to buy new, free is transformational. Over six million people in the UK lack essential furniture such as a bed, sofa or cooker. Getting a sofa through Freegle saves a household around <strong>£940</strong> against buying new (WRAP). Nationally, WRAP estimates current reuse already saves UK households about <strong>£1 billion a year</strong>.</p>
+        <h4 style="font-size:15px;color:var(--green-dark);margin:11px 0 5px">The most job-rich tier of the hierarchy</h4>
+        <p style="font-size:12.5px">Per 1,000 tonnes of material, reuse supports far more employment than the alternatives:</p>
+        <div class="hier">
+          <div class="hier-row"><div class="lab">Reuse</div><div class="hier-bar" style="background:linear-gradient(90deg,#51a91e,#1d6607);width:100%"></div><div class="val">8&ndash;20 jobs</div></div>
+          <div class="hier-row"><div class="lab">Recycling</div><div class="hier-bar" style="background:var(--green-mid);width:50%"></div><div class="val">5&ndash;10 jobs</div></div>
+          <div class="hier-row"><div class="lab">Landfill</div><div class="hier-bar" style="background:#cdd6c2;width:6%"></div><div class="val">0.1 jobs</div></div>
+        </div>
+        <p class="small">WRAP &amp; Green Alliance (2015). At the upper bound, reuse is up to 200x more job-intensive than landfill. Freegle's 10,910 tonnes in 2025 represents reuse activity equivalent to roughly <strong>90 to 220 jobs</strong> in the local reuse and repair economy.</p>
+      </div>
+      <div>
+        <div class="callout dark" style="margin-top:0">
+          <p style="margin:0 0 3px;font-size:11.5px;opacity:.85">Built for the circular economy ReLondon is creating</p>
+          <p style="margin:0;font-size:12px;color:#eafbe0">If London meets its 2030 targets, ReLondon projects the capital's circular economy could grow from 231,000 to over 500,000 jobs and add <strong style="color:#bff58a">£24.2 billion</strong> of GVA. Freegle is the grassroots engine for exactly that: it normalises reuse among millions of residents and feeds local repair and reuse organisations with a steady supply of goods.</p>
+        </div>
+        <h4 style="font-size:15px;color:var(--green-dark);margin:13px 0 5px">Keeping value local</h4>
+        <p style="font-size:12.5px">Every Freegle exchange happens between neighbours. The goods never leave the area and the money a household saves stays in the local economy. Freegle also feeds local furniture-reuse charities and repair schemes, which have waiting lists and which directly employ local people, with the goods they need.</p>
+        <div class="callout green">
+          <p style="margin:0;font-size:12px;color:var(--ink-soft)"><strong>Levelling up, by design.</strong> Left to the market, circular-economy jobs cluster in London and the South East. Freegle's distributed, community-led model spreads the benefit to every part of the UK, including the most deprived areas.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>07</span></div>
+</section>
+
+<!-- ============ 08 COMMUNITY ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Stronger communities</span>
+    <div class="section-head"><span class="section-no">06</span><h2>Resilience, connection and cohesion</h2></div>
+    <p class="lede">Freegle's deepest impact is the hardest to weigh on a scale. A gift between strangers is a small act of trust, and millions of them a year weave more connected, more resilient, more neighbourly places.</p>
+    <div class="two" style="margin-top:9px">
+      <div>
+        <p style="font-size:12px">Giving and receiving on Freegle does something a transaction never can. Research on gifting platforms comparable to Freegle (Ballard &amp; Bhatta, 2012, on Freecycle and Craigslist) found their members show significantly stronger <strong>community identification, solidarity and willingness to give</strong> than users of buy-and-sell sites. The more people receive, the more they give back.</p>
+        <p style="font-size:12px">Connection has measurable value. The Government's Green Book wellbeing methodology and the HACT Social Value Bank value outcomes like a stronger sense of belonging to your neighbourhood at several thousand pounds per person per year. Freegle touches these at a scale almost no other service reaches. (We quote these illustratively; measuring them directly is our next priority, page 14.)</p>
+        <div class="callout">
+          <p style="margin:0;font-size:11.5px;color:var(--ink-soft)"><strong>Resilience in a crisis.</strong> A network of neighbours already used to helping each other is what communities lean on when times are hard. Freegle quietly builds that social infrastructure every day.</p>
+        </div>
+      </div>
+      <div>
+        <p class="pull" style="margin-top:0;font-size:17px">"People referred to the foodbank often don't know where to get basic household items. They are often in temporary accommodation, or have recently come out of prison, and have nothing."
+          <span class="who">Pat Gabriel, Wandsworth Foodbank</span></p>
+        <p style="font-size:12px">Freegle reaches people at the sharpest end. On the Ethelburga Estate in Wandsworth, a resident who became a Freegle Community Champion delivered postcards to all 400 homes and posters to every noticeboard, driven by a simple frustration: good things dumped while neighbours went without.</p>
+        <p class="pull">"There is an appetite among residents to take positive steps on reuse. Sharing Freegle on the estate WhatsApp group and noticeboards has really helped."
+          <span class="who">Freegle Community Champion, Ethelburga Estate</span></p>
+      </div>
+    </div>
+    <p style="font-weight:700;color:var(--green-dark);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:11px 0 7px">In their own words &middot; real freeglers, from ilovefreegle.org/stories</p>
+    <div class="three" style="align-items:stretch">
+      <div class="pcard"><img src="@@FREEGLER18@@" alt="A real freegler with an item they passed on"><div class="cap">Real freeglers and the things they have passed on</div></div>
+      <div class="voice"><p>"I put out a request for a bookshelf so we could start a book exchange at the railway station. Through Freegle a wonderful couple donated a fabulous one, and threw in some books too. It is now happily installed."</p><span class="who">A freegler, Totton</span></div>
+      <div class="voice"><p>"Giving feels good, and allowing others the chance to help you is far better than pride."</p><span class="who">A freegler, after years of giving and getting</span></div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>08</span></div>
+</section>
+
+<!-- ============ 09 WANDSWORTH ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Case study &middot; Local authority partnership</span>
+    <div class="section-head"><span class="section-no">07</span><h2>Wandsworth: reuse meets the cost-of-living crisis</h2></div>
+    <div class="cs-hero">
+      <h3>£15,000 of council funding, £78,000 of community value</h3>
+      <div class="row">
+        <div><div class="n">5.2&times;</div><div class="l">return on the grant (community value)</div></div>
+        <div><div class="n">110+</div><div class="l">organisations identified &amp; contacted (target was 10)</div></div>
+        <div><div class="n">£7.75</div><div class="l">cost per new Freegle member</div></div>
+        <div><div class="n">1,937</div><div class="l">new members in the borough</div></div>
+      </div>
+    </div>
+    <div class="two">
+      <div>
+        <p style="font-size:12.5px">Wandsworth Council funded Freegle through its Cost-of-Living Support Fund to reach the households hardest hit by rising prices. Rather than cold outreach, Freegle mapped and built relationships with organisations already trusted by those communities: foodbanks, estates, a university and refugee groups.</p>
+        <p style="font-size:12.5px">The project worked through <strong>all six Wandsworth foodbank sites</strong>, recruited Community Champions on local estates, and connected the University of Roehampton with furniture-reuse charities to rescue white goods that were being thrown away. During the project, Wandsworth Freegle reused <strong>110 tonnes</strong>, saving <strong>56 tonnes of CO<sub>2</sub>e</strong> and generating <strong>£78,086</strong> of social and economic value, a 5.2&times; return on the £15,000 grant. Of the 110+ organisations mapped, <strong>30+ are still actively promoting Freegle</strong> after the project ended.</p>
+      </div>
+      <div>
+        <p style="font-weight:700;color:var(--green-dark);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">What it left behind</p>
+        <ul class="ticks">
+          <li>30+ organisations still promoting Freegle post-project</li>
+          <li>Two new platform features for partners: "Always Wanted" lists and Charity Partner status</li>
+          <li>A database of 100+ local organisations, shared with the council</li>
+          <li>New supply chains between the university, Richmond Furniture Scheme and a repair charity</li>
+          <li>Continuation funding secured for a third phase</li>
+        </ul>
+        <div class="callout dark" style="margin-top:8px">
+          <p style="margin:0;font-size:12px;color:#eafbe0">Wandsworth Foodbank alone supports <strong style="color:#bff58a">2,417 households</strong> a year. 60% of referrals are driven by low income; three in four guests are behind on bills. For them, free household essentials are not a nicety, they are a need.</p>
+        </div>
+      </div>
+    </div>
+    <p class="note">The £78,086 is the WRAP-valued benefit of all reuse in the Wandsworth community during the project period, at the rate current at the time (£711/tonne; ~£112,000 at 2025 prices). The council's avoided disposal cost on those 110 tonnes (~£13,000-18,000) is additional public-purse benefit. "Engaged" here means identified and contacted; 30+ went on to actively promote Freegle.</p>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>09</span></div>
+</section>
+
+<!-- ============ 10 MORE CASE STUDIES + LONDON ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Case studies &middot; Reuse at every scale</span>
+    <div class="section-head"><span class="section-no">08</span><h2>From a free shop to a whole county</h2></div>
+    <div class="cs-hero">
+      <h3>Brighton Freegle Free Shop</h3>
+      <p style="position:relative;margin:5px 0 0;font-size:12px;color:#dff3d2;max-width:35em">The UK's first Freegle Free Shop, open since 2021. The same idea made physical: bring what you don't need, take what you do, all free.</p>
+      <div class="row">
+        <div><div class="n">52,000+</div><div class="l">visitors in 2025</div></div>
+        <div><div class="n">38 t</div><div class="l">redistributed for reuse</div></div>
+        <div><div class="n">£140,000</div><div class="l">social value created</div></div>
+        <div><div class="n">2,240</div><div class="l">volunteer hours given</div></div>
+      </div>
+    </div>
+    <p style="font-size:12px">On a fixed cost of around £12,400 a year, the Free Shop turns donations into a thriving community hub, diverting tonnes from the bin while offering company, purpose and volunteering to hundreds of local people. Its £140,000 social value counts the wider community and volunteering benefit, not just the tonnage.</p>
+
+    <div class="cs-hero teal" style="margin-top:11px">
+      <h3>Essex &amp; Sutton: from a county to a London borough</h3>
+      <div class="row">
+        <div><div class="n">320 t</div><div class="l">reused a year across Essex (20 communities)</div></div>
+        <div><div class="n">£228k</div><div class="l">benefit to Essex &amp; residents</div></div>
+        <div><div class="n">156 t</div><div class="l">diverted in Sutton, London</div></div>
+        <div><div class="n">72,000</div><div class="l">members across Essex</div></div>
+      </div>
+    </div>
+    <div class="two" style="margin-top:8px">
+      <p class="pull" style="margin:0;font-size:15px">"Even with a small investment, Freegle has the capacity to deliver significant, meaningful and measurable results which are of great value to the council and its residents."
+        <span class="who">Cathryn Wood, Senior Sustainability &amp; Resilience Officer, Essex County Council</span></p>
+      <p class="pull" style="margin:0;font-size:15px">"Over 200 items of surplus furniture have gone to new homes through Freegle instead of being sent to landfill. This partnership helps us reduce waste, increase reuse and support local people."
+        <span class="who">London Borough of Sutton</span></p>
+    </div>
+    <p class="note">Essex figures are from Freegle's published Essex case study (benefit at the £711/tonne rate then current; ~£326,000 at 2025 prices). The Sutton case study is published on ReLondon's website.</p>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>10</span></div>
+</section>
+
+<!-- ============ 11 VALUE FOR MONEY ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">Value for money</span>
+    <div class="section-head"><span class="section-no">09</span><h2>For every £1, an extraordinary return</h2></div>
+    <p class="lede">Freegle is among the most cost-effective social and environmental organisations in the UK. The reason is structural: the members do the work, so almost every pound raised converts directly into impact.</p>
+    <div class="three" style="margin-top:13px">
+      <div class="callout" style="text-align:center">
+        <div class="big" style="font-size:36px">£110</div>
+        <p style="margin:5px 0 0;font-size:11.5px;color:var(--ink-soft)">of reuse value for every <strong>£1 of cash income</strong>. Freegle delivered £11.1m of value on a cash budget of around £100,000.</p>
+      </div>
+      <div class="callout dark" style="text-align:center">
+        <div class="big" style="font-size:36px;color:#bff58a">£45</div>
+        <p style="margin:5px 0 0;font-size:11.5px;color:#dff3d2">of value for every £1 of <strong>total resources</strong>, counting all volunteer time. A genuinely conservative, data-backed figure.</p>
+      </div>
+      <div class="callout" style="text-align:center">
+        <div class="big" style="font-size:36px">5.2&times;</div>
+        <p style="margin:5px 0 0;font-size:11.5px;color:var(--ink-soft)">return on a real council grant: Wandsworth's <strong>£15,000</strong> generated <strong>£78,000</strong> of community value.</p>
+      </div>
+    </div>
+    <p style="margin-top:13px;font-size:12.5px">The £45 figure is grounded in real data. In 2025 Freegle's <strong>252 volunteer moderators</strong> carried out <strong>412,094</strong> recorded moderation actions. Valuing each at one minute gives around <strong>6,900 volunteer hours</strong>, worth roughly <strong>£110,000</strong> of labour at the UK median wage. Added to Freegle's full annual running costs of about £133,000, that is a total resource base of around £243,000, so Freegle still returns about <strong>£45</strong> of WRAP-valued reuse for every £1 of everything it uses. These ratios rest on Freegle's own value of reuse, not speculative wellbeing valuations; a full Social Return on Investment study including the community, health and avoided-public-service benefits in this report would be higher still, peer reuse charities publish SROI figures of £8 or more to every £1.</p>
+    <div class="callout dark">
+      <p style="margin:0;font-size:13px;color:#eafbe0">Put simply: there are very few places where a council or a funder can turn <strong style="color:#bff58a">£1 into £45 to £110</strong> of waste prevented, money saved and community built, across the whole of the UK, with infrastructure that already exists. Freegle is one of them.</p>
+    </div>
+    <div class="strip" style="margin-top:14px">
+      <div class="cell"><div class="n">100%</div><div class="l">of the value stays local: no fees, no commission, no middleman</div></div>
+      <div class="cell"><div class="n">£0</div><div class="l">cost to the member, giving or getting, always</div></div>
+      <div class="cell"><div class="n">~89,000 t</div><div class="l">kept in use since 2016, almost entirely by volunteers</div></div>
+    </div>
+    <div class="two" style="margin-top:14px;align-items:center;grid-template-columns:1.7fr 1fr">
+      <p style="margin:0;font-size:12.5px;color:var(--ink-soft)">Most reuse and waste-prevention interventions need premises, vehicles, staff and ongoing subsidy. Freegle needs none of these. That is why a modest investment in Freegle goes so much further than the same money spent almost anywhere else in the waste hierarchy, and why supporting it is one of the highest-leverage decisions a council or funder can make. Behind every pound of that value is a real person passing on something good.</p>
+      <div class="pcard"><img src="@@FREEGLER14@@" alt="A real freegler with an item"><div class="cap">Value, made by people, one gift at a time</div></div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>11</span></div>
+</section>
+
+<!-- ============ 12 GOVERNANCE ============ -->
+<section class="page">
+  <div class="pad">
+    <span class="tag">About Freegle</span>
+    <div class="section-head"><span class="section-no">10</span><h2>Who we are, and how we are run</h2></div>
+    <p class="lede">Freegle is a serious, accountable organisation behind a deceptively simple idea. Here is who we are, how we are governed, and how we are funded.</p>
+    <div class="two" style="margin-top:12px">
+      <div>
+        <h4 style="font-size:15px;color:var(--green-dark);margin:0 0 5px">Structure &amp; governance</h4>
+        <ul class="ticks">
+          <li>Freegle Ltd is a <strong>Community Benefit Society</strong>, registered with the Financial Conduct Authority and recognised as charitable by HMRC.</li>
+          <li>Run by a volunteer board of directors, with a small paid team and around <strong>450 volunteers</strong> (252 actively moderating in 2025).</li>
+          <li>Operating since 2009; national coverage across ~500 local communities.</li>
+          <li>Local communities are self-sustaining; a small central input keeps the platform and support running.</li>
+        </ul>
+        <div class="callout green" style="margin-top:8px">
+          <p style="margin:0;font-size:12px;color:var(--ink-soft)"><strong>Resilient by design.</strong> Because Freegle is distributed across hundreds of independent volunteer communities, it has no single point of failure. The platform runs whether or not any one volunteer is available.</p>
+        </div>
+      </div>
+      <div>
+        <h4 style="font-size:15px;color:var(--green-dark);margin:0 0 5px">Finances (year to 31 March 2025)</h4>
+        <table class="data">
+          <tr><th>Item</th><th>Amount</th></tr>
+          <tr><td>Total income</td><td class="r">£91,000</td></tr>
+          <tr><td>Total expenditure</td><td class="r">£133,000</td></tr>
+          <tr><td>Planned deficit (from reserves)</td><td class="r">£42,000</td></tr>
+          <tr><td>Reserves held</td><td class="r">~£80,000</td></tr>
+        </table>
+        <p style="font-size:12px;margin-top:8px">Freegle is <strong>deliberately investing in growth</strong>: building the partnership and impact-measurement capacity that this report represents, funded from reserves. The opportunity, and the need, is to put this onto a sustainable footing through partnership and grant income, so that a network delivering £11m of annual value is not run on a shoestring.</p>
+        <div class="callout" style="margin-top:4px">
+          <p style="margin:0;font-size:12px;color:var(--ink-soft)">Every £1,000 of funding supports a network that returns over £100,000 of reuse value. We are one of the highest-leverage investments in the sector.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>12</span></div>
+</section>
+
+<!-- ============ 13 PARTNER ============ -->
+<section class="page partner">
+  <div class="pad">
+    <p class="eyebrow">Looking ahead &middot; 2026 and beyond</p>
+    <h2>Partner with Freegle</h2>
+    <p style="font-size:15px;color:#eafbe0;max-width:35em;margin-top:9px">We are ready to do much more, with partners who want measurable reuse, real cost savings and stronger communities, at a fraction of the usual cost. Here is what we are asking for.</p>
+    <div class="ask">
+      <div class="a"><div class="amt">£2,000&ndash;£10,000</div><h5>Council partnership</h5><p>A year of borough-level engagement and reporting: your tonnes diverted, carbon saved and disposal costs avoided, plus outreach to residents who need essential items most.</p></div>
+      <div class="a"><div class="amt">£25,000&ndash;£50,000</div><h5>ReLondon / foundation grant</h5><p>Fund a beneficiary survey and an independently-assured SROI, and a multi-borough reuse drive contributing directly to the Mayor's 450,000-tonne waste-prevention target.</p></div>
+      <div class="a"><div class="amt">£75,000+</div><h5>Core sustainability</h5><p>Underwrite the national infrastructure for a year, putting a network that delivers £11m of annual value onto a stable footing and freeing it to scale.</p></div>
+    </div>
+    <div class="two" style="margin-top:16px">
+      <div class="box">
+        <h4>For local authorities &amp; ReLondon</h4>
+        <p>Plug into a reuse network that already exists in your area, and one already recognised in ReLondon's own published case studies. We will report your borough's numbers and help you hit your circular-economy and waste-prevention targets.</p>
+      </div>
+      <div class="box">
+        <h4>What we will deliver next</h4>
+        <p>A full, independently-reviewed SROI; a beneficiary survey valuing the cost-of-living and wellbeing benefits directly; and a council-level dashboard so every partner sees their own impact in real time. We will send any council its borough's tonnage, carbon and disposal-cost saving on request.</p>
+      </div>
+    </div>
+    <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:flex-end">
+      <div class="mark on-green"><svg viewBox="0 0 32 32" fill="none"><path d="M16 28S3.5 20.4 3.5 11.9C3.5 7.9 6.7 5 10.4 5c2.4 0 4.5 1.3 5.6 3.2C17.1 6.3 19.2 5 21.6 5c3.7 0 6.9 2.9 6.9 6.9C28.5 20.4 16 28 16 28Z" fill="#bff58a"/></svg> Freegle</div>
+      <div style="text-align:right;font-size:12.5px;color:#eafbe0">Talk to us: councils@ilovefreegle.org<br>ilovefreegle.org &middot; councils.ilovefreegle.org</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 14 METHODOLOGY ============ -->
+<section class="page">
+  <div class="pad">
+    <div class="section-head"><span class="section-no">&#9829;</span><h2>How we measure, and what we will improve</h2></div>
+    <p class="lede">An impact report is only as good as the honesty of its methods. Here is exactly how the numbers in this report are built, and where we are making them stronger.</p>
+    <div class="flow">
+      <div class="step">Platform records item weight</div><div class="arrow">&rarr;</div>
+      <div class="step">WRAP Benefits of Reuse tool</div><div class="arrow">&rarr;</div>
+      <div class="step">Carbon &amp; value per tonne</div><div class="arrow">&rarr;</div>
+      <div class="step">LA savings via gate fees</div>
+    </div>
+    <div class="two">
+      <div>
+        <h4 style="font-size:14px;color:var(--green-dark);margin:0 0 4px">The method</h4>
+        <ul class="ticks">
+          <li><strong>Weight</strong> is recorded from confirmed exchanges and is the foundation of every other figure.</li>
+          <li><strong>Carbon</strong> = weight &times; 0.51 t CO<sub>2</sub>e/t (WRAP Benefits of Reuse, 2011 basis; a conservative blended figure already assuming ~50% of items displace a new purchase).</li>
+          <li><strong>Value of reuse</strong> = weight &times; £1,019/t, which is WRAP's 2011 figure of £711/t uprated by Freegle to 2025 prices using ONS CPI.</li>
+          <li><strong>LA savings</strong> use the same tonnage &times; WRAP gate fees (£121&ndash;164/t).</li>
+          <li>All 2025 platform figures are summed from Freegle's own dashboard for 1 Jan&ndash;31 Dec 2025.</li>
+        </ul>
+        <p style="font-size:11.5px;margin-top:7px"><strong>Why conservative:</strong> we count only confirmed outcomes, use WRAP's established factors rather than higher in-house estimates, and present the three monetary lenses (reuse value, carbon value, LA savings) separately, never summed.</p>
+      </div>
+      <div>
+        <h4 style="font-size:14px;color:var(--green-dark);margin:0 0 4px">What we will strengthen next</h4>
+        <ul class="ticks">
+          <li>A <strong>beneficiary survey</strong> to measure directly what members save and how reuse affects their wellbeing and sense of community, turning the illustrative wellbeing values in this report into evidenced ones.</li>
+          <li>An <strong>independently-assured SROI</strong> applying deadweight, attribution and displacement adjustments.</li>
+          <li>A <strong>council-level dashboard</strong> giving every partner their own tonnes, carbon and savings.</li>
+          <li>Re-running the <strong>2024 WRAP tool</strong> on Freegle's current item mix to refresh the per-tonne factors.</li>
+        </ul>
+        <div class="callout" style="margin-top:6px">
+          <p style="margin:0;font-size:11.5px;color:var(--ink-soft)">Wellbeing proxy values (belonging, loneliness, volunteering) are quoted to show the scale of Freegle's potential social value. They are not applied to headline totals, because doing so credibly requires the beneficiary survey above. We under-claim rather than over-claim.</p>
+        </div>
+      </div>
+    </div>
+    <p class="note">Principal sources: Freegle platform data 2025; WRAP UK Gate Fees Report 2024-25; WRAP Benefits of Reuse tool; WRAP &amp; Green Alliance, Employment and the Circular Economy (2015); Defra fly-tipping statistics 2024-25; DESNZ carbon values (2023); HM Treasury Green Book wellbeing supplementary guidance; HACT UK Social Value Bank; ReLondon &amp; Valpak, The Circular Economy at Work (2022); End Furniture Poverty; Ballard &amp; Bhatta (2012), Administrative Science Quarterly. Council quotes from Freegle partnership case studies.</p>
+  </div>
+  <div class="foot"><span>Freegle Social Impact Report 2025</span><span>14</span></div>
+</section>
+
+</body>
+</html>

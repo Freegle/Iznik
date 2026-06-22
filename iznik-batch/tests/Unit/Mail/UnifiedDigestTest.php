@@ -5,7 +5,9 @@ namespace Tests\Unit\Mail;
 use App\Mail\Digest\UnifiedDigest;
 use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Carbon\Carbon;
 use Illuminate\Mail\Mailable;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
@@ -105,6 +107,35 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals("What's New (1 post) - Sofa", $envelope->subject);
     }
 
+    public function test_immediate_subject_prefers_recipients_group_for_cross_post(): void
+    {
+        // A post on groups A and B; the recipient is a member of B only. The
+        // immediate-digest subject prefix must name B (the recipient's group),
+        // not an arbitrary first group.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $groupBName = $groupB->namefull ?: $groupB->nameshort;
+        $groupAName = $groupA->namefull ?: $groupA->nameshort;
+        $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
+        $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
+    }
+
     public function test_subject_with_multiple_posts(): void
     {
         $user = $this->createTestUser();
@@ -156,6 +187,99 @@ class UnifiedDigestTest extends TestCase
         $tracking = $mail->getTracking();
         $this->assertNotNull($tracking);
         $this->assertEquals('UnifiedDigestDaily', $tracking->email_type);
+    }
+
+    /**
+     * Build a one-post daily digest for a recipient with the given email.
+     */
+    private function digestForRecipientEmail(string $email): UnifiedDigest
+    {
+        $user = $this->createTestUser(['email_preferred' => $email]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        return new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+    }
+
+    public function test_has_amp_column_set_for_amp_supported_recipient(): void
+    {
+        // The ModTools sysadmin AMP stats read the has_amp COLUMN. It was only
+        // ever passed as a metadata key, never as the 7th initTracking() argument,
+        // so it always defaulted to false and every digest "showed no AMP".
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@gmail.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertTrue((bool) $tracking->has_amp);
+    }
+
+    public function test_has_amp_column_not_set_for_unsupported_recipient(): void
+    {
+        // Matches ChatNotification: only count has_amp where the provider can
+        // actually use AMP, so the AMP-vs-HTML comparison is like with like.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@example.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertFalse((bool) $tracking->has_amp);
+    }
+
+    public function test_has_amp_column_not_set_when_amp_disabled(): void
+    {
+        // No secret configured => AMP is off => has_amp must be false even for a
+        // provider that supports AMP.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        $tracking = $this->digestForRecipientEmail('recipient@gmail.com')->getTracking();
+
+        $this->assertNotNull($tracking);
+        $this->assertFalse((bool) $tracking->has_amp);
+    }
+
+    public function test_build_renders_amp_when_enabled(): void
+    {
+        // With AMP enabled, build() renders the AMP variant. (The variant is
+        // rendered for every recipient; provider support only governs the has_amp
+        // tracking flag, not whether the AMP part is built.)
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        // $ampHtml is protected; read it via reflection to confirm the AMP
+        // variant was rendered.
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+        $ampHtml = $ref->getValue($mail);
+
+        $this->assertNotEmpty($ampHtml, 'AMP variant should be rendered when AMP is enabled');
+        $this->assertStringContainsString('amp4email', $ampHtml);
+    }
+
+    public function test_build_skips_amp_when_disabled(): void
+    {
+        // No secret => AMP disabled => no AMP variant rendered.
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => '']);
+
+        $mail = $this->digestForRecipientEmail('recipient@gmail.com');
+        $mail->build();
+
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        $this->assertNull($ref->getValue($mail), 'No AMP should be rendered when AMP is disabled');
     }
 
     /**
@@ -286,6 +410,61 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('/explore/'.$group->id, $target);
     }
 
+    public function test_byline_uses_recipients_group_for_cross_post(): void
+    {
+        // Recipient is a member of group B only; the post is cross-posted to A and
+        // B (A listed first). The "Posted on …" byline must name B — the group the
+        // recipient is actually in — not the arbitrary first group A.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Sofa (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $card = $ref->getValue($mail)->first();
+
+        $this->assertSame($groupB->namefull, $card['groupName'], 'byline should name the recipient\'s group');
+        $this->assertNotSame($groupA->namefull, $card['groupName']);
+    }
+
+    public function test_byline_falls_back_to_first_group_when_recipient_in_neither(): void
+    {
+        // Edge case: the recipient is a member of NEITHER posted-to group (e.g. a
+        // cross-group digest, or membership changed). selectPreferredGroup must
+        // degrade gracefully to the first posted-to group — a real, non-empty group
+        // name — rather than group 0 / a blank byline.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        // Deliberately no membership of either group for $user.
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Lamp (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $card = $ref->getValue($mail)->first();
+
+        $this->assertSame($groupA->namefull, $card['groupName'], 'byline should fall back to the first posted-to group');
+        $this->assertNotEmpty($card['groupName'], 'byline group name must not be blank');
+    }
+
     public function test_cross_post_text_shown_for_multiple_groups(): void
     {
         $user = $this->createTestUser();
@@ -388,6 +567,32 @@ class UnifiedDigestTest extends TestCase
         // A daily digest spans the member's groups → not tied to one.
         $dailyMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $this->assertNull($dailyMail->getTracking()->groupid);
+    }
+
+    public function test_immediate_tracking_groupid_uses_recipients_group_for_cross_post(): void
+    {
+        // A post on groups A and B; the recipient is a member of B only. The
+        // immediate-digest tracking groupid must record B (the recipient's group),
+        // not an arbitrary first group.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupB);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals($groupB->id, $mail->getTracking()->groupid);
+        $this->assertNotEquals($groupA->id, $mail->getTracking()->groupid);
     }
 
     public function test_immediate_mode_envelope_from_is_noreply_for_amp(): void
@@ -757,5 +962,81 @@ class UnifiedDigestTest extends TestCase
         // Verify tracking does not indicate AMP.
         $tracking = $mail->getTracking();
         $this->assertFalse($tracking->has_amp);
+    }
+
+    public function test_card_meta_shows_distance_when_user_has_location(): void
+    {
+        // haversineDistance() and the distance branch in prepareCard() are only
+        // reached when the digest recipient has a lastlocation set. Without a
+        // lastlocation both $userLat and $userLng remain null and the distance
+        // block is skipped entirely.
+        $locationId = DB::table('locations')->insertGetId([
+            'name' => 'TestUserLocation',
+            'type' => 'Point',
+            'lat'  => 51.55,    // ~3 miles north of the default group/message lat
+            'lng'  => -0.1278,
+        ]);
+
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(); // defaults: lat=51.5074, lng=-0.1278
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Bicycle (London)',
+        ]);
+
+        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html    = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        // The distance text rendered by haversineDistance() must appear in the
+        // compiled HTML (e.g. "3 miles" or "< 1 mile").
+        $this->assertMatchesRegularExpression(
+            '/(?:[0-9]+ miles?|&lt; 1 mile|< 1 mile)/',
+            $html,
+            'Distance text must appear in the digest card when the user has a lastlocation'
+        );
+    }
+
+    public function test_card_shows_first_posted_when_message_was_reposted(): void
+    {
+        // The "First posted" line in _card.blade.php is only emitted when
+        // prepareCard() sets firstPostedFormatted — which only happens when
+        // messages.date is > 60 minutes before the pivot arrival date (i.e. the
+        // item was reposted). Without this test the firstPostedFormatted branch
+        // in UnifiedDigest::prepareCard() was never covered.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $originalDate = Carbon::now()->subDays(3);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Bookshelf (London)',
+            'date'    => $originalDate,
+            'arrival' => Carbon::now(),
+        ]);
+
+        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html    = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        // The "First posted" line must appear since the item was reposted 3 days
+        // after its original posting date.
+        $this->assertStringContainsString(
+            'First posted',
+            $html,
+            'A reposted message must render the "First posted" date line'
+        );
     }
 }

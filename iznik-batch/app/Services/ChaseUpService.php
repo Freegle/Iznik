@@ -367,12 +367,13 @@ class ChaseUpService
      * Sends chase-up emails for messages with replies but no outcome,
      * after max reposts reached.
      *
-     * Multi-group fix: V1 updates lastchaseup globally
-     * (WHERE msgid = ?). We update per-group
-     * (WHERE msgid = ? AND groupid = ?).
+     * Multi-group: a chase-up is about the item's global outcome, so a cross-posted
+     * message is chased up at most once per interval (not once per group). When one
+     * is sent we stamp lastchaseup on EVERY group of the message (WHERE msgid = ?),
+     * matching V1, so the other groups skip it. Reposting stays per-group.
      *
      * V1 side effects included:
-     *   - UPDATE messages_groups SET lastchaseup = NOW() (per-group)
+     *   - UPDATE messages_groups SET lastchaseup = NOW() (all the message's groups)
      *   - Chase-up email: "What happened to: {subject}" with links to
      *     mark completed/repost/withdraw. Different template if promised.
      */
@@ -480,11 +481,15 @@ class ChaseUpService
                 continue;
             }
 
-            // Multi-group fix: update per-group, not global.
-            // V1: UPDATE messages_groups SET lastchaseup = NOW() WHERE msgid = ?
+            // A chase-up asks the poster to record the item's (global) outcome, so a
+            // cross-posted message must trigger at most one chase-up per interval —
+            // not one per group. Stamp lastchaseup on EVERY group of the message so
+            // the other groups' candidate scans (later in this run, or on a future
+            // run) see it as recently chased and skip it. This matches V1's
+            // whole-message `WHERE msgid = ?` behaviour. Reposting stays per-group —
+            // it keys off arrival/autoreposts, not lastchaseup.
             DB::table('messages_groups')
                 ->where('msgid', $msg->msgid)
-                ->where('groupid', $group->id)
                 ->update(['lastchaseup' => now()]);
 
             // V1: "What happened to: {subject}" — different template if promised.
@@ -577,9 +582,11 @@ class ChaseUpService
      * Check if a message can be chased up on this specific group.
      *
      * V1 canChaseup(): queries ALL groups, returns TRUE if ANY passes.
-     * Multi-group fix: we check only the current group. V1's cross-group
-     * leak (chasing up on group A because group B hit max reposts) is not
-     * reproduced — each group is evaluated independently.
+     * Multi-group: the max-reposts test is evaluated per-group (each group has its
+     * own autoreposts counter), so we don't chase up on group A just because group B
+     * hit max. The lastchaseup interval is effectively shared — when a chase-up is
+     * sent it stamps lastchaseup on every group of the message (see process()), so a
+     * cross-posted item is chased up at most once per interval.
      */
     protected function canChaseup(object $msg, array $reposts): bool
     {

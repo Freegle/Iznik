@@ -550,9 +550,10 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&startCollection)
 	assert.Equal(t, "Approved", startCollection)
 
-	// First reviewer rejects — not yet at quorum (needs 2).
+	// First reviewer rejects — not yet at quorum (needs 2). The vote carries
+	// the group context the volunteer is acting in (per-group sendForReview).
 	_, token1 := CreateTestSession(t, reviewer1ID)
-	body1 := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"Bad post","msgcategory":"ShouldntBeHere"}`, msgID)
+	body1 := fmt.Sprintf(`{"msgid":%d,"groupid":%d,"response":"Reject","comments":"Bad post","msgcategory":"ShouldntBeHere"}`, msgID, groupID)
 	req1 := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token1, strings.NewReader(body1))
 	req1.Header.Set("Content-Type", "application/json")
 	resp1, _ := getApp().Test(req1)
@@ -565,20 +566,20 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 
 	// Second reviewer rejects — now at quorum (2 >= ApprovalQuorum).
 	_, token2 := CreateTestSession(t, reviewer2ID)
-	body2 := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"Spam post","msgcategory":"ShouldntBeHere"}`, msgID)
+	body2 := fmt.Sprintf(`{"msgid":%d,"groupid":%d,"response":"Reject","comments":"Spam post","msgcategory":"ShouldntBeHere"}`, msgID, groupID)
 	req2 := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token2, strings.NewReader(body2))
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, _ := getApp().Test(req2)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	// After quorum reached, message should be moved to Pending for review.
+	// After quorum reached, the message should be moved to Pending for review
+	// on that group only, with spamreason recorded on the per-group row.
 	var endCollection string
-	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&endCollection)
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&endCollection)
 	assert.Equal(t, "Pending", endCollection)
 
-	// Verify spamreason was set.
 	var spamreason string
-	db.Raw("SELECT COALESCE(spamreason, '') FROM messages WHERE id = ?", msgID).Scan(&spamreason)
+	db.Raw("SELECT COALESCE(spamreason, '') FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&spamreason)
 	assert.Equal(t, "Members think there is something wrong with this message.", spamreason)
 }
 

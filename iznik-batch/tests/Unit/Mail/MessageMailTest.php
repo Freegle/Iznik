@@ -4,7 +4,7 @@ namespace Tests\Unit\Mail;
 
 use App\Mail\Message\DeadlineReached;
 use App\Models\Message;
-use App\Models\User;
+use App\Models\MessageGroup;
 use Tests\TestCase;
 
 class MessageMailTest extends TestCase
@@ -113,5 +113,55 @@ class MessageMailTest extends TestCase
         $envelope = $mail->envelope();
 
         $this->assertEquals('Deadline reached: OFFER: Test Item (Location)', $envelope->subject);
+    }
+
+    public function test_deadline_reached_tracking_uses_recipients_group_for_cross_post(): void
+    {
+        // Message on groupA and groupB; recipient is a member of groupB only.
+        // Tracking groupid must reference groupB, not the arbitrary first group.
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $user = $this->createTestUser();
+        $this->createMembership($user, $groupB);
+
+        $message = $this->createTestMessage($user, $groupA);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+        ]);
+        $message = Message::with('groups')->find($message->id);
+
+        $mail = new DeadlineReached($message, $user);
+
+        $this->assertEquals($groupB->id, $mail->getTracking()->groupid);
+        $this->assertNotEquals($groupA->id, $mail->getTracking()->groupid);
+    }
+
+    public function test_deadline_reached_falls_back_to_first_group_when_no_membership_overlap(): void
+    {
+        // Defensive: if the recipient is somehow not a member of any of the message's
+        // groups, fall back to groups->first() rather than returning null.
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $user = $this->createTestUser();
+        // No memberships at all — complete mismatch.
+
+        $message = $this->createTestMessage($user, $groupA);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+        ]);
+        $message = Message::with('groups')->find($message->id);
+
+        $mail = new DeadlineReached($message, $user);
+
+        // Should not be null — falls back to groups->first().
+        $this->assertNotNull($mail->getTracking()->groupid);
     }
 }

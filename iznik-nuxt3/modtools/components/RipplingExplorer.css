@@ -336,6 +336,13 @@
   letter-spacing: 0.3px;
   pointer-events: none;
 }
+#rippling-tl-hint {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  margin-bottom: 4px;
+  pointer-events: none;
+}
 #rippling-tl-scrub-wrap {
   position: relative;
   margin: 26px 4px 34px;

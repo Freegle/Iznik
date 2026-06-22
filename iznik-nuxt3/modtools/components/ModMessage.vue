@@ -702,6 +702,7 @@ import { useMiscStore } from '~/stores/misc'
 import { SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 import { useModGroupStore } from '@/stores/modgroup'
 
@@ -990,15 +991,28 @@ watch(
   { immediate: true }
 )
 
+// A subject "follows the keyword convention" if it starts with a keyword this
+// group recognises for any type — built from the group's own settings.keywords
+// plus the standard OFFER/WANTED and common variants (OFFERED/REQUESTED/REQUEST).
+const keywordRegex = computed(() =>
+  buildKeywordRegex(group.value?.settings?.keywords)
+)
+
 const subjectClass = computed(() => {
   let ret = 'text-success'
 
   if (message.value && modconfig.value && modconfig.value.coloursubj) {
-    ret =
-      message.value.subject?.match &&
-      message.value.subject.match(modconfig.value.subjreg)
-        ? 'text-success'
-        : 'text-danger'
+    const subj = message.value.subject
+    // Green when the subject uses a recognised keyword for this group, OR matches
+    // the mod's own subjreg. Previously this tested ONLY subjreg (default
+    // /^(OFFER|WANTED):/i), so a Wanted post shown with a custom keyword such as
+    // "REQUESTED" was wrongly coloured red even though it's a valid Wanted.
+    // See Discourse https://discourse.ilovefreegle.org/t/9481/594
+    const ok =
+      subj?.match &&
+      (subj.match(keywordRegex.value) ||
+        (modconfig.value.subjreg && subj.match(modconfig.value.subjreg)))
+    ret = ok ? 'text-success' : 'text-danger'
   }
 
   return ret
@@ -1275,9 +1289,11 @@ async function save() {
     }
 
     if (editmessage.value.item && editmessage.value.location) {
-      // Well-structured message
+      // Well-structured message. Pass the selected group so the rebuilt
+      // subject uses that group's keyword (e.g. a group overriding OFFER).
       await messageStore.patch({
         id: editmessage.value.id,
+        groupid: editgroup.value,
         msgtype: editmessage.value.type,
         item: editmessage.value.item.name,
         location: editmessage.value.location.name,
@@ -1469,7 +1485,7 @@ function cancelEdit() {
 }
 
 async function backToPending(callback) {
-  await messageStore.backToPending(message.value.id)
+  await messageStore.backToPending(message.value.id, groupid.value)
   callback()
 }
 

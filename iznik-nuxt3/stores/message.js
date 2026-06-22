@@ -589,9 +589,10 @@ export const useMessageStore = defineStore({
 
       this.remove({ id: params.id })
     },
-    async backToPending(id) {
+    async backToPending(id, groupid) {
       await api(this.config).message.update({
         id,
+        groupid,
         action: 'BackToPending',
       })
       this.remove({ id })
@@ -648,14 +649,14 @@ export const useMessageStore = defineStore({
       // Do not remove from list
     },
     async hold(params) {
-      await api(this.config).message.hold(params.id)
+      await api(this.config).message.hold(params.id, params.groupid)
       const message = await api(this.config).message.fetchMT({
         id: params.id,
       })
       this.list[message.id] = message
     },
     async release(params) {
-      await api(this.config).message.release(params.id)
+      await api(this.config).message.release(params.id, params.groupid)
       const message = await api(this.config).message.fetchMT({
         id: params.id,
       })
