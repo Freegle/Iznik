@@ -2022,4 +2022,55 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertSame([1, 2, 3], $sorted->pluck('id')->all());
     }
+
+    // -----------------------------------------------------------------------
+    // Task 6: Wire score-sort into daily digest flow
+    // -----------------------------------------------------------------------
+
+    public function test_daily_digest_orders_live_posts_by_score(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5, 'lng' => -0.12],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // near post has NEWER arrival; far post has OLDER arrival.
+        // Arrival ASC would put far (older) first => [far, near].
+        // Score ordering should put near first => [near, far].
+        $near = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Near (TestLocation)',
+            'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subHours(2),
+        ]);
+        $far = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far (TestLocation)',
+            'lat' => 53.0, 'lng' => -0.12, 'arrival' => now()->subHours(10),
+        ]);
+
+        // Spy the spooler so we can read the posts handed to the daily UnifiedDigest.
+        $captured = null;
+        $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
+            $captured = $mailable;
+            return 'spooled';
+        });
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertNotNull($captured, 'daily digest should have been spooled');
+        $ids = $captured->getPosts()->map(fn ($p) => $p['message']->id)->all();
+        $this->assertSame([$near->id, $far->id], $ids); // near outranks far on closeness
+    }
 }

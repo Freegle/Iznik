@@ -951,6 +951,15 @@ class UnifiedDigestService
         // completed  = a Taken/Received outcome (the "came and went" list, daily only)
         // withdrawn/expired (has_outcome && !has_success) appear in neither.
         $posts = $allPosts->filter(fn ($p) => !$p->has_outcome)->values();
+
+        // Order the live posts by the rippling digest-preview score (nearer +
+        // newer + less-seen float up), matching the /rippling "Digest preview".
+        // Daily only — immediate mode stays chronological (single-group, real-time).
+        // Dedup runs after, so the kept cross-post representative is the top-scoring one.
+        if ($mode === self::MODE_DAILY) {
+            $posts = $this->scoreAndSortAvailable($posts, $this->resolveUserLatLng($user));
+        }
+
         $completedPosts = $mode === self::MODE_DAILY
             ? $this->deduplicateCompletedPosts($allPosts->filter(fn ($p) => $p->has_success)->values())
             : collect();
