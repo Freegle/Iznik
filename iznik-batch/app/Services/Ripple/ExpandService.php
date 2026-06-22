@@ -34,7 +34,14 @@ class ExpandService
     /**
      * @return array{initialized:int,expanded:int,completed:int,removed:int,skipped:int,errors:int}
      */
-    public function process(bool $dryRun = false, int $limit = 500): array
+    /**
+     * @param int|null    $onlyMsgid     Restrict the whole run to one message ID (controlled testing).
+     * @param string|null $withinPolyWkt Restrict the whole run to posts whose origin point falls within
+     *                                   this WKT polygon (SRID self::SRID) — the area test (e.g. ripple
+     *                                   the recent posts near Edinburgh). The go-live arrival cutoff
+     *                                   still applies (an area scope filters where, not when).
+     */
+    public function process(bool $dryRun = false, int $limit = 500, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): array
     {
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
@@ -48,15 +55,21 @@ class ExpandService
             return $stats;
         }
 
-        // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
-        $stats['removed'] = $this->removeStale($dryRun);
+        // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
+        // testing): stale-removal is skipped because it operates over the WHOLE reach set and is not
+        // scope-aware, and both init and advance are restricted to the same subset.
+        $scoped = $onlyMsgid !== null || $withinPolyWkt !== null;
+        if (!$scoped) {
+            // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
+            $stats['removed'] = $this->removeStale($dryRun);
+        }
 
         // 2. Initialise reach for posts new to messages_spatial.
-        $this->initialiseNew($dryRun, $limit, $stats);
+        $this->initialiseNew($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
 
         // 3. Advance reach for posts whose next tick is due — active hours only.
         if ($this->inActiveHours()) {
-            $this->advanceDue($dryRun, $limit, $stats);
+            $this->advanceDue($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
         }
 
         return $stats;
@@ -85,7 +98,7 @@ class ExpandService
         return (int) (DB::selectOne('SELECT ROW_COUNT() AS n')->n ?? 0);
     }
 
-    private function initialiseNew(bool $dryRun, int $limit, array &$stats): void
+    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
         // cutoff ever start rippling, so flipping RIPPLE_ENABLED on does not make the
@@ -93,9 +106,25 @@ class ExpandService
         $enabledAt = config('freegle.ripple.enabled_at');
         $cutoffSql = '';
         $params = [];
-        if (!empty($enabledAt)) {
-            $cutoffSql = ' AND ms.arrival >= ?';
-            $params[] = $enabledAt;
+        $scopeSql = '';
+        if ($onlyMsgid !== null) {
+            // A single chosen post (controlled test) targets its msgid directly and bypasses the
+            // arrival cutoff — the chosen post may predate go-live, and selecting nothing would be
+            // a surprising no-op for an explicit one-post request.
+            $scopeSql = ' AND ms.msgid = ?';
+            $params[] = $onlyMsgid;
+        } else {
+            // An area scope is an ADDITIONAL filter on top of normal behaviour: the go-live arrival
+            // cutoff still applies, so an area run ripples only the recent (post-cutoff) posts inside
+            // the polygon rather than the whole historical backlog there.
+            if ($withinPolyWkt !== null) {
+                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ms.point)';
+                $params[] = $withinPolyWkt;
+            }
+            if (!empty($enabledAt)) {
+                $cutoffSql = ' AND ms.arrival >= ?';
+                $params[] = $enabledAt;
+            }
         }
         $params[] = $limit;
 
@@ -106,7 +135,7 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $cutoffSql . '
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -182,12 +211,17 @@ class ExpandService
         }
     }
 
-    private function advanceDue(bool $dryRun, int $limit, array &$stats): void
+    private function advanceDue(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         $rows = DB::table('rippling_reach')
             ->where('status', 'expanding')
             ->whereNotNull('next_expansion_at')
             ->where('next_expansion_at', '<=', now())
+            ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
+            ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
+                'ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(lng, lat), ' . self::SRID . '))',
+                [$withinPolyWkt]
+            ))
             ->limit($limit)
             ->get();
 
