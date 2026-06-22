@@ -23,12 +23,7 @@ class Spam {
     const IMAGE_THRESHOLD_TIME = 24;
 
     # For checking users as suspect.
-    // Distinct groups joined/applied to in a year before a user is considered suspect.  Raised from 16
-    // to 35 for rippling-out: joining groups no longer multiplies a poster's reach (reach is bounded by
-    // declared location + drive-time isochrone, not membership count), so a high join count is now
-    // mostly power users with many local groups rather than reach-spamming.  MUST NOT be relaxed ahead
-    // of rippling going live - until then group membership still drives reach and 16 is the right guard.
-    const SEEN_THRESHOLD = 35; // Number of groups to join or apply to before considered suspect
+    const SEEN_THRESHOLD = 16; // Number of groups to join or apply to before considered suspect
     const ESCALATE_THRESHOLD = 2; // Level of suspicion before a user is escalated to support/admin for review
     // Replies to items further apart than this is suspicious.  In miles.  Tightened from 100 to 50 for
     // rippling-out: a post's reach is now bounded by the poster's ~30-min drive isochrone, so a single

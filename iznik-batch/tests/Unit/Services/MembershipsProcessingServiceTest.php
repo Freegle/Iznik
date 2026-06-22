@@ -227,9 +227,10 @@ class MembershipsProcessingServiceTest extends TestCase
             'collection' => 'Approved',
         ]);
 
-        // 17 distinct groups joined in the last year (threshold is 16). One of
-        // them is the just-added group; the rest come from Group/Joined logs.
-        for ($i = 0; $i < 17; $i++) {
+        // 36 distinct groups joined in the last year, plus the just-added group,
+        // exceeds the relaxed threshold of 35 (raised from 16 for rippling-out).
+        // The just-added group is counted separately by the service.
+        for ($i = 0; $i < 36; $i++) {
             DB::table('logs')->insert([
                 'type' => 'Group',
                 'subtype' => 'Joined',
@@ -278,6 +279,43 @@ class MembershipsProcessingServiceTest extends TestCase
                 'subtype' => 'Joined',
                 'user' => $user->id,
                 'groupid' => 910000 + $i,
+                'timestamp' => now()->subDays(30),
+            ]);
+        }
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+        ]);
+
+        $this->service->processAll();
+
+        $membership = DB::table('memberships')
+            ->where('userid', $user->id)->where('groupid', $group->id)->first();
+        $this->assertNull($membership->reviewrequestedat ?? null);
+    }
+
+    public function test_does_not_flag_member_between_old_and_new_threshold(): void
+    {
+        // 20 distinct groups would have flagged under the old threshold of 16, but the relaxed
+        // threshold (35, for rippling-out) must NOT flag them - this is the point of the relax.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        for ($i = 0; $i < 20; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $user->id,
+                'groupid' => 920000 + $i,
                 'timestamp' => now()->subDays(30),
             ]);
         }
