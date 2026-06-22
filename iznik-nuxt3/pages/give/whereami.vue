@@ -52,7 +52,8 @@
               </div>
               <p class="community-hint">
                 This is the Freegle community for your area, chosen from your
-                location.
+                location. If there isn't enough interest, we'll automatically
+                show it further away.
               </p>
             </div>
             <PostPersonalInfoWarning :group="group" :text="postText" />

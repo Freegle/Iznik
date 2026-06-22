@@ -535,6 +535,63 @@ describe('PostMap', () => {
       expect(wrapper.exists()).toBe(true)
     })
 
+    it('applies Chaikin smoothing to isochrone polygons for the reach overlay', async () => {
+      // The raw WKT has 4 distinct corners (+ closing repeat = 5 points in the ring).
+      // After 3 Chaikin iterations the outer ring grows to 33 points, making the
+      // polygon boundary smooth so it matches the rippling-explorer style.
+      const rawRingPoints = 5 // POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))
+
+      // We reach into the component's isochroneGEOJSONs computed to assert
+      // smoothing happened.  The Wicket mock returns a Polygon geometry whose
+      // coordinates array we check.
+      let capturedGeoJSON = null
+      const { smoothGeoJSON } = await import('~/composables/useReachPolygon')
+
+      // Build the minimal GeoJSON that Wicket.toJson() would produce for the square.
+      const rawGeometry = {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
+            [0, 0],
+          ],
+        ],
+      }
+      capturedGeoJSON = smoothGeoJSON(rawGeometry)
+
+      // After smoothing, each ring should have more points.
+      expect(capturedGeoJSON.coordinates[0].length).toBeGreaterThan(
+        rawRingPoints
+      )
+      // 4 open pts × 3 Chaikin iterations → 32 open + 1 close = 33 points.
+      expect(capturedGeoJSON.coordinates[0].length).toBe(33)
+      // Ring must stay closed.
+      const ring = capturedGeoJSON.coordinates[0]
+      expect(ring[0]).toEqual(ring[ring.length - 1])
+    })
+
+    it('does not render the reach overlay when showIsochrones is false', async () => {
+      mockIsochroneList.value = [
+        { id: 1, polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))' },
+      ]
+      const wrapper = await createWrapper({ showIsochrones: false })
+      await flushPromises()
+      // With showIsochrones=false the l-geo-json elements for the overlay are not rendered.
+      const geoJsonEls = wrapper.findAll('.l-geo-json')
+      expect(geoJsonEls.length).toBe(0)
+    })
+
+    it('renders no overlay when the user has no isochrones', async () => {
+      mockIsochroneList.value = []
+      const wrapper = await createWrapper({ showIsochrones: true })
+      await flushPromises()
+      const geoJsonEls = wrapper.findAll('.l-geo-json')
+      expect(geoJsonEls.length).toBe(0)
+    })
+
     it('uses isochroneOverride when provided', async () => {
       const override = {
         id: 999,

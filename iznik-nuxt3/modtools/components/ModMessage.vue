@@ -476,6 +476,15 @@
               :boundary="group.poly || group.polyofficial"
               :height="150"
             />
+            <b-button
+              v-if="canShowReach"
+              variant="white"
+              size="sm"
+              class="mt-2 w-100"
+              @click="reachMapModal?.show()"
+            >
+              <v-icon icon="map-marker-alt" /> View rippling reach
+            </b-button>
           </b-col>
           <b-col cols="12" lg="3">
             <div
@@ -681,6 +690,13 @@
       :safelist="false"
     />
     <RipplingExplanationModal ref="ripplingExplanationModal" />
+    <ModMessageReachMap
+      v-if="message && message.id"
+      ref="reachMapModal"
+      :lat="position?.lat"
+      :lng="position?.lng"
+      :arrival="reachArrival"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -811,6 +827,7 @@ const top = ref(null)
 const bottom = ref(null)
 const spamConfirm = ref(null)
 const ripplingExplanationModal = ref(null)
+const reachMapModal = ref(null)
 
 const saving = ref(false)
 const saved = ref(false)
@@ -857,6 +874,25 @@ const otherGroups = computed(() => {
   if (!message.value?.groups) return []
   const gid = parseInt(groupid.value)
   return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
+})
+
+// Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
+// The modal itself explains when a post isn't rippling yet.
+const canShowReach = computed(
+  () => message.value?.type === 'Offer' || message.value?.type === 'Wanted'
+)
+
+// When the post entered the rippling system: the earliest arrival across its groups
+// (a repost ripples from the repost time, not the original post date). The engine uses
+// MIN(messages_spatial.arrival); mirror that so the reach opens at the right point.
+const reachArrival = computed(() => {
+  const arrivals = (message.value?.groups || [])
+    .map((g) => g.arrival)
+    .filter(Boolean)
+  if (arrivals.length) {
+    return arrivals.reduce((a, b) => (new Date(a) <= new Date(b) ? a : b))
+  }
+  return message.value?.date || null
 })
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
