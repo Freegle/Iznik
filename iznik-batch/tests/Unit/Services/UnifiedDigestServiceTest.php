@@ -1952,4 +1952,40 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame(3, (int) $row->views);
         $this->assertSame(1, (int) $row->replies);
     }
+
+    // -----------------------------------------------------------------------
+    // Task 4: Per-run reach-radius lookup
+    // -----------------------------------------------------------------------
+
+    public function test_reach_radius_falls_back_to_config_default_without_reach_row(): void
+    {
+        config(['freegle.ripple.score.default_reach_metres' => 12345.0]);
+        $svc = app(\App\Services\UnifiedDigestService::class);
+
+        // No rippling_reach row for this msgid => default.
+        $r = $this->callPrivate($svc, 'reachRadiusMetres', [999999999]);
+        $this->assertEqualsWithDelta(12345.0, $r, 1e-6);
+    }
+
+    public function test_reach_radius_is_distance_origin_to_polygon_boundary(): void
+    {
+        $svc = app(\App\Services\UnifiedDigestService::class);
+
+        // Need a real message row to satisfy rippling_reach FK on msgid.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $msg = $this->createTestMessage($poster, $group, ['lat' => 0.0, 'lng' => 0.0]);
+
+        // Origin at 3857 (0,0); square polygon 1000 units half-width => corner dist sqrt(2)*1000.
+        DB::table('rippling_reach')->insert([
+            'msgid' => $msg->id, 'lat' => 0, 'lng' => 0,
+            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-1000 -1000,1000 -1000,1000 1000,-1000 1000,-1000 -1000))', 3857)"),
+            'arrival' => now(), 'mode' => 'drive', 'tick' => 1, 'total_ticks' => 9,
+            'status' => 'expanding', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $r = $this->callPrivate($svc, 'reachRadiusMetres', [$msg->id]);
+        // Farthest boundary point is a corner at distance sqrt(2)*1000 ~= 1414.2 (3857 planar units).
+        $this->assertEqualsWithDelta(1414.21356, $r, 0.5);
+    }
 }

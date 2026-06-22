@@ -28,6 +28,9 @@ class UnifiedDigestService
 
     public const EMAIL_TYPE = 'UnifiedDigest';
 
+    /** Per-run cache of post reach radius (SRID-3857 planar units) keyed by msgid. */
+    private array $reachRadiusCache = [];
+
     /**
      * Digest mode constants.
      */
@@ -1190,6 +1193,68 @@ class UnifiedDigestService
         }
 
         return null;
+    }
+
+    /**
+     * The post's reach extent in SRID-3857 planar units: the greatest distance
+     * from the post origin (rippling_reach.lat/lng) to any vertex of its reach
+     * polygon. Used as the closeness denominator in the digest score.
+     *
+     * Computed in 3857 planar units (NOT true metres) on purpose: the recipient
+     * distance (see scoreAndSortAvailable) is measured the same way, so the
+     * mercator scale factor cancels in the close = 1 - dist/reach ratio.
+     *
+     * Posts with no rippling_reach row (rippling dark, or backlog posts arriving
+     * before the go-live cutoff) fall back to the configured default. Cached per
+     * run because many recipients share the same posts.
+     */
+    private function reachRadiusMetres(int $msgid): float
+    {
+        if (array_key_exists($msgid, $this->reachRadiusCache)) {
+            return $this->reachRadiusCache[$msgid];
+        }
+
+        $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
+
+        $row = DB::selectOne(
+            'SELECT rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
+               FROM rippling_reach rr WHERE rr.msgid = ?',
+            [$msgid]
+        );
+
+        if (!$row || $row->poly_wkt === null) {
+            return $this->reachRadiusCache[$msgid] = $default;
+        }
+
+        // Parse the WKT exterior ring in PHP and compute max planar distance in
+        // 3857 units from the origin to each vertex. This is more portable than
+        // MySQL geometry functions and avoids the SRID-transform problem.
+        // WKT form: POLYGON((x1 y1,x2 y2,...,x1 y1))
+        $ox = (float) $row->ox;
+        $oy = (float) $row->oy;
+        $wkt = $row->poly_wkt;
+
+        // Extract the coordinate pairs from the exterior ring.
+        if (!preg_match('/POLYGON\s*\(\s*\(([^)]+)\)/', $wkt, $m)) {
+            return $this->reachRadiusCache[$msgid] = $default;
+        }
+
+        $maxDist = 0.0;
+        foreach (explode(',', $m[1]) as $pair) {
+            $parts = preg_split('/\s+/', trim($pair));
+            if (count($parts) < 2) {
+                continue;
+            }
+            $vx = (float) $parts[0];
+            $vy = (float) $parts[1];
+            $dist = sqrt(($vx - $ox) ** 2 + ($vy - $oy) ** 2);
+            if ($dist > $maxDist) {
+                $maxDist = $dist;
+            }
+        }
+
+        $r = $maxDist > 0 ? $maxDist : $default;
+        return $this->reachRadiusCache[$msgid] = $r;
     }
 
     /**
