@@ -4640,6 +4640,80 @@ func TestPostMessageViewDedup(t *testing.T) {
 	assert.Equal(t, 1, viewCount)
 }
 
+// TestMessagePageviewSemantics verifies the pageview flag distinguishes a genuine
+// page-open (handleView => 1) from a list-scroll impression (MarkSeen => 0), that a
+// scroll-then-open is upgraded to 1, and that an open-then-scroll is never downgraded.
+func TestMessagePageviewSemantics(t *testing.T) {
+	db := database.DBConn
+
+	// Returns (exists, pageview) where pageview is -1 for NULL (legacy/unknown).
+	getPageview := func(msgID, userID uint64) (bool, int) {
+		var cnt int
+		db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&cnt)
+		if cnt == 0 {
+			return false, -1
+		}
+		var pv int
+		db.Raw("SELECT COALESCE(pageview, -1) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&pv)
+		return true, pv
+	}
+	doView := func(token string, msgID uint64) {
+		body, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "View"})
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	doMarkSeen := func(token string, msgID uint64) {
+		req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString(fmt.Sprintf(`{"ids": [%d]}`, msgID)))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	// Distinct viewer (not the owner) so MarkSeen records against a real recipient.
+	setup := func(label string) (msgID uint64, token string, viewerID uint64) {
+		prefix := uniquePrefix(label)
+		groupID := CreateTestGroup(t, prefix)
+		ownerID := CreateTestUser(t, prefix+"_owner", "User")
+		CreateTestMembership(t, ownerID, groupID, "Member")
+		viewerID = CreateTestUser(t, prefix+"_viewer", "User")
+		CreateTestMembership(t, viewerID, groupID, "Member")
+		_, token = CreateTestSession(t, viewerID)
+		msgID = CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
+		return
+	}
+
+	// genuine page-open => pageview = 1
+	msgID, token, viewerID := setup("pv_open")
+	doView(token, msgID)
+	exists, pv := getPageview(msgID, viewerID)
+	assert.True(t, exists, "page-open should create a View row")
+	assert.Equal(t, 1, pv, "page-open => pageview=1")
+
+	// list-scroll impression => pageview = 0
+	msgID, token, viewerID = setup("pv_seen")
+	doMarkSeen(token, msgID)
+	exists, pv = getPageview(msgID, viewerID)
+	assert.True(t, exists, "impression should create a View row")
+	assert.Equal(t, 0, pv, "scroll impression => pageview=0")
+
+	// scroll THEN open => upgraded to 1
+	msgID, token, viewerID = setup("pv_seen_open")
+	doMarkSeen(token, msgID)
+	doView(token, msgID)
+	_, pv = getPageview(msgID, viewerID)
+	assert.Equal(t, 1, pv, "open after scroll => upgraded to pageview=1")
+
+	// open THEN scroll => stays 1 (never downgraded)
+	msgID, token, viewerID = setup("pv_open_seen")
+	doView(token, msgID)
+	doMarkSeen(token, msgID)
+	_, pv = getPageview(msgID, viewerID)
+	assert.Equal(t, 1, pv, "scroll after open must not downgrade pageview")
+}
+
 // --- Adversarial tests ---
 
 func TestPostMessageAddByNegativeCount(t *testing.T) {
