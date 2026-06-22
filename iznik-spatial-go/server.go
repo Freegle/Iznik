@@ -49,6 +49,29 @@ func (s *datasetState) swapIndex(newIdx *Index) {
 	}
 }
 
+// ensureIndex guarantees a live index exists for the admin upsert (integration-
+// test seeding) endpoint. When startupLoad/rebuild could not produce a non-empty
+// index — e.g. the test database has no source rows — state.idx is nil and
+// withIndex would reject the seed with errIndexNotReady. Lazily create an empty
+// in-memory index here: upsert populates it immediately, so KNN never sees a
+// 0-row index by this path, and the production guards that refuse to SERVE an
+// empty index built from MySQL (rebuild/startupLoad) are untouched. In-memory
+// keeps it off disk, so it can't be adopted by a later startupLoad and can't
+// race a rebuild's file rename.
+func (s *datasetState) ensureIndex() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.idx != nil {
+		return nil
+	}
+	idx, err := CreateIndex(":memory:")
+	if err != nil {
+		return err
+	}
+	s.idx = idx
+	return nil
+}
+
 // server manages all datasets and the MySQL connection.
 type server struct {
 	datasets map[string]*datasetState
