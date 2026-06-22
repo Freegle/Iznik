@@ -1974,23 +1974,40 @@ class UnifiedDigestServiceTest extends TestCase
         // Need a real message row to satisfy rippling_reach FK on msgid.
         $poster = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createTestMessage($poster, $group, ['lat' => 0.0, 'lng' => 0.0]);
+        $msg = $this->createTestMessage($poster, $group);
 
-        // Origin at 3857 (0,0); square polygon 1000 units half-width => corner dist sqrt(2)*1000.
-        DB::table('rippling_reach')->insert([
-            'msgid' => $msg->id, 'lat' => 0, 'lng' => 0,
-            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-1000 -1000,1000 -1000,1000 1000,-1000 1000,-1000 -1000))', 3857)"),
-            'arrival' => now(), 'mode' => 'drive', 'tick' => 1, 'total_ticks' => 9,
-            'status' => 'expanding', 'created_at' => now(), 'updated_at' => now(),
-        ]);
+        // seedReach() seeds the origin at (lat 51.5, lng -0.1). The polygon stores
+        // lng/lat DEGREES (tagged SRID 3857 by Freegle convention). This box spans
+        // +/-0.1deg in each axis, so all four corners are equidistant from the origin
+        // (~13km), and the reach radius is that great-circle corner distance in metres.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        // Same haversine the implementation uses (mean Earth radius 6371000m).
+        $haversine = function (float $lat1, float $lng1, float $lat2, float $lng2): float {
+            $R = 6371000.0;
+            $dLat = deg2rad($lat2 - $lat1);
+            $dLng = deg2rad($lng2 - $lng1);
+            $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+            return $R * 2 * atan2(sqrt($a), sqrt(1 - $a));
+        };
+        // Max over all four corners (the southern corners are marginally farther
+        // because east-west distance grows with cos(latitude)) — mirrors the
+        // implementation, which takes the greatest origin->vertex distance.
+        $expected = 0.0;
+        foreach ([[-0.2, 51.4], [0.0, 51.4], [0.0, 51.6], [-0.2, 51.6]] as [$lng, $lat]) {
+            $expected = max($expected, $haversine(51.5, -0.1, $lat, $lng));
+        }
 
         $r = $this->callPrivate($svc, 'reachRadiusMetres', [$msg->id]);
-        // Farthest boundary point is a corner at distance sqrt(2)*1000 ~= 1414.2 (3857 planar units).
-        $this->assertEqualsWithDelta(1414.21356, $r, 0.5);
+        $this->assertEqualsWithDelta($expected, $r, 1.0);
+        // Sanity: a ~0.1deg box corner from this origin is ~13km — kilometre-scale metres.
+        $this->assertGreaterThan(10000, $r);
+        $this->assertLessThan(16000, $r);
     }
 
     // -----------------------------------------------------------------------
-    // Task 5: scoreAndSortAvailable + toMercator
+    // Task 5: scoreAndSortAvailable (haversine distance + DigestPostScorer)
     // -----------------------------------------------------------------------
 
     public function test_available_posts_sorted_by_score_descending_not_arrival(): void

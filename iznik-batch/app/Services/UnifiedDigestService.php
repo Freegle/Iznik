@@ -29,7 +29,7 @@ class UnifiedDigestService
 
     public const EMAIL_TYPE = 'UnifiedDigest';
 
-    /** Per-run cache of post reach radius (SRID-3857 planar units) keyed by msgid. */
+    /** Per-run cache of post reach radius in metres, keyed by msgid. */
     private array $reachRadiusCache = [];
 
     /**
@@ -1206,13 +1206,16 @@ class UnifiedDigestService
     }
 
     /**
-     * The post's reach extent in SRID-3857 planar units: the greatest distance
-     * from the post origin (rippling_reach.lat/lng) to any vertex of its reach
-     * polygon. Used as the closeness denominator in the digest score.
+     * The post's reach extent in metres: the greatest great-circle distance from
+     * the post origin (rippling_reach.lat/lng) to any vertex of its reach polygon.
+     * Used as the closeness denominator in the digest score.
      *
-     * Computed in 3857 planar units (NOT true metres) on purpose: the recipient
-     * distance (see scoreAndSortAvailable) is measured the same way, so the
-     * mercator scale factor cancels in the close = 1 - dist/reach ratio.
+     * rippling_reach.polygon stores lng/lat DEGREES (tagged SRID 3857 by Freegle
+     * convention — the coordinates are WGS84 degrees, not projected metres), so we
+     * parse the WKT ring and measure each vertex against the origin with haversine
+     * to get true metres. The recipient->post distance (see scoreAndSortAvailable)
+     * is measured the same way, so close = 1 - dist/reach is a consistent
+     * true-metre ratio and the configured default (~30km) is meaningful.
      *
      * Posts with no rippling_reach row (rippling dark, or backlog posts arriving
      * before the go-live cutoff) fall back to the configured default. Cached per
@@ -1236,12 +1239,12 @@ class UnifiedDigestService
             return $this->reachRadiusCache[$msgid] = $default;
         }
 
-        // Parse the WKT exterior ring in PHP and compute max planar distance in
-        // 3857 units from the origin to each vertex. This is more portable than
-        // MySQL geometry functions and avoids the SRID-transform problem.
-        // WKT form: POLYGON((x1 y1,x2 y2,...,x1 y1))
-        $ox = (float) $row->ox;
-        $oy = (float) $row->oy;
+        // Parse the WKT exterior ring in PHP and take the greatest great-circle
+        // distance (metres) from the origin to any vertex. Parsing in PHP is more
+        // portable than MySQL geometry functions and avoids SRID-transform issues.
+        // WKT form: POLYGON((lng1 lat1,lng2 lat2,...,lng1 lat1)) — x is lng, y is lat.
+        $oLng = (float) $row->ox;
+        $oLat = (float) $row->oy;
         $wkt = $row->poly_wkt;
 
         // Extract the coordinate pairs from the exterior ring.
@@ -1255,9 +1258,9 @@ class UnifiedDigestService
             if (count($parts) < 2) {
                 continue;
             }
-            $vx = (float) $parts[0];
-            $vy = (float) $parts[1];
-            $dist = sqrt(($vx - $ox) ** 2 + ($vy - $oy) ** 2);
+            $vLng = (float) $parts[0];
+            $vLat = (float) $parts[1];
+            $dist = $this->haversineMetres($oLat, $oLng, $vLat, $vLng);
             if ($dist > $maxDist) {
                 $maxDist = $dist;
             }
@@ -1288,15 +1291,17 @@ class UnifiedDigestService
             'budget_decay' => (float) config('freegle.ripple.score.budget_decay', 25),
         ];
 
-        // Recipient point in SRID-3857 planar units (same space as the reach radius).
-        [$recX, $recY] = $this->toMercator($latlng[0], $latlng[1]); // (lat,lng) -> (x,y)
-
         $now = now();
         foreach ($posts as $post) {
             $reach = $this->reachRadiusMetres((int) $post->id);
             // Post origin: messages.lat/lng (already on the row via messages.* select).
-            [$px, $py] = $this->toMercator((float) $post->lat, (float) $post->lng);
-            $dist = sqrt(($px - $recX) ** 2 + ($py - $recY) ** 2);
+            // Great-circle metres recipient -> post, the same unit as the reach radius.
+            $dist = $this->haversineMetres(
+                $latlng[0],
+                $latlng[1],
+                (float) $post->lat,
+                (float) $post->lng
+            );
             $arrival = $post->arrival instanceof \DateTimeInterface
                 ? $post->arrival
                 : \Illuminate\Support\Carbon::parse($post->arrival);
@@ -1317,14 +1322,20 @@ class UnifiedDigestService
         return $posts->sortByDesc('_score')->values();
     }
 
-    /** Forward Web-Mercator (EPSG:3857) projection of (lat,lng) degrees -> (x,y) metres. */
-    private function toMercator(float $lat, float $lng): array
+    /**
+     * Great-circle distance in metres between two (lat,lng) points in degrees.
+     * Used for both the recipient->post distance and the post reach radius, so the
+     * close = 1 - dist/reach ratio is a consistent true-metre ratio.
+     */
+    private function haversineMetres(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
-        $r = 6378137.0;
-        $x = $r * deg2rad($lng);
-        $lat = max(-85.05112878, min(85.05112878, $lat));
-        $y = $r * log(tan(M_PI / 4 + deg2rad($lat) / 2));
-        return [$x, $y];
+        $r = 6371000.0; // mean Earth radius (metres)
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 
     /**
