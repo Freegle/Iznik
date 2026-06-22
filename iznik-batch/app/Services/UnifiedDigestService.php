@@ -9,6 +9,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Services\Ripple\DigestPostScorer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -1255,6 +1256,66 @@ class UnifiedDigestService
 
         $r = $maxDist > 0 ? $maxDist : $default;
         return $this->reachRadiusCache[$msgid] = $r;
+    }
+
+    /**
+     * Score the available (live) posts with the rippling digest-preview algorithm
+     * and return them ordered by score descending. See DigestPostScorer for the
+     * formula and the haversine/drive-time performance approximation.
+     *
+     * When the recipient's location is unknown we cannot compute closeness, so we
+     * leave the posts in their incoming (arrival) order — fail open, no regression.
+     */
+    private function scoreAndSortAvailable(Collection $posts, ?array $latlng): Collection
+    {
+        if ($latlng === null || $posts->count() < 2) {
+            return $posts->values();
+        }
+
+        $scorer = app(DigestPostScorer::class);
+        $weights = (array) config('freegle.ripple.score.weights');
+        $env = [
+            'window_hours' => (float) config('freegle.ripple.score.window_hours', 24),
+            'budget_decay' => (float) config('freegle.ripple.score.budget_decay', 25),
+        ];
+
+        // Recipient point in SRID-3857 planar units (same space as the reach radius).
+        [$recX, $recY] = $this->toMercator($latlng[0], $latlng[1]); // (lat,lng) -> (x,y)
+
+        $now = now();
+        foreach ($posts as $post) {
+            $reach = $this->reachRadiusMetres((int) $post->id);
+            // Post origin: messages.lat/lng (already on the row via messages.* select).
+            [$px, $py] = $this->toMercator((float) $post->lat, (float) $post->lng);
+            $dist = sqrt(($px - $recX) ** 2 + ($py - $recY) ** 2);
+            $arrival = $post->arrival instanceof \DateTimeInterface
+                ? $post->arrival
+                : \Illuminate\Support\Carbon::parse($post->arrival);
+            $ageH = max(0.0, $now->floatDiffInHours($arrival));
+            $s = $scorer->score(
+                $dist,
+                $reach,
+                $ageH,
+                (int) ($post->views ?? 0),
+                (int) ($post->replies ?? 0),
+                false, // anchor/home-group not yet implemented; see /rippling (digest_simulator.go homeGroups). Default weight 0.
+                $weights,
+                $env
+            );
+            $post->_score = $s['total'];
+        }
+
+        return $posts->sortByDesc('_score')->values();
+    }
+
+    /** Forward Web-Mercator (EPSG:3857) projection of (lat,lng) degrees -> (x,y) metres. */
+    private function toMercator(float $lat, float $lng): array
+    {
+        $r = 6378137.0;
+        $x = $r * deg2rad($lng);
+        $lat = max(-85.05112878, min(85.05112878, $lat));
+        $y = $r * log(tan(M_PI / 4 + deg2rad($lat) / 2));
+        return [$x, $y];
     }
 
     /**

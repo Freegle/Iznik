@@ -1988,4 +1988,38 @@ class UnifiedDigestServiceTest extends TestCase
         // Farthest boundary point is a corner at distance sqrt(2)*1000 ~= 1414.2 (3857 planar units).
         $this->assertEqualsWithDelta(1414.21356, $r, 0.5);
     }
+
+    // -----------------------------------------------------------------------
+    // Task 5: scoreAndSortAvailable + toMercator
+    // -----------------------------------------------------------------------
+
+    public function test_available_posts_sorted_by_score_descending_not_arrival(): void
+    {
+        config(['freegle.ripple.score.default_reach_metres' => 40000.0]);
+        $latlng = [0.0, 0.0]; // recipient [lat, lng]
+
+        $mk = function (int $id, float $lat, float $lng, int $ageH, int $views) {
+            $p = new \stdClass();
+            $p->id = $id;
+            $p->lat = $lat;
+            $p->lng = $lng;
+            $p->arrival = now()->subHours($ageH);
+            $p->views = $views;
+            $p->replies = 0;
+            return $p;
+        };
+
+        // ~0.0009deg ~= 100m; ~0.0027deg ~= 300m near origin. Distances are well within
+        // the 40km default radius so closeness differences are small but ordered; the
+        // dominating differentiator is the budget term (views).
+        $near = $mk(1, 0.0009, 0.0, 20, 0);   // nearest, unseen (oldest arrival)
+        $far  = $mk(2, 0.0027, 0.0, 1,  0);   // farther, unseen, newest
+        $busy = $mk(3, 0.0009, 0.0, 1,  500); // nearest but heavily viewed -> low budget
+
+        $sorted = $this->callPrivate(
+            $this->service, 'scoreAndSortAvailable', [collect([$busy, $far, $near]), $latlng]
+        );
+
+        $this->assertSame([1, 2, 3], $sorted->pluck('id')->all());
+    }
 }
