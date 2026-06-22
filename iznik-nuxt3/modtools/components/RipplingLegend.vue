@@ -48,6 +48,28 @@
     </div>
   </div>
 
+  <!-- Minimal legend for the per-post reach modal: only what that static view draws
+       (no deprivation quintiles, which aren't shown there). -->
+  <div v-else-if="minimal" class="rpl-legend">
+    <h4>Legend</h4>
+    <div class="rpl-leg-item">
+      <div class="rpl-leg-swatch" style="background:none;border:2.5px solid #cc0000" />
+      Current reach boundary
+    </div>
+    <div class="rpl-leg-item">
+      <div style="width:10px;height:10px;border-radius:50%;background:#e8380d;flex-shrink:0" />
+      Active Freegler
+    </div>
+    <div class="rpl-leg-item">
+      <div class="rpl-leg-swatch" style="background:none;border:2px solid #27ae60" />
+      Freegle group
+    </div>
+    <div class="rpl-leg-item">
+      <span style="color:#e07000;font-size:13px;margin-right:2px">⚡</span>
+      Cross-posting begins
+    </div>
+  </div>
+
   <div v-else class="rpl-legend">
     <h4>Legend</h4>
     <div class="rpl-leg-item">
@@ -99,6 +121,11 @@ defineProps({
     required: true,
     validator: (v) => v === 'outbound' || v === 'inbound',
   },
+  // Minimal legend for the per-post reach modal: only what that static view draws.
+  minimal: {
+    type: Boolean,
+    default: false,
+  },
 })
 </script>
 
@@ -121,10 +148,14 @@ defineProps({
   color: #555;
 }
 .rpl-leg-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px 1fr;
   align-items: center;
   gap: 6px;
   margin: 3px 0;
+}
+.rpl-leg-item > :first-child {
+  justify-self: center;
 }
 .rpl-leg-swatch {
   width: 14px;
