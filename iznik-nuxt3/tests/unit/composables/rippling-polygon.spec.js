@@ -5,6 +5,7 @@ import {
   groupCentroid,
   distSq,
   ringsOverlap,
+  homeGroupOverlapFraction,
 } from '~/modtools/composables/rippling/polygon.js'
 
 // A minimal GeoJSON-shaped polygon wrapper.
@@ -243,6 +244,77 @@ describe('rippling/polygon', () => {
       // throw and the result is a boolean.
       const r = ringsOverlap(left, right)
       expect(typeof r).toBe('boolean')
+    })
+  })
+
+  describe('homeGroupOverlapFraction', () => {
+    // A unit square centred at origin — used as the group polygon.
+    const groupRing = [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+      [-1, -1],
+    ]
+
+    it('returns ~1 when the isochrone fully contains the group polygon', () => {
+      // A large square that fully encloses groupRing.
+      const bigIso = [
+        [-5, -5],
+        [5, -5],
+        [5, 5],
+        [-5, 5],
+        [-5, -5],
+      ]
+      const frac = homeGroupOverlapFraction(bigIso, groupRing)
+      expect(frac).toBeGreaterThan(0.95)
+    })
+
+    it('returns ~0 when the isochrone is entirely outside the group polygon', () => {
+      const farIso = [
+        [10, 10],
+        [12, 10],
+        [12, 12],
+        [10, 12],
+        [10, 10],
+      ]
+      const frac = homeGroupOverlapFraction(farIso, groupRing)
+      expect(frac).toBeLessThan(0.05)
+    })
+
+    it('returns ~0.5 when the isochrone covers exactly half the group (left half)', () => {
+      // Isochrone covers x in [-1, 0] — the left half of groupRing.
+      const halfIso = [
+        [-2, -2],
+        [0, -2],
+        [0, 2],
+        [-2, 2],
+        [-2, -2],
+      ]
+      const frac = homeGroupOverlapFraction(halfIso, groupRing)
+      // Allow ±0.08 tolerance for the point-grid approximation.
+      expect(frac).toBeGreaterThan(0.42)
+      expect(frac).toBeLessThan(0.58)
+    })
+
+    it('returns 0 gracefully for null or short rings', () => {
+      expect(homeGroupOverlapFraction(null, groupRing)).toBe(0)
+      expect(homeGroupOverlapFraction(groupRing, null)).toBe(0)
+      expect(homeGroupOverlapFraction([], groupRing)).toBe(0)
+      expect(homeGroupOverlapFraction(groupRing, [[0, 0], [1, 0]])).toBe(0)
+    })
+
+    it('exceeds the 0.9 engine threshold when 95% covered', () => {
+      // Isochrone covers 95% of groupRing: x in [-1, 0.9].
+      const nearlyAllIso = [
+        [-2, -2],
+        [0.9, -2],
+        [0.9, 2],
+        [-2, 2],
+        [-2, -2],
+      ]
+      const frac = homeGroupOverlapFraction(nearlyAllIso, groupRing)
+      expect(frac).toBeGreaterThanOrEqual(0.9)
     })
   })
 })

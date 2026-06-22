@@ -141,6 +141,7 @@ vi.mock('~/composables/useModMe', () => ({
   useModMe: () => ({
     myModGroups: { value: mockMyModGroups },
     myModGroup: (id) => mockMyModGroups.find((g) => g.id === id),
+    amAModOn: (id) => mockMyModGroups.some((g) => g.id === id),
   }),
 }))
 

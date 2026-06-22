@@ -69,6 +69,47 @@ export function distSq(lat1, lng1, lat2, lng2) {
   return dlat * dlat + dlng * dlng
 }
 
+// Estimate the fraction of groupRing's area that is covered by isoRing, using
+// a uniform point-grid sample.  Returns a value in [0, 1].
+//
+// We probe at GRID_N² points inside the group's bounding box; the fraction of
+// those that fall inside BOTH rings is used as the overlap estimate.  This is
+// an approximation (accuracy ~±0.03 for typical convex polygons at GRID_N=20),
+// but it is sufficient for the >=90% threshold check and requires no turf
+// dependency.  Only @turf/area + @turf/union would give an exact result; those
+// packages are not present in this project (only turf-distance / turf-point are).
+export function homeGroupOverlapFraction(isoRing, groupRing, GRID_N = 20) {
+  if (!isoRing || isoRing.length < 3) return 0
+  if (!groupRing || groupRing.length < 3) return 0
+
+  // Bounding box of the group polygon.
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const [x, y] of groupRing) {
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+
+  const dx = (maxX - minX) / (GRID_N - 1)
+  const dy = (maxY - minY) / (GRID_N - 1)
+  let inGroup = 0
+  let inBoth = 0
+  for (let i = 0; i < GRID_N; i++) {
+    const x = minX + i * dx
+    for (let j = 0; j < GRID_N; j++) {
+      const y = minY + j * dy
+      if (!pointInRing(x, y, groupRing)) continue
+      inGroup++
+      if (pointInRing(x, y, isoRing)) inBoth++
+    }
+  }
+  return inGroup === 0 ? 0 : inBoth / inGroup
+}
+
 // True iff two closed [lng,lat] rings overlap (share area, contain each
 // other, or have crossing edges).  Cheap bbox reject first.
 export function ringsOverlap(ring1, ring2) {

@@ -154,6 +154,7 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
+                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
                     DB::statement(
                         'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
@@ -161,13 +162,13 @@ class ExpandService
                             created_at, updated_at)
                          VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
                         [
-                            $row->msgid, $lat, $lng, $entry['wkt'], $arrival,
+                            $row->msgid, $lat, $lng, $storeWkt, $arrival,
                             $this->reach->mode(), $tick, $total,
                             $schedule['total_freeglers'], $schedule['max_drive_min'],
                             json_encode($schedule['ticks']), $next, $status,
                         ]
                     );
-                    $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
+                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
                     $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
                         ->mailNewlyReachedForPost((int) $row->msgid);
                 }
@@ -232,18 +233,19 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
+                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
                     DB::statement(
                         'UPDATE rippling_reach
                          SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?',
-                        [$entry['wkt'], $target, $next, $status, $row->msgid]
+                        [$storeWkt, $target, $next, $status, $row->msgid]
                     );
                     // The polygon was just overwritten from the cached schedule, which does NOT
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                    $this->rippleIntoNewGroups((int) $row->msgid, $entry['wkt'], $stats);
+                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
                     $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
                         ->mailNewlyReachedForPost((int) $row->msgid);
                 }
@@ -277,6 +279,18 @@ class ExpandService
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats): void
     {
         try {
+            // TN posts must not be rippled into new groups while TN still cross-posts the same
+            // item to multiple Freegle groups by tnpostid. Once TN is restricted to a single
+            // origin group (design.md #10), this guard can be removed.
+            $isTn = DB::table('messages')
+                ->where('id', $msgid)
+                ->whereNotNull('tnpostid')
+                ->where('tnpostid', '!=', '')
+                ->exists();
+            if ($isTn) {
+                return;
+            }
+
             $n = DB::affectingStatement(
                 "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype, rippled_in)
                  SELECT ?, g.id, 'Pending', NOW(), 0, m.type, 1
@@ -286,6 +300,7 @@ class ExpandService
                    AND g.publish = 1
                    AND g.type = 'Freegle'
                    AND g.onhere = 1
+                   AND g.nameshort NOT LIKE '%playground%'
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
                    AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))
@@ -310,6 +325,92 @@ class ExpandService
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: ripple-into-groups failed for msg {$msgid}: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Union the isochrone WKT with the origin group's area when the isochrone already
+     * covers >= 90% of that area, so the stored reach polygon fills in the whole group
+     * rather than leaving a thin uncovered sliver at the edge.
+     *
+     * The "origin group" is the earliest-arrival group for the post (the group the post
+     * was originally submitted to). Its area is groups.polyindex (COALESCE(poly, polyofficial)),
+     * skipping the (0,0) point sentinel.
+     *
+     * If anything goes wrong (bad geometry, routing query failure, etc.) the method
+     * returns the original WKT unchanged — it must never throw.
+     */
+    private function unionWithOriginGroupArea(int $msgid, string $wkt): string
+    {
+        try {
+            $groupRow = DB::selectOne(
+                'SELECT ST_AsText(g.polyindex) AS group_wkt
+                 FROM messages_groups mg
+                 JOIN `groups` g ON g.id = mg.groupid
+                 WHERE mg.msgid = ? AND mg.deleted = 0
+                   AND g.polyindex IS NOT NULL
+                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                 ORDER BY mg.arrival ASC
+                 LIMIT 1',
+                [$msgid]
+            );
+
+            if ($groupRow === null || empty($groupRow->group_wkt)) {
+                return $wkt;
+            }
+
+            $groupWkt = $groupRow->group_wkt;
+
+            $result = DB::selectOne(
+                'SELECT ST_Area(ST_Intersection(iso, grp)) / NULLIF(ST_Area(grp), 0) AS frac,
+                        ST_AsText(ST_Union(iso, grp)) AS u
+                 FROM (SELECT ST_GeomFromText(?, ' . self::SRID . ') AS iso,
+                              ST_GeomFromText(?, ' . self::SRID . ') AS grp) t',
+                [$wkt, $groupWkt]
+            );
+
+            if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
+                return $result->u;
+            }
+
+            return $wkt;
+        } catch (\Throwable $e) {
+            // Retry once with ST_Buffer(geom, 0) geometry repair to handle invalid polygons.
+            try {
+                $groupRow = DB::selectOne(
+                    'SELECT ST_AsText(g.polyindex) AS group_wkt
+                     FROM messages_groups mg
+                     JOIN `groups` g ON g.id = mg.groupid
+                     WHERE mg.msgid = ? AND mg.deleted = 0
+                       AND g.polyindex IS NOT NULL
+                       AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                     ORDER BY mg.arrival ASC
+                     LIMIT 1',
+                    [$msgid]
+                );
+
+                if ($groupRow === null || empty($groupRow->group_wkt)) {
+                    return $wkt;
+                }
+
+                $groupWkt = $groupRow->group_wkt;
+
+                $result = DB::selectOne(
+                    'SELECT ST_Area(ST_Intersection(iso, grp)) / NULLIF(ST_Area(grp), 0) AS frac,
+                            ST_AsText(ST_Union(iso, grp)) AS u
+                     FROM (SELECT ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS iso,
+                                  ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS grp) t',
+                    [$wkt, $groupWkt]
+                );
+
+                if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
+                    return $result->u;
+                }
+            } catch (\Throwable $e2) {
+                Log::warning("ripple: unionWithOriginGroupArea retry failed for msg {$msgid}: {$e2->getMessage()}");
+            }
+
+            return $wkt;
         }
     }
 

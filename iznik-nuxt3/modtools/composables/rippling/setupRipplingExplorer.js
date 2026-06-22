@@ -18,6 +18,7 @@ import {
   groupCentroid,
   distSq,
   ringsOverlap,
+  homeGroupOverlapFraction,
 } from './polygon.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
@@ -65,6 +66,10 @@ export async function setupRipplingExplorer({
   let currentMode = 'drive'
   let marker = null
   let layers = {}
+  // Minimal mode only: when the isochrone covers >=90% of the home group,
+  // this layer draws the home-group polygon in the reach (red) style so the
+  // display matches the engine's union behaviour.
+  let homeGroupReachLayer = null
   let debounceTimer = null
   let isochroneGeneration = 0
   // Bumped on every location change. Any async fetch tied to a location captures
@@ -652,6 +657,10 @@ export async function setupRipplingExplorer({
     if (morphLayer && map.hasLayer(morphLayer)) {
       map.removeLayer(morphLayer)
       morphLayer = null
+    }
+    if (homeGroupReachLayer && map.hasLayer(homeGroupReachLayer)) {
+      map.removeLayer(homeGroupReachLayer)
+      homeGroupReachLayer = null
     }
     // Cached datasets / derived state for the old spot.
     groupFeatures = []
@@ -1546,6 +1555,9 @@ export async function setupRipplingExplorer({
     if (props.minimal && rippleFrames.length) {
       renderMinimalGroupsHit(rippleFrames[rippleStep])
       markCrossPostingStatic()
+      // Groups may have just arrived asynchronously (fetchAndDrawGroups resolves
+      // after the frame is already shown): re-evaluate the home-group union now.
+      maybeExtendReachToHomeGroup(rippleFrames[rippleStep])
     }
   }
 
@@ -1706,6 +1718,59 @@ export async function setupRipplingExplorer({
     staticCrossMarked = true
   }
 
+  // Minimal mode (per-post reach modal): match the engine's home-group union behaviour.
+  //
+  // When the engine detects that the post's isochrone already covers >=90% of the home
+  // group's polygon, it treats reach as (isochrone UNION home-group-area).  We replicate
+  // that here so the visual display matches what recipients actually experience.
+  //
+  // Approximation note: @turf/union and @turf/area are not available in this project
+  // (only turf-distance / turf-point are).  Instead of a true geometric union we add a
+  // separate Leaflet layer drawing the home-group polygon filled in the same red reach
+  // style, so the group's area is visually covered by the reach colour.  This is
+  // indistinguishable from a true union at normal map zoom levels.
+  //
+  // The overlap fraction is estimated via homeGroupOverlapFraction (point-grid, ±~0.03).
+  //
+  // Only active in minimal mode; no-ops silently in the full explorer.
+  const HOME_GROUP_UNION_THRESHOLD = 0.9
+  function maybeExtendReachToHomeGroup(isoData) {
+    // Remove any previous extension layer before re-evaluating.
+    if (homeGroupReachLayer && map.hasLayer(homeGroupReachLayer)) {
+      map.removeLayer(homeGroupReachLayer)
+      homeGroupReachLayer = null
+    }
+    if (!props.minimal) return
+    if (!isoData || !hasRing(isoData.standard)) return
+    if (!groupFeatures.length) return
+
+    const isoRing = isoData.standard.geometry.coordinates[0]
+    // Find the home-group feature (properties.contains === true).
+    const homeFeature = groupFeatures.find((f) => f.properties.contains)
+    if (!homeFeature) return
+    const groupCoords =
+      homeFeature.geometry &&
+      homeFeature.geometry.coordinates &&
+      homeFeature.geometry.coordinates[0]
+    if (!groupCoords || groupCoords.length < 4) return
+
+    const fraction = homeGroupOverlapFraction(isoRing, groupCoords)
+    if (fraction < HOME_GROUP_UNION_THRESHOLD) return
+
+    // Isochrone covers >=90% of the home group: draw the home-group polygon
+    // filled in the reach style so it appears fully enclosed by the red reach.
+    const latlngs = groupCoords.map(([lng, lat]) => [lat, lng])
+    homeGroupReachLayer = L.polygon(latlngs, {
+      color: '#cc0000',
+      weight: 2,
+      fillColor: '#cc0000',
+      fillOpacity: 0.15,
+      dashArray: null,
+    })
+      .bindTooltip('Reach extended to cover full home group', { sticky: true })
+      .addTo(map)
+  }
+
   // Static mode: mark where the reach SHOULD be ("up to", expected — bottom) and, only when
   // the engine is behind, where it ACTUALLY is ("now", actual — top). When they match we show
   // just "up to", so a visible "now" means the post hasn't rippled as far as it should.
@@ -1826,6 +1891,7 @@ export async function setupRipplingExplorer({
       updateStats(data)
       updateFreeglersInside(data)
       drawGroupsOverlay()
+      maybeExtendReachToHomeGroup(data)
     }
   }
 
@@ -2331,6 +2397,9 @@ export async function setupRipplingExplorer({
     drawFreeglersLayer()
     maybeMarkCrossPosting(frameA, data)
     refitMapForFrame(frameA, maxIdx, data)
+    // Minimal mode: re-evaluate the home-group union at each keyframe boundary
+    // (cheap enough here; we avoid calling it every rAF tick in drawMorphedRing).
+    maybeExtendReachToHomeGroup(data)
   }
 
   function animateRipple(now) {
