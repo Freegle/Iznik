@@ -349,6 +349,9 @@ describe('ModMessage', () => {
           RipplingExplanationModal: {
             template: '<div class="rippling-explanation-modal" />',
           },
+          ModMessageReachMap: {
+            template: '<div class="mod-message-reach-map" />',
+          },
           SpinButton: {
             template:
               '<button class="spin-button" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',

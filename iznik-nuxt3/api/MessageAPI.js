@@ -10,6 +10,11 @@ export default class MessageAPI extends BaseAPI {
     return await this.$getv2('/message/' + id, rest, logError)
   }
 
+  // Current rippling-out reach of a post, for the moderation reach map (mod-of-group only).
+  reach(id, logError = true) {
+    return this.$getv2('/message/' + id + '/reach', {}, logError)
+  }
+
   fetchByUser(id, active, logError = true) {
     return this.$getv2(
       '/user/' + id + '/message',

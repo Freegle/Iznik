@@ -564,6 +564,10 @@ export const useMessageStore = defineStore({
       if (message && !message.subject) message.subject = ''
       return message
     },
+    // Current rippling-out reach of a post, for the moderation reach map.
+    async fetchReach(id, logError = true) {
+      return await api(this.config).message.reach(id, logError)
+    },
     async updateMT(params) {
       // Rely on refresh elsewhere
       return await api(this.config).message.update(params)

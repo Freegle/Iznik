@@ -845,6 +845,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Param ids path string true "Message IDs (comma separated)"
 		// @Success 200 {array} message.Message
 		// @Failure 404 {object} fiber.Error "Message not found"
+		// Current rippling-out reach of a post, for the moderation map. Mod-of-group only.
+		// @Router /message/{id}/reach [get]
+		// @Summary Current rippling-out reach of a post (moderation)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Success 200 {object} message.ReachResponse
+		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
+		rg.Get("/message/:id/reach", message.Reach)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen

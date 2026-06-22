@@ -157,6 +157,14 @@
                 :key="g.groupid"
               >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
             </div>
+            <div
+              v-if="canShowReach"
+              class="small mt-1"
+            >
+              <a href="#" @click.prevent="reachMapModal?.show()">
+                <v-icon icon="map-marked-alt" /> Who can see this?
+              </a>
+            </div>
             <NoticeMessage
               v-if="isRippledInToContextGroup"
               variant="info"
@@ -681,6 +689,11 @@
       :safelist="false"
     />
     <RipplingExplanationModal ref="ripplingExplanationModal" />
+    <ModMessageReachMap
+      v-if="message && message.id"
+      ref="reachMapModal"
+      :messageid="message.id"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -811,6 +824,7 @@ const top = ref(null)
 const bottom = ref(null)
 const spamConfirm = ref(null)
 const ripplingExplanationModal = ref(null)
+const reachMapModal = ref(null)
 
 const saving = ref(false)
 const saved = ref(false)
@@ -858,6 +872,12 @@ const otherGroups = computed(() => {
   const gid = parseInt(groupid.value)
   return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
 })
+
+// Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
+// The modal itself explains when a post isn't rippling yet.
+const canShowReach = computed(
+  () => message.value?.type === 'Offer' || message.value?.type === 'Wanted'
+)
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group we're viewing it under, so it is "starting to become available" to this group's
