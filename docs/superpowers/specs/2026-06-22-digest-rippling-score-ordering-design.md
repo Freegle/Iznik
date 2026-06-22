@@ -70,15 +70,22 @@ score(
 
 ### Config
 
-A `config/digest.php` block (created/extended), all overridable via env so
-weights can be retuned without a deploy:
+A `score` sub-block added to the existing `freegle.ripple` config in
+`config/freegle.php` (the established convention — there is no `config/digest.php`),
+all overridable via env so weights can be retuned without a deploy:
 
 ```php
+// inside the existing 'ripple' => [ ... ] block in config/freegle.php
 'score' => [
-    'weights'             => ['close' => 1.0, 'fresh' => 0.0, 'budget' => 1.0, 'anchor' => 0.0],
-    'window_hours'        => 24,
-    'budget_decay'        => 25,
-    'default_reach_metres'=> 30000, // ~30km, the 30-min drive-isochrone analogue; used for posts with no rippling_reach row
+    'weights' => [
+        'close'  => (float) env('RIPPLE_DIGEST_W_CLOSE', 1.0),
+        'fresh'  => (float) env('RIPPLE_DIGEST_W_FRESH', 0.0),
+        'budget' => (float) env('RIPPLE_DIGEST_W_BUDGET', 1.0),
+        'anchor' => (float) env('RIPPLE_DIGEST_W_ANCHOR', 0.0),
+    ],
+    'window_hours'         => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
+    'budget_decay'         => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+    'default_reach_metres' => (float) env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000), // ~30km, the 30-min drive-isochrone analogue; used for posts with no rippling_reach row (the dominant case while rippling is dark, and for all backlog posts after go-live)
 ],
 ```
 
