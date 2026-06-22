@@ -77,6 +77,10 @@ describe('ChatMessage', () => {
             props: ['variant'],
             emits: ['click'],
           },
+          'b-badge': {
+            template: '<span class="b-badge"><slot /></span>',
+            props: ['variant'],
+          },
           ChatMessageText: {
             template: '<div class="chat-message-text" />',
             props: ['id', 'chatid', 'pov', 'highlightEmails'],
