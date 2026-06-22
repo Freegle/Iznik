@@ -2040,9 +2040,15 @@ func PutUser(c *fiber.Ctx) error {
 // before they are flagged for moderator review. Rippling-out makes a post's reach follow the
 // poster's declared location (not their group memberships), so rapidly hopping location is the new
 // way to push posts into unrelated areas. This catches that pattern; it is the one spam signal
-// rippling newly requires (see plans/rippling-out-rollout/spam-checks-review-2026-06-18.md). Tune
-// the constant if it proves too tight/loose.
-const RapidLocationChangeThreshold = 4
+// rippling newly requires (see plans/rippling-out-rollout/spam-checks-review-2026-06-18.md).
+//
+// Relaxed 4 -> 8 alongside the rippling go-live (this PR): under rippling, legitimate members
+// refine/correct their declared location more than before (it now drives what they see and where
+// their posts reach), so a few changes in a day is expected. 8 distinct postcodes in 24h is still
+// clearly abnormal and keeps the guard against genuine reach-hopping while cutting the false
+// positives the tighter value produced. Like PR #818's SEEN_THRESHOLD relax, this WEAKENS a spam
+// guard and is only safe once rippling is live. Tune the constant if it proves too tight/loose.
+const RapidLocationChangeThreshold = 8
 
 // CheckLocationChangeVelocity flags a user for moderator review when they have set too many distinct
 // postcodes in the last 24 hours. It is NON-DESTRUCTIVE: it sets the existing member-review flag

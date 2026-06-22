@@ -115,7 +115,14 @@ class MembershipsProcessingService
      */
     private function checkSeenOnManyGroups(int $userId, int $groupJustAdded): void
     {
-        $threshold = 16; // Spam::SEEN_THRESHOLD
+        // Distinct groups joined/applied to in a year before a member is "suspect" and flagged.
+        // Relaxed 16 -> 35 for rippling-out: a post's reach now follows the poster's declared
+        // location + drive-time isochrone, not their group-membership count, so joining many groups
+        // is no longer a reach-amplification signal - it is mostly power users with many local
+        // groups. At 16 this became a false-positive factory for them; 35 still guards against
+        // abnormal join sprees. This WEAKENS detection and is only safe once rippling is live.
+        // (This is the live equivalent of V1 Spam::SEEN_THRESHOLD, which is obsolete.)
+        $threshold = 35;
 
         $user = User::find($userId);
         if (!$user) {
