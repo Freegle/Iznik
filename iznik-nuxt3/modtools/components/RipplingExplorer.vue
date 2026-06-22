@@ -383,8 +383,11 @@ const props = defineProps({
   initialLng: { type: Number, default: null },
   initialView: { type: String, default: null },
   // How long the post has already been live (hours). The seeded reach opens at the
-  // matching point on the scrubber (static, no animation), so mods see where it is now.
+  // matching point on the scrubber (static, no animation): the EXPECTED point ("up to").
   initialElapsedHours: { type: Number, default: null },
+  // The ACTUAL reach point (elapsed-hours equivalent), shown as a "now" marker ONLY when
+  // the engine is behind the expected point. Null = up to date -> show just "up to".
+  actualElapsedHours: { type: Number, default: null },
 })
 
 let cleanup = null

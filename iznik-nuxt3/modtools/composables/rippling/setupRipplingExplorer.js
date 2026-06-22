@@ -1706,6 +1706,32 @@ export async function setupRipplingExplorer({
     staticCrossMarked = true
   }
 
+  // Static mode: mark where the reach SHOULD be ("up to", expected — bottom) and, only when
+  // the engine is behind, where it ACTUALLY is ("now", actual — top). When they match we show
+  // just "up to", so a visible "now" means the post hasn't rippled as far as it should.
+  function addReachMarker(layer, hours, text, color, where) {
+    const pct = hoursToLogPct(Math.max(0, Math.min(hours, MAX_HOURS)))
+    const mark = document.createElement('div')
+    mark.className = 'rpl-tick-mark'
+    mark.style.cssText = `left:${pct}%;background:${color};height:16px;top:-11px;width:2px`
+    layer.appendChild(mark)
+    const label = document.createElement('div')
+    const xform =
+      pct < 12 ? 'translateX(0)' : pct > 88 ? 'translateX(-100%)' : 'translateX(-50%)'
+    const top = where === 'top' ? '-28px' : '16px'
+    label.style.cssText = `position:absolute;left:${pct}%;top:${top};color:${color};font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`
+    label.textContent = text
+    layer.appendChild(label)
+  }
+  function renderReachMarkers() {
+    const layer = document.getElementById('rippling-tl-tick-layer')
+    if (!layer || props.initialElapsedHours == null) return
+    addReachMarker(layer, props.initialElapsedHours, '▼ up to', '#2c7be5', 'bottom')
+    if (props.actualElapsedHours != null) {
+      addReachMarker(layer, props.actualElapsedHours, 'now ▲', '#e07000', 'top')
+    }
+  }
+
   const EXPANSION_HOURS = [0, 1, 3, 6, 12, 24, 48, 72, 120, 168, 336, 720]
   const MAX_HOURS = 720
   let timelineBuilt = false
@@ -2107,6 +2133,7 @@ export async function setupRipplingExplorer({
       const clamped = Math.max(0, Math.min(staticAtHours, MAX_HOURS))
       jumpToFrame(Math.round((clamped / MAX_HOURS) * maxIdx))
       markCrossPostingStatic()
+      renderReachMarkers()
       return
     }
 

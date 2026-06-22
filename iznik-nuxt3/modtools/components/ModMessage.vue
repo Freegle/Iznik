@@ -693,6 +693,7 @@
     <ModMessageReachMap
       v-if="message && message.id"
       ref="reachMapModal"
+      :messageid="message.id"
       :lat="position?.lat"
       :lng="position?.lng"
       :arrival="reachArrival"
