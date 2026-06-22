@@ -1896,4 +1896,198 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertCount(0, $eligible->all(), 'simplemail=Full alone must not select a user who has no immediate-frequency memberships');
     }
+
+    // -----------------------------------------------------------------------
+    // Task 3: Engagement counts in the post query
+    // -----------------------------------------------------------------------
+
+    private function callPrivate(object $obj, string $method, array $args = []): mixed
+    {
+        $ref = new \ReflectionMethod($obj, $method);
+        $ref->setAccessible(true);
+        return $ref->invokeArgs($obj, $args);
+    }
+
+    public function test_get_posts_for_user_exposes_engagement_counts(): void
+    {
+        $recipient = $this->createTestUser();
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Counted (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        // 3 'View' likes (the count column is SUMmed) and 1 approved 'Interested' reply.
+        DB::table('messages_likes')->insert([
+            'msgid' => $msg->id, 'userid' => $recipient->id, 'type' => 'View', 'count' => 3,
+            'timestamp' => now(),
+        ]);
+        // chat_messages has a FK on chatid; create a real chat room to satisfy it.
+        $room = $this->createTestChatRoom($recipient, $poster);
+        DB::table('chat_messages')->insert([
+            'refmsgid' => $msg->id, 'userid' => $poster->id, 'chatid' => $room->id,
+            'type' => 'Interested', 'message' => 'Interested',
+            'reviewrejected' => 0, 'reviewrequired' => 0, 'date' => now(),
+            'processingrequired' => 0, 'processingsuccessful' => 1,
+            'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
+        ]);
+
+        $tracker = UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgdate' => null,
+        ]);
+
+        $posts = $this->service->getPostsForUser(
+            $recipient, $tracker, UnifiedDigestService::MODE_DAILY
+        );
+
+        $row = $posts->firstWhere('id', $msg->id);
+        $this->assertNotNull($row);
+        $this->assertSame(3, (int) $row->views);
+        $this->assertSame(1, (int) $row->replies);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 4: Per-run reach-radius lookup
+    // -----------------------------------------------------------------------
+
+    public function test_reach_radius_falls_back_to_config_default_without_reach_row(): void
+    {
+        config(['freegle.ripple.score.default_reach_metres' => 12345.0]);
+        $svc = app(\App\Services\UnifiedDigestService::class);
+
+        // No rippling_reach row for this msgid => default.
+        $r = $this->callPrivate($svc, 'reachRadiusMetres', [999999999]);
+        $this->assertEqualsWithDelta(12345.0, $r, 1e-6);
+    }
+
+    public function test_reach_radius_is_distance_origin_to_polygon_boundary(): void
+    {
+        $svc = app(\App\Services\UnifiedDigestService::class);
+
+        // Need a real message row to satisfy rippling_reach FK on msgid.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $msg = $this->createTestMessage($poster, $group);
+
+        // seedReach() seeds the origin at (lat 51.5, lng -0.1). The polygon stores
+        // lng/lat DEGREES (tagged SRID 3857 by Freegle convention). This box spans
+        // +/-0.1deg in each axis, so all four corners are equidistant from the origin
+        // (~13km), and the reach radius is that great-circle corner distance in metres.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+
+        // Same haversine the implementation uses (mean Earth radius 6371000m).
+        $haversine = function (float $lat1, float $lng1, float $lat2, float $lng2): float {
+            $R = 6371000.0;
+            $dLat = deg2rad($lat2 - $lat1);
+            $dLng = deg2rad($lng2 - $lng1);
+            $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+            return $R * 2 * atan2(sqrt($a), sqrt(1 - $a));
+        };
+        // Max over all four corners (the southern corners are marginally farther
+        // because east-west distance grows with cos(latitude)) — mirrors the
+        // implementation, which takes the greatest origin->vertex distance.
+        $expected = 0.0;
+        foreach ([[-0.2, 51.4], [0.0, 51.4], [0.0, 51.6], [-0.2, 51.6]] as [$lng, $lat]) {
+            $expected = max($expected, $haversine(51.5, -0.1, $lat, $lng));
+        }
+
+        $r = $this->callPrivate($svc, 'reachRadiusMetres', [$msg->id]);
+        $this->assertEqualsWithDelta($expected, $r, 1.0);
+        // Sanity: a ~0.1deg box corner from this origin is ~13km — kilometre-scale metres.
+        $this->assertGreaterThan(10000, $r);
+        $this->assertLessThan(16000, $r);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 5: scoreAndSortAvailable (haversine distance + DigestPostScorer)
+    // -----------------------------------------------------------------------
+
+    public function test_available_posts_sorted_by_score_descending_not_arrival(): void
+    {
+        config(['freegle.ripple.score.default_reach_metres' => 40000.0]);
+        $latlng = [0.0, 0.0]; // recipient [lat, lng]
+
+        $mk = function (int $id, float $lat, float $lng, int $ageH, int $views) {
+            $p = new \stdClass();
+            $p->id = $id;
+            $p->lat = $lat;
+            $p->lng = $lng;
+            $p->arrival = now()->subHours($ageH);
+            $p->views = $views;
+            $p->replies = 0;
+            return $p;
+        };
+
+        // ~0.0009deg ~= 100m; ~0.0027deg ~= 300m near origin. Distances are well within
+        // the 40km default radius so closeness differences are small but ordered; the
+        // dominating differentiator is the budget term (views).
+        $near = $mk(1, 0.0009, 0.0, 20, 0);   // nearest, unseen (oldest arrival)
+        $far  = $mk(2, 0.0027, 0.0, 1,  0);   // farther, unseen, newest
+        $busy = $mk(3, 0.0009, 0.0, 1,  500); // nearest but heavily viewed -> low budget
+
+        $sorted = $this->callPrivate(
+            $this->service, 'scoreAndSortAvailable', [collect([$busy, $far, $near]), $latlng]
+        );
+
+        $this->assertSame([1, 2, 3], $sorted->pluck('id')->all());
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 6: Wire score-sort into daily digest flow
+    // -----------------------------------------------------------------------
+
+    public function test_daily_digest_orders_live_posts_by_score(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5, 'lng' => -0.12],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // near post has NEWER arrival; far post has OLDER arrival.
+        // Arrival ASC would put far (older) first => [far, near].
+        // Score ordering should put near first => [near, far].
+        $near = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Near (TestLocation)',
+            'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subHours(2),
+        ]);
+        $far = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far (TestLocation)',
+            'lat' => 53.0, 'lng' => -0.12, 'arrival' => now()->subHours(10),
+        ]);
+
+        // Spy the spooler so we can read the posts handed to the daily UnifiedDigest.
+        $captured = null;
+        $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
+            $captured = $mailable;
+            return 'spooled';
+        });
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertNotNull($captured, 'daily digest should have been spooled');
+        $ids = $captured->getPosts()->map(fn ($p) => $p['message']->id)->all();
+        $this->assertSame([$near->id, $far->id], $ids); // near outranks far on closeness
+    }
 }
