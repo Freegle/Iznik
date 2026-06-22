@@ -302,6 +302,22 @@ return [
         // exclusive end. Outside this window, due expansions wait.
         'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
         'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+        // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
+        // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
+        'score' => [
+            'weights' => [
+                'close'  => (float) env('RIPPLE_DIGEST_W_CLOSE', 1.0),
+                'fresh'  => (float) env('RIPPLE_DIGEST_W_FRESH', 0.0),
+                'budget' => (float) env('RIPPLE_DIGEST_W_BUDGET', 1.0),
+                'anchor' => (float) env('RIPPLE_DIGEST_W_ANCHOR', 0.0),
+            ],
+            'window_hours' => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
+            'budget_decay' => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+            // ~30km, the 30-min drive-isochrone analogue. Used for posts with no
+            // rippling_reach row (the dominant case while rippling is dark, and for
+            // all backlog posts after go-live).
+            'default_reach_metres' => (float) env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000),
+        ],
     ],
 
     /*
