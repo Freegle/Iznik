@@ -204,12 +204,31 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 		"lat DOUBLE NULL, lng DOUBLE NULL, " +
 		"status ENUM('held','released','dropped','taken-gone') NOT NULL DEFAULT 'held', " +
 		"created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, releasedat TIMESTAMP NULL)")
-	// Insert two held + one released row with sentinel ids that won't clash.
-	db.Exec("INSERT INTO rippling_held_replies (chatid, chatmsgid, msgid, replieruserid, status) VALUES " +
-		"(9000001, 9000001, 9000001, 9000001, 'held'), " +
-		"(9000002, 9000002, 9000002, 9000002, 'held'), " +
-		"(9000003, 9000003, 9000003, 9000003, 'released')")
-	defer db.Exec("DELETE FROM rippling_held_replies WHERE chatid IN (9000001, 9000002, 9000003)")
+
+	// The real table has FKs (chatmsgid -> chat_messages, msgid -> messages), so create
+	// real referenced rows rather than sentinel ids.
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: held summary test", 51.5, -0.1)
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	makeChatMsg := func() uint64 {
+		db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) "+
+			"VALUES (?, ?, 'held reply', NOW(), 0, 0, 1)", chatID, replierID)
+		var id uint64
+		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&id)
+		return id
+	}
+	cm1, cm2, cm3 := makeChatMsg(), makeChatMsg(), makeChatMsg()
+
+	// Two held + one released, all FK-valid.
+	db.Exec("INSERT INTO rippling_held_replies (chatid, chatmsgid, msgid, replieruserid, status) VALUES "+
+		"(?, ?, ?, ?, 'held'), (?, ?, ?, ?, 'held'), (?, ?, ?, ?, 'released')",
+		chatID, cm1, msgID, replierID,
+		chatID, cm2, msgID, replierID,
+		chatID, cm3, msgID, replierID)
+	defer db.Exec("DELETE FROM rippling_held_replies WHERE chatmsgid IN (?, ?, ?)", cm1, cm2, cm3)
+	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?, ?)", cm1, cm2, cm3)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
 	assert.Equal(t, 200, resp.StatusCode)

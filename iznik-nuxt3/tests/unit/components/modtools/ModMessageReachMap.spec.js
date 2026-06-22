@@ -26,7 +26,14 @@ vi.mock('#imports', () => ({
 
 const ExplorerStub = {
   name: 'RipplingExplorer',
-  props: ['minimal', 'initialLat', 'initialLng', 'initialView', 'spatialUrl', 'jwt'],
+  props: {
+    minimal: { type: Boolean, default: false },
+    initialLat: { default: null },
+    initialLng: { default: null },
+    initialView: { default: null },
+    spatialUrl: { default: null },
+    jwt: { default: null },
+  },
   template:
     '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" />',
 }
