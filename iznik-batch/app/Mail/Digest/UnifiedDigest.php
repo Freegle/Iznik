@@ -456,9 +456,21 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $immediateIsOffer = $immediatePost ? ($immediatePost['type'] === 'Offer') : false;
         $immediateAccentColor = $immediateIsOffer ? '#3c763d' : '#4895DD';
 
+        // Cap the live-post list carried by the HTML and plain-text MIME parts to the same
+        // DIGEST_POST_CAP as AMP. A dense-area daily digest can otherwise list hundreds of
+        // posts and get clipped by Gmail (~102KB) mid-post with no graceful overflow. When the
+        // cap bites, the template shows an intro under "In this digest" sending the reader to
+        // the website for the rest. (Immediate digests are single-post, so this never bites.)
+        $postCap = DigestStyle::DIGEST_POST_CAP;
+        $liveMorePosts = max(0, $this->preparedPosts->count() - $postCap);
+        $livePosts = $liveMorePosts > 0
+            ? $this->preparedPosts->take($postCap)->values()
+            : $this->preparedPosts;
+
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
-            'posts' => $this->preparedPosts,
+            'posts' => $livePosts,
+            'morePosts' => $liveMorePosts,
             'completedPosts' => $this->preparedCompletedPosts,
             'post' => $immediatePost,
             'isOffer' => $immediateIsOffer,
@@ -537,7 +549,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // shrinks all three) and surface an "and N more — browse all" link.
             // The HTML and text parts still carry EVERY post; this cap is AMP
             // only. applyAmpToMessage()'s 199KB guard remains the final backstop.
-            $ampCap = 65;
+            $ampCap = DigestStyle::DIGEST_POST_CAP;
             $ampMorePosts = max(0, $ampPosts->count() - $ampCap);
             if ($ampMorePosts > 0) {
                 $ampPosts = $ampPosts->take($ampCap)->values();
