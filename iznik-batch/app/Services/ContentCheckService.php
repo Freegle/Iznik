@@ -227,31 +227,8 @@ class ContentCheckService
             'errors'           => 0,
         ];
 
-        DB::table('messages_groups as mg')
-            ->join('messages as m', 'm.id', '=', 'mg.msgid')
-            ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'mg.collection', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
-            ->whereNull('mg.contentcheck_checked_at')
-            ->where('mg.deleted', 0)
-            // Never fight a mod: a held message has been deliberately pulled back /
-            // is under review, so leave it alone rather than re-promoting it (9816/9815).
-            ->whereNull('mg.heldby')
-            ->whereNull('m.deleted')
-            ->whereNotNull('m.fromuser')
-            ->whereNull('u.deleted')
-            ->where(function ($q) {
-                // Pending posts awaiting their first check (existing behaviour).
-                $q->where('mg.collection', MessageGroup::COLLECTION_PENDING)
-                    // NEW approved-on-arrival posts, bounded to recent arrivals so the
-                    // historical backlog of live posts is never rescanned.
-                    ->orWhere(function ($q2) {
-                        $q2->where('mg.collection', MessageGroup::COLLECTION_APPROVED)
-                            ->where('mg.arrival', '>', now()->subHours(self::APPROVED_CHECK_WINDOW_HOURS));
-                    });
-            })
-            ->orderBy('mg.msgid')
-            ->orderBy('mg.groupid')
-            ->chunk(100, function ($candidates) use (&$stats, $dryRun) {
+        // Per-row processing, shared by the two candidate queries below.
+        $processChunk = function ($candidates) use (&$stats, $dryRun) {
                 foreach ($candidates as $row) {
                     try {
                         $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
@@ -349,7 +326,44 @@ class ContentCheckService
                         $stats['errors']++;
                     }
                 }
-            });
+        };
+
+        // The old single query OR'd the two cases (Pending, or recent Approved)
+        // together. No index leads with the selective predicate, so MySQL could
+        // only satisfy the ORDER BY mg.msgid + LIMIT by walking the `deleted`
+        // index - millions of rows - re-filtering each (EXPLAIN: ~4.59M rows,
+        // filtered 2.5%). Splitting into two passes lets each use an existing
+        // index. Which posts get checked, and how, is unchanged.
+        $base = fn () => DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
+            ->whereNull('mg.contentcheck_checked_at')
+            ->where('mg.deleted', 0)
+            // Never fight a mod: a held message has been deliberately pulled back /
+            // is under review, so leave it alone rather than re-promoting it (9816/9815).
+            ->whereNull('mg.heldby')
+            ->whereNull('m.deleted')
+            ->whereNotNull('m.fromuser')
+            ->whereNull('u.deleted')
+            ->orderBy('mg.msgid')
+            ->orderBy('mg.groupid');
+
+        // Pending posts awaiting their first check. Served by the single-column
+        // `collection` index; being a secondary index it returns rows already
+        // ordered by the appended (msgid, groupid) clustered key, so no filesort,
+        // and Pending is the small live mod queue.
+        $base()
+            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
+            ->chunk(100, $processChunk);
+
+        // NEW approved-on-arrival posts, bounded to recent arrivals so the
+        // historical backlog of live posts is never rescanned. Served by the
+        // `arrival` index range over just the recent window.
+        $base()
+            ->where('mg.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('mg.arrival', '>', now()->subHours(self::APPROVED_CHECK_WINDOW_HOURS))
+            ->chunk(100, $processChunk);
 
         return $stats;
     }
