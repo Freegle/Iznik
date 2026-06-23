@@ -66,6 +66,7 @@ class TestMailCommand extends Command
         'chaseup-promised' => 'Chase-up promised email (promised variant)',
         'deadline-reached' => 'Deadline reached notification',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
+        'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
     ];
 
     /**
@@ -355,8 +356,49 @@ class TestMailCommand extends Command
             'chaseup-promised' => $this->buildChaseUp(true),
             'deadline-reached' => $this->buildDeadlineReached(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
+            'ripple-intro' => $this->buildRippleIntro(),
             default => null,
         };
+    }
+
+    /**
+     * Build the Rippling Out intro email (one-off "your post is reaching more people" notice).
+     * Use to preview/review the copy in Mailpit: mail:test ripple-intro --user=ID --send-to=you@...
+     */
+    protected function buildRippleIntro(): ?\App\Mail\Ripple\RippleIntroMail
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            return null;
+        }
+
+        $this->info("Generating Rippling Out intro email for user: {$user->displayname} (ID: {$user->id})");
+
+        // Optionally attach one of the user's posts for light context (subject/body only).
+        $message = \App\Models\Message::where('fromuser', $user->id)->latest('id')->first();
+
+        // For preview: show the per-community welcome section using a couple of real groups'
+        // welcome text where available, else sample text, so the layout can be reviewed.
+        $welcomeGroups = DB::table('groups')
+            ->where('onhere', 1)
+            ->whereNotNull('welcomemail')
+            ->where('welcomemail', '<>', '')
+            ->orderByDesc('id')
+            ->limit(2)
+            ->get(['namefull', 'nameshort', 'welcomemail'])
+            ->map(fn ($g) => [
+                'name' => $g->namefull ?: $g->nameshort,
+                'welcome' => $g->welcomemail,
+            ])->all();
+
+        if (empty($welcomeGroups)) {
+            $welcomeGroups = [
+                ['name' => 'Freegle Sampleton', 'welcome' => "Welcome to Freegle Sampleton!\nPlease keep posts local and be kind. Our volunteers are here to help."],
+                ['name' => 'Freegle Exampleford', 'welcome' => "Hi and welcome!\nOffers and Wanteds both welcome - thanks for helping us reuse rather than bin."],
+            ];
+        }
+
+        return new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups);
     }
 
     /**
