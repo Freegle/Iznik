@@ -41,10 +41,13 @@ func MarkSeen(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Insert a View record for each message. ON DUPLICATE KEY UPDATE
-	// increments the count and updates the timestamp.
+	// Insert a 'View' record (marks the message "seen" for list de-duplication).
+	// pageview=0 marks this as a list-scroll impression, distinct from a genuine
+	// page-open (handleView writes 1). It is set only when this INSERT *creates* the
+	// row; the ON DUPLICATE KEY UPDATE deliberately does NOT touch pageview, so an
+	// existing genuine view (1) or legacy/unknown row (NULL) is never downgraded.
 	for _, msgID := range req.IDs {
-		db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, ?) "+
+		db.Exec("INSERT INTO messages_likes (msgid, userid, type, pageview) VALUES (?, ?, ?, 0) "+
 			"ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
 			msgID, myid, utils.MESSAGE_LIKES_VIEW)
 	}

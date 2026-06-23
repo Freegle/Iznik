@@ -3751,6 +3751,7 @@ type PostMessageRequest struct {
 	Deliverypossible *bool   `json:"deliverypossible"`
 	ForcePending     *bool   `json:"forcepending"`
 	Tnpostid         *string `json:"tnpostid"`
+	Source           *string `json:"source"`
 }
 
 // PostMessage dispatches POST /message actions.
@@ -4272,14 +4273,34 @@ func handleRemoveBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 func handleView(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
-	// Check for a recent view within 30 minutes to avoid redundant writes.
+	// Optional source tag (e.g. "ripple_notify" from a notification link's ?src=), recording
+	// HOW a genuine page-open arrived so notification-click opens are distinguishable from
+	// organic browse. nil when absent; COALESCE below means it never clears a known source.
+	var src interface{}
+	if req.Source != nil && *req.Source != "" {
+		src = *req.Source
+	}
+
+	// Check for a recent view within 30 minutes to avoid double-counting.
 	var recentCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View' AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)",
 		req.ID, myid).Scan(&recentCount)
 
+	// pageview=1 marks a genuine page-open (a real eyeball), as opposed to a list-scroll
+	// impression (MarkSeen writes 0) or a legacy row (NULL). The 'View' type still marks
+	// "seen" for list de-duplication. source records the arrival path; COALESCE keeps any
+	// existing source so a later organic view never clears the notification attribution.
 	if recentCount == 0 {
-		db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View') ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
-			req.ID, myid)
+		// First view in the window: create/refresh the row as a genuine page-open.
+		db.Exec("INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES (?, ?, 'View', 1, ?) ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1, pageview = 1, source = COALESCE(?, source)",
+			req.ID, myid, src, src)
+	} else {
+		// A recent 'View' row already exists, so we de-duplicate the count - but that row
+		// may be a list-scroll impression (pageview=0) or legacy (NULL). A real page-open
+		// must still upgrade it to a genuine view; otherwise a scroll immediately before an
+		// open would suppress the open and the eyeball would never be recorded.
+		db.Exec("UPDATE messages_likes SET pageview = 1, source = COALESCE(?, source) WHERE msgid = ? AND userid = ? AND type = 'View'",
+			src, req.ID, myid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
