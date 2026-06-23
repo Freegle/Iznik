@@ -22,6 +22,7 @@ import {
 } from './polygon.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
+import { buildFreeglerBarHTML } from './freeglerBar.js'
 
 export async function setupRipplingExplorer({
   props,
@@ -587,9 +588,13 @@ export async function setupRipplingExplorer({
   const urlParams = new URLSearchParams(window.location.search)
   const pendingView = props.initialView || urlParams.get('view')
   const pendingLat =
-    props.initialLat != null ? props.initialLat : parseFloat(urlParams.get('lat'))
+    props.initialLat != null
+      ? props.initialLat
+      : parseFloat(urlParams.get('lat'))
   const pendingLng =
-    props.initialLng != null ? props.initialLng : parseFloat(urlParams.get('lng'))
+    props.initialLng != null
+      ? props.initialLng
+      : parseFloat(urlParams.get('lng'))
   const pendingPostcode = urlParams.get('postcode') || urlParams.get('q')
   const seededFromProps = props.initialLat != null && props.initialLng != null
 
@@ -606,7 +611,9 @@ export async function setupRipplingExplorer({
       // post's current point (how far it has already rippled), with the scrubber, and
       // let the user drag forwards/backwards. No animation.
       if (seededFromProps) {
-        startRipple(props.initialElapsedHours != null ? props.initialElapsedHours : 0)
+        startRipple(
+          props.initialElapsedHours != null ? props.initialElapsedHours : 0
+        )
       }
       return true
     }
@@ -1318,21 +1325,16 @@ export async function setupRipplingExplorer({
   function renderFreeglerBar(estimatedInsideLocated) {
     const totalLocated = totalLocatedFromServer || allFreeglers.length
     const bar = document.getElementById('rippling-freegler-bar')
-    if (!(estimatedInsideLocated > 0 && totalLocated > 0)) {
+    const html = buildFreeglerBarHTML(
+      estimatedInsideLocated,
+      totalLocated,
+      UNLOCATED_FRACTION
+    )
+    if (!html) {
       bar.style.display = 'none'
       return
     }
-    const totalEstimate = Math.round(
-      estimatedInsideLocated / (1 - UNLOCATED_FRACTION)
-    )
-    const unlocatedShare = totalEstimate - estimatedInsideLocated
-    bar.innerHTML =
-      `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
-      `<div style="font-size:10px;color:#666;margin-top:1px">${estimatedInsideLocated.toLocaleString()} with known location` +
-      (unlocatedShare > 0
-        ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
-        : '') +
-      `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">TrashNothing members use a separate algorithm</div>`
+    bar.innerHTML = html
     bar.style.display = ''
   }
 
@@ -1594,7 +1596,9 @@ export async function setupRipplingExplorer({
       hits
         .map(
           (g) =>
-            `<div class="rpl-rg-item">${g.home ? '🏠 ' : '⚡ '}${esc(g.name)}</div>`
+            `<div class="rpl-rg-item">${g.home ? '🏠 ' : '⚡ '}${esc(
+              g.name
+            )}</div>`
         )
         .join('')
   }
@@ -1694,7 +1698,11 @@ export async function setupRipplingExplorer({
     layer.appendChild(mark)
     const label = document.createElement('div')
     const xform =
-      pct < 15 ? 'translateX(0)' : pct > 80 ? 'translateX(-100%)' : 'translateX(-50%)'
+      pct < 15
+        ? 'translateX(0)'
+        : pct > 80
+        ? 'translateX(-100%)'
+        : 'translateX(-50%)'
     label.style.cssText = `position:absolute;left:${pct}%;top:-22px;color:#e07000;font-size:11px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = '⚡'
     layer.appendChild(label)
@@ -1782,7 +1790,11 @@ export async function setupRipplingExplorer({
     layer.appendChild(mark)
     const label = document.createElement('div')
     const xform =
-      pct < 12 ? 'translateX(0)' : pct > 88 ? 'translateX(-100%)' : 'translateX(-50%)'
+      pct < 12
+        ? 'translateX(0)'
+        : pct > 88
+        ? 'translateX(-100%)'
+        : 'translateX(-50%)'
     const top = where === 'top' ? '-28px' : '16px'
     label.style.cssText = `position:absolute;left:${pct}%;top:${top};color:${color};font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = text
@@ -1795,7 +1807,13 @@ export async function setupRipplingExplorer({
     // is the "up to" indicator (no separate marker needed). Only when the engine is BEHIND
     // do we add an "actually here" marker, so the gap to the thumb is the lag.
     if (props.actualElapsedHours != null) {
-      addReachMarker(layer, props.actualElapsedHours, 'actually here ▲', '#e07000', 'top')
+      addReachMarker(
+        layer,
+        props.actualElapsedHours,
+        'actually here ▲',
+        '#e07000',
+        'top'
+      )
     }
   }
 
