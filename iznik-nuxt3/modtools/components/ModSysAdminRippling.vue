@@ -6,6 +6,13 @@
       immediate mails on expansion.
     </p>
 
+    <ModEmailDateFilter
+      :loading="loading"
+      fetch-label="Fetch"
+      default-preset="30days"
+      @fetch="onFilterFetch"
+    />
+
     <div v-if="loading" class="text-center py-3">
       <b-spinner />
     </div>
@@ -91,29 +98,6 @@
         />
         <p v-else class="text-muted small">No data yet.</p>
       </div>
-
-      <h6 class="mt-3">Totals (all time)</h6>
-      <b-table-simple hover responsive small>
-        <b-thead>
-          <b-tr>
-            <b-th>Event</b-th>
-            <b-th>Count</b-th>
-          </b-tr>
-        </b-thead>
-        <b-tbody>
-          <b-tr v-for="t in totals" :key="t.event">
-            <b-td>
-              <code>{{ t.event }}</code>
-            </b-td>
-            <b-td>{{ t.count }}</b-td>
-          </b-tr>
-          <b-tr v-if="!totals.length">
-            <b-td colspan="2" class="text-muted">
-              No rippling events recorded yet.
-            </b-td>
-          </b-tr>
-        </b-tbody>
-      </b-table-simple>
 
       <h6 class="mt-3">Last 30 days</h6>
       <b-table-simple hover responsive small>
@@ -354,6 +338,7 @@
 
 <script setup>
 import { GChart } from 'vue-google-charts'
+import ModEmailDateFilter from '~/modtools/components/ModEmailDateFilter.vue'
 import api from '~/api'
 
 const runtimeConfig = useRuntimeConfig()
@@ -361,8 +346,10 @@ const apiInstance = api(runtimeConfig)
 
 const loading = ref(true)
 const error = ref(null)
-const totals = ref([])
 const recent = ref([])
+// Date range driving the headline KPI queries (set by ModEmailDateFilter).
+const startDate = ref('')
+const endDate = ref('')
 const hotspots = ref([])
 const proposedParams = ref([])
 // §16 rollout-health metrics
@@ -450,8 +437,11 @@ async function fetchMetrics() {
   loading.value = true
   error.value = null
   try {
-    const result = await apiInstance.rippling.fetchMetrics(groupFilter.value)
-    totals.value = result?.totals || []
+    const result = await apiInstance.rippling.fetchMetrics(
+      groupFilter.value,
+      startDate.value,
+      endDate.value
+    )
     recent.value = result?.recent || []
     hotspots.value = result?.hotspots || []
     proposedParams.value = result?.proposed_params || []
@@ -479,9 +469,13 @@ function onGroupChange() {
   fetchMetrics()
 }
 
-onMounted(() => {
+// ModEmailDateFilter fires this on mount and whenever the period changes, so it
+// drives the initial load too (no separate onMounted fetch needed).
+function onFilterFetch({ start, end }) {
+  startDate.value = start || ''
+  endDate.value = end || ''
   fetchMetrics()
-})
+}
 
-defineExpose({ fetchMetrics, groupFilter, onGroupChange })
+defineExpose({ fetchMetrics, groupFilter, onGroupChange, onFilterFetch })
 </script>

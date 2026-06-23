@@ -291,3 +291,53 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	}
 	assert.True(t, found, "the seeded rippling/home split is surfaced")
 }
+
+// The ?start= / ?end= range bounds every headline KPI so a treatment group's before-vs-after can
+// be read. We seed a single reply in Jan 2020 - long before rippling_reply_attribution existed, so
+// no real rows collide - and confirm it appears only when its day is inside the requested window.
+// The default (no params) range is echoed back non-empty.
+func TestRipplingMetricsDateRange(t *testing.T) {
+	prefix := uniquePrefix("rippledate")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reply_attribution (
+		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		replied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, was_home_member TINYINT(1) NOT NULL,
+		PRIMARY KEY (msgid, userid), KEY rra_replied_at (replied_at))`)
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES " +
+		"(900000291, 900000291, '2020-01-15 12:00:00', 0)")
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = 900000291")
+
+	fetchSplit := func(qs string) []interface{} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/rippling/metrics?%s&jwt=%s", qs, token), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json.Unmarshal(rsp(resp), &result)
+		split, _ := result["reply_source_split"].([]interface{})
+		return split
+	}
+	dayPresent := func(split []interface{}, day string) bool {
+		for _, r := range split {
+			if m, ok := r.(map[string]interface{}); ok && m["day"] == day {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Window covering Jan 2020 includes the seeded reply; a 2021 window excludes it.
+	in := fetchSplit("start=2020-01-01%2000:00:00&end=2020-02-01%2000:00:00")
+	assert.True(t, dayPresent(in, "2020-01-15"), "seeded reply present when its day is in range")
+	out := fetchSplit("start=2021-01-01%2000:00:00&end=2021-02-01%2000:00:00")
+	assert.False(t, dayPresent(out, "2020-01-15"), "seeded reply absent when its day is out of range")
+
+	// With no params the handler defaults the range (last 30 days) and echoes it back.
+	respDefault, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	var rd map[string]interface{}
+	json.Unmarshal(rsp(respDefault), &rd)
+	assert.NotEmpty(t, rd["start"], "start defaults when absent")
+	assert.NotEmpty(t, rd["end"], "end defaults when absent")
+}

@@ -34,6 +34,15 @@ function mountComponent() {
           template: '<select><slot /></select>',
           props: ['modelValue'],
         },
+        // Drive the initial fetch deterministically: the real filter fires
+        // 'fetch' on mount, so the stub mirrors that with a fixed range.
+        ModEmailDateFilter: {
+          template: '<div class="date-filter" />',
+          emits: ['fetch'],
+          mounted() {
+            this.$emit('fetch', { start: '2026-05-24', end: '2026-06-23' })
+          },
+        },
         GChart: {
           template: '<div class="gchart" />',
           props: ['type', 'data', 'options'],
@@ -48,12 +57,9 @@ describe('ModSysAdminRippling', () => {
     mockFetchMetrics.mockReset()
   })
 
-  it('renders the event totals from the metrics endpoint', async () => {
+  it('renders recent rippling event rows from the metrics endpoint', async () => {
     mockFetchMetrics.mockResolvedValue({
-      totals: [
-        { day: '', event: 'reply_blocked', count: 7 },
-        { day: '', event: 'held', count: 3 },
-      ],
+      totals: [],
       recent: [{ day: '2026-06-18', event: 'reply_blocked', count: 7 }],
     })
 
@@ -63,17 +69,27 @@ describe('ModSysAdminRippling', () => {
     expect(mockFetchMetrics).toHaveBeenCalled()
     const html = wrapper.html()
     expect(html).toContain('reply_blocked')
-    expect(html).toContain('held')
+    expect(html).toContain('2026-06-18')
     expect(html).toContain('7')
   })
 
-  it('shows an empty state when there are no events', async () => {
+  it('shows an empty state when there are no recent events', async () => {
     mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
 
     const wrapper = mountComponent()
     await flushPromises()
 
-    expect(wrapper.html()).toContain('No rippling events recorded yet')
+    expect(wrapper.html()).toContain('No recent events')
+  })
+
+  it('passes the selected date range to the metrics API', async () => {
+    mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23')
+    wrapper.unmount()
   })
 
   it('renders geographic hotspots and proposed parameter changes', async () => {
