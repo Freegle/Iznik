@@ -294,6 +294,14 @@ return [
         'mode' => env('RIPPLE_MODE', 'drive'),
         // Maximum drive-time (minutes) the reach may grow to.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
+        // origin group, waits before it is approved onto the rippled-in group (it was already
+        // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
+        // into the Pending mod queue - this keeps the moderation load of rippling off the
+        // receiving groups, since the post was already moderated on its origin group. >0 leaves
+        // it Pending for AutoApproveService to approve after the window (a mod-veto window for
+        // groups that want to eyeball rippled-in posts before they appear).
+        'rippled_in_pending_hours' => (int) env('RIPPLE_RIPPLED_IN_PENDING_HOURS', 0),
         // Wall-clock hazard schedule (hours since arrival) at which the reach
         // expands one tick. One schedule tick is requested per entry, so the
         // number of ticks equals the length of this array.

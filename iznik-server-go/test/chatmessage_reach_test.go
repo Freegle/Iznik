@@ -70,3 +70,60 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857) WHERE msgid = ?", msgID)
 	assert.Equal(t, fiber.StatusOK, post(), "in-app reply accepted once the reach covers the replier")
 }
+
+// TestCreateChatMessage_RecordsReplyAttribution verifies the rippling reply-source capture: posting
+// an Interested reply records, in rippling_reply_attribution, whether the replier was an ESTABLISHED
+// home-group member at reply time. A membership made well before the reply -> home (1). A non-member
+// (and, identically, a join-to-reply whose membership is younger than the 300s grace) -> rippling (0).
+func TestCreateChatMessage_RecordsReplyAttribution(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replyattr")
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reply_attribution (
+		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		replied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, was_home_member TINYINT(1) NOT NULL,
+		PRIMARY KEY (msgid, userid), KEY rra_replied_at (replied_at))`)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply attribution test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+
+	postReply := func(replierID uint64) int {
+		chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+		_, token := CreateTestSession(t, replierID)
+		var payload chat.ChatMessage
+		payload.Message = "I'd like this please"
+		payload.Refmsgid = &msgID
+		s, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		return resp.StatusCode
+	}
+	attribution := func(uid uint64) (int, bool) {
+		var rows []int
+		db.Raw("SELECT was_home_member FROM rippling_reply_attribution WHERE msgid = ? AND userid = ?", msgID, uid).Scan(&rows)
+		if len(rows) == 0 {
+			return 0, false
+		}
+		return rows[0], true
+	}
+
+	// Established member: approved membership added an hour ago -> home (was_home_member = 1).
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 1 HOUR, collection = 'Approved' WHERE userid = ? AND groupid = ?", memberID, groupID)
+	assert.Equal(t, fiber.StatusOK, postReply(memberID))
+	v, ok := attribution(memberID)
+	assert.True(t, ok, "attribution row recorded for the established-member reply")
+	assert.Equal(t, 1, v, "established member reply recorded as home-group (was_home_member=1)")
+
+	// Non-member: no membership of the origin group -> reached via rippling (was_home_member = 0).
+	nonMemberID := CreateTestUser(t, prefix+"_nonmember", "User")
+	assert.Equal(t, fiber.StatusOK, postReply(nonMemberID))
+	v, ok = attribution(nonMemberID)
+	assert.True(t, ok, "attribution row recorded for the non-member reply")
+	assert.Equal(t, 0, v, "non-member reply recorded as rippling (was_home_member=0)")
+}

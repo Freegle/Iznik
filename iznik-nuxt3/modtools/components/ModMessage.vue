@@ -23,7 +23,12 @@
               </b-input-group>
             </NoticeMessage>
             <NoticeMessage
-              v-if="editing && editmessage && message.groups && message.groups.length > 1"
+              v-if="
+                editing &&
+                editmessage &&
+                message.groups &&
+                message.groups.length > 1
+              "
               variant="warning"
               class="w-100 mb-2"
             >
@@ -89,7 +94,8 @@
               <span
                 v-if="message.matchedon && message.matchedon.type === 'Vector'"
                 class="highlight"
-              >{{ eSubject }}</span>
+                >{{ eSubject }}</span
+              >
               <Highlighter
                 v-else-if="message.matchedon"
                 :search-words="[String(message.matchedon.word)]"
@@ -148,15 +154,14 @@
               Possibly should be on {{ homegroup }}
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
-            <div
-              v-if="otherGroups.length > 0"
-              class="small text-muted"
-            >
+            <div v-if="otherGroups.length > 0" class="small text-muted">
               Also on:
-              <span
-                v-for="(g, idx) in otherGroups"
-                :key="g.groupid"
-              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
+              <span v-for="(g, idx) in otherGroups" :key="g.groupid"
+                >{{
+                  groupStore.get(g.groupid)?.namedisplay ||
+                  'Group ' + g.groupid
+                }}<span v-if="idx < otherGroups.length - 1">, </span></span
+              >
             </div>
             <NoticeMessage
               v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
@@ -171,17 +176,28 @@
                 <strong>{{ currentGroupName || 'this group' }}</strong> only.
               </span>
               <span v-if="isRippledInToContextGroup">
-                This post has rippled out to some of your group members from a
-                neighbouring community - that's expected<span
+                <span
                   v-if="pending"
                   data-test="ripple-out-of-area-reject-warning"
-                  >, so
+                >
+                  This post has rippled in from a neighbouring community -
+                  that's expected, so
                   <strong class="text-danger"
                     >please don't reject it just for being "out of area"</strong
                   >
                   (only reject for the usual reasons: spam, breaks the rules,
-                  wrong sort of thing)</span
-                >.
+                  wrong sort of thing).
+                </span>
+                <span v-else>
+                  This post was
+                  <strong>rippled in</strong> from a neighbouring community and
+                  automatically approved onto
+                  <strong>{{ currentGroupName || 'this group' }}</strong> to
+                  keep moderation load low - it was already checked by the
+                  moderators of the community it came from. You don't need to do
+                  anything; you can still reject it for the usual reasons (spam,
+                  breaks the rules), just not for being "out of area".
+                </span>
                 <a href="#" @click.prevent="ripplingExplanationModal?.show()">
                   Learn more
                 </a>
@@ -246,7 +262,9 @@
                   icon-name="reply"
                   confirm
                   @handle="backToPending"
-                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
+                  ><span class="d-none d-sm-inline"
+                    >Back to Pending</span
+                  ></SpinButton
                 >
               </div>
               <div class="ms-2">
@@ -348,7 +366,11 @@
               {{ message.spamreason }}
             </NoticeMessage>
             <NoticeMessage
-              v-if="pending && membership && membership.ourpostingstatus === 'MODERATED'"
+              v-if="
+                pending &&
+                membership &&
+                membership.ourpostingstatus === 'MODERATED'
+              "
               variant="info"
               class="mb-2"
             >
@@ -391,9 +413,7 @@
               v-if="
                 message.worry?.length ||
                 message.groups?.some(
-                  (g) =>
-                    g.contentcheck_reasons &&
-                    g.contentcheck_reasons.length
+                  (g) => g.contentcheck_reasons && g.contentcheck_reasons.length
                 )
               "
               :messageid="message.id"
@@ -431,9 +451,12 @@
                 class="mb-3 rounded border p-2 preline forcebreak fw-bold"
               >
                 <span
-                  v-if="message.matchedon && message.matchedon.type === 'Vector'"
+                  v-if="
+                    message.matchedon && message.matchedon.type === 'Vector'
+                  "
                   class="highlight"
-                >{{ eBody }}</span>
+                  >{{ eBody }}</span
+                >
                 <Highlighter
                   v-else-if="message.matchedon"
                   :search-words="[String(message.matchedon.word)]"
@@ -886,7 +909,10 @@ const currentGroupid = computed(() => {
     const pool = pending.length ? pending : mine
     let pick = pool[0]
     for (const g of pool) {
-      if (g.arrival && (!pick.arrival || new Date(g.arrival) > new Date(pick.arrival)))
+      if (
+        g.arrival &&
+        (!pick.arrival || new Date(g.arrival) > new Date(pick.arrival))
+      )
         pick = g
     }
     return parseInt(pick.groupid)
@@ -912,7 +938,8 @@ const originGroupid = computed(() => {
   let earliest = null
   for (const g of groups) {
     if (!g.arrival) continue
-    if (!earliest || new Date(g.arrival) < new Date(earliest.arrival)) earliest = g
+    if (!earliest || new Date(g.arrival) < new Date(earliest.arrival))
+      earliest = g
   }
   return earliest ? parseInt(earliest.groupid) : null
 })
@@ -1523,7 +1550,11 @@ function checkHistory(duplicateCheck) {
 
           const key = histMsg.id + '-' + histMsg.arrival
 
-          if (duplicateCheck && groupsInCommon && histMsg.id < message.value.id) {
+          if (
+            duplicateCheck &&
+            groupsInCommon &&
+            histMsg.id < message.value.id
+          ) {
             // Same group, and this history message was posted before the one we're
             // rendering (message ids are auto-increment, so a lower id means earlier).
             // So the message we're rendering is the second/subsequent copy and IS a

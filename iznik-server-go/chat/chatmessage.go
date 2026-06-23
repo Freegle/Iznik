@@ -431,6 +431,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 
+	// Rippling reply attribution (sysadmin KPI): for an Interested reply, snapshot whether the
+	// replier was already an ESTABLISHED home-group member at the instant they replied. The Nuxt
+	// reply flow joins the group in order to reply (useReplyStateMachine.handleJoinGroup), so a
+	// membership existing right now isn't enough - we require an approved membership of an ORIGIN
+	// (non-rippled-in) group of the post that predates this reply by more than the join grace
+	// (300s). A join made to reply (added ~ now) is therefore excluded and counts as rippling.
+	// Frozen here so a later leave can't erase the signal. INSERT IGNORE = first reply only.
+	// Best-effort: never blocks the reply.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+		var wasHome int
+		db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+			myid, utils.COLLECTION_APPROVED, *payload.Refmsgid).Scan(&wasHome)
+		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
+			"VALUES (?, ?, NOW(), ?)", *payload.Refmsgid, myid, wasHome)
+	}
+
 	if payload.Imageid != nil {
 		// Update the chat image to link it to this chat message.  This also stops it being purged in
 		// purge_chats.

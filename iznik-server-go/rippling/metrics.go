@@ -84,6 +84,40 @@ type CaptureSummary struct {
 	ReplyP75H   float64 `json:"reply_p75_hours" gorm:"column:reply_p75_hours"`
 }
 
+// ReplyRateRow is the headline KPI per arrival day: of Offers that arrived that day (and whose
+// full 36h window has elapsed, so the figure is complete), what fraction received at least one
+// Interested reply within 36h. This is the "are we turning 0-reply posts into 1-reply posts"
+// number. Computed live from messages + chat_messages, so it works over all history with no
+// instrumentation and no capture (reply timestamps don't change).
+type ReplyRateRow struct {
+	Day      string  `json:"day"     gorm:"column:day"`
+	Posts    int     `json:"posts"   gorm:"column:posts"`
+	Replied  int     `json:"replied" gorm:"column:replied"`
+	ReplyPct float64 `json:"reply_pct"` // computed in Go
+}
+
+// ReplySourceRow is the daily split of Interested replies by whether the replier reached the post
+// via rippling or via their own (home) group. A reply counts as "home" only if the replier was an
+// approved member of an ORIGIN (rippled_in=0) group of the post BEFORE the post arrived
+// (memberships.added < arrival). We key on the join TIMESTAMP, not current membership, because
+// replying can join the member to the group - a naive membership check would mis-label every
+// rippling reply as home-group. Everything else is rippling-attributable.
+type ReplySourceRow struct {
+	Day       string  `json:"day"     gorm:"column:day"`
+	Replies   int     `json:"replies" gorm:"column:replies"`
+	Home      int     `json:"home"    gorm:"column:home"`
+	Ripple    int     `json:"ripple"`     // computed in Go (replies - home)
+	RipplePct float64 `json:"ripple_pct"` // computed in Go
+}
+
+// ReplyDistanceRow is the daily median crow-flies distance (km) from a post's location to the
+// replier's home location, over Interested replies - how far rippling is pulling replies from.
+type ReplyDistanceRow struct {
+	Day      string  `json:"day"       gorm:"column:day"`
+	Replies  int     `json:"replies"   gorm:"column:replies"`
+	MedianKm float64 `json:"median_km" gorm:"column:median_km"`
+}
+
 // Metrics returns the rippling-out event counters plus the §15/§16 rollout-health metrics.
 // Events: reply_blocked (#2), held/released/taken_gone (#3), secondary_reject (#6),
 // immediate_mailed (#0), rippled_in (#6). Support/Admin only.
@@ -189,14 +223,89 @@ func Metrics(c *fiber.Ctx) error {
 		capture.CaptureRate = float64(capture.PairsInTime) / float64(capture.PairsTotal) * 100
 	}
 
+	// ---- Reply KPIs (the rollout's headline outcome) --------------------------------
+	// (1) % of Offers with a reply within 36h, per arrival day. Only days whose full 36h
+	//     window has elapsed are counted, so each point is complete (no trailing dip).
+	//     Live from messages + chat_messages: works over all history, no instrumentation.
+	replyRates := []ReplyRateRow{}
+	db.Raw(`
+		SELECT DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+		       COUNT(DISTINCT m.id) AS posts,
+		       COUNT(DISTINCT CASE WHEN fr.first_reply <= m.arrival + INTERVAL 36 HOUR THEN m.id END) AS replied
+		FROM messages m
+		JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0
+		LEFT JOIN (
+		    SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
+		    WHERE type = 'Interested' AND date >= CURDATE() - INTERVAL 33 DAY GROUP BY refmsgid
+		) fr ON fr.refmsgid = m.id
+		WHERE m.type = 'Offer'
+		  AND m.arrival >= CURDATE() - INTERVAL 30 DAY
+		  AND m.arrival <  NOW() - INTERVAL 36 HOUR
+		GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
+		ORDER BY day DESC`).Scan(&replyRates)
+	for i := range replyRates {
+		if replyRates[i].Posts > 0 {
+			replyRates[i].ReplyPct = float64(replyRates[i].Replied) / float64(replyRates[i].Posts) * 100
+		}
+	}
+
+	// (2) Rippling vs home-group replies, per day. Sourced from rippling_reply_attribution,
+	//     which records at REPLY time whether the replier was already a home-group member -
+	//     the only sound way to attribute, because replying later joins them to the group and
+	//     a retrospective membership check would mis-credit every rippling reply. Defensive:
+	//     empty until the capture (in CreateChatMessage) has accrued rows.
+	replySources := []ReplySourceRow{}
+	db.Raw(`
+		SELECT DATE_FORMAT(replied_at, '%Y-%m-%d') AS day,
+		       COUNT(*) AS replies,
+		       COALESCE(SUM(was_home_member), 0) AS home
+		FROM rippling_reply_attribution
+		WHERE replied_at >= CURDATE() - INTERVAL 30 DAY
+		GROUP BY DATE_FORMAT(replied_at, '%Y-%m-%d')
+		ORDER BY day DESC`).Scan(&replySources)
+	for i := range replySources {
+		replySources[i].Ripple = replySources[i].Replies - replySources[i].Home
+		if replySources[i].Replies > 0 {
+			replySources[i].RipplePct = float64(replySources[i].Ripple) / float64(replySources[i].Replies) * 100
+		}
+	}
+
+	// (3) Median crow-flies distance (km) from post to replier, per reply day. Distance isn't
+	//     changed by replying, so this is sound computed retrospectively from locations.
+	replyDistances := []ReplyDistanceRow{}
+	db.Raw(`
+		SELECT day, MAX(cnt) AS replies, AVG(dist_km) AS median_km
+		FROM (
+		  SELECT day, dist_km,
+		         ROW_NUMBER() OVER (PARTITION BY day ORDER BY dist_km) AS rn,
+		         COUNT(*)     OVER (PARTITION BY day) AS cnt
+		  FROM (
+		    SELECT DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
+		           ST_Distance_Sphere(POINT(ml.lng, ml.lat), POINT(ul.lng, ul.lat)) / 1000 AS dist_km
+		    FROM chat_messages cm
+		    JOIN messages m   ON m.id = cm.refmsgid AND m.type = 'Offer'
+		    JOIN locations ml ON ml.id = m.locationid
+		    JOIN users u      ON u.id = cm.userid
+		    JOIN locations ul ON ul.id = u.lastlocation
+		    WHERE cm.type = 'Interested' AND cm.date >= CURDATE() - INTERVAL 30 DAY
+		      AND ml.lat IS NOT NULL AND ul.lat IS NOT NULL
+		  ) d
+		) r
+		WHERE r.rn IN (FLOOR((r.cnt + 1) / 2), FLOOR((r.cnt + 2) / 2))
+		GROUP BY day
+		ORDER BY day DESC`).Scan(&replyDistances)
+
 	return c.JSON(fiber.Map{
-		"totals":              totals,
-		"recent":              recent,
-		"hotspots":            hotspots,
-		"proposed_params":     proposed,
-		"live_metrics":        liveMetrics,
-		"held_reply_summary":  heldReplySummary,
-		"cross_group_summary": crossGroup,
-		"capture_summary":     capture,
+		"totals":                totals,
+		"recent":                recent,
+		"hotspots":              hotspots,
+		"proposed_params":       proposed,
+		"live_metrics":          liveMetrics,
+		"held_reply_summary":    heldReplySummary,
+		"cross_group_summary":   crossGroup,
+		"capture_summary":       capture,
+		"reply_rate_36h":        replyRates,
+		"reply_source_split":    replySources,
+		"reply_distance_median": replyDistances,
 	})
 }

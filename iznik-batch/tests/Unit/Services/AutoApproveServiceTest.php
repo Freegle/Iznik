@@ -396,6 +396,9 @@ class AutoApproveServiceTest extends TestCase
     /** Within the short veto window a rippled-in post stays Pending (mods can still reject). */
     public function test_holds_rippled_in_post_within_veto_window(): void
     {
+        // A mod-veto window only exists when configured > 0 (default is now 0 = approve at
+        // ripple-in). Set a 1h window so a just-rippled-in post is held within it.
+        config(['freegle.ripple.rippled_in_pending_hours' => 1]);
         $user = $this->createTestUser();
         $originGroup = $this->createTestGroup();
         $nearbyGroup = $this->createTestGroup();
@@ -419,6 +422,40 @@ class AutoApproveServiceTest extends TestCase
             'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
             'collection' => MessageGroup::COLLECTION_PENDING,
         ]);
+    }
+
+    /**
+     * With ripple.rippled_in_pending_hours = 0 (experiment mode) a rippled-in post already
+     * Approved on its origin auto-approves immediately, keeping moderation load off the
+     * receiving groups during a reach experiment.
+     */
+    public function test_rippled_in_pending_hours_zero_auto_approves_immediately(): void
+    {
+        config(['freegle.ripple.rippled_in_pending_hours' => 0]);
+
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        // Rippled in 2 minutes ago — inside the default 1h window, but 0h approves immediately.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subMinutes(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'rippled_in_pending_hours=0 auto-approves a just-rippled-in post immediately');
     }
 
     /** A rippled-in post NOT yet Approved on its origin group is never fast-tracked. */

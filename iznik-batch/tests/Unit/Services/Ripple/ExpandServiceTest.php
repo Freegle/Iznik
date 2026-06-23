@@ -443,11 +443,14 @@ class ExpandServiceTest extends TestCase
 
         $stats = $this->service()->process(false, 500);
 
-        // Rippled into B as fresh Pending, carrying the post's msgtype (else it is invisible
-        // to type-filtered browse once approved — addApprovedMessage copies messages_groups.msgtype).
+        // Rippled into B carrying the post's msgtype (else it is invisible to type-filtered
+        // browse once approved — addApprovedMessage copies messages_groups.msgtype). With
+        // rippled_in_pending_hours=0 (default) it is approved AT ripple-in time, so it never
+        // flickers into the Pending mod queue.
         $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($b, 'post rippled into group B whose area the reach covers');
-        $this->assertSame('Pending', $b->collection);
+        $this->assertSame('Approved', $b->collection);
+        $this->assertNotNull($b->approvedat, 'approved at ripple-in time carries approvedat');
         $this->assertSame(Message::TYPE_OFFER, $b->msgtype);
         $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
         // §15/§16: the ripple-in is also recorded in the event metrics.
@@ -476,6 +479,28 @@ class ExpandServiceTest extends TestCase
             1,
             (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->count()
         );
+    }
+
+    /**
+     * With ripple.rippled_in_pending_hours > 0 the rippled-in row is inserted Pending, so
+     * AutoApproveService approves it after the mod-veto window (rather than at ripple-in).
+     */
+    public function test_positive_window_inserts_rippled_in_as_pending(): void
+    {
+        config(['freegle.ripple.rippled_in_pending_hours' => 2]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'post rippled into group B');
+        $this->assertSame('Pending', $b->collection, 'a positive window leaves the rippled-in row Pending for the mod-veto');
     }
 
     /**
