@@ -57,33 +57,8 @@ describe('ModSysAdminRippling', () => {
     mockFetchMetrics.mockReset()
   })
 
-  it('renders recent rippling event rows from the metrics endpoint', async () => {
-    mockFetchMetrics.mockResolvedValue({
-      totals: [],
-      recent: [{ day: '2026-06-18', event: 'reply_blocked', count: 7 }],
-    })
-
-    const wrapper = mountComponent()
-    await flushPromises()
-
-    expect(mockFetchMetrics).toHaveBeenCalled()
-    const html = wrapper.html()
-    expect(html).toContain('reply_blocked')
-    expect(html).toContain('2026-06-18')
-    expect(html).toContain('7')
-  })
-
-  it('shows an empty state when there are no recent events', async () => {
-    mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
-
-    const wrapper = mountComponent()
-    await flushPromises()
-
-    expect(wrapper.html()).toContain('No recent events')
-  })
-
   it('passes the selected date range to the metrics API', async () => {
-    mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+    mockFetchMetrics.mockResolvedValue({})
 
     const wrapper = mountComponent()
     await flushPromises()
@@ -92,14 +67,27 @@ describe('ModSysAdminRippling', () => {
     wrapper.unmount()
   })
 
-  it('renders geographic hotspots and proposed parameter changes', async () => {
+  it('renders the headline KPI questions and a chart when there is series data', async () => {
     mockFetchMetrics.mockResolvedValue({
-      totals: [],
-      recent: [],
+      reply_rate_36h: [{ day: '2026-06-18', reply_pct: 35 }],
+      taken_rate: [{ day: '2026-06-18', taken_pct: 58 }],
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const html = wrapper.html()
+    // Plain-English, decision-oriented headings replace the old jargon.
+    expect(html).toContain('Are more offers getting a reply?')
+    expect(html).toContain('Is more stuff actually being reused?')
+    // Charts render once their series has data.
+    expect(wrapper.findAll('.gchart').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('renders geographic hotspots as an action surface', async () => {
+    mockFetchMetrics.mockResolvedValue({
       hotspots: [
         {
-          period_start: '2026-06-11',
-          area_type: 'group',
           area_id: 99,
           area_name: 'Anomaly Town',
           metric: 'secondary_reject_rate',
@@ -110,168 +98,37 @@ describe('ModSysAdminRippling', () => {
           severity: 'alert',
         },
       ],
-      proposed_params: [
-        {
-          ons_category: 'urban_major',
-          max_minutes: 25,
-          rationale: 'volume delta +80% outside band; propose to tighten reach',
-          proposed_at: '2026-06-18 09:00',
-        },
-      ],
     })
 
     const wrapper = mountComponent()
     await flushPromises()
 
     const html = wrapper.html()
+    expect(html).toContain('Where to look')
     expect(html).toContain('Anomaly Town')
     expect(html).toContain('secondary_reject_rate')
     expect(html).toContain('alert')
-    expect(html).toContain('urban_major')
-    expect(html).toContain('tighten reach')
   })
 
-  it('shows empty states for hotspots and proposals when there are none', async () => {
-    mockFetchMetrics.mockResolvedValue({
-      totals: [],
-      recent: [],
-      hotspots: [],
-      proposed_params: [],
-    })
+  it('shows an empty state when there are no hotspots', async () => {
+    mockFetchMetrics.mockResolvedValue({ hotspots: [] })
 
     const wrapper = mountComponent()
     await flushPromises()
 
     expect(wrapper.html()).toContain('No hotspots flagged')
-    expect(wrapper.html()).toContain('No proposals')
   })
 
-  // §16.1/§16.2 — volume & reach weekly rollup
-  describe('live_metrics section', () => {
-    it('shows "No rollup data yet" when live_metrics is empty or absent', async () => {
-      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
-      const wrapper = mountComponent()
-      await flushPromises()
-      expect(wrapper.html()).toContain('No rollup data yet')
-    })
-
-    it('renders live metric rows returned by the API', async () => {
-      mockFetchMetrics.mockResolvedValue({
-        totals: [],
-        recent: [],
-        live_metrics: [
-          {
-            period_start: '2026-06-16',
-            metric: 'volume_posts_p50',
-            value: 42.5,
-            sample_size: 80,
-          },
-        ],
-      })
-      const wrapper = mountComponent()
-      await flushPromises()
-      const html = wrapper.html()
-      expect(html).toContain('volume_posts_p50')
-      expect(html).toContain('42.5')
-      expect(html).toContain('2026-06-16')
-    })
-  })
-
-  // §16.3 — cross-group reach summary
-  describe('cross_group_summary section', () => {
-    it('renders the cross-group reach heading', async () => {
-      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
-      const wrapper = mountComponent()
-      await flushPromises()
-      expect(wrapper.html()).toContain('Cross-group reach')
-    })
-
-    it('shows the rippled-in count and cross_group_pct from the API', async () => {
-      mockFetchMetrics.mockResolvedValue({
-        totals: [],
-        recent: [],
-        cross_group_summary: {
-          period_days: 30,
-          rippled_in: 57,
-          total: 300,
-          cross_group_pct: 19.0,
-          approval_rate: 72.0,
-        },
-      })
-      const wrapper = mountComponent()
-      await flushPromises()
-      const html = wrapper.html()
-      expect(html).toContain('57')
-      expect(html).toContain('19.0%')
-    })
-
-    it('shows — for approval_rate when rippled_in is zero', async () => {
-      mockFetchMetrics.mockResolvedValue({
-        totals: [],
-        recent: [],
-        cross_group_summary: {
-          period_days: 30,
-          rippled_in: 0,
-          total: 100,
-          cross_group_pct: 0,
-          approval_rate: 0,
-        },
-      })
-      const wrapper = mountComponent()
-      await flushPromises()
-      expect(wrapper.html()).toContain('—')
-    })
-  })
-
-  // §16.4 — timing / capture from offline simulator
-  describe('capture_summary section', () => {
-    it('shows "No simulator data yet" when week_start is empty', async () => {
-      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
-      const wrapper = mountComponent()
-      await flushPromises()
-      expect(wrapper.html()).toContain('No simulator data yet')
-    })
-
-    it('renders capture rate and curve when data is present', async () => {
-      mockFetchMetrics.mockResolvedValue({
-        totals: [],
-        recent: [],
-        capture_summary: {
-          week_start: '2026-06-09',
-          curve: 'front-heavy',
-          pairs_total: 200,
-          pairs_in_time: 150,
-          pairs_late: 40,
-          capture_rate: 75.0,
-          reply_p50_hours: 2.5,
-          reply_p75_hours: 6.0,
-        },
-      })
-      const wrapper = mountComponent()
-      await flushPromises()
-      const html = wrapper.html()
-      expect(html).toContain('front-heavy')
-      expect(html).toContain('75.0%')
-      expect(html).toContain('2.5h')
-      expect(html).toContain('2026-06-09')
-    })
-  })
-
-  // §15/§16.5 — held-reply friction summary
   describe('held_reply_summary section', () => {
-    it('renders the held external replies heading', async () => {
-      mockFetchMetrics.mockResolvedValue({ totals: [], recent: [] })
+    it('renders the reply-friction heading', async () => {
+      mockFetchMetrics.mockResolvedValue({})
       const wrapper = mountComponent()
       await flushPromises()
-      expect(wrapper.html()).toContain('Held external replies')
+      expect(wrapper.html()).toContain('Reply friction')
     })
 
     it('shows "No held replies recorded yet" when the list is empty', async () => {
-      mockFetchMetrics.mockResolvedValue({
-        totals: [],
-        recent: [],
-        held_reply_summary: [],
-      })
+      mockFetchMetrics.mockResolvedValue({ held_reply_summary: [] })
       const wrapper = mountComponent()
       await flushPromises()
       expect(wrapper.html()).toContain('No held replies recorded yet')
@@ -279,8 +136,6 @@ describe('ModSysAdminRippling', () => {
 
     it('renders held/released rows with counts from the API', async () => {
       mockFetchMetrics.mockResolvedValue({
-        totals: [],
-        recent: [],
         held_reply_summary: [
           { status: 'held', count: 3, median_hold_hours: 0 },
           { status: 'released', count: 1, median_hold_hours: 4.2 },
@@ -293,5 +148,27 @@ describe('ModSysAdminRippling', () => {
       expect(html).toContain('released')
       expect(html).toContain('4.2')
     })
+  })
+
+  it('no longer renders the dropped absolute-number sections', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      recent: [{ day: '2026-06-18', event: 'reply_blocked', count: 7 }],
+      live_metrics: [
+        { period_start: '2026-06-16', metric: 'volume_posts_p50', value: 42.5 },
+      ],
+      cross_group_summary: { rippled_in: 57, total: 300, cross_group_pct: 19 },
+      capture_summary: { week_start: '2026-06-09', curve: 'front-heavy' },
+      proposed_params: [{ ons_category: 'urban_major', max_minutes: 25 }],
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const html = wrapper.html()
+    expect(html).not.toContain('Last 30 days')
+    expect(html).not.toContain('Cross-group reach')
+    expect(html).not.toContain('Volume')
+    expect(html).not.toContain('simulator')
+    expect(html).not.toContain('Proposed parameter changes')
   })
 })
