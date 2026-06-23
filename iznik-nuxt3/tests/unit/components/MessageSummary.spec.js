@@ -423,11 +423,37 @@ describe('MessageSummary', () => {
         resolve(__dirname, '../../../components/MessageSummary.vue'),
         'utf-8'
       )
-      const start = source.indexOf('v-else-if="message.attachments[0]?.externaluid"')
+      const start = source.indexOf(
+        'v-else-if="message.attachments[0]?.externaluid"'
+      )
       expect(start).toBeGreaterThan(-1)
       const end = source.indexOf('/>', start)
       const nuxtPictureBlock = source.substring(start, end)
       expect(nuxtPictureBlock).toContain(':loading=')
+    })
+  })
+
+  describe('photo-area responsive layout', () => {
+    it('uses aspect-ratio (not padding-bottom hack) so photo does not overlap content on narrow viewports', () => {
+      // Discourse 9684/3: on iPad mini portrait (768px) the .photo-area used the old
+      // height:0 + padding-bottom percentage trick.  In a flex column (ScrollGrid forces
+      // flex:1/display:flex/flex-direction:column via :deep cascade) WebKit/Safari can
+      // collapse the photo-area's height to 0, so the absolutely-positioned photo bleeds
+      // over the .content-section below it.  The mobile-landscape case already uses the
+      // correct CSS aspect-ratio property; portrait/md breakpoints must match.
+      const { readFileSync } = require('fs')
+      const { resolve } = require('path')
+      const source = readFileSync(
+        resolve(__dirname, '../../../components/MessageSummary.vue'),
+        'utf-8'
+      )
+      // Must use aspect-ratio for the base photo-area sizing (not the padding-bottom hack)
+      expect(source).toContain('aspect-ratio: 100 / 115')
+      // The md breakpoint override must use aspect-ratio too, not padding-bottom: 75%
+      expect(source).not.toContain('padding-bottom: 75%')
+      // The old height:0 trick must not appear as a standalone declaration
+      // (min-height: 0 is fine; check for height:0 as a start-of-declaration)
+      expect(source).not.toMatch(/^\s+height:\s*0\s*;/m)
     })
   })
 })

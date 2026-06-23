@@ -46,19 +46,18 @@
 .skeleton-photo-area {
   position: relative;
   width: 100%;
-  height: 0;
-  padding-bottom: 115%;
+  aspect-ratio: 100 / 115;
   background: $color-gray--light;
   overflow: hidden;
 
   @include media-breakpoint-up(md) {
-    padding-bottom: 75%;
+    aspect-ratio: 4 / 3;
   }
 
   @include media-breakpoint-up(lg) {
     width: 200px;
     height: 200px;
-    padding-bottom: 0;
+    aspect-ratio: unset;
     flex-shrink: 0;
   }
 }

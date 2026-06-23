@@ -294,8 +294,9 @@ function expand(e) {
 .photo-area {
   position: relative;
   width: 100%;
-  height: 0;
-  padding-bottom: 115%;
+  /* aspect-ratio is reliable in flex containers; the old height:0+padding-bottom trick
+     collapses in Safari/WebKit flex columns, causing the photo to overlap content below */
+  aspect-ratio: 100 / 115;
   background: $color-gray--light;
   overflow: hidden;
   flex-shrink: 0;
@@ -307,14 +308,14 @@ function expand(e) {
 
   /* Smaller photo on tablet/desktop to make room for text */
   @include media-breakpoint-up(md) {
-    padding-bottom: 75%;
+    aspect-ratio: 4 / 3;
   }
 
   /* Horizontal layout on lg+ - fixed square photo */
   @include media-breakpoint-up(lg) {
     width: 200px;
     height: 200px;
-    padding-bottom: 0;
+    aspect-ratio: unset;
     flex-shrink: 0;
   }
 
@@ -322,7 +323,6 @@ function expand(e) {
   .mobile-landscape & {
     width: 20%;
     height: auto;
-    padding-bottom: 0;
     aspect-ratio: 1;
     flex-shrink: 0;
   }
