@@ -4714,6 +4714,57 @@ func TestMessagePageviewSemantics(t *testing.T) {
 	assert.Equal(t, 1, pv, "scroll after open must not downgrade pageview")
 }
 
+// TestMessagePageviewSource verifies a notification-tagged page-open records its source
+// (e.g. ripple_notify), and that a later untagged (organic) open never clears that
+// attribution - the key property for distinguishing notification-click from organic browse.
+func TestMessagePageviewSource(t *testing.T) {
+	db := database.DBConn
+
+	getSource := func(msgID, userID uint64) string {
+		var s string
+		db.Raw("SELECT COALESCE(source, '') FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&s)
+		return s
+	}
+	doView := func(token string, msgID uint64, source string) {
+		body := map[string]interface{}{"id": msgID, "action": "View"}
+		if source != "" {
+			body["source"] = source
+		}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	// notification-tagged open records the source; a later organic open does not clear it
+	{
+		prefix := uniquePrefix("pv_src_notify")
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
+
+		doView(token, msgID, "ripple_notify")
+		assert.Equal(t, "ripple_notify", getSource(msgID, userID), "tagged open records source")
+		doView(token, msgID, "") // organic, within dedup window -> UPDATE path
+		assert.Equal(t, "ripple_notify", getSource(msgID, userID), "organic open must not clear notification source")
+	}
+
+	// organic-only open leaves source unset (NULL)
+	{
+		prefix := uniquePrefix("pv_src_organic")
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
+
+		doView(token, msgID, "")
+		assert.Equal(t, "", getSource(msgID, userID), "organic open leaves source NULL")
+	}
+}
+
 // --- Adversarial tests ---
 
 func TestPostMessageAddByNegativeCount(t *testing.T) {
