@@ -117,6 +117,19 @@ if (config('freegle.ripple.enabled')) {
         ->runInBackground();
 }
 
+// Group experiment (per-group before/after): when RIPPLE_WITHIN_GROUPS lists group ids, ripple ONLY
+// those groups' posts - even while the global switch above is OFF. The scoped run bypasses the global
+// gate in ExpandService::process(), so the rest of the network stays dark. During the experiment you
+// run with RIPPLE_ENABLED=false and RIPPLE_WITHIN_GROUPS set, so only this scoped cron is active.
+$rippleWithinGroups = (array) config('freegle.ripple.within_groups', []);
+if (!empty($rippleWithinGroups)) {
+    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups)])
+        ->everyMinute()
+        ->withoutOverlapping()
+        ->sendOutputTo(cronLog('ripple:expand-experiment'))
+        ->runInBackground();
+}
+
 // Release/expire held external (email/TN) replies as posts ripple out (#3).
 // Inert until the reach engine is live -- nothing to release until a reply is held.
 Schedule::command('ripple:release-replies')

@@ -48,17 +48,20 @@ class ExpandService
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
         ];
 
-        // Master activation switch. While rippling is disabled, do nothing: no reach is computed and
-        // nothing is rippled into new groups. The cron is also unscheduled when off (routes/console.php),
-        // so this is defence-in-depth that also covers a manual `artisan ripple:expand`.
-        if (!config('freegle.ripple.enabled')) {
-            return $stats;
-        }
-
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
         // testing): stale-removal is skipped because it operates over the WHOLE reach set and is not
         // scope-aware, and both init and advance are restricted to the same subset.
         $scoped = $onlyMsgid !== null || $withinPolyWkt !== null;
+
+        // Master activation switch. While rippling is globally disabled an UNSCOPED run does nothing
+        // (no reach computed, nothing rippled). A SCOPED run is still allowed through while global is
+        // off - this is how the group experiment runs: RIPPLE_WITHIN_GROUPS set + RIPPLE_ENABLED false
+        // ripples ONLY the scoped (experiment) groups, everyone else stays dark. The unscoped cron is
+        // also unscheduled when off (routes/console.php); this gate is defence-in-depth.
+        if (!config('freegle.ripple.enabled') && !$scoped) {
+            return $stats;
+        }
+
         if (!$scoped) {
             // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
             $stats['removed'] = $this->removeStale($dryRun);

@@ -29,6 +29,15 @@ function mountComponent() {
         'b-td': { template: '<td><slot /></td>' },
         'b-badge': { template: '<span class="badge"><slot /></span>' },
         'b-spinner': { template: '<div class="spinner" />' },
+        'b-form-group': { template: '<div><slot /></div>' },
+        'b-form-select': {
+          template: '<select><slot /></select>',
+          props: ['modelValue'],
+        },
+        GChart: {
+          template: '<div class="gchart" />',
+          props: ['type', 'data', 'options'],
+        },
       },
     },
   })

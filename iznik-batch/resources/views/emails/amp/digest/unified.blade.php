@@ -110,6 +110,16 @@
       font-size: 14px;
     }
     .summary-rest { padding-top: 6px; }
+    .summary-intro {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #6c757d;
+      margin: 0 0 8px 0;
+    }
+    .summary-intro a {
+      color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};
+      text-decoration: underline;
+    }
 
     /* Greeting */
     .greeting {
@@ -734,6 +744,9 @@
     @if($summaryPosts->count() >= 2)
     <div class="summary-section">
       <p class="summary-head">In this digest</p>
+      @if(!empty($ampMorePosts) && $ampMorePosts > 0)
+      <p class="summary-intro">We've limited this to {{ \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP }} posts, but if you're keen there are <a href="{{ $browseUrl }}">even more on the website</a>.</p>
+      @endif
       @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
       <a class="summary-link" href="{{ $summaryPost['summaryUrl'] }}">{{ $summaryPost['subject'] }}</a>
       @endforeach

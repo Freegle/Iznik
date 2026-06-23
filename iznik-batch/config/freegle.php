@@ -288,6 +288,15 @@ return [
         // mail. With the cutoff, only recent posts ripple, so go-live is a trickle.
         // Empty string disables the cutoff (ripple everything, e.g. in tests).
         'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-21'),
+        // Group experiment scope: comma-separated group ids that ripple even while the global
+        // RIPPLE_ENABLED switch is OFF. When non-empty, the scheduled ripple:expand cron runs SCOPED
+        // to these groups' polygons, so ONLY these groups' posts ripple (origin-in-polygon) and
+        // everyone else stays dark - this is the per-group before/after experiment. Empty = no
+        // experiment. RIPPLE_ENABLED remains the network-wide kill switch for the unscoped rollout.
+        'within_groups' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) env('RIPPLE_WITHIN_GROUPS', ''))
+        ))),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.

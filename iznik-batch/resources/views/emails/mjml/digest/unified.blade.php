@@ -251,6 +251,11 @@
                 <mj-text font-size="13px" color="#212529" padding="0 0 8px 0">
                     <strong style="text-transform: uppercase; letter-spacing: 0.3px;">In this digest</strong>
                 </mj-text>
+                @if(!empty($morePosts) && $morePosts > 0)
+                <mj-text font-size="13px" color="#6c757d" padding="0 0 8px 0">
+                    We've limited this to {{ \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP }} posts, but if you're keen there are <a href="{{ $browseUrl }}" style="color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};">even more on the website</a>.
+                </mj-text>
+                @endif
                 <mj-text font-size="14px" color="#212529" line-height="1.6" padding="0">
                     @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
                     <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a><br>

@@ -242,6 +242,35 @@ class UnifiedDigestSummaryTest extends TestCase
         $this->assertGreaterThan($pos, strpos($html, $subjects[4]));
     }
 
+    public function test_html_daily_caps_live_posts_at_65_and_shows_intro(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP; // 65
+        $total = $cap + 1; // one over the cap, so the last post is dropped
+        $posts = collect();
+        for ($i = 0; $i < $total; $i++) {
+            $m = $this->createTestMessage($poster, $group, [
+                'subject' => 'OFFER: CapWord'.$i.' (TestLocation)',
+            ]);
+            $posts->push(['message' => $m, 'postedToGroups' => [$group->id]]);
+        }
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $html = $this->spoolAndLoad($mail, 'r@example.com')['html'] ?? '';
+
+        // The "in this digest" intro appears because the digest was capped.
+        $this->assertStringContainsString('limited this to '.$cap.' posts', $html);
+        $this->assertStringContainsString('even more on the website', $html);
+        // A within-cap post is in the email; the (cap+1)th post is dropped entirely.
+        $this->assertStringContainsString('CapWord0', $html);
+        $this->assertStringNotContainsString('CapWord'.($total - 1), $html);
+    }
+
     public function test_html_daily_three_posts_show_summary_without_collapse(): void
     {
         [$mail] = $this->buildDigest(3, UnifiedDigestService::MODE_DAILY);

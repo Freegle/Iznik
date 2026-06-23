@@ -15,6 +15,10 @@ Here are {{ $postCount }} new posts from your Freegle communities:
 @php($summaryHidden = $summaryPosts->slice($summaryVisible))
 @if($summaryPosts->count() >= 2)
 In this digest:
+@if(!empty($morePosts) && $morePosts > 0)
+We've limited this to {{ \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP }} posts, but if you're keen there are even more on the website: {{ $browseUrl }}
+
+@endif
 @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
 - {!! $summaryPost['subject'] !!}: {{ $summaryPost['summaryUrl'] }}
 @endforeach
