@@ -112,12 +112,14 @@ class ExpandService
         // entire historical pending backlog eligible at once. Empty config = no cutoff.
         $enabledAt = config('freegle.ripple.enabled_at');
         $cutoffSql = '';
+        $satSql = '';
         $params = [];
         $scopeSql = '';
         if ($onlyMsgid !== null) {
             // A single chosen post (controlled test) targets its msgid directly and bypasses the
-            // arrival cutoff — the chosen post may predate go-live, and selecting nothing would be
-            // a surprising no-op for an explicit one-post request.
+            // arrival cutoff AND the reply-saturation stop — the chosen post may predate go-live or
+            // already be saturated, and selecting nothing would be a surprising no-op for an
+            // explicit one-post request.
             $scopeSql = ' AND ms.msgid = ?';
             $params[] = $onlyMsgid;
         } else {
@@ -132,6 +134,15 @@ class ExpandService
                 $cutoffSql = ' AND ms.arrival >= ?';
                 $params[] = $enabledAt;
             }
+            // Reply-saturation stop (extent-governor T1.1): a post that already has >= threshold
+            // distinct repliers never starts rippling - it has enough interest without reach.
+            // 0 disables. Applies to normal and scoped (experiment) runs alike.
+            $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
+            if ($satStop > 0) {
+                $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
+                                  WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?";
+                $params[] = $satStop;
+            }
         }
         $params[] = $limit;
 
@@ -142,7 +153,7 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . '
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -245,6 +256,24 @@ class ExpandService
                     continue;
                 }
                 $arrival = Carbon::parse($row->arrival);
+
+                // Reply-saturation stop (extent-governor T1.1): once a post has enough distinct
+                // repliers it already has plenty of interest, so stop expanding - mark it done and
+                // do not fan out further. Type-agnostic; 0 disables.
+                $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
+                if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
+                    if (!$dryRun) {
+                        DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            'status' => 'done',
+                            'next_expansion_at' => null,
+                            'updated_at' => now(),
+                        ]);
+                    }
+                    $stats['completed']++;
+                    $this->logEvent($row->msgid, 'reply_saturated', (int) $row->tick, []);
+                    continue;
+                }
+
                 $elapsedHours = $arrival->diffInMinutes(now()) / 60.0;
                 // The post's own hazard-schedule length (stored at init), used as the ceiling
                 // for both the target tick and the 'done' transition.
@@ -779,6 +808,18 @@ class ExpandService
      * #9 observability: one structured line per expansion event. Rolled up by the
      * later metrics job; for now it makes the engine's behaviour visible in Loki.
      */
+    /**
+     * Distinct-replier count for a post: distinct users with an Interested chat reply
+     * (chat_messages.refmsgid = msgid). Drives the reply-saturation stop (extent-governor T1.1).
+     */
+    private function distinctReplierCount(int $msgid): int
+    {
+        return (int) (DB::selectOne(
+            "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
+            [$msgid]
+        )->n ?? 0);
+    }
+
     private function logEvent(int|string $msgid, string $kind, int $tick, array $entry): void
     {
         Log::info('ripple:reach', [

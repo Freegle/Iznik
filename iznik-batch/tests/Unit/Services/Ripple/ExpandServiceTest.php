@@ -2,9 +2,11 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\ChatMessage;
 use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Models\User;
 use App\Services\Ripple\ExpandService;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
@@ -968,5 +970,77 @@ class ExpandServiceTest extends TestCase
                     fn ($g) => str_contains($g['welcome'] ?? '', 'lovely community')
                 );
         });
+    }
+
+    /** Seed $count DISTINCT users each leaving an Interested chat reply on the post. */
+    private function seedInterestedRepliers(int $msgid, int $count): void
+    {
+        $poster = User::find((int) DB::table('messages')->where('id', $msgid)->value('fromuser'));
+        for ($i = 0; $i < $count; $i++) {
+            $replier = $this->createTestUser();
+            $room = $this->createTestChatRoom($replier, $poster);
+            $this->createTestChatMessage($room, $replier, [
+                'type' => ChatMessage::TYPE_INTERESTED,
+                'refmsgid' => $msgid,
+            ]);
+        }
+    }
+
+    /**
+     * Reply-saturation stop (extent-governor T1.1): a post that already has the threshold number
+     * of distinct repliers (5) has enough interest, so it never starts rippling.
+     */
+    public function test_saturated_post_does_not_start_rippling(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->seedInterestedRepliers($msgid, 5);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'a post at the saturation threshold never starts rippling');
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no rippling_reach row for an already-saturated post'
+        );
+    }
+
+    /** A post below the saturation threshold ripples normally. */
+    public function test_post_below_saturation_threshold_still_ripples(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->seedInterestedRepliers($msgid, 4);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'a post below the threshold ripples normally');
+    }
+
+    /** A post that crosses the saturation threshold mid-expansion stops expanding. */
+    public function test_post_that_becomes_saturated_stops_expanding(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // First pass: reach is initialised and expanding.
+        $this->service()->process(false, 500);
+        $this->assertSame(
+            'expanding',
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('status'),
+            'reach is expanding before saturation'
+        );
+
+        // The post now saturates and its next tick falls due.
+        $this->seedInterestedRepliers($msgid, 5);
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['next_expansion_at' => now()->subMinute()]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame('done', $row->status, 'a post crossing the saturation threshold stops expanding');
+        $this->assertNull($row->next_expansion_at, 'a saturated post is not rescheduled');
+        $this->assertGreaterThanOrEqual(1, $stats['completed']);
     }
 }

@@ -1,9 +1,12 @@
 <template>
   <div>
-    <p class="text-muted">
-      Live counters for the rippling-out rollout: reply-blocked-by-reach, held /
-      released / taken-gone external replies, secondary-group rejections, and
-      immediate mails on expansion.
+    <p class="text-muted small mb-2">
+      <strong>How to read this:</strong> rippling is working in a group when its
+      reply rate and reuse rate step up after you switch it on - with a real
+      share of replies coming via rippling, and travel distance staying
+      sensible. If reply and reuse stay flat it isn't helping there; if distance
+      climbs with no gain, tighten the reach. Pick a date range, and a group to
+      compare places.
     </p>
 
     <ModEmailDateFilter
@@ -18,16 +21,6 @@
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else>
-      <h6>Reply outcomes (headline KPIs)</h6>
-      <p class="text-muted small mb-2">
-        The rollout's goal is to turn more 0-reply posts into 1-reply posts. (1)
-        share of Offers that get a reply within 36h; (2) of replies, the share
-        that came via rippling vs existing group members (captured at reply
-        time, so a join-to-reply isn't mis-counted as a member); (3) median
-        distance from post to replier; (4) the reuse outcome - share
-        taken/received. Filter by group to compare places.
-      </p>
-
       <b-form-group
         v-if="groupOptions.length"
         label="Group:"
@@ -47,9 +40,18 @@
           </option>
         </b-form-select>
       </b-form-group>
+      <p v-else class="text-muted small fst-italic mb-2">
+        Per-group comparison appears here once groups have rippled.
+      </p>
 
-      <div class="mb-2">
-        <strong class="small">% of Offers with a reply within 36h</strong>
+      <div class="mb-3">
+        <strong class="small">Are more offers getting a reply?</strong>
+        <p class="text-muted small mb-1">
+          Share of offers that get a reply within 36h.
+          <span class="text-success fw-bold">Good:</span> trends up after
+          rippling starts. <span class="text-danger fw-bold">Bad:</span> flat -
+          rippling isn't getting posts seen here.
+        </p>
         <GChart
           v-if="replyRateChart"
           type="LineChart"
@@ -60,8 +62,15 @@
         <p v-else class="text-muted small">No data yet.</p>
       </div>
 
-      <div class="mb-2">
-        <strong class="small">% of replies that came via rippling</strong>
+      <div class="mb-3">
+        <strong class="small">How much of the lift is rippling?</strong>
+        <p class="text-muted small mb-1">
+          Share of replies that came via rippling vs your own members.
+          <span class="text-success fw-bold">Good:</span> a real share - the
+          lift is coming from reach.
+          <span class="text-danger fw-bold">Bad:</span> ~0% - reach isn't
+          producing replies.
+        </p>
         <GChart
           v-if="replySourceChart"
           type="LineChart"
@@ -76,7 +85,13 @@
       </div>
 
       <div class="mb-3">
-        <strong class="small">Median reply distance (km)</strong>
+        <strong class="small">Are repliers a sensible distance away?</strong>
+        <p class="text-muted small mb-1">
+          Median distance from a post to its replier.
+          <span class="fw-bold">Watch:</span> climbing while the reply rate
+          stays flat means you're reaching too far for no gain - tighten the
+          reach.
+        </p>
         <GChart
           v-if="replyDistanceChart"
           type="LineChart"
@@ -88,7 +103,12 @@
       </div>
 
       <div class="mb-3">
-        <strong class="small">% of posts taken/received (reuse outcome)</strong>
+        <strong class="small">Is more stuff actually being reused?</strong>
+        <p class="text-muted small mb-1">
+          Share of posts taken/received - the real outcome.
+          <span class="text-success fw-bold">Good:</span> up - rippling is
+          driving reuse. This is the number that justifies it.
+        </p>
         <GChart
           v-if="takenRateChart"
           type="LineChart"
@@ -99,33 +119,12 @@
         <p v-else class="text-muted small">No data yet.</p>
       </div>
 
-      <h6 class="mt-3">Last 30 days</h6>
-      <b-table-simple hover responsive small>
-        <b-thead>
-          <b-tr>
-            <b-th>Day</b-th>
-            <b-th>Event</b-th>
-            <b-th>Count</b-th>
-          </b-tr>
-        </b-thead>
-        <b-tbody>
-          <b-tr v-for="(r, ix) in recent" :key="ix">
-            <b-td class="text-nowrap">{{ r.day }}</b-td>
-            <b-td>
-              <code>{{ r.event }}</code>
-            </b-td>
-            <b-td>{{ r.count }}</b-td>
-          </b-tr>
-          <b-tr v-if="!recent.length">
-            <b-td colspan="3" class="text-muted">No recent events.</b-td>
-          </b-tr>
-        </b-tbody>
-      </b-table-simple>
-
-      <h6 class="mt-3">Geographic hotspots (last 30 days)</h6>
+      <h6 class="mt-4">Where to look — geographic hotspots</h6>
       <p class="text-muted small mb-1">
-        Areas whose metric is a robust outlier vs the rest of the network, so a
-        local problem the overall average hides is surfaced here.
+        Areas behaving unusually vs the rest of the network - a local problem
+        the overall average hides.
+        <span class="fw-bold">Action:</span> investigate any row flagged
+        <b-badge variant="danger">alert</b-badge>.
       </p>
       <b-table-simple hover responsive small>
         <b-thead>
@@ -154,158 +153,19 @@
             </b-td>
           </b-tr>
           <b-tr v-if="!hotspots.length">
-            <b-td colspan="6" class="text-muted">No hotspots flagged.</b-td>
-          </b-tr>
-        </b-tbody>
-      </b-table-simple>
-
-      <h6 class="mt-3">Proposed parameter changes (advisory)</h6>
-      <b-table-simple hover responsive small>
-        <b-thead>
-          <b-tr>
-            <b-th>ONS category</b-th>
-            <b-th>max_minutes</b-th>
-            <b-th>Rationale</b-th>
-            <b-th>Proposed</b-th>
-          </b-tr>
-        </b-thead>
-        <b-tbody>
-          <b-tr v-for="(p, ix) in proposedParams" :key="ix">
-            <b-td>
-              <code>{{ p.ons_category }}</code>
+            <b-td colspan="6" class="text-muted">
+              No hotspots flagged — nothing unusual to act on.
             </b-td>
-            <b-td>{{ p.max_minutes }}</b-td>
-            <b-td>{{ p.rationale }}</b-td>
-            <b-td class="text-nowrap">{{ p.proposed_at }}</b-td>
-          </b-tr>
-          <b-tr v-if="!proposedParams.length">
-            <b-td colspan="4" class="text-muted">No proposals.</b-td>
           </b-tr>
         </b-tbody>
       </b-table-simple>
 
-      <!-- §16.1/§16.2 Volume + reach: overall weekly rollup from ripple:tune -->
-      <h6 class="mt-3">Volume &amp; reach — weekly rollup (last 2 weeks)</h6>
+      <h6 class="mt-4">Reply friction — held external replies</h6>
       <p class="text-muted small mb-1">
-        Written by <code>ripple:tune</code> each week. Guard-rail band:
-        &minus;10% to +50% vs each group's own baseline (ripple-thresholds).
-        Empty until the first tune run.
-      </p>
-      <b-table-simple hover responsive small>
-        <b-thead>
-          <b-tr>
-            <b-th>Period start</b-th>
-            <b-th>Metric</b-th>
-            <b-th>Value</b-th>
-            <b-th>Sample size</b-th>
-          </b-tr>
-        </b-thead>
-        <b-tbody>
-          <b-tr v-for="(m, ix) in liveMetrics" :key="ix">
-            <b-td class="text-nowrap">{{ m.period_start }}</b-td>
-            <b-td>
-              <code>{{ m.metric }}</code>
-            </b-td>
-            <b-td>{{ m.value }}</b-td>
-            <b-td>{{ m.sample_size }}</b-td>
-          </b-tr>
-          <b-tr v-if="!liveMetrics.length">
-            <b-td colspan="4" class="text-muted">No rollup data yet.</b-td>
-          </b-tr>
-        </b-tbody>
-      </b-table-simple>
-
-      <!-- §16.3 Cross-group reach -->
-      <h6 class="mt-3">Cross-group reach (last 30 days)</h6>
-      <p class="text-muted small mb-1">
-        Fraction of post appearances that were rippled in by the engine to a
-        group the poster was not a member of, and how many of those were
-        subsequently approved.
-      </p>
-      <b-table-simple small>
-        <b-tbody>
-          <b-tr>
-            <b-th>Post appearances (total)</b-th>
-            <b-td>{{ crossGroupSummary.total }}</b-td>
-          </b-tr>
-          <b-tr>
-            <b-th>Rippled-in appearances</b-th>
-            <b-td>{{ crossGroupSummary.rippled_in }}</b-td>
-          </b-tr>
-          <b-tr>
-            <b-th>Cross-group %</b-th>
-            <b-td>{{
-              crossGroupSummary.cross_group_pct != null
-                ? crossGroupSummary.cross_group_pct.toFixed(1) + '%'
-                : '—'
-            }}</b-td>
-          </b-tr>
-          <b-tr>
-            <b-th>Approval rate (rippled-in)</b-th>
-            <b-td>{{
-              crossGroupSummary.rippled_in > 0
-                ? crossGroupSummary.approval_rate.toFixed(1) + '%'
-                : '—'
-            }}</b-td>
-          </b-tr>
-        </b-tbody>
-      </b-table-simple>
-
-      <!-- §16.4 Timing / capture from offline simulator -->
-      <h6 class="mt-3">Timing &amp; capture — latest simulator week</h6>
-      <p class="text-muted small mb-1">
-        From <code>rippling_algorithm_metrics</code> ('all' group). Capture rate
-        = repliers notified before they replied / total repliers. Empty until
-        the first simulator run.
-      </p>
-      <div v-if="captureSummary.week_start">
-        <b-table-simple small>
-          <b-tbody>
-            <b-tr>
-              <b-th>Week</b-th>
-              <b-td class="text-nowrap">{{ captureSummary.week_start }}</b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>Curve</b-th>
-              <b-td>
-                <code>{{ captureSummary.curve }}</code>
-              </b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>Pairs total</b-th>
-              <b-td>{{ captureSummary.pairs_total }}</b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>In-time</b-th>
-              <b-td>{{ captureSummary.pairs_in_time }}</b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>Late</b-th>
-              <b-td>{{ captureSummary.pairs_late }}</b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>Capture rate</b-th>
-              <b-td>{{ captureSummary.capture_rate.toFixed(1) }}%</b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>Reply p50</b-th>
-              <b-td>{{ captureSummary.reply_p50_hours.toFixed(1) }}h</b-td>
-            </b-tr>
-            <b-tr>
-              <b-th>Reply p75</b-th>
-              <b-td>{{ captureSummary.reply_p75_hours.toFixed(1) }}h</b-td>
-            </b-tr>
-          </b-tbody>
-        </b-table-simple>
-      </div>
-      <p v-else class="text-muted small">No simulator data yet.</p>
-
-      <!-- §15 / §16.5 Held-reply friction -->
-      <h6 class="mt-3">Held external replies — status breakdown</h6>
-      <p class="text-muted small mb-1">
-        External (email / TrashNothing) replies held because the post had not
-        yet rippled to the replier's location. Avg hold duration shown for
-        released rows.
+        Email / TrashNothing replies held because the post hadn't yet rippled to
+        the replier's location.
+        <span class="fw-bold">Action:</span> a growing held count means replies
+        are waiting - consider widening reach or shortening the hold.
       </p>
       <b-table-simple hover responsive small>
         <b-thead>
@@ -346,32 +206,12 @@ const apiInstance = api(runtimeConfig)
 
 const loading = ref(true)
 const error = ref(null)
-const recent = ref([])
 // Date range driving the headline KPI queries (set by ModEmailDateFilter).
 const startDate = ref('')
 const endDate = ref('')
+// Action surfaces kept on the page: where to look, and reply friction.
 const hotspots = ref([])
-const proposedParams = ref([])
-// §16 rollout-health metrics
-const liveMetrics = ref([])
 const heldReplySummary = ref([])
-const crossGroupSummary = ref({
-  period_days: 30,
-  rippled_in: 0,
-  total: 0,
-  cross_group_pct: 0,
-  approval_rate: 0,
-})
-const captureSummary = ref({
-  week_start: '',
-  curve: '',
-  pairs_total: 0,
-  pairs_in_time: 0,
-  pairs_late: 0,
-  capture_rate: 0,
-  reply_p50_hours: 0,
-  reply_p75_hours: 0,
-})
 // Headline reply KPIs (per-day series for the line charts)
 const replyRate = ref([])
 const replySource = ref([])
@@ -442,17 +282,8 @@ async function fetchMetrics() {
       startDate.value,
       endDate.value
     )
-    recent.value = result?.recent || []
     hotspots.value = result?.hotspots || []
-    proposedParams.value = result?.proposed_params || []
-    liveMetrics.value = result?.live_metrics || []
     heldReplySummary.value = result?.held_reply_summary || []
-    if (result?.cross_group_summary) {
-      crossGroupSummary.value = result.cross_group_summary
-    }
-    if (result?.capture_summary) {
-      captureSummary.value = result.capture_summary
-    }
     replyRate.value = result?.reply_rate_36h || []
     replySource.value = result?.reply_source_split || []
     replyDistance.value = result?.reply_distance_median || []

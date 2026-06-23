@@ -91,6 +91,17 @@ class AutoApproveService
                     ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
                     ->where('spam_mg.deleted', 0);
             })
+            // Never auto-approve a post that has already been collected. A rippled-in row can
+            // still be Pending when the poster marks the item Taken/Received - the take retires the
+            // pending rows it can see, but a take via a non-Go path (V1 mark()) leaves them. Approving
+            // it would re-list a gone item in a new group and fire a "newly reached" mail, so skip
+            // anything with a Taken/Received outcome.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_outcomes')
+                    ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
+                    ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
+            })
             ->where(function ($q) {
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {

@@ -487,6 +487,10 @@ class UnifiedDigestService
                  JOIN users u ON u.id = m.userid
                  LEFT JOIN locations l ON l.id = u.lastlocation
                  WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0
+                   AND NOT EXISTS (
+                         SELECT 1 FROM messages_outcomes mo
+                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received')
+                       )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
                    AND ST_Contains(mr.polygon, ST_SRID(POINT(
                          CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL

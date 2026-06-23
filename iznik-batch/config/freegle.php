@@ -307,6 +307,13 @@ return [
         'mode' => env('RIPPLE_MODE', 'drive'),
         // Maximum drive-time (minutes) the reach may grow to.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
+        // DISTINCT repliers (distinct users with an Interested chat reply on the post,
+        // chat_messages.refmsgid = msgid) stops expanding - it already has plenty of interest, so
+        // further reach is wasted. Applies both at init (an already-saturated post never starts
+        // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
+        // 5 = the figure from the Discourse rippling thread.
+        'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
