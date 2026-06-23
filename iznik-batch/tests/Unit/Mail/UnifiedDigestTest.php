@@ -301,6 +301,7 @@ class UnifiedDigestTest extends TestCase
             'jobsUrl' => 'https://example.com/jobs?t=1',
             'donateUrl' => 'https://example.com/donate?t=1',
             'browseUrl' => 'https://example.com/browse?t=1',
+            'myPostsUrl' => 'https://example.com/myposts?t=1',
             'settingsUrl' => 'https://example.com/settings?t=1',
             'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
             'userSite' => 'https://example.com',

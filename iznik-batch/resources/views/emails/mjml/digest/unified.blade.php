@@ -156,6 +156,8 @@
                 <mj-text align="center" font-size="13px" color="#888888" padding="0">
                     <a href="{{ $browseUrl }}" style="color: #555555; text-decoration: none;">Browse other posts</a>
                     &nbsp;&middot;&nbsp;
+                    <a href="{{ $myPostsUrl }}" style="color: #555555; text-decoration: none;">Manage your listings</a>
+                    &nbsp;&middot;&nbsp;
                     <a href="{{ $userSite }}/offer" style="color: #555555; text-decoration: none;">Post something</a>
                 </mj-text>
             </mj-column>
@@ -344,6 +346,9 @@
                 >
                     Browse All Posts
                 </mj-button>
+                <mj-text align="center" font-size="13px" color="#888888" padding="8px 0 0 0">
+                    <a href="{{ $myPostsUrl }}" style="color: #555555; text-decoration: none;">Manage your listings</a>
+                </mj-text>
             </mj-column>
         </mj-section>
 

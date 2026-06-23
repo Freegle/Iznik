@@ -867,6 +867,7 @@
         {{-- Secondary actions on the immediate hero (V1 single.html parity). --}}
         <p class="post-actions" style="margin-top: 12px;">
           <a href="{{ $browseUrl }}">Browse other posts</a>
+          <a href="{{ $myPostsUrl }}">Manage your listings</a>
           <a href="{{ $userSite }}/offer">Post something</a>
         </p>
         {{-- Per-post reply form lives INSIDE .post-content (the right
@@ -949,6 +950,7 @@
     {{-- Browse All Posts --}}
     <div class="browse-section">
       <a href="{{ $browseUrl }}" class="browse-button">Browse All Posts</a>
+      <p class="footer-links" style="margin-top: 8px;"><a href="{{ $myPostsUrl }}">Manage your listings</a></p>
     </div>
 
     {{-- Footer --}}

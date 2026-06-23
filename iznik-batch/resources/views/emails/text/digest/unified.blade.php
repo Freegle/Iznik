@@ -58,6 +58,7 @@ These were posted since your last email but have already gone. If you'd like to 
 @endif
 
 Browse all posts: {{ $browseUrl }}
+Manage your listings: {{ $myPostsUrl }}
 @if(isset($jobAds) && $jobAds->isNotEmpty())
 
 Jobs near you:

@@ -172,6 +172,7 @@ class UnifiedDigestSummaryTest extends TestCase
             'jobsUrl' => 'https://example.com/jobs',
             'donateUrl' => 'https://example.com/donate',
             'browseUrl' => 'https://example.com/browse',
+            'myPostsUrl' => 'https://example.com/myposts',
             'settingsUrl' => 'https://example.com/settings',
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
             'userSite' => 'https://example.com',
