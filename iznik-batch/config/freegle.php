@@ -281,13 +281,17 @@ return [
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
         'enabled' => (bool) env('RIPPLE_ENABLED', false),
-        // Go-live arrival cutoff (server local time). Only posts that arrived on or
-        // after this instant ever START rippling; older pending posts are left alone.
-        // This is the flood guard: when RIPPLE_ENABLED first flips on, every historical
-        // pending post would otherwise become eligible at once and fan out a wall of
-        // mail. With the cutoff, only recent posts ripple, so go-live is a trickle.
+        // Arrival cutoff (server local time). Only posts that arrived on or after this
+        // instant ever START rippling; older pending posts are left alone. This is the
+        // flood guard: when rippling first turns on, every historical pending post would
+        // otherwise become eligible at once and fan out a wall of mail. With the cutoff,
+        // only recent posts ripple, so turn-on is a trickle. It applies to the scoped
+        // group experiment too (an area run still ripples only post-cutoff posts inside
+        // the polygon), so for a clean before/after boundary set RIPPLE_ENABLED_AT in
+        // .env.background to the day you switch the experiment on, alongside
+        // RIPPLE_WITHIN_GROUPS - otherwise the first run back-fills the gap to this date.
         // Empty string disables the cutoff (ripple everything, e.g. in tests).
-        'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-21'),
+        'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-23'),
         // Group experiment scope: comma-separated group ids that ripple even while the global
         // RIPPLE_ENABLED switch is OFF. When non-empty, the scheduled ripple:expand cron runs SCOPED
         // to these groups' polygons, so ONLY these groups' posts ripple (origin-in-polygon) and
