@@ -48,6 +48,9 @@ class BirthdayService
                 ->join('memberships', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', 'Approved')
+                // Exclude Rippling Out auto-joins: a birthday appeal must never appear to come
+                // "from" a community the member never knowingly joined.
+                ->where('memberships.rippled', 0)
                 ->whereNull('users.deleted')
                 ->where('users.marketingconsent', 1)
                 ->select('users.id', 'users.settings')

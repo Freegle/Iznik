@@ -707,6 +707,271 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    public function test_poster_is_added_as_member_of_rippled_into_group_immediate_downgraded_to_daily(): void
+    {
+        // When a post ripples into a new group the poster becomes a member of it (Member /
+        // Approved, rippled=1). Email settings follow the home group EXCEPT immediate (-1) is
+        // downgraded to daily (24) so an unrequested membership never floods the inbox; events
+        // and volunteering are copied verbatim.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        // Home-group membership on IMMEDIATE with events/volunteering off, to prove the downgrade
+        // (-1 -> 24) and the verbatim copy of events/volunteering.
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'collection' => 'Approved', 'emailfrequency' => -1, 'eventsallowed' => 0,
+            'volunteeringallowed' => 0, 'added' => now(),
+        ]);
+
+        // Group B: area intersects the fake reach.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        // Post rippled into B...
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post rippled into group B'
+        );
+
+        // ...and the poster is now a Member/Approved of B, marked rippled, with immediate downgraded
+        // to daily and events/volunteering copied from home.
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as a member of the rippled-into group');
+        $this->assertSame('Member', $m->role);
+        $this->assertSame('Approved', $m->collection);
+        $this->assertSame(24, (int) $m->emailfrequency, 'immediate (-1) downgraded to daily (24)');
+        $this->assertSame(0, (int) $m->eventsallowed, 'eventsallowed copied from home group');
+        $this->assertSame(0, (int) $m->volunteeringallowed, 'volunteeringallowed copied from home group');
+        $this->assertSame(1, (int) $m->rippled, 'rippled membership marked rippled=1');
+        $this->assertGreaterThanOrEqual(1, $stats['memberships_added']);
+
+        // memberships_history row written (abuse detection) with rippled=1 (welcome suppression).
+        $hist = DB::table('memberships_history')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($hist, 'memberships_history row recorded for the new membership');
+        $this->assertSame(1, (int) $hist->rippled, 'history row marked rippled=1 to suppress the per-group welcome');
+        $this->assertSame(1, (int) $hist->processingrequired, 'history row still requires processing for abuse detection');
+
+        // The intro email is claimed exactly once for the post.
+        $this->assertSame(
+            1,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'),
+            'bundled intro email claimed once for the post'
+        );
+
+        // A Group/Joined log is written with the rippling-specific reason, so the join is
+        // audited and distinguishable from a button click ('Manual') or other auto-join ('Auto').
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Group',
+            'subtype' => 'Joined',
+            'user' => $posterId,
+            'groupid' => $groupB->id,
+            'text' => 'Rippled',
+        ]);
+    }
+
+    public function test_rippling_does_not_overwrite_an_existing_banned_membership(): void
+    {
+        // A poster already Banned on a group the post ripples into must stay Banned — we
+        // never silently convert a ban into a normal membership.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Banned', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertSame('Banned', $m->collection, 'existing banned membership left untouched');
+    }
+
+    /** A no-email home setting (0) is preserved on the rippled membership - never forced to daily. */
+    public function test_no_email_home_setting_is_preserved_on_rippled_membership(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        // Home membership on NO email (emailfrequency 0).
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'collection' => 'Approved', 'emailfrequency' => 0, 'eventsallowed' => 1,
+            'volunteeringallowed' => 1, 'added' => now(),
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as member of rippled-into group');
+        $this->assertSame(0, (int) $m->emailfrequency, 'no-email (0) home setting preserved, not forced to daily');
+    }
+
+    /**
+     * A poster who has actively LEFT a group (Group/Left log) is never re-joined AND their post is
+     * never (re-)rippled into that group - rippling must not override an explicit departure.
+     */
+    public function test_left_group_is_not_rejoined_and_post_not_rippled_in(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // The poster previously left group B (any reason writes Group/Left).
+        DB::table('logs')->insert([
+            'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB->id,
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'poster who left B is not re-joined by rippling'
+        );
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post is not rippled into a group the poster has left'
+        );
+    }
+
+    /** Leaving a group the post rippled into pulls the post from that group (soft-delete + log). */
+    public function test_leaving_a_rippled_group_pulls_the_post(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // First run: post ripples into B, poster auto-joined.
+        $this->service()->process(false, 500);
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($row, 'post rippled into B');
+        $this->assertSame(0, (int) $row->deleted, 'rippled-in row live before leave');
+
+        // Poster leaves B (Go leave path: delete membership + Group/Left log).
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->delete();
+        DB::table('logs')->insert([
+            'timestamp' => now(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB->id,
+        ]);
+
+        // Second run: reconciliation pulls the post from B.
+        $stats = $this->service()->process(false, 500);
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame(1, (int) $row->deleted, 'post soft-deleted from the group the poster left');
+        $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
+            'groupid' => $groupB->id, 'msgid' => $msgid, 'text' => 'Rippling: removed on leave',
+        ]);
+    }
+
+    /** The bundled intro email is claimed exactly once per post, even as more groups are added. */
+    public function test_intro_email_claimed_once_per_post_across_groups(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'));
+
+        // A second group appears on a later tick; make the post due for a HIGHER tick (advanceDue
+        // only ripples when the target tick exceeds the current one). Back-date arrival to ~4h so
+        // tickForElapsedHours advances it past tick 1. The poster joins C but the intro must NOT
+        // be re-claimed.
+        $groupC = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.17 51.53,-0.13 51.53,-0.13 51.57,-0.17 51.57,-0.17 51.53))', 3857, $groupC->id]
+        );
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+            'status' => 'expanding',
+        ]);
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupC->id)->first(),
+            'poster joined the second rippled-into group'
+        );
+        $this->assertSame(
+            1,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'),
+            'intro stays claimed once - not re-sent when more groups are added'
+        );
+    }
+
+    /** The bundled intro email carries each rippled-into community's own welcome text. */
+    public function test_intro_email_includes_rippled_group_welcome_text(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        // The poster needs a usable address for the intro to be sent.
+        $this->createTestUserEmail(\App\Models\User::find($posterId));
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, onhere = 1, welcomemail = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['Welcome to our lovely community! Please be kind.',
+             'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\Ripple\RippleIntroMail::class, function ($mail) use ($posterId) {
+            return $mail->user->id === $posterId
+                && collect($mail->welcomeGroups)->contains(
+                    fn ($g) => str_contains($g['welcome'] ?? '', 'lovely community')
+                );
+        });
+    }
+
     /** Seed $count DISTINCT users each leaving an Interested chat reply on the post. */
     private function seedInterestedRepliers(int $msgid, int $count): void
     {
