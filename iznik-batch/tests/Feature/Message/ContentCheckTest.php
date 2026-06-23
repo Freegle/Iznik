@@ -17,10 +17,10 @@ class ContentCheckTest extends TestCase
     {
         parent::setUp();
         $this->service = new ContentCheckService();
-        // Mark any unprocessed pending messages so processUnprocessed() only
-        // sees rows inserted within this test's transaction.
+        // Mark any unprocessed messages so processUnprocessed() only sees rows
+        // inserted within this test. Covers both Pending candidates and the
+        // recently-arrived Approved candidates the service now also checks.
         DB::table('messages_groups')
-            ->where('collection', 'Pending')
             ->whereNull('contentcheck_checked_at')
             ->update(['contentcheck_checked_at' => now()]);
     }
@@ -2797,5 +2797,171 @@ class ContentCheckTest extends TestCase
         $result  = $service->checkConcernKeywords('OFFER: warning — I was asked for a bank transfer, report this scam', '', $group->id);
 
         $this->assertNull($result, 'Embedding service said innocent — should not flag scam warning');
+    }
+
+    // -------------------------------------------------------------------------
+    // Held messages must be left alone (Discourse 9816 / mod-veto), and new
+    // approved-on-arrival posts must be content-checked too.
+    // -------------------------------------------------------------------------
+
+    public function test_held_pending_message_is_not_promoted(): void
+    {
+        // A mod has pulled a post back to Pending and is holding it for review
+        // (heldby set). The content-check job must not fight the mod by promoting
+        // it straight back to Approved.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        $modId = $this->createTestUser()->id;
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+            'heldby'     => $modId,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals('Pending', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
+            'A held message must not be auto-promoted');
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'A held message must not be processed at all');
+    }
+
+    public function test_new_approved_message_is_content_checked(): void
+    {
+        // Unmoderated members post straight to Approved, bypassing the Pending
+        // queue. Those new posts must still be content-checked (just recorded
+        // when clean — never demoted).
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
+            'A clean approved post must stay Approved (never auto-demoted)');
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'A new approved post must be content-checked');
+    }
+
+    public function test_new_approved_message_with_reason_notifies_mods_and_stays_live(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: stuff (SW1A)',
+            'textbody' => 'Some stuff.',
+            'message'  => 'Some stuff.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        // Vague item name -> a content-check reason.
+        DB::table('items')->insertOrIgnore(['name' => 'stuff']);
+        $itemId = DB::table('items')->where('name', 'stuff')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
+            'A flagged approved post stays live (mods are notified, not auto-removed)');
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_reasons'),
+            'Reasons must be stored for a flagged approved post');
+        $this->assertTrue(
+            DB::table('background_tasks')
+                ->where('task_type', \App\Models\BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS)
+                ->whereRaw("JSON_EXTRACT(data, '$.group_id') = ?", [$group->id])
+                ->exists(),
+            'Mods must be notified about a flagged approved post'
+        );
+    }
+
+    public function test_old_approved_message_is_not_content_checked(): void
+    {
+        // Bound: only NEW approved posts are checked. An older approved post
+        // (outside the recent-arrival window) must never be rescanned, so the
+        // historical backlog is untouched.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now()->subHours(72),
+            'date'     => now()->subHours(72),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now()->subHours(72),
+            'deleted'    => 0,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'An old approved post (outside the recent-arrival window) must not be rescanned');
     }
 }

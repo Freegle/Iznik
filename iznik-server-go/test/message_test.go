@@ -2,8 +2,8 @@ package test
 
 import (
 	"bytes"
-	json2 "encoding/json"
 	"encoding/json"
+	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -1306,6 +1306,52 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	assert.Equal(t, "Rejected", collection, "Reject with stdmsg should move to Rejected collection")
 
 	// Log creation is now handled by the batch processor (not synchronously in the Go API).
+}
+
+// A reject that lands on a message which is no longer Pending (e.g. it was
+// re-approved/promoted to live before the mod's click arrived) must NOT silently
+// queue a rejection email/log nor claim success - otherwise the mod and the poster
+// both get told it was rejected while the post stays live (Discourse 9815).
+func TestPostMessageRejectNonPendingDoesNotEmailOrLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_nonpending")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	// The message is live (Approved) by the time the reject lands.
+	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupID,
+		"subject": "Sorry",
+		"body":    "Not suitable for this group.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// No rejection email/log task must be queued — nothing was actually rejected.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_rejected' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "Must not queue a rejection email when the message was not Pending")
+
+	// Collection must be unchanged (still live), not falsely Rejected.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "A non-pending message must not be silently rejected")
 }
 
 func TestPostMessageRejectNoSubjectDeletes(t *testing.T) {
