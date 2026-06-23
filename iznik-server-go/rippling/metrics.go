@@ -3,6 +3,8 @@
 package rippling
 
 import (
+	"time"
+
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
 )
@@ -244,17 +246,30 @@ func Metrics(c *fiber.Ctx) error {
 	// rippled_in=0 messages_groups row), so results read per place - dense Croydon won't look
 	// like rural Ribble Valley. 0 = all groups. Each scoped query takes one gid arg.
 	gid := c.QueryInt("groupid", 0)
-	gargs := func() []interface{} {
-		if gid > 0 {
-			return []interface{}{gid}
-		}
-		return nil
+	// Optional ?start= & ?end= date range bounds every KPI below; default to the last 30 days.
+	// This is what lets you read a treatment group's before vs after rippling went on.
+	start := c.Query("start")
+	end := c.Query("end")
+	if start == "" {
+		start = time.Now().AddDate(0, 0, -30).Format("2006-01-02 15:04:05")
+	}
+	if end == "" {
+		end = time.Now().Format("2006-01-02 15:04:05")
 	}
 	rateGroup, srcGroup, distGroup := "", "", ""
 	if gid > 0 {
 		rateGroup = " AND mg.groupid = ? AND mg.rippled_in = 0"
 		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
 		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+	}
+	// Per-query args: the group filter (when set) sits in a JOIN before the date-bounded WHERE,
+	// so gid comes first, then start, end.
+	gargs := func() []interface{} {
+		a := []interface{}{}
+		if gid > 0 {
+			a = append(a, gid)
+		}
+		return append(a, start, end)
 	}
 
 	// (1) % of Offers with a reply within 36h, per arrival day. Only days whose full 36h window
@@ -268,10 +283,10 @@ func Metrics(c *fiber.Ctx) error {
 		JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
 		LEFT JOIN (
 		    SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
-		    WHERE type = 'Interested' AND date >= CURDATE() - INTERVAL 33 DAY GROUP BY refmsgid
+		    WHERE type = 'Interested' AND date >= CURDATE() - INTERVAL 200 DAY GROUP BY refmsgid
 		) fr ON fr.refmsgid = m.id
 		WHERE m.type = 'Offer'
-		  AND m.arrival >= CURDATE() - INTERVAL 30 DAY
+		  AND m.arrival >= ? AND m.arrival < ?
 		  AND m.arrival <  NOW() - INTERVAL 36 HOUR
 		GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
 		ORDER BY day DESC`, gargs()...).Scan(&replyRates)
@@ -289,7 +304,7 @@ func Metrics(c *fiber.Ctx) error {
 		       COUNT(*) AS replies,
 		       COALESCE(SUM(rra.was_home_member), 0) AS home
 		FROM rippling_reply_attribution rra`+srcGroup+`
-		WHERE rra.replied_at >= CURDATE() - INTERVAL 30 DAY
+		WHERE rra.replied_at >= ? AND rra.replied_at < ?
 		GROUP BY DATE_FORMAT(rra.replied_at, '%Y-%m-%d')
 		ORDER BY day DESC`, gargs()...).Scan(&replySources)
 	for i := range replySources {
@@ -316,7 +331,7 @@ func Metrics(c *fiber.Ctx) error {
 		    JOIN locations ml ON ml.id = m.locationid
 		    JOIN users u      ON u.id = cm.userid
 		    JOIN locations ul ON ul.id = u.lastlocation
-		    WHERE cm.type = 'Interested' AND cm.date >= CURDATE() - INTERVAL 30 DAY
+		    WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?
 		      AND ml.lat IS NOT NULL AND ul.lat IS NOT NULL
 		  ) d
 		) r
@@ -337,7 +352,7 @@ func Metrics(c *fiber.Ctx) error {
 		LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes WHERE outcome IN ('Taken','Received')) o
 		       ON o.msgid = m.id
 		WHERE m.type IN ('Offer','Wanted')
-		  AND m.arrival >= CURDATE() - INTERVAL 30 DAY
+		  AND m.arrival >= ? AND m.arrival < ?
 		  AND m.arrival <  NOW() - INTERVAL 7 DAY
 		GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
 		ORDER BY day DESC`, gargs()...).Scan(&takenRates)
@@ -371,5 +386,7 @@ func Metrics(c *fiber.Ctx) error {
 		"taken_rate":            takenRates,
 		"groups":                groupOpts,
 		"groupid":               gid,
+		"start":                 start,
+		"end":                   end,
 	})
 }
