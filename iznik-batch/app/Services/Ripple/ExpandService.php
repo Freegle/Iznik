@@ -46,6 +46,7 @@ class ExpandService
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
+            'memberships_added' => 0, 'pulled_on_leave' => 0,
         ];
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
@@ -65,6 +66,9 @@ class ExpandService
         if (!$scoped) {
             // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
             $stats['removed'] = $this->removeStale($dryRun);
+            // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
+            //     leave removes the poster's post from that group (not just their membership).
+            $this->pullRippledPostsFromLeftGroups($dryRun, $stats);
         }
 
         // 2. Initialise reach for posts new to messages_spatial.
@@ -382,6 +386,11 @@ class ExpandService
                    AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM logs l
+                       WHERE l.user = m.fromuser AND l.groupid = g.id
+                         AND l.type = 'Group' AND l.subtype = 'Left'
                    )",
                 [$msgid, $msgid, $reachWkt, $msgid]
             );
@@ -398,9 +407,232 @@ class ExpandService
                     // best-effort; never affect the expander
                 }
             }
+
+            // The poster becomes a member of every group their post has rippled into, exactly
+            // as if they had posted there directly. Backfills any rippled-in group they're not
+            // yet on (idempotent), so it also catches posts rippled before this existed.
+            $this->addPosterMembershipToRippledGroups($msgid, $stats);
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: ripple-into-groups failed for msg {$msgid}: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Add the poster as a member of every group their post has rippled into (role Member,
+     * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
+     * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
+     * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
+     * preserved). Existing memberships - including a Banned row - are left untouched (INSERT IGNORE
+     * + NOT EXISTS), and a group the poster has actively LEFT is never re-joined (Group/Left guard).
+     * Writes a memberships_history row (rippled=1) so abuse detection still runs while the per-group
+     * welcome is suppressed, and sends one bundled intro email per post. Best-effort: never breaks
+     * the expander.
+     */
+    private function addPosterMembershipToRippledGroups(int $msgid, array &$stats): void
+    {
+        try {
+            $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
+            $posterId = $msg->fromuser ?? null;
+            if (!$posterId) {
+                return;
+            }
+
+            // Email settings = the poster's settings on their home group: the earliest-arrival
+            // group on this message where they're already a member. Fall back to the same
+            // defaults addMembership uses if (unexpectedly) no such membership exists.
+            $home = DB::selectOne(
+                'SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed
+                 FROM messages_groups mg
+                 JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?
+                 WHERE mg.msgid = ?
+                 ORDER BY mg.arrival ASC
+                 LIMIT 1',
+                [$posterId, $msgid]
+            );
+            // Email frequency: preserve the poster's home-group setting, but DOWNGRADE ONLY
+            // immediate (-1) to daily (24). A rippled-into group is a lower-priority, unrequested
+            // membership, so we never start a flood of immediate emails from it - but we also never
+            // silently start emailing a no-email (0) member, nor change a daily (24) member. Events
+            // and volunteering are copied verbatim: they are one-email-per-user roundups with their
+            // own cadence guard, so leaving them at the home setting adds no extra emails.
+            $homeFreq = $home->emailfrequency ?? 24;
+            $emailfrequency = ((int) $homeFreq === -1) ? 24 : $homeFreq;
+            $eventsallowed = $home->eventsallowed ?? 1;
+            $volunteeringallowed = $home->volunteeringallowed ?? 1;
+
+            // Groups this post has rippled into where the poster has no membership row yet AND
+            // which the poster has not actively LEFT. A Group/Left log (self-leave, mod-remove,
+            // unban, partner-remove) is a durable "do not put me back here" signal: rippling must
+            // never re-join a group the poster chose to leave. (The post itself is also pulled from
+            // such groups by pullRippledPostsFromLeftGroups; here we only gate the membership.)
+            $targets = DB::select(
+                "SELECT mg.groupid
+                 FROM messages_groups mg
+                 WHERE mg.msgid = ? AND mg.rippled_in = 1
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM logs l
+                       WHERE l.user = ? AND l.groupid = mg.groupid
+                         AND l.type = 'Group' AND l.subtype = 'Left'
+                   )",
+                [$msgid, $posterId, $posterId]
+            );
+
+            $addedThisCall = 0;
+            foreach ($targets as $t) {
+                $added = DB::affectingStatement(
+                    "INSERT IGNORE INTO memberships
+                        (userid, groupid, role, collection, emailfrequency, eventsallowed, volunteeringallowed, rippled, added)
+                     VALUES (?, ?, 'Member', 'Approved', ?, ?, ?, 1, NOW())",
+                    [$posterId, $t->groupid, $emailfrequency, $eventsallowed, $volunteeringallowed]
+                );
+                if ($added > 0) {
+                    $addedThisCall++;
+                    $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
+                    // memberships_history with rippled=1: abuse detection still runs (processingrequired=1),
+                    // but MembershipsProcessingService reads rippled to SUPPRESS the per-group welcome -
+                    // a single bundled intro email (RippleIntroMail) is sent below instead.
+                    DB::statement(
+                        "INSERT INTO memberships_history (userid, groupid, collection, processingrequired, rippled)
+                         VALUES (?, ?, 'Approved', 1, 1)",
+                        [$posterId, $t->groupid]
+                    );
+                    // Log the join with a rippling-specific reason. V1 addMembership logs a
+                    // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use
+                    // 'Rippled' so the modlog - and MembershipsProcessingService, which reads
+                    // Group/Joined logs - can tell a rippled-in auto-join apart from those (and the
+                    // 'seen on many groups' spam check excludes text='Rippled').
+                    // byuser is NULL: the system joined them off their post rippling in, no actor.
+                    DB::table('logs')->insert([
+                        'timestamp' => now(),
+                        'type' => 'Group',
+                        'subtype' => 'Joined',
+                        'user' => $posterId,
+                        'byuser' => null,
+                        'groupid' => $t->groupid,
+                        'text' => 'Rippled',
+                    ]);
+                }
+            }
+
+            // One bundled intro email per post, the first time the poster is actually auto-joined
+            // anywhere off this post. Explains what happened, the email defaults we applied, and how
+            // to change them. Replaces the per-group welcome storm (suppressed above).
+            if ($addedThisCall > 0) {
+                $this->maybeSendRippleIntro($posterId, $msgid);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("ripple: add-poster-membership failed for msg {$msgid}: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Send the bundled "your post is reaching nearby communities" intro email at most once per
+     * post. Claims the send atomically via rippling_reach.ripple_intro_sent (0 -> 1) so it fires
+     * exactly once no matter how many ticks/groups the post ripples into. Best-effort: a spool
+     * failure never breaks the expander (the spooler has its own durable retry).
+     */
+    private function maybeSendRippleIntro(int $posterId, int $msgid): void
+    {
+        // Atomic claim: only the run that flips 0 -> 1 gets to send. No row (e.g. backfill path)
+        // => nothing to claim here => no send (the backfill command sends those).
+        $claimed = DB::affectingStatement(
+            'UPDATE rippling_reach SET ripple_intro_sent = 1 WHERE msgid = ? AND ripple_intro_sent = 0',
+            [$msgid]
+        );
+        if ($claimed < 1) {
+            return;
+        }
+
+        try {
+            $user = \App\Models\User::find($posterId);
+            if (!$user || !$user->email_preferred) {
+                return;
+            }
+            $message = \App\Models\Message::find($msgid);
+
+            // Each rippled-into community's own welcome text (groups.welcomemail), so the one
+            // bundled intro carries what each community wanted to say - instead of a separate
+            // per-group welcome email (which MembershipsProcessingService suppresses for rippled
+            // joins). Limited to the rippled groups the poster is now a member of that have a
+            // welcome configured and are live here.
+            $welcomeGroups = array_map(
+                static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome],
+                DB::select(
+                    "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome
+                     FROM messages_groups mg
+                     JOIN `groups` g ON g.id = mg.groupid
+                     JOIN memberships m ON m.groupid = g.id AND m.userid = ?
+                     WHERE mg.msgid = ? AND mg.rippled_in = 1 AND m.rippled = 1
+                       AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> ''
+                     ORDER BY mg.arrival ASC",
+                    [$posterId, $msgid]
+                )
+            );
+
+            app(\App\Services\EmailSpoolerService::class)
+                ->spool(new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups));
+        } catch (\Throwable $e) {
+            Log::warning("ripple: intro email failed for msg {$msgid}: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Leaving a group the post rippled into also pulls the POST from that group (the product
+     * decision: a leave means "I want nothing to do with this group", not just "stop my
+     * membership"). Soft-deletes (deleted=1) every rippled-in messages_groups row whose post's
+     * author has a Group/Left log for that group, and audits each removal with a Message/Deleted
+     * log. Idempotent (only touches deleted=0 rows); the membership re-join and any future
+     * re-ripple are separately blocked by the Group/Left guard. Best-effort: never breaks the run.
+     */
+    private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats): void
+    {
+        try {
+            $rows = DB::select(
+                "SELECT mg.msgid, mg.groupid, m.fromuser
+                 FROM messages_groups mg
+                 JOIN messages m ON m.id = mg.msgid
+                 JOIN logs l ON l.user = m.fromuser AND l.groupid = mg.groupid
+                              AND l.type = 'Group' AND l.subtype = 'Left'
+                 WHERE mg.rippled_in = 1 AND mg.deleted = 0
+                 GROUP BY mg.msgid, mg.groupid, m.fromuser"
+            );
+
+            if (empty($rows)) {
+                return;
+            }
+
+            if ($dryRun) {
+                $stats['pulled_on_leave'] += count($rows);
+                return;
+            }
+
+            foreach ($rows as $r) {
+                $n = DB::affectingStatement(
+                    'UPDATE messages_groups SET deleted = 1
+                     WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
+                    [$r->msgid, $r->groupid]
+                );
+                if ($n > 0) {
+                    DB::table('logs')->insert([
+                        'timestamp' => now(),
+                        'type' => 'Message',
+                        'subtype' => 'Deleted',
+                        'user' => $r->fromuser,
+                        'byuser' => null,
+                        'groupid' => $r->groupid,
+                        'msgid' => $r->msgid,
+                        'text' => 'Rippling: removed on leave',
+                    ]);
+                    $stats['pulled_on_leave']++;
+                }
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: pull-on-leave failed: {$e->getMessage()}");
         }
     }
 

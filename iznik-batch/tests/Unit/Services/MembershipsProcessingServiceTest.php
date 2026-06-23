@@ -132,6 +132,32 @@ class MembershipsProcessingServiceTest extends TestCase
         Mail::assertNotSent(GroupWelcomeMail::class);
     }
 
+    public function test_does_not_send_per_group_welcome_for_a_rippled_join(): void
+    {
+        // Rippling Out auto-joins (memberships_history.rippled = 1) get NO per-group welcome -
+        // a single bundled intro email is sent by the ripple expander instead.
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+        $group = $this->createTestGroup(['welcomemail' => 'Welcome to our group! Please be nice.']);
+        DB::table('groups')->where('id', $group->id)->update(['onhere' => 1]);
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+            'rippled' => 1,
+        ]);
+
+        $this->service->processAll();
+
+        Mail::assertNotSent(GroupWelcomeMail::class);
+
+        // The entry is still processed (abuse detection runs), only the welcome is suppressed.
+        $entry = DB::table('memberships_history')->where('userid', $user->id)->where('groupid', $group->id)->first();
+        $this->assertEquals(0, (int) $entry->processingrequired, 'rippled entry still marked processed');
+    }
+
     // --- Flagged mod comments ---
 
     public function test_flags_member_for_review_when_flagged_comment_exists(): void
@@ -258,6 +284,53 @@ class MembershipsProcessingServiceTest extends TestCase
             DB::table('logs')->where('user', $user->id)
                 ->where('type', 'User')->where('subtype', 'Suspect')->exists(),
             'a User/Suspect log should be written'
+        );
+    }
+
+    public function test_rippled_joins_do_not_count_toward_seen_on_many_groups(): void
+    {
+        // A single far-reaching post can ripple the poster into dozens of groups (Group/Joined
+        // text='Rippled'). Those must NOT count toward "seen on many groups", or the poster would
+        // be flagged for review everywhere off one popular post.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        // 40 rippling joins - well over the threshold IF they counted, but they must be excluded.
+        for ($i = 0; $i < 40; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $user->id,
+                'groupid' => 900000 + $i,
+                'text' => 'Rippled',
+                'timestamp' => now()->subDays(30),
+            ]);
+        }
+
+        // The just-added group is itself a rippled join.
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+            'rippled' => 1,
+        ]);
+
+        $this->service->processAll();
+
+        $membership = DB::table('memberships')
+            ->where('userid', $user->id)->where('groupid', $group->id)->first();
+        $this->assertNull($membership->reviewrequestedat ?? null, 'rippled joins must not trip the spam flag');
+        $this->assertFalse(
+            DB::table('logs')->where('user', $user->id)
+                ->where('type', 'User')->where('subtype', 'Suspect')->exists(),
+            'no User/Suspect log for a poster whose joins are all rippled'
         );
     }
 

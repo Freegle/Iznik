@@ -152,6 +152,43 @@ class UserDataExportServiceTest extends TestCase
         $this->assertContains($email->email, array_column($json['emails'], 'email'));
     }
 
+    public function test_rippled_post_appears_once_in_export_not_per_group(): void
+    {
+        // A post that rippled into other groups must appear ONCE in the SAR export (via its origin
+        // group), not once per group - otherwise the export looks like deliberate cross-posting.
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+        $originGroup = $this->createTestGroup();
+        $rippledGroup = $this->createTestGroup();
+
+        $message = \App\Models\Message::create([
+            'type' => \App\Models\Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: a single sofa',
+            'textbody' => 'A sofa.',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            ['msgid' => $message->id, 'groupid' => $originGroup->id, 'collection' => 'Approved', 'arrival' => now(), 'rippled_in' => 0],
+            ['msgid' => $message->id, 'groupid' => $rippledGroup->id, 'collection' => 'Approved', 'arrival' => now(), 'rippled_in' => 1],
+        ]);
+
+        $exportId = DB::table('users_exports')->insertGetId([
+            'userid' => $user->id, 'tag' => 'test-tag', 'requested' => now(),
+        ]);
+
+        $this->service->processAll();
+
+        $export = DB::table('users_exports')->where('id', $exportId)->first();
+        $json = json_decode(gzinflate($export->data), true);
+
+        $rows = array_values(array_filter($json['messages'] ?? [], fn ($m) => (int) $m['id'] === (int) $message->id));
+        $this->assertCount(1, $rows, 'the rippled post appears exactly once');
+        $this->assertEquals($originGroup->id, (int) $rows[0]['groupid'], 'and via its origin group, not the rippled copy');
+    }
+
     public function test_export_contains_memberships(): void
     {
         $user = $this->createTestUser();

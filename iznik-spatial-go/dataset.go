@@ -63,6 +63,29 @@ type Dataset interface {
 	DeltaInterval() time.Duration
 }
 
+// DriftChecker is an optional interface for delta datasets whose source table
+// can change in ways the incremental delta cannot self-heal.
+//
+// The WhatJobs sync RENAME-swaps the `jobs` table, hard-DELETEing postings that
+// have closed/left the feed. The add/update-only delta (ApplyDelta keys on
+// `seenat > since`) never sees those vanished ids, so their index entries linger
+// as orphans until the next full (nightly) rebuild — leaving the server to serve
+// stale/closed jobs. In sparse areas every nearest result can be an orphan, so
+// users see no jobs at all.
+//
+// A dataset implementing this reports, on the delta cadence, when a full rebuild
+// is warranted so the orphans are cleared promptly rather than waiting up to 24h.
+type DriftChecker interface {
+	// CheckDrift inspects the source DB and the live index and returns whether a
+	// full rebuild is warranted, plus a short human-readable reason for logs.
+	CheckDrift(mysqlDB *sql.DB, idx *Index) (need bool, reason string, err error)
+
+	// NoteReconciled records that the index is now in sync with the source —
+	// called after a successful (re)build — so the next CheckDrift compares
+	// against this fresh baseline rather than re-triggering on the same change.
+	NoteReconciled(mysqlDB *sql.DB) error
+}
+
 // Item is the generic unit stored in the spatial index.
 // For polygon datasets: MinLng != MaxLng (actual envelope), WKB non-nil.
 // For point datasets: MinLng == MaxLng, MinLat == MaxLat (degenerate bbox), WKB nil.
