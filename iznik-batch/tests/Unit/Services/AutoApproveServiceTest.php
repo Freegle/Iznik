@@ -115,6 +115,47 @@ class AutoApproveServiceTest extends TestCase
         );
     }
 
+    /**
+     * The newly-reached reach mail must never go out for a post that has already been collected -
+     * notifying people about a gone item. mailNewlyReachedForPost guards on the outcome directly.
+     */
+    public function test_mail_newly_reached_skips_taken_post(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['added' => now()->subHours(72)]);
+        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
+        $member->save();
+
+        $message = $this->createTestMessage($poster, $group);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(1),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+        );
+        // The item has been collected before the newly-reached mail runs.
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => 'Taken', 'timestamp' => now(),
+        ]);
+
+        $sent = app(\App\Services\UnifiedDigestService::class)->mailNewlyReachedForPost((int) $message->id);
+
+        $this->assertEquals(0, $sent, 'a taken post is not mailed to newly-reached members');
+        $this->assertFalse(
+            DB::table('rippling_reach_notified')->where('msgid', $message->id)->exists(),
+            'no reach notification recorded for a taken post'
+        );
+    }
+
     public function test_does_not_auto_approve_message_marked_spam_on_another_group(): void
     {
         // A message that is Pending (and otherwise eligible) on one group but
@@ -476,6 +517,44 @@ class AutoApproveServiceTest extends TestCase
             'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
             'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
             'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    /**
+     * A rippled-in post that has already been collected (a Taken/Received outcome exists) is
+     * never auto-approved into the receiving group - approving it would re-list a gone item and
+     * fire a "newly reached" mail. The take normally retires the pending rows, but a take via a
+     * non-Go path leaves them, so this guard is the catch-all.
+     */
+    public function test_does_not_auto_approve_rippled_in_post_already_taken(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        // Rippled into the nearby group 2h ago (past the 1h veto window), still Pending.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        // The item has been collected.
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => 'Taken', 'timestamp' => now(),
         ]);
 
         $this->service->process();
