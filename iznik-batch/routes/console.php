@@ -838,6 +838,20 @@ Schedule::command('integrations:sync-whatjobs')
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
 
+// Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
+// schedule above starts at 09:00 UTC, so the morning digest would otherwise
+// ship jobs last synced ~21:00 the night before (9-10h stale -> closed
+// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
+// (and the post-swap KNN rebuild it triggers) completes before the digest.
+// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
+// command mutex with the run above via withoutOverlapping.
+Schedule::command('integrations:sync-whatjobs')
+    ->timezone(config('freegle.timezone'))
+    ->dailyAt('05:00')
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
+    ->runInBackground();
+
 // Sync Freegle offers with LoveJunk - runs every minute.
 // V1: cron/lovejunk.php
 Schedule::command('integrations:sync-lovejunk')

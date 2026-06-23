@@ -6,6 +6,7 @@ use App\Services\WhatJobsService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class SyncWhatJobsCommandTest extends TestCase
@@ -400,6 +401,10 @@ class SyncWhatJobsCommandTest extends TestCase
     {
         DB::statement('DROP TABLE IF EXISTS jobs_new');
 
+        // A real swap must trigger a KNN "jobs" index rebuild so the spatial
+        // index doesn't keep serving stale ids after the table swap.
+        Http::fake(['*/v1/jobs/rebuild' => Http::response(['status' => 'rebuilding'], 200)]);
+
         $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
         $xml  = $this->makeFeedXml([
             ['job_reference' => 'sync-e2e-1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
@@ -432,6 +437,9 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertEquals(1, $result['total']);
         $this->assertEquals(1, $result['inserted']);
         $this->assertEquals(1, DB::table('jobs_new')->where('job_reference', 'sync-e2e-1')->count());
+
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/v1/jobs/rebuild')
+            && $request->method() === 'POST');
 
         DB::statement('DROP TABLE IF EXISTS jobs_new');
     }

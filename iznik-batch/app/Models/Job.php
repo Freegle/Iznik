@@ -59,9 +59,14 @@ class Job extends Model
             ->whereIn('id', $ids)
             ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
             ->where('visible', 1)
-            // Rank by expected value (cpc * clickability), matching the public
-            // jobs page (Go job.GetJobs) so digest and web agree on ordering.
-            ->orderByRaw('cpc * clickability DESC, id ASC')
+            // Rank by expected value (cpc * clickability) discounted by a mild
+            // freshness factor, matching the public jobs page (Go job.GetJobs)
+            // so digest and web agree on ordering. Older WhatJobs postings are
+            // likelier already filled/closed (so a click redirects to a
+            // different job and doesn't convert), so decay the score with the
+            // posting age: factor 1.0 when fresh, floored at 0.5 by ~7 days.
+            // posted_at NULL -> treated as fresh (no penalty).
+            ->orderByRaw('cpc * clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), posted_at), 0) * 0.07) DESC, id ASC')
             ->get();
 
         // Randomize the candidate pool so consecutive immediate-mode digests
