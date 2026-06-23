@@ -2938,7 +2938,7 @@ func TestGetSessionRejectsOldAppVersion(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(123), result["ret"])
-	assert.Equal(t, "App is out of date", result["status"])
+	assert.Equal(t, "App is out of date - please upgrade or use the website", result["status"])
 }
 
 func TestGetSessionRecordsWebVersion(t *testing.T) {

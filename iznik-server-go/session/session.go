@@ -775,7 +775,26 @@ func GetSession(c *fiber.Ctx) error {
 	if appversion != "" && strings.HasPrefix(appversion, "2") {
 		return c.JSON(fiber.Map{
 			"ret":    123,
-			"status": "App is out of date",
+			"status": "App is out of date - please upgrade or use the website",
+		})
+	}
+
+	// Kill switch: reject any client whose build is older than the configured
+	// minimum. webversion (BUILD_DATE) is sent on every GET /session and needs no
+	// client cooperation, so failing the session makes an out-of-date client
+	// non-functional until it updates. ModTools and the Freegle app/web are gated
+	// separately (app_min_webversion_mt vs app_min_webversion) so each can be forced
+	// to update independently; the modtools flag is added to every request by the
+	// client. Fails open — blocks nobody unless an operator sets the relevant ISO
+	// date. Website bundles are always fresh and self-heal on reload, so a date-only
+	// gate doesn't meaningfully affect the website.
+	modtools := c.Query("modtools") == "true" || c.Query("modtools") == "1"
+	var minWebversion string
+	database.DBConn.Raw("SELECT value FROM config WHERE `key` = ?", minWebversionConfigKey(modtools)).Scan(&minWebversion)
+	if webversionOlderThan(c.Query("webversion"), minWebversion) {
+		return c.JSON(fiber.Map{
+			"ret":    123,
+			"status": "App is out of date - please upgrade or use the website",
 		})
 	}
 

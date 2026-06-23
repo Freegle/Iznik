@@ -37,7 +37,7 @@ class ExpandServiceTest extends TestCase
     }
 
     /** Seed an approved OFFER present in messages_spatial; returns the message id. */
-    private function seedSpatialPost(Carbon $arrival): int
+    private function seedSpatialPost(Carbon $arrival, float $lat = 51.5, float $lng = -0.1): int
     {
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -50,8 +50,8 @@ class ExpandServiceTest extends TestCase
             'source' => 'Platform',
             'date' => $arrival,
             'arrival' => $arrival,
-            'lat' => 51.5,
-            'lng' => -0.1,
+            'lat' => $lat,
+            'lng' => $lng,
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
@@ -61,8 +61,8 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::insert(
             "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, $arrival]
+             VALUES (?, ST_GeomFromText(?, 3857), ?, ?, ?)",
+            [$message->id, "POINT($lng $lat)", $group->id, Message::TYPE_OFFER, $arrival]
         );
 
         return (int) $message->id;
@@ -143,6 +143,105 @@ class ExpandServiceTest extends TestCase
             1,
             DB::table('rippling_reach')->where('msgid', $newMsgid)->count(),
             'a post that arrived after the cutoff ripples normally'
+        );
+    }
+
+    /**
+     * Controlled single-message test run: passing $onlyMsgid restricts the whole run to that one
+     * post, so exactly one reach row is written and every other eligible post is left untouched.
+     */
+    public function test_only_msgid_restricts_run_to_a_single_post(): void
+    {
+        $this->fakeRouting(3);
+        $targetMsgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $otherMsgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(false, 500, $targetMsgid);
+
+        $this->assertSame(1, $stats['initialized'], 'only the targeted post is initialised');
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $targetMsgid)->count(),
+            'the targeted post gets a reach row'
+        );
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $otherMsgid)->count(),
+            'a non-targeted eligible post is left untouched by a --msgid run'
+        );
+    }
+
+    /**
+     * The arrival cutoff is bypassed for a --msgid run, so a chosen post that predates go-live
+     * still ripples (otherwise the test would silently select nothing).
+     */
+    public function test_only_msgid_bypasses_the_arrival_cutoff(): void
+    {
+        $this->fakeRouting(3);
+        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
+        $oldMsgid = $this->seedSpatialPost(now()->subHours(2)); // pre-cutoff
+
+        $stats = $this->service()->process(false, 500, $oldMsgid);
+
+        $this->assertSame(1, $stats['initialized'], 'a targeted pre-cutoff post still ripples');
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $oldMsgid)->count(),
+            '--msgid overrides the go-live arrival cutoff'
+        );
+    }
+
+    /**
+     * Area test: passing a WKT polygon restricts the run to posts whose origin point falls
+     * inside it. A post in London ripples; an otherwise-identical post in Edinburgh does not.
+     */
+    public function test_within_poly_restricts_run_to_posts_inside_polygon(): void
+    {
+        $this->fakeRouting(3);
+        $london = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
+        $edinburgh = $this->seedSpatialPost(now()->subMinutes(30), 55.95, -3.19);
+
+        // Box around London only.
+        $poly = 'POLYGON((-0.5 51.3, 0.3 51.3, 0.3 51.8, -0.5 51.8, -0.5 51.3))';
+        $stats = $this->service()->process(false, 500, null, $poly);
+
+        $this->assertSame(1, $stats['initialized'], 'only the in-polygon post is initialised');
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $london)->count(),
+            'the post inside the polygon ripples'
+        );
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $edinburgh)->count(),
+            'the post outside the polygon is left untouched'
+        );
+    }
+
+    /**
+     * An area run still RESPECTS the arrival cutoff (the polygon filters where, not when): a
+     * pre-cutoff post inside the polygon is left alone, while a post-cutoff one inside ripples.
+     */
+    public function test_within_poly_respects_the_arrival_cutoff(): void
+    {
+        $this->fakeRouting(3);
+        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
+        $old = $this->seedSpatialPost(now()->subHours(2), 51.5, -0.1);   // pre-cutoff, in London
+        $new = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1); // post-cutoff, in London
+
+        $poly = 'POLYGON((-0.5 51.3, 0.3 51.3, 0.3 51.8, -0.5 51.8, -0.5 51.3))';
+        $stats = $this->service()->process(false, 500, null, $poly);
+
+        $this->assertSame(1, $stats['initialized'], 'only the post-cutoff post in the area ripples');
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $old)->count(),
+            'a pre-cutoff post is left alone even inside the area'
+        );
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $new)->count(),
+            'a post-cutoff post inside the area ripples'
         );
     }
 
