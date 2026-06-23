@@ -102,6 +102,29 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    /**
+     * The group experiment runs with global rippling OFF: a SCOPED run (--within-poly / --within-group)
+     * still initialises reach for the in-scope posts, so only those groups ripple while everyone else
+     * stays dark. The unscoped path (test above) remains inert.
+     */
+    public function test_scoped_run_proceeds_when_globally_disabled(): void
+    {
+        config(['freegle.ripple.enabled' => false]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // origin (51.5, -0.1)
+
+        // A polygon covering the post's origin (mirrors the experiment's group-union scope).
+        $poly = 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))';
+        $stats = $this->service()->process(false, 500, null, $poly);
+
+        $this->assertSame(1, $stats['initialized'], 'a scoped run initialises reach even while global rippling is off');
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'the in-scope post gets a rippling_reach row despite the global switch being off'
+        );
+    }
+
     public function test_initialises_reach_for_new_spatial_post(): void
     {
         $this->fakeRouting(3);

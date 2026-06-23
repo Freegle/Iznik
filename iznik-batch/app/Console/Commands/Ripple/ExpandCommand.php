@@ -23,7 +23,7 @@ class ExpandCommand extends Command
                             {--limit=500 : Max posts to initialise/advance this run}
                             {--msgid= : Restrict the whole run to a single message ID (controlled testing)}
                             {--within-poly= : Restrict the run to posts whose origin lies within this WKT polygon (area testing)}
-                            {--within-group= : Restrict the run to posts within this group ID\'s area (area testing; resolved to its polygon)}';
+                            {--within-group= : Restrict the run to posts within these group IDs\' area - comma-separated, resolved to the union of their polygons (group experiment / area testing)}';
 
     protected $description = 'Maintain rippling-out reach (rippling_reach) for active posts';
 
@@ -112,17 +112,43 @@ class ExpandCommand extends Command
         }
 
         if ($groupId !== null) {
-            // Resolve to the group's area polygon (the same polyindex the cross-post step tests).
-            $wkt = DB::table('groups')
-                ->where('id', (int) $groupId)
-                ->whereNotNull('polyindex')
-                ->value(DB::raw('ST_AsText(polyindex)'));
-            if (!$wkt) {
-                $this->error("Group {$groupId} has no usable polyindex polygon.");
+            // A comma-separated list of group ids (the experiment scope). Resolve to the UNION of
+            // their stored area polygons (the same polyindex the cross-post step tests) so one run
+            // ripples every experiment group's posts. The scheduled cron passes the env-backed list
+            // (freegle.ripple.within_groups); it can also be given by hand for area testing.
+            $groupIds = array_values(array_filter(
+                array_map('intval', explode(',', (string) $groupId)),
+                fn ($id) => $id > 0
+            ));
+            if (empty($groupIds)) {
+                $this->error('--within-group had no usable group ids.');
 
                 return false;
             }
-            $this->info("Resolved --within-group={$groupId} to its area polygon.");
+            $idList = implode(',', $groupIds);
+
+            // Keep only ids that actually have a polygon. MySQL ST_Union is BINARY (not an
+            // aggregate), so chain ST_Union over per-id subqueries - this avoids round-tripping
+            // each (large) polygon out to WKT and back through a giant query string.
+            $validIds = DB::table('groups')->whereIn('id', $groupIds)->whereNotNull('polyindex')
+                ->pluck('id')->map(fn ($v) => (int) $v)->all();
+            if (empty($validIds)) {
+                $this->error("None of the --within-group ids [{$idList}] have a usable polyindex polygon.");
+
+                return false;
+            }
+            $count = count($validIds);
+            $expr = '(SELECT polyindex FROM `groups` WHERE id = ' . array_pop($validIds) . ')';
+            foreach (array_reverse($validIds) as $id) {
+                $expr = 'ST_Union((SELECT polyindex FROM `groups` WHERE id = ' . $id . '), ' . $expr . ')';
+            }
+            $wkt = DB::selectOne('SELECT ST_AsText(' . $expr . ') AS u')?->u;
+            if (!$wkt) {
+                $this->error("ST_Union of --within-group polygons [{$idList}] returned NULL.");
+
+                return false;
+            }
+            $this->info("Resolved --within-group=[{$idList}] to the union of {$count} area polygon(s).");
 
             return $wkt;
         }
