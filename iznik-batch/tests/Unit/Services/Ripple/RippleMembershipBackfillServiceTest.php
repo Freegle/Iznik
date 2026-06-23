@@ -84,6 +84,38 @@ class RippleMembershipBackfillServiceTest extends TestCase
         );
     }
 
+    public function test_send_bundles_each_rippled_group_welcome_into_the_intro(): void
+    {
+        // A rippled member whose group has a welcome message configured here.
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)
+            ->update(['onhere' => 1, 'welcomemail' => 'Welcome to our community!']);
+        DB::table('memberships')->insert([
+            'userid' => $user->id, 'groupid' => $group->id, 'role' => 'Member',
+            'collection' => 'Approved', 'emailfrequency' => -1, 'rippled' => 0, 'added' => now(),
+        ]);
+        DB::table('logs')->insert([
+            'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => 'Joined',
+            'user' => $user->id, 'groupid' => $group->id, 'text' => 'Rippled',
+        ]);
+
+        // Capture the mailable handed to the spooler.
+        $captured = null;
+        $this->mock(\App\Services\EmailSpoolerService::class, function ($mock) use (&$captured) {
+            $mock->shouldReceive('spool')->once()->andReturnUsing(function ($mail) use (&$captured) {
+                $captured = $mail;
+            });
+        });
+
+        $this->service()->backfill($user->id, 0, send: true);
+
+        $this->assertInstanceOf(\App\Mail\Ripple\RippleIntroMail::class, $captured);
+        $this->assertCount(1, $captured->welcomeGroups, 'the rippled group welcome is bundled into the intro');
+        $this->assertSame('Welcome to our community!', $captured->welcomeGroups[0]['welcome']);
+    }
+
     public function test_user_filter_restricts_scope(): void
     {
         [$userId1] = $this->seedPreMitigationRippledMember();

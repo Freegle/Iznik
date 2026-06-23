@@ -119,7 +119,25 @@ class RippleMembershipBackfillService
         ]);
 
         try {
-            app(EmailSpoolerService::class)->spool(new RippleIntroMail($user));
+            // Bundle each rippled-into community's own welcome text into the one intro email, the
+            // same as the live ExpandService path - but per user, across every group they were
+            // rippled into (the backfill is not tied to a single post). Without this, backfilled
+            // posters got the intro with no "welcome from the communities your post reached"
+            // section. Only groups live here with a welcome configured are included.
+            $welcomeGroups = array_map(
+                static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome],
+                DB::select(
+                    "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome
+                     FROM memberships m
+                     JOIN `groups` g ON g.id = m.groupid
+                     WHERE m.userid = ? AND m.rippled = 1
+                       AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> ''
+                     ORDER BY m.groupid ASC",
+                    [$user->id]
+                )
+            );
+
+            app(EmailSpoolerService::class)->spool(new RippleIntroMail($user, null, $welcomeGroups));
         } catch (\Throwable $e) {
             Log::warning("ripple backfill: intro email failed for user {$user->id}: {$e->getMessage()}");
         }
