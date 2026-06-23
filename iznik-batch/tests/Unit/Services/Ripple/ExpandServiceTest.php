@@ -704,4 +704,89 @@ class ExpandServiceTest extends TestCase
             'post with empty tnpostid is inserted into the intersecting group'
         );
     }
+
+    public function test_poster_is_added_as_member_of_rippled_into_group_with_home_email_settings(): void
+    {
+        // When a post ripples into a new group the poster becomes a member of it, exactly as
+        // if they had posted there directly (Member / Approved), with email settings copied
+        // from their home (origin) group rather than the system default.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        // Home-group membership with NON-default email settings, to prove they're copied.
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'collection' => 'Approved', 'emailfrequency' => -1, 'eventsallowed' => 0,
+            'volunteeringallowed' => 0, 'added' => now(),
+        ]);
+
+        // Group B: area intersects the fake reach.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        // Post rippled into B...
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post rippled into group B'
+        );
+
+        // ...and the poster is now a Member/Approved of B with the home group's email settings.
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($m, 'poster added as a member of the rippled-into group');
+        $this->assertSame('Member', $m->role);
+        $this->assertSame('Approved', $m->collection);
+        $this->assertSame(-1, (int) $m->emailfrequency, 'emailfrequency copied from home group');
+        $this->assertSame(0, (int) $m->eventsallowed, 'eventsallowed copied from home group');
+        $this->assertSame(0, (int) $m->volunteeringallowed, 'volunteeringallowed copied from home group');
+        $this->assertGreaterThanOrEqual(1, $stats['memberships_added']);
+
+        // memberships_history row written (abuse detection), as addMembership does.
+        $this->assertGreaterThanOrEqual(
+            1,
+            DB::table('memberships_history')->where('userid', $posterId)->where('groupid', $groupB->id)->count(),
+            'memberships_history row recorded for the new membership'
+        );
+
+        // A Group/Joined log is written with the rippling-specific reason, so the join is
+        // audited and distinguishable from a button click ('Manual') or other auto-join ('Auto').
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Group',
+            'subtype' => 'Joined',
+            'user' => $posterId,
+            'groupid' => $groupB->id,
+            'text' => 'Rippled',
+        ]);
+    }
+
+    public function test_rippling_does_not_overwrite_an_existing_banned_membership(): void
+    {
+        // A poster already Banned on a group the post ripples into must stay Banned — we
+        // never silently convert a ban into a normal membership.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Banned', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
+        $this->assertSame('Banned', $m->collection, 'existing banned membership left untouched');
+    }
 }

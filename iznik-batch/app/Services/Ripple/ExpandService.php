@@ -46,6 +46,7 @@ class ExpandService
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
+            'memberships_added' => 0,
         ];
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
@@ -369,9 +370,95 @@ class ExpandService
                     // best-effort; never affect the expander
                 }
             }
+
+            // The poster becomes a member of every group their post has rippled into, exactly
+            // as if they had posted there directly. Backfills any rippled-in group they're not
+            // yet on (idempotent), so it also catches posts rippled before this existed.
+            $this->addPosterMembershipToRippledGroups($msgid, $stats);
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: ripple-into-groups failed for msg {$msgid}: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Add the poster as a member of every group their post has rippled into, exactly as if
+     * they had posted there directly: role Member, collection Approved. Email settings are
+     * copied from the poster's membership on their home/origin group (the earliest-arrival
+     * group on the message where they're already a member) rather than the system default,
+     * so a rippled-in membership behaves like their existing ones. Existing memberships —
+     * including a Banned row — are left untouched (INSERT IGNORE on the unique userid+groupid
+     * key, and the NOT EXISTS guard). Mirrors V1 User::addMembership, including the
+     * memberships_history row used by abuse detection. Best-effort: never breaks the expander.
+     */
+    private function addPosterMembershipToRippledGroups(int $msgid, array &$stats): void
+    {
+        try {
+            $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
+            $posterId = $msg->fromuser ?? null;
+            if (!$posterId) {
+                return;
+            }
+
+            // Email settings = the poster's settings on their home group: the earliest-arrival
+            // group on this message where they're already a member. Fall back to the same
+            // defaults addMembership uses if (unexpectedly) no such membership exists.
+            $home = DB::selectOne(
+                'SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed
+                 FROM messages_groups mg
+                 JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?
+                 WHERE mg.msgid = ?
+                 ORDER BY mg.arrival ASC
+                 LIMIT 1',
+                [$posterId, $msgid]
+            );
+            $emailfrequency = $home->emailfrequency ?? 24;
+            $eventsallowed = $home->eventsallowed ?? 1;
+            $volunteeringallowed = $home->volunteeringallowed ?? 1;
+
+            // Groups this post has rippled into where the poster has no membership row yet.
+            $targets = DB::select(
+                'SELECT mg.groupid
+                 FROM messages_groups mg
+                 WHERE mg.msgid = ? AND mg.rippled_in = 1
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
+                   )',
+                [$msgid, $posterId]
+            );
+
+            foreach ($targets as $t) {
+                $added = DB::affectingStatement(
+                    "INSERT IGNORE INTO memberships
+                        (userid, groupid, role, collection, emailfrequency, eventsallowed, volunteeringallowed, added)
+                     VALUES (?, ?, 'Member', 'Approved', ?, ?, ?, NOW())",
+                    [$posterId, $t->groupid, $emailfrequency, $eventsallowed, $volunteeringallowed]
+                );
+                if ($added > 0) {
+                    $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
+                    DB::statement(
+                        "INSERT INTO memberships_history (userid, groupid, collection, processingrequired)
+                         VALUES (?, ?, 'Approved', 1)",
+                        [$posterId, $t->groupid]
+                    );
+                    // Log the join with a rippling-specific reason. V1 addMembership logs a
+                    // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use
+                    // 'Rippled' so the modlog - and MembershipsProcessingService, which reads
+                    // Group/Joined logs - can tell a rippled-in auto-join apart from those.
+                    // byuser is NULL: the system joined them off their post rippling in, no actor.
+                    DB::table('logs')->insert([
+                        'timestamp' => now(),
+                        'type' => 'Group',
+                        'subtype' => 'Joined',
+                        'user' => $posterId,
+                        'byuser' => null,
+                        'groupid' => $t->groupid,
+                        'text' => 'Rippled',
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("ripple: add-poster-membership failed for msg {$msgid}: {$e->getMessage()}");
         }
     }
 
