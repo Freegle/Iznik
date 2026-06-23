@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
-import { DISCOURSE_BASE } from '../discourse.js'
+import { DISCOURSE_BASE, formatReplyRaw } from '../discourse.js'
 import { partitionFailedChecks } from '../coverage-checks.js'
 import {
   getDb,
@@ -887,7 +887,11 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
         // Auto-post (explicitly approved): post the verbatim reply threaded under
         // the specific reporting post, then record it so it dedups + audits.
-        const postRes = await postDiscourseReply(bug.topic, body, bug.post)
+        // formatReplyRaw prepends the [quote] block of the reporting post — the
+        // bare `body` was posted unquoted before, identical to the human-draft
+        // path (dashboard) which has always quoted.
+        const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
+        const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
         if (!postRes.ok) {
           postFailed.push(bug.pr_number)
           outWarn(`queue_deployed_reply_drafts: FAILED to post reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}): ${postRes.error}`)

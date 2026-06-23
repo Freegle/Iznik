@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import https from 'node:https'
 import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
-import { DISCOURSE_BASE } from './discourse.js'
+import { DISCOURSE_BASE, formatReplyRaw } from './discourse.js'
 import type { Database as DB } from 'better-sqlite3'
 
 const execAsync = promisify(exec)
@@ -471,8 +471,8 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     }
 
     try {
-      // Format as Discourse reply with quote
-      const raw = `[quote="${draft.username}, post:${draft.post}, topic:${draft.topic}"]\n${draft.quote}\n[/quote]\n\n${draft.body}`
+      // Format as Discourse reply with quote (shared with the auto-post path).
+      const raw = formatReplyRaw(draft)
 
       // Post to Discourse
       const result = await postToDiscourse(draft.topic, raw, draft.post)

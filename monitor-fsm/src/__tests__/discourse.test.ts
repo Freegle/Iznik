@@ -33,3 +33,53 @@ describe('DISCOURSE_BASE resolution', () => {
     expect(await load()).toBe('https://example.test')
   })
 })
+
+describe('formatReplyRaw', () => {
+  it('prepends an attributed, linked quote block when username is known', async () => {
+    const { formatReplyRaw } = await import('../discourse')
+    const raw = formatReplyRaw({
+      username: 'Neville_Reid',
+      post: 10,
+      topic: 9692,
+      quote: 'iOS app not showing badge count',
+      body: 'AI Edward: possible fix applied, please retest and report back',
+    })
+    expect(raw).toBe(
+      '[quote="Neville_Reid, post:10, topic:9692"]\n' +
+        'iOS app not showing badge count\n' +
+        '[/quote]\n\n' +
+        'AI Edward: possible fix applied, please retest and report back',
+    )
+  })
+
+  it('falls back to a plain [quote] when the username is missing or the "there" placeholder', async () => {
+    const { formatReplyRaw } = await import('../discourse')
+    for (const username of [undefined, null, '', 'there', 'There']) {
+      const raw = formatReplyRaw({ username, post: 5, topic: 100, quote: 'the reported text', body: 'the reply' })
+      expect(raw).toBe('[quote]\nthe reported text\n[/quote]\n\nthe reply')
+    }
+  })
+
+  it('returns the body unchanged when there is no quote text', async () => {
+    const { formatReplyRaw } = await import('../discourse')
+    expect(formatReplyRaw({ username: 'Jos', post: 3, topic: 9, quote: '', body: 'bare reply' })).toBe('bare reply')
+    expect(formatReplyRaw({ username: 'Jos', post: 3, topic: 9, quote: '   ', body: 'bare reply' })).toBe('bare reply')
+    expect(formatReplyRaw({ username: 'Jos', post: 3, topic: 9, quote: null, body: 'bare reply' })).toBe('bare reply')
+  })
+
+  it('never double-wraps a body that already opens with a quote block', async () => {
+    const { formatReplyRaw } = await import('../discourse')
+    const baked = '[quote="Vee, post:13, topic:9737"]\nRed alert appears\n[/quote]\n\nFixed now.'
+    expect(formatReplyRaw({ username: 'Someone', post: 1, topic: 2, quote: 'ignored', body: baked })).toBe(baked)
+    // also tolerate leading whitespace and the bare [quote] form
+    expect(formatReplyRaw({ username: 'X', post: 1, topic: 2, quote: 'q', body: '  [quote]\na\n[/quote]\n\nb' })).toBe(
+      '  [quote]\na\n[/quote]\n\nb',
+    )
+  })
+
+  it('trims surrounding whitespace from the quote text', async () => {
+    const { formatReplyRaw } = await import('../discourse')
+    const raw = formatReplyRaw({ username: 'Jos', post: 2, topic: 9, quote: '\n  padded  \n', body: 'reply' })
+    expect(raw).toBe('[quote="Jos, post:2, topic:9"]\npadded\n[/quote]\n\nreply')
+  })
+})
