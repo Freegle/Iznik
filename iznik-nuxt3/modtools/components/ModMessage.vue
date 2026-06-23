@@ -193,10 +193,9 @@
                   <strong>rippled in</strong> from a neighbouring community and
                   automatically approved onto
                   <strong>{{ currentGroupName || 'this group' }}</strong> to
-                  keep moderation load low - it was already checked by the
-                  moderators of the community it came from. You don't need to do
-                  anything; you can still reject it for the usual reasons (spam,
-                  breaks the rules), just not for being "out of area".
+                  keep moderation load low. You don't need to do anything; you
+                  can still reject it for the usual reasons (spam, breaks the
+                  rules), just not for being "out of area".
                 </span>
                 <a href="#" @click.prevent="ripplingExplanationModal?.show()">
                   Learn more
