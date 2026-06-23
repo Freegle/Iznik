@@ -15,10 +15,31 @@
       <p class="text-muted small mb-2">
         The rollout's goal is to turn more 0-reply posts into 1-reply posts. (1)
         share of Offers that get a reply within 36h; (2) of replies, the share
-        that came via rippling rather than from existing group members (captured
-        at reply time, so a join-to-reply isn't mis-counted as a member); (3)
-        median distance from post to replier.
+        that came via rippling vs existing group members (captured at reply
+        time, so a join-to-reply isn't mis-counted as a member); (3) median
+        distance from post to replier; (4) the reuse outcome - share
+        taken/received. Filter by group to compare places.
       </p>
+
+      <b-form-group
+        v-if="groupOptions.length"
+        label="Group:"
+        label-cols="auto"
+        label-class="small fw-bold"
+        class="mb-2"
+      >
+        <b-form-select
+          v-model="groupFilter"
+          size="sm"
+          style="width: auto"
+          @change="onGroupChange"
+        >
+          <option :value="0">All groups</option>
+          <option v-for="g in groupOptions" :key="g.id" :value="g.id">
+            {{ g.name }}
+          </option>
+        </b-form-select>
+      </b-form-group>
 
       <div class="mb-2">
         <strong class="small">% of Offers with a reply within 36h</strong>
@@ -54,6 +75,18 @@
           type="LineChart"
           :data="replyDistanceChart"
           :options="kmChartOptions()"
+          style="width: 100%; height: 300px"
+        />
+        <p v-else class="text-muted small">No data yet.</p>
+      </div>
+
+      <div class="mb-3">
+        <strong class="small">% of posts taken/received (reuse outcome)</strong>
+        <GChart
+          v-if="takenRateChart"
+          type="LineChart"
+          :data="takenRateChart"
+          :options="pctChartOptions('Taken/received (%)', '#6f42c1')"
           style="width: 100%; height: 300px"
         />
         <p v-else class="text-muted small">No data yet.</p>
@@ -356,6 +389,10 @@ const captureSummary = ref({
 const replyRate = ref([])
 const replySource = ref([])
 const replyDistance = ref([])
+const takenRate = ref([])
+// Per-group KPI filter (results differ a lot by place; 0 = all groups).
+const groupOptions = ref([])
+const groupFilter = ref(0)
 
 const replyRateChart = computed(() => {
   if (!replyRate.value.length) return null
@@ -377,6 +414,13 @@ const replyDistanceChart = computed(() => {
     .reverse()
     .map((r) => [new Date(r.day), r.median_km])
   return [['Date', 'Median km'], ...rows]
+})
+const takenRateChart = computed(() => {
+  if (!takenRate.value.length) return null
+  const rows = [...takenRate.value]
+    .reverse()
+    .map((r) => [new Date(r.day), r.taken_pct])
+  return [['Date', '% taken/received'], ...rows]
 })
 
 function pctChartOptions(vTitle, color) {
@@ -406,7 +450,7 @@ async function fetchMetrics() {
   loading.value = true
   error.value = null
   try {
-    const result = await apiInstance.rippling.fetchMetrics()
+    const result = await apiInstance.rippling.fetchMetrics(groupFilter.value)
     totals.value = result?.totals || []
     recent.value = result?.recent || []
     hotspots.value = result?.hotspots || []
@@ -422,6 +466,8 @@ async function fetchMetrics() {
     replyRate.value = result?.reply_rate_36h || []
     replySource.value = result?.reply_source_split || []
     replyDistance.value = result?.reply_distance_median || []
+    takenRate.value = result?.taken_rate || []
+    groupOptions.value = result?.groups || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
@@ -429,9 +475,13 @@ async function fetchMetrics() {
   }
 }
 
+function onGroupChange() {
+  fetchMetrics()
+}
+
 onMounted(() => {
   fetchMetrics()
 })
 
-defineExpose({ fetchMetrics })
+defineExpose({ fetchMetrics, groupFilter, onGroupChange })
 </script>

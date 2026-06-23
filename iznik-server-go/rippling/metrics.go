@@ -118,6 +118,22 @@ type ReplyDistanceRow struct {
 	MedianKm float64 `json:"median_km" gorm:"column:median_km"`
 }
 
+// TakenRateRow is the daily reuse outcome: of posts that arrived that day (and have had a settling
+// window to find a taker), what fraction reached a Taken (offer) or Received (wanted) outcome.
+type TakenRateRow struct {
+	Day      string  `json:"day"   gorm:"column:day"`
+	Posts    int     `json:"posts" gorm:"column:posts"`
+	Taken    int     `json:"taken" gorm:"column:taken"`
+	TakenPct float64 `json:"taken_pct"` // computed in Go
+}
+
+// GroupOption is one entry in the per-group KPI filter: a group whose posts have rippled, so its
+// KPIs are worth viewing on their own (the experiment groups surface here once they ripple).
+type GroupOption struct {
+	ID   uint64 `json:"id"   gorm:"column:id"`
+	Name string `json:"name" gorm:"column:name"`
+}
+
 // Metrics returns the rippling-out event counters plus the §15/§16 rollout-health metrics.
 // Events: reply_blocked (#2), held/released/taken_gone (#3), secondary_reject (#6),
 // immediate_mailed (#0), rippled_in (#6). Support/Admin only.
@@ -223,17 +239,33 @@ func Metrics(c *fiber.Ctx) error {
 		capture.CaptureRate = float64(capture.PairsInTime) / float64(capture.PairsTotal) * 100
 	}
 
-	// ---- Reply KPIs (the rollout's headline outcome) --------------------------------
-	// (1) % of Offers with a reply within 36h, per arrival day. Only days whose full 36h
-	//     window has elapsed are counted, so each point is complete (no trailing dip).
-	//     Live from messages + chat_messages: works over all history, no instrumentation.
+	// ---- Reply + reuse KPIs (the rollout's headline outcomes) ------------------------
+	// Optional ?groupid= scopes every KPI below to posts ORIGINATING in that group (its
+	// rippled_in=0 messages_groups row), so results read per place - dense Croydon won't look
+	// like rural Ribble Valley. 0 = all groups. Each scoped query takes one gid arg.
+	gid := c.QueryInt("groupid", 0)
+	gargs := func() []interface{} {
+		if gid > 0 {
+			return []interface{}{gid}
+		}
+		return nil
+	}
+	rateGroup, srcGroup, distGroup := "", "", ""
+	if gid > 0 {
+		rateGroup = " AND mg.groupid = ? AND mg.rippled_in = 0"
+		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+	}
+
+	// (1) % of Offers with a reply within 36h, per arrival day. Only days whose full 36h window
+	//     has elapsed are counted, so each point is complete (no trailing dip).
 	replyRates := []ReplyRateRow{}
 	db.Raw(`
 		SELECT DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
 		       COUNT(DISTINCT m.id) AS posts,
 		       COUNT(DISTINCT CASE WHEN fr.first_reply <= m.arrival + INTERVAL 36 HOUR THEN m.id END) AS replied
 		FROM messages m
-		JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0
+		JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
 		LEFT JOIN (
 		    SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
 		    WHERE type = 'Interested' AND date >= CURDATE() - INTERVAL 33 DAY GROUP BY refmsgid
@@ -242,27 +274,24 @@ func Metrics(c *fiber.Ctx) error {
 		  AND m.arrival >= CURDATE() - INTERVAL 30 DAY
 		  AND m.arrival <  NOW() - INTERVAL 36 HOUR
 		GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
-		ORDER BY day DESC`).Scan(&replyRates)
+		ORDER BY day DESC`, gargs()...).Scan(&replyRates)
 	for i := range replyRates {
 		if replyRates[i].Posts > 0 {
 			replyRates[i].ReplyPct = float64(replyRates[i].Replied) / float64(replyRates[i].Posts) * 100
 		}
 	}
 
-	// (2) Rippling vs home-group replies, per day. Sourced from rippling_reply_attribution,
-	//     which records at REPLY time whether the replier was already a home-group member -
-	//     the only sound way to attribute, because replying later joins them to the group and
-	//     a retrospective membership check would mis-credit every rippling reply. Defensive:
-	//     empty until the capture (in CreateChatMessage) has accrued rows.
+	// (2) Rippling vs home-group replies, per day, from rippling_reply_attribution (captured at
+	//     reply time - the only sound attribution, since replying joins the member to the group).
 	replySources := []ReplySourceRow{}
 	db.Raw(`
-		SELECT DATE_FORMAT(replied_at, '%Y-%m-%d') AS day,
+		SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,
 		       COUNT(*) AS replies,
-		       COALESCE(SUM(was_home_member), 0) AS home
-		FROM rippling_reply_attribution
-		WHERE replied_at >= CURDATE() - INTERVAL 30 DAY
-		GROUP BY DATE_FORMAT(replied_at, '%Y-%m-%d')
-		ORDER BY day DESC`).Scan(&replySources)
+		       COALESCE(SUM(rra.was_home_member), 0) AS home
+		FROM rippling_reply_attribution rra`+srcGroup+`
+		WHERE rra.replied_at >= CURDATE() - INTERVAL 30 DAY
+		GROUP BY DATE_FORMAT(rra.replied_at, '%Y-%m-%d')
+		ORDER BY day DESC`, gargs()...).Scan(&replySources)
 	for i := range replySources {
 		replySources[i].Ripple = replySources[i].Replies - replySources[i].Home
 		if replySources[i].Replies > 0 {
@@ -270,8 +299,8 @@ func Metrics(c *fiber.Ctx) error {
 		}
 	}
 
-	// (3) Median crow-flies distance (km) from post to replier, per reply day. Distance isn't
-	//     changed by replying, so this is sound computed retrospectively from locations.
+	// (3) Median crow-flies distance (km) from post to replier, per reply day. The origin-group
+	//     join is added only when filtering (avoids multi-group row inflation in the all view).
 	replyDistances := []ReplyDistanceRow{}
 	db.Raw(`
 		SELECT day, MAX(cnt) AS replies, AVG(dist_km) AS median_km
@@ -283,7 +312,7 @@ func Metrics(c *fiber.Ctx) error {
 		    SELECT DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
 		           ST_Distance_Sphere(POINT(ml.lng, ml.lat), POINT(ul.lng, ul.lat)) / 1000 AS dist_km
 		    FROM chat_messages cm
-		    JOIN messages m   ON m.id = cm.refmsgid AND m.type = 'Offer'
+		    JOIN messages m   ON m.id = cm.refmsgid AND m.type = 'Offer'`+distGroup+`
 		    JOIN locations ml ON ml.id = m.locationid
 		    JOIN users u      ON u.id = cm.userid
 		    JOIN locations ul ON ul.id = u.lastlocation
@@ -293,7 +322,39 @@ func Metrics(c *fiber.Ctx) error {
 		) r
 		WHERE r.rn IN (FLOOR((r.cnt + 1) / 2), FLOOR((r.cnt + 2) / 2))
 		GROUP BY day
-		ORDER BY day DESC`).Scan(&replyDistances)
+		ORDER BY day DESC`, gargs()...).Scan(&replyDistances)
+
+	// (4) Reuse outcome: % of posts (Offers taken / Wanteds received) per arrival day. An outcome
+	//     of Taken or Received counts. A 7-day settling cut stops the most recent days looking bad
+	//     just because their posts are too young to have been collected (the rate accrues longer).
+	takenRates := []TakenRateRow{}
+	db.Raw(`
+		SELECT DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+		       COUNT(DISTINCT m.id) AS posts,
+		       COUNT(DISTINCT o.msgid) AS taken
+		FROM messages m
+		JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+		LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes WHERE outcome IN ('Taken','Received')) o
+		       ON o.msgid = m.id
+		WHERE m.type IN ('Offer','Wanted')
+		  AND m.arrival >= CURDATE() - INTERVAL 30 DAY
+		  AND m.arrival <  NOW() - INTERVAL 7 DAY
+		GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
+		ORDER BY day DESC`, gargs()...).Scan(&takenRates)
+	for i := range takenRates {
+		if takenRates[i].Posts > 0 {
+			takenRates[i].TakenPct = float64(takenRates[i].Taken) / float64(takenRates[i].Posts) * 100
+		}
+	}
+
+	// Groups whose posts have rippled - the per-group filter options (the experiment groups appear
+	// here once they ripple). Defensive: empty while rippling is dark.
+	groupOpts := []GroupOption{}
+	db.Raw("SELECT DISTINCT g.id AS id, g.nameshort AS name " +
+		"FROM rippling_reach rr " +
+		"JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0 " +
+		"JOIN `groups` g ON g.id = mg.groupid " +
+		"ORDER BY g.nameshort").Scan(&groupOpts)
 
 	return c.JSON(fiber.Map{
 		"totals":                totals,
@@ -307,5 +368,8 @@ func Metrics(c *fiber.Ctx) error {
 		"reply_rate_36h":        replyRates,
 		"reply_source_split":    replySources,
 		"reply_distance_median": replyDistances,
+		"taken_rate":            takenRates,
+		"groups":                groupOpts,
+		"groupid":               gid,
 	})
 }
