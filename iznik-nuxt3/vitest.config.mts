@@ -91,6 +91,10 @@ export default defineConfig({
         'tests/unit/mocks/quill-html-edit-button.js'
       ),
       papaparse: path.join(rootDir, 'tests/unit/mocks/papaparse.js'),
+      'qr-code-styling': path.join(
+        rootDir,
+        'tests/unit/mocks/qr-code-styling.js'
+      ),
       'vue-letter': path.join(rootDir, 'tests/unit/mocks/vue-letter.js'),
       letterparser: path.join(rootDir, 'tests/unit/mocks/letterparser.js'),
       // Handsontable mocks
