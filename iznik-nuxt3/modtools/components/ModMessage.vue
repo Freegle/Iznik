@@ -171,17 +171,25 @@
                 <strong>{{ currentGroupName || 'this group' }}</strong> only.
               </span>
               <span v-if="isRippledInToContextGroup">
-                This post has rippled out to some of your group members from a
-                neighbouring community - that's expected<span
-                  v-if="pending"
-                  data-test="ripple-out-of-area-reject-warning"
-                  >, so
+                <span v-if="pending" data-test="ripple-out-of-area-reject-warning">
+                  This post has rippled in from a neighbouring community - that's
+                  expected, so
                   <strong class="text-danger"
                     >please don't reject it just for being "out of area"</strong
                   >
                   (only reject for the usual reasons: spam, breaks the rules,
-                  wrong sort of thing)</span
-                >.
+                  wrong sort of thing).
+                </span>
+                <span v-else>
+                  This post was
+                  <strong>rippled in</strong> from a neighbouring community and
+                  automatically approved onto
+                  <strong>{{ currentGroupName || 'this group' }}</strong> to keep
+                  moderation load low - it was already checked by the moderators
+                  of the community it came from. You don't need to do anything;
+                  you can still reject it for the usual reasons (spam, breaks the
+                  rules), just not for being "out of area".
+                </span>
                 <a href="#" @click.prevent="ripplingExplanationModal?.show()">
                   Learn more
                 </a>

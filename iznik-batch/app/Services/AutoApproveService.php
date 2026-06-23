@@ -100,8 +100,12 @@ class AutoApproveService
                 // Rippling-out rows already Approved on their origin group: a short mod-veto
                 // window, then auto-approve (membership gate bypassed in shouldApproveOnGroup).
                 ->orWhere(function ($q2) {
+                    // Configurable mod-veto window (default 1h via the const; 0 = immediate,
+                    // used during reach experiments to keep moderation load off receiving
+                    // groups). >= so that 0 means "eligible as soon as it arrives".
+                    $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
                     $q2->where('messages_groups.rippled_in', 1)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::RIPPLED_IN_PENDING_HOURS])
+                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
                         ->whereExists(function ($q3) {
                             $q3->select(DB::raw(1))
                                 ->from('messages_groups as origin_mg')
