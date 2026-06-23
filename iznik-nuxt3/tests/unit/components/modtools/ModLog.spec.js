@@ -229,6 +229,29 @@ describe('ModLog', () => {
         text: 'Manual',
       })
       expect(wrapperManual.text()).toContain('Clicked on Join button')
+
+      // Rippled text shows the rippling-specific reason, not the generic auto-join
+      const wrapperRippled = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Joined',
+        text: 'Rippled',
+      })
+      expect(wrapperRippled.text()).toContain(
+        'Joined automatically when their post rippled into this group'
+      )
+      expect(wrapperRippled.text()).not.toContain('when posting/replying')
+
+      // Any other auto-join text still shows the generic message
+      const wrapperAuto = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Joined',
+        text: 'Auto',
+      })
+      expect(wrapperAuto.text()).toContain(
+        'Joined automatically when posting/replying'
+      )
     })
 
     it('shows Left when same user, Removed when different users for Group/Left', () => {
