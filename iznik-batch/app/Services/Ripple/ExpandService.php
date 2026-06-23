@@ -305,10 +305,11 @@ class ExpandService
      * ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'))), so we test the
      * spatial-indexed polyindex and skip the (0,0) point sentinel.
      *
-     * Inserts a fresh-Pending messages_groups row (collection forced to 'Pending', so the
-     * existing moderation pipeline — ContentCheck/AutoApprove/visibility — treats it as a
-     * new arrival), idempotently (INSERT IGNORE + NOT EXISTS on the existing (msgid,groupid)
-     * rows, so the origin group and already-rippled groups are never touched or duplicated).
+     * Inserts a messages_groups row idempotently (INSERT IGNORE + NOT EXISTS on the existing
+     * (msgid,groupid) rows, so the origin group and already-rippled groups are never touched
+     * or duplicated). The row is inserted Approved when ripple.rippled_in_pending_hours = 0
+     * (the default - no Pending flicker, since the post was already vetted on origin), else
+     * Pending so AutoApproveService approves it after the mod-veto window.
      */
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats): void
     {
@@ -325,9 +326,18 @@ class ExpandService
                 return;
             }
 
+            // rippled_in_pending_hours = 0 (default) approves the rippled-in row AT ripple-in
+            // time, so it never flickers into the Pending mod queue (the post was already
+            // vetted on its origin group; matches AutoApproveService::approveOnGroup -
+            // collection='Approved', approvedby NULL, approvedat NOW; spatial indexing follows
+            // via the message_spatial cron). >0 inserts Pending for the mod-veto window.
+            $immediateApprove = ((int) config('freegle.ripple.rippled_in_pending_hours', 0)) <= 0;
+            $collection = $immediateApprove ? 'Approved' : 'Pending';
+            $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
+
             $n = DB::affectingStatement(
-                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype, rippled_in)
-                 SELECT ?, g.id, 'Pending', NOW(), 0, m.type, 1
+                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
+                 SELECT ?, g.id, '$collection', $approvedAt, NOW(), 0, m.type, 1
                  FROM `groups` g
                  CROSS JOIN messages m
                  WHERE m.id = ?

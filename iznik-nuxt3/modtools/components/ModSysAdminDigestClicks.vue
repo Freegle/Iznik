@@ -1,31 +1,22 @@
 <template>
   <div class="digest-clicks">
     <p class="text-muted">
-      How far down the unified digest do people click? Each post in a digest is
+      How far down the daily digest do people click? Each post in a digest is
       tracked with its position (1 = top). This shows the
       <strong>click-through rate</strong> — the percentage of digests displaying
       a post at each position where the recipient clicked that post — so you can
       see how a post's position affects engagement.
     </p>
 
-    <!-- Date Range + digest type filter -->
+    <!-- Date range filter. We only ever analyse the DAILY digest: immediate digests
+         contain a single post, so they are always position 1 and tell us nothing about
+         how position affects clicks. -->
     <ModEmailDateFilter
       :loading="emailTrackingStore.digestPositionsLoading"
       fetch-label="Fetch"
       default-preset="30days"
       @fetch="onFilterFetch"
-    >
-      <template #extra-filters>
-        <label class="filter-label">Digest:</label>
-        <b-form-select
-          v-model="digestType"
-          :options="digestTypeOptions"
-          size="sm"
-          style="width: 150px"
-          @change="onTypeChange"
-        />
-      </template>
-    </ModEmailDateFilter>
+    />
 
     <!-- Error -->
     <NoticeMessage
@@ -84,10 +75,8 @@
       v-else-if="!emailTrackingStore.digestPositionsError"
       class="text-muted text-center py-4"
     >
-      <p>No digest click data available for the selected period.</p>
-      <p class="small">
-        Try widening the date range or selecting a different digest type.
-      </p>
+      <p>No daily-digest click data available for the selected period.</p>
+      <p class="small">Try widening the date range.</p>
     </div>
   </div>
 </template>
@@ -102,14 +91,9 @@ const emailTrackingStore = useEmailTrackingStore()
 
 const startDate = ref('')
 const endDate = ref('')
-const digestType = ref('')
-
-// The unified digest is sent in two modes; allow filtering to each.
-const digestTypeOptions = [
-  { text: 'All digests', value: '' },
-  { text: 'Immediate', value: 'UnifiedDigestImmediate' },
-  { text: 'Daily', value: 'UnifiedDigestDaily' },
-]
+// Daily digest only - immediate digests are single-post (always position 1), so position
+// analysis is meaningless for them. Fixed, not user-selectable.
+const digestType = ref('UnifiedDigestDaily')
 
 const tableFields = [
   { key: 'position', label: 'Position', sortable: true },
@@ -161,13 +145,6 @@ function onFilterFetch({ start, end }) {
   fetchData()
 }
 
-function onTypeChange() {
-  // Re-fetch with the existing date range when the digest type changes.
-  if (startDate.value && endDate.value) {
-    fetchData()
-  }
-}
-
 function getPositionChartOptions() {
   return {
     title: 'Click-through rate by position in the digest',
@@ -205,13 +182,11 @@ function getPositionChartOptions() {
 // Exposed for unit testing.
 defineExpose({
   digestType,
-  digestTypeOptions,
   tableFields,
   tableRows,
   insight,
   fetchData,
   onFilterFetch,
-  onTypeChange,
   getPositionChartOptions,
 })
 </script>

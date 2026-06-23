@@ -91,7 +91,7 @@ describe('ModSysAdminDigestClicks', () => {
 
     it('shows the empty message when there is no data', () => {
       const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('No digest click data available')
+      expect(wrapper.text()).toContain('No daily-digest click data available')
     })
 
     it('shows the chart when data is present', async () => {
@@ -114,19 +114,10 @@ describe('ModSysAdminDigestClicks', () => {
     })
   })
 
-  describe('digest type options', () => {
-    it('offers All / Immediate / Daily', () => {
+  describe('digest type', () => {
+    it('is pinned to the daily digest (immediate is always position 1)', () => {
       const wrapper = mountComponent()
-      const options = wrapper.vm.digestTypeOptions
-      expect(options).toContainEqual({ text: 'All digests', value: '' })
-      expect(options).toContainEqual({
-        text: 'Immediate',
-        value: 'UnifiedDigestImmediate',
-      })
-      expect(options).toContainEqual({
-        text: 'Daily',
-        value: 'UnifiedDigestDaily',
-      })
+      expect(wrapper.vm.digestType).toBe('UnifiedDigestDaily')
     })
   })
 
@@ -195,25 +186,10 @@ describe('ModSysAdminDigestClicks', () => {
       wrapper.vm.onFilterFetch({ start: '2026-01-01', end: '2026-01-31' })
 
       expect(mockEmailTrackingStore.setFilters).toHaveBeenCalledWith({
-        type: '',
+        type: 'UnifiedDigestDaily',
         start: '2026-01-01',
         end: '2026-01-31',
       })
-      expect(mockEmailTrackingStore.fetchDigestPositions).toHaveBeenCalled()
-    })
-
-    it('onTypeChange refetches only once dates are known', () => {
-      const wrapper = mountComponent()
-
-      // No dates yet → should not fetch.
-      wrapper.vm.onTypeChange()
-      expect(mockEmailTrackingStore.fetchDigestPositions).not.toHaveBeenCalled()
-
-      // After a fetch sets the dates → type change refetches.
-      wrapper.vm.onFilterFetch({ start: '2026-01-01', end: '2026-01-31' })
-      mockEmailTrackingStore.fetchDigestPositions.mockClear()
-      wrapper.vm.digestType = 'UnifiedDigestDaily'
-      wrapper.vm.onTypeChange()
       expect(mockEmailTrackingStore.fetchDigestPositions).toHaveBeenCalled()
     })
   })

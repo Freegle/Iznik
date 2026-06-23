@@ -246,3 +246,48 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 	assert.GreaterOrEqual(t, statusCounts["held"], float64(2), "at least 2 held rows counted")
 	assert.GreaterOrEqual(t, statusCounts["released"], float64(1), "at least 1 released row counted")
 }
+
+// The endpoint surfaces the three reply KPIs. reply_source_split is sourced from
+// rippling_reply_attribution (captured at reply time): a home row and a rippling row on the same
+// day must yield a 50% rippling share. reply_rate_36h and reply_distance_median are computed live
+// from messages/chat_messages and are always present arrays.
+func TestRipplingMetricsReplyKPIs(t *testing.T) {
+	prefix := uniquePrefix("ripplereply")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reply_attribution (
+		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		replied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, was_home_member TINYINT(1) NOT NULL,
+		PRIMARY KEY (msgid, userid), KEY rra_replied_at (replied_at))`)
+	// Two replies on an isolated day (5 days ago): one established member (home), one via rippling.
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES " +
+		"(900000091, 900000091, NOW() - INTERVAL 5 DAY, 1), (900000091, 900000092, NOW() - INTERVAL 5 DAY, 0)")
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = 900000091")
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	// All three reply-KPI keys are present (arrays).
+	_, hasRate := result["reply_rate_36h"].([]interface{})
+	_, hasDist := result["reply_distance_median"].([]interface{})
+	split, hasSplit := result["reply_source_split"].([]interface{})
+	assert.True(t, hasRate, "reply_rate_36h present")
+	assert.True(t, hasDist, "reply_distance_median present")
+	assert.True(t, hasSplit, "reply_source_split present")
+
+	// The seeded day's split row: 2 replies, 1 home, 1 ripple -> 50% rippling.
+	found := false
+	for _, r := range split {
+		if m, ok := r.(map[string]interface{}); ok && m["replies"] == float64(2) && m["home"] == float64(1) {
+			found = true
+			assert.Equal(t, float64(1), m["ripple"], "one rippling reply")
+			assert.Equal(t, float64(50), m["ripple_pct"], "50% of replies via rippling")
+		}
+	}
+	assert.True(t, found, "the seeded rippling/home split is surfaced")
+}
