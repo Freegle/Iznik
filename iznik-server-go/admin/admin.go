@@ -28,7 +28,6 @@ type Admin struct {
 	Editprotected bool       `json:"editprotected"`
 }
 
-
 // GetAdmin handles GET /admin/:id - get a single admin by ID.
 //
 // @Summary Get a specific admin message
@@ -81,30 +80,40 @@ func ListAdmins(c *fiber.Ctx) error {
 	groupidParam, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
 	pendingParam := c.Query("pending", "")
 
-	// Build query: admins for groups the user moderates, not yet complete.
-	// System Admin/Support users can see all admins.
+	// Build query: admins for the relevant group(s). We deliberately do NOT filter on
+	// `complete` - the ModTools "Previous" tab is the archive of *sent* admins (which have
+	// `complete` set), so filtering complete IS NULL hid the entire history and left only
+	// stale, approved-but-never-sent admins on show (Discourse 9816). Matches V1
+	// Admin::listForGroup, which returned all admins for a group ordered by created DESC.
+	// The frontend partitions pending vs previous client-side by the `pending` flag.
+	selectCols := "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected " +
+		"FROM admins a WHERE "
 	var query string
 	var args []interface{}
 
-	if auth.IsAdminOrSupport(myid) {
-		query = "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected " +
-			"FROM admins a WHERE a.complete IS NULL"
+	if groupidParam > 0 && auth.IsAdminOrSupport(myid) {
+		// System Admin/Support may view the admin history for any specific group they ask for
+		// (e.g. to look up a sent admin), without needing a membership on it.
+		query = selectCols + "a.groupid = ?"
+		args = append(args, groupidParam)
 	} else {
-		// filter by active mod groups (checks settings.active flag),
-		// not just role. This prevents showing admins for groups the mod has
-		// stepped back from.
+		// Restrict to the caller's active mod groups (checks settings.active, not just role,
+		// so admins for groups the mod has stepped back from are hidden). This applies to
+		// ordinary mods always, and to Admin/Support when no specific group is requested -
+		// otherwise the unscoped sweep leaked other groups' admins into the Pending tab
+		// (Discourse 9816: "I can see Admins for groups I am not on"). Matches V1
+		// Admin::listPending, which always scoped to the caller's own active mod groups.
 		activeGroupIDs := user.GetActiveModGroupIDs(myid)
 		if len(activeGroupIDs) == 0 {
 			return c.JSON(make([]Admin, 0))
 		}
-		query = "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected " +
-			"FROM admins a WHERE a.complete IS NULL AND a.groupid IN (?)"
+		query = selectCols + "a.groupid IN (?)"
 		args = append(args, activeGroupIDs)
-	}
 
-	if groupidParam > 0 {
-		query += " AND a.groupid = ?"
-		args = append(args, groupidParam)
+		if groupidParam > 0 {
+			query += " AND a.groupid = ?"
+			args = append(args, groupidParam)
+		}
 	}
 
 	if pendingParam == "true" {
@@ -113,7 +122,7 @@ func ListAdmins(c *fiber.Ctx) error {
 		query += " AND a.pending = 0"
 	}
 
-	query += " ORDER BY a.id DESC"
+	query += " ORDER BY a.created DESC, a.id DESC"
 
 	var admins []Admin
 	db.Raw(query, args...).Scan(&admins)
