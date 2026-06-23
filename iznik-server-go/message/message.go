@@ -4155,6 +4155,35 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Exec("UPDATE messages_spatial SET successful = 1 WHERE msgid = ?", req.ID)
 	}
 
+	// When a post is collected while still Pending in some groups - chiefly the rippling-out
+	// case, where it was rippled into a neighbouring group and is awaiting that group's approval,
+	// but also ordinary cross-posts - retire those Pending appearances so the now-taken item
+	// leaves those mod queues (and is never auto-approved/mailed into them later). We do this
+	// ONLY when the post is Approved on some other group, so the post and its Taken record
+	// survive and a post pending only on its single group is never stranded. Mirrors the
+	// Withdrawn-while-pending cleanup above, but keeps the message.
+	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
+		var approvedElsewhere int64
+		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ? AND deleted = 0",
+			req.ID, utils.COLLECTION_APPROVED).Scan(&approvedElsewhere)
+		if approvedElsewhere > 0 {
+			var pendingGroups []uint64
+			db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND collection = ? AND deleted = 0",
+				req.ID, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+			if len(pendingGroups) > 0 {
+				db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ? AND deleted = 0",
+					req.ID, utils.COLLECTION_PENDING)
+				// V1 parity: log a Deleted entry per group so the post's disappearance from
+				// that pending queue is audited (matches the Withdrawn-pending path).
+				var fromuser uint64
+				db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&fromuser)
+				for _, gid := range pendingGroups {
+					logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, req.ID, 0, req.Outcome)
+				}
+			}
+		}
+	}
+
 	// Remove from freebiealerts.app — post is no longer available regardless of outcome type.
 	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
 		"msgid": req.ID,
