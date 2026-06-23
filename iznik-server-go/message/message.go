@@ -2032,11 +2032,24 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 	ctx.Groupid = authorizedGroups[0]
 
+	// Only groups where this message is currently Pending can be rejected/deleted via
+	// this action. If it has since been (re-)approved to live, this click is a no-op
+	// (Discourse 9815): we must not move a non-pending row and - for a reject-with-
+	// explanation - must not log a phantom rejection or email the poster a "rejected"
+	// notice while the post stays live.
+	var pendingGroups []uint64
+	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0",
+		req.ID, authorizedGroups, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+
+	if subject != "" && len(pendingGroups) == 0 {
+		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
+	}
+
 	// With a subject (stdmsg), move to Rejected collection (user can edit and resubmit).
 	// Without a subject (plain delete), mark as deleted.
 	if subject != "" {
 		if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW() WHERE msgid = ? AND groupid IN ? AND collection = ?",
-			utils.COLLECTION_REJECTED, req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
+			utils.COLLECTION_REJECTED, req.ID, pendingGroups, utils.COLLECTION_PENDING); result.Error != nil {
 			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
 	} else {
@@ -2072,8 +2085,9 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Queue the rejection email only for the origin group (the batch processor creates
 	// one log+push per group). Secondary-group rejections are silent to the poster and
 	// logged for #9 observability (how often rippling pushes a post somewhere a group
-	// rejects it).
-	for _, gid := range authorizedGroups {
+	// rejects it). Iterate only the groups actually rejected here (Pending at the time)
+	// so a group where the post had already gone live gets no phantom email/log (#9815).
+	for _, gid := range pendingGroups {
 		if originGid != 0 && gid != originGid {
 			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
 			RecordRippleEvent(db, "secondary_reject")

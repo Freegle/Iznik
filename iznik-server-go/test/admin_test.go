@@ -82,7 +82,7 @@ func TestListAdminsNotMod(t *testing.T) {
 
 func TestListAdminsSystemAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_sysadm")
-	// System Admin user with no group membership should see all admins.
+	// System Admin user with no group membership.
 	adminUserID := CreateTestUser(t, prefix+"_admin", "Admin")
 	_, adminToken := CreateTestSession(t, adminUserID)
 
@@ -92,6 +92,9 @@ func TestListAdminsSystemAdmin(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	adminID := createTestAdmin(t, modID, groupID, "SysAdmin Test "+prefix)
 
+	// Discourse 9816: with NO group requested, even a system admin must NOT see other
+	// groups' admins - the unscoped sweep leaked admins for groups the user isn't on into
+	// the Pending tab. The default listing is scoped to the caller's own active mod groups.
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin?jwt=%s", adminToken), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -99,7 +102,22 @@ func TestListAdminsSystemAdmin(t *testing.T) {
 	var result []map[string]interface{}
 	json2.Unmarshal(rsp(resp), &result)
 
-	// System admin should see admins from any group.
+	leaked := false
+	for _, a := range result {
+		if a["id"] == float64(adminID) {
+			leaked = true
+			break
+		}
+	}
+	assert.False(t, leaked, "System admin should NOT see other groups' admins when no group is requested")
+
+	// But when a specific group IS requested, a system admin may view that group's admin
+	// history even without a membership (e.g. to look up a sent admin for a mod).
+	req = httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin?groupid=%d&jwt=%s", groupID, adminToken), nil)
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &result)
 	found := false
 	for _, a := range result {
 		if a["id"] == float64(adminID) {
@@ -107,11 +125,47 @@ func TestListAdminsSystemAdmin(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, found, "System admin should see admins from any group")
+	assert.True(t, found, "System admin should see a specific group's admins when that group is requested")
 
 	// Cleanup
 	db := database.DBConn
 	db.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}
+
+func TestListAdminsIncludesCompleted(t *testing.T) {
+	// Discourse 9816: the ModTools "Previous" tab is the archive of *sent* admins, which have
+	// `complete` set. The V2 listing previously filtered `complete IS NULL`, hiding every sent
+	// admin and leaving only stale, approved-but-never-sent ones (Derek saw a 3-year-old
+	// Christmas admin as the newest). The listing must include completed admins.
+	prefix := uniquePrefix("adm_done")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// A sent (completed) admin.
+	completedID := createTestAdmin(t, modID, groupID, "Sent Admin "+prefix)
+	db := database.DBConn
+	db.Exec("UPDATE admins SET complete = NOW(), pending = 0 WHERE id = ?", completedID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin?groupid=%d&jwt=%s", groupID, modToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	found := false
+	for _, a := range result {
+		if a["id"] == float64(completedID) {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Completed (sent) admins must appear in the listing for the Previous tab")
+
+	// Cleanup
+	db.Exec("DELETE FROM admins WHERE id = ?", completedID)
 }
 
 func TestCreateAdmin(t *testing.T) {

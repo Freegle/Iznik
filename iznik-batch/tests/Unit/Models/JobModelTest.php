@@ -243,6 +243,32 @@ class JobModelTest extends TestCase
         $this->assertEquals('Low CPC', $result[2]->title);
     }
 
+    public function test_near_location_prefers_fresher_postings_at_equal_value(): void
+    {
+        $this->clearJobsTable();
+
+        // Equal cpc * clickability, so the only differentiator is posting age:
+        // older WhatJobs postings are likelier already filled/closed, so the
+        // fresher one should rank first.
+        $this->seedJob([
+            'title' => 'Stale',
+            'cpc' => 0.20,
+            'clickability' => 1,
+            'posted_at' => date('Y-m-d H:i:s', strtotime('-7 days')),
+        ]);
+        $this->seedJob([
+            'title' => 'Fresh',
+            'cpc' => 0.20,
+            'clickability' => 1,
+            'posted_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertEquals('Fresh', $result[0]->title);
+        $this->assertEquals('Stale', $result[1]->title);
+    }
+
     public function test_near_location_title_cases_lowercase_location(): void
     {
         // The jobs feed stores location names lowercase ("stoke-on-trent");
