@@ -127,7 +127,13 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid "+
 			"FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
 			"WHERE jobs.id IN (%s) AND %s AND %s "+
-			"ORDER BY jobs.cpc * jobs.clickability DESC, jobs.id ASC LIMIT %d",
+			// Rank by expected value (cpc * clickability) discounted by a mild
+			// freshness factor: older WhatJobs postings are likelier already
+			// filled/closed, so a click redirects to a different job and doesn't
+			// convert. Decay the score with posting age (floored at 0.5 by ~7
+			// days); posted_at NULL -> treated as fresh. Kept identical to the
+			// digest ordering in iznik-batch Job::nearLocation.
+			"ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT %d",
 		placeholders, categoryClause, areaClause, JOBS_LIMIT,
 	), categoryArgs...).Scan(&rows)
 

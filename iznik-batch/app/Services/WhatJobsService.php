@@ -517,6 +517,16 @@ class WhatJobsService
         $this->analyseClickability();
         $this->updateClickability();
 
+        // The swap drops rows for postings that have closed/left the feed. The
+        // spatial server's "jobs" index backs both the web jobs page and the
+        // digest (since #764), and its incremental delta only adds/updates — it
+        // never removes vanished ids. Without an explicit rebuild the index
+        // keeps serving stale ids (gone, or remapped to a different posting)
+        // until the nightly 03:00 rebuild, so clicks land on the wrong/closed
+        // job and don't convert to billable. Trigger a rebuild now so the index
+        // matches the freshly-swapped table.
+        app(SpatialAdminService::class)->rebuildDataset('jobs');
+
         Log::info('WhatJobs sync complete', ['total' => $inserted, 'inserted' => $inserted]);
 
         return ['total' => $inserted, 'inserted' => $inserted, 'dry_run' => false];
