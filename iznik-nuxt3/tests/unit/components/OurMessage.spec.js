@@ -190,11 +190,22 @@ describe('OurMessage', () => {
   })
 
   describe('view tracking', () => {
-    it('calls view when recordView is true and user logged in', async () => {
+    it('calls view with the browse source when recordView is true and user logged in', async () => {
       const wrapper = await createWrapper({ recordView: true })
       await wrapper.find('.message-summary').trigger('click')
       await flushPromises()
-      expect(mockMessageStore.view).toHaveBeenCalledWith(1)
+      // A feed view (tap-to-expand) records 'browse', the default viewSource.
+      expect(mockMessageStore.view).toHaveBeenCalledWith(1, 'browse')
+    })
+
+    it('records the configured viewSource (e.g. message_page) on startExpanded', async () => {
+      await createWrapper({
+        recordView: true,
+        startExpanded: true,
+        viewSource: 'message_page',
+      })
+      await flushPromises()
+      expect(mockMessageStore.view).toHaveBeenCalledWith(1, 'message_page')
     })
 
     it('does not call view when recordView is false', async () => {
