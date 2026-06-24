@@ -910,6 +910,51 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
+     * "Most recent join wins": a poster rippled into B, left, then MANUALLY rejoined and left again
+     * is NOT blocked - their last join was ordinary, so the rippled opt-out no longer applies and
+     * the post is rippled back in. Only a group whose MOST RECENT join was a ripple-join (then left)
+     * stays barred.
+     */
+    public function test_manual_rejoin_after_rippled_left_allows_rippling(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // History oldest -> newest (insertion order = ascending log id):
+        // rippled in -> left -> MANUALLY rejoined -> left again. The latest Joined is 'Manual'.
+        $events = [
+            ['Joined', 'Rippled', 40],
+            ['Left', null, 30],
+            ['Joined', 'Manual', 20],
+            ['Left', null, 10],
+        ];
+        foreach ($events as [$subtype, $text, $minsAgo]) {
+            DB::table('logs')->insert([
+                'timestamp' => now()->subMinutes($minsAgo), 'type' => 'Group', 'subtype' => $subtype,
+                'user' => $posterId, 'groupid' => $groupB->id, 'text' => $text,
+            ]);
+        }
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post IS rippled in - the most recent join was manual, not a ripple opt-out'
+        );
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'poster IS re-added (most-recent-join-wins: the last join was ordinary)'
+        );
+    }
+
+    /**
      * BUG FIX (pull side): a freshly rippled-in post is NOT pulled just because the poster has an
      * ordinary Group/Left log that pre-dates the ripple-in. Without this, a post rippling into a
      * group the poster once normally-left would be added and then immediately pulled back out.
