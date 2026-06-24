@@ -831,10 +831,11 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * A poster who has actively LEFT a group (Group/Left log) is never re-joined AND their post is
-     * never (re-)rippled into that group - rippling must not override an explicit departure.
+     * A poster who was RIPPLED into a group (Group/Joined, text='Rippled') and then LEFT it is
+     * never re-joined AND their post is never (re-)rippled in: leaving a group you were rippled
+     * into is the opt-out signal rippling must respect.
      */
-    public function test_left_group_is_not_rejoined_and_post_not_rippled_in(): void
+    public function test_rippled_in_then_left_is_not_rejoined_and_post_not_rippled_in(): void
     {
         $this->fakeRouting(3);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
@@ -846,7 +847,12 @@ class ExpandServiceTest extends TestCase
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
         );
 
-        // The poster previously left group B (any reason writes Group/Left).
+        // The poster was rippled into B (Group/Joined, text='Rippled') and then LEFT it. The
+        // Joined/Rippled log is inserted first so it has the lower id (the leave post-dates it).
+        DB::table('logs')->insert([
+            'timestamp' => now()->subDays(2), 'type' => 'Group', 'subtype' => 'Joined',
+            'user' => $posterId, 'groupid' => $groupB->id, 'text' => 'Rippled',
+        ]);
         DB::table('logs')->insert([
             'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => 'Left',
             'user' => $posterId, 'groupid' => $groupB->id,
@@ -856,12 +862,85 @@ class ExpandServiceTest extends TestCase
 
         $this->assertNull(
             DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
-            'poster who left B is not re-joined by rippling'
+            'poster rippled into B then left is not re-joined by rippling'
         );
         $this->assertNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
-            'post is not rippled into a group the poster has left'
+            'post is not (re-)rippled into a group the poster was rippled into then left'
         );
+    }
+
+    /**
+     * BUG FIX: a poster who left a group they were NOT rippled into (an ordinary/manual membership
+     * they later left) IS still rippled in. Only a rippled-in-then-left opt-out blocks rippling -
+     * an unrelated prior departure must not bar the post or the membership.
+     */
+    public function test_ordinary_left_does_not_block_rippling(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // Poster joined B manually (text='Manual') and later left - no rippled-in history at all.
+        DB::table('logs')->insert([
+            'timestamp' => now()->subDays(2), 'type' => 'Group', 'subtype' => 'Joined',
+            'user' => $posterId, 'groupid' => $groupB->id, 'text' => 'Manual',
+        ]);
+        DB::table('logs')->insert([
+            'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB->id,
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post IS rippled into a group the poster only ordinarily left'
+        );
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'poster IS re-added as a member (an ordinary prior leave does not block rippling)'
+        );
+    }
+
+    /**
+     * BUG FIX (pull side): a freshly rippled-in post is NOT pulled just because the poster has an
+     * ordinary Group/Left log that pre-dates the ripple-in. Without this, a post rippling into a
+     * group the poster once normally-left would be added and then immediately pulled back out.
+     */
+    public function test_ordinary_left_does_not_pull_a_freshly_rippled_post(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // An ordinary leave of B, recorded BEFORE the post ripples in (so its log id is lower than
+        // the Joined/Rippled log process() writes at ripple-in time).
+        DB::table('logs')->insert([
+            'timestamp' => now()->subDay(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB->id,
+        ]);
+
+        // Run 1 ripples the post into B (writes the Joined/Rippled log). Run 2 exercises the
+        // pull-on-leave reconciliation, which runs at the start of a process() pass.
+        $this->service()->process(false, 500);
+        $this->service()->process(false, 500);
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($row, 'post rippled into B despite the ordinary prior leave');
+        $this->assertSame(0, (int) $row->deleted, 'freshly rippled-in post is NOT pulled by a pre-existing ordinary leave');
     }
 
     /** Leaving a group the post rippled into pulls the post from that group (soft-delete + log). */
