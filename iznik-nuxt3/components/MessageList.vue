@@ -148,6 +148,7 @@ import MessageListUpToDate from './MessageListUpToDate'
 import ScrollGrid from '~/components/ScrollGrid'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
+import { useIsochroneStore } from '~/stores/isochrone'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
 import { useScrollDepth } from '~/composables/useScrollDepth'
@@ -245,6 +246,7 @@ const emit = defineEmits(['update:none', 'update:visible'])
 
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
+const isochroneStore = useIsochroneStore()
 const { me, myid, myGroups: myMemberships } = useMe()
 
 // Browse-feed scroll-depth instrumentation: record how far down the feed this
@@ -502,10 +504,15 @@ function visibilityChanged(visible) {
 }
 
 function markSeen() {
-  // Collect all unseen message IDs
+  // Mark the whole list the count is computed over (the full isochrone/mygroups response),
+  // not just the rendered/viewport subset — otherwise unseen posts that are off-screen or
+  // filtered out keep the server count above zero and "Mark seen" can never clear it.
+  const source = isochroneStore.messageList?.length
+    ? isochroneStore.messageList
+    : props.messagesForList
   const ids = []
 
-  props.messagesForList.forEach((m) => {
+  source.forEach((m) => {
     if (m.unseen) {
       ids.push(m.id)
     }
@@ -527,7 +534,7 @@ function pollUntilZero() {
   }
 
   markSeenTimer = setTimeout(async () => {
-    const count = await messageStore.fetchCount(me?.settings?.browseView, false)
+    const count = await messageStore.fetchCount(me.value?.settings?.browseView, false)
     pollCount++
 
     if (count > 0 && pollCount < MAX_POLL_COUNT) {

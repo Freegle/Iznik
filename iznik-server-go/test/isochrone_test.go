@@ -952,3 +952,49 @@ func TestHealPointIsochronesNullTransport(t *testing.T) {
 	db.Exec("DELETE FROM isochrones WHERE locationid = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
+
+// TestIsochroneMyGroupsView verifies the 'mygroups' browse view: the list feed and the count BOTH
+// restrict to the user's member groups, and a non-member group's post is excluded — so the nav
+// badge matches the feed and "Mark seen" can clear it. effectiveBrowseView resolves the view from
+// the user's saved setting, so no ?browseView= param is needed (the bug was a client path omitting
+// it, defaulting to 'nearby', and counting non-member nearby posts the member feed never showed).
+func TestIsochroneMyGroupsView(t *testing.T) {
+	prefix := uniquePrefix("isomygroups")
+	userID := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, userID)
+	posterID := CreateTestUser(t, prefix+"_p", "User")
+	db := database.DBConn
+
+	memberGroup := CreateTestGroup(t, prefix+"_member")
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, memberGroup)
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.browseView', 'mygroups') WHERE id = ?", userID)
+
+	memberMsg := CreateTestMessage(t, posterID, memberGroup, prefix+" memberpost", 55.9533, -3.1883)
+	otherMsg := CreateTestMessage(t, posterID, otherGroup, prefix+" otherpost", 55.9533, -3.1883)
+	// The browse feed shows open posts (messages_spatial.successful = 0); the helper inserts 1.
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", memberMsg, otherMsg)
+
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, memberGroup)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", memberMsg, otherMsg)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", memberMsg, otherMsg)
+
+	// List with NO browseView param: effectiveBrowseView resolves 'mygroups' from the user's setting.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+	got := map[uint64]bool{}
+	for _, m := range msgs {
+		got[m.ID] = true
+	}
+	assert.True(t, got[memberMsg], "member-group post appears in the mygroups feed")
+	assert.False(t, got[otherMsg], "non-member-group post is excluded from the mygroups feed")
+
+	// Count uses the same member-group universe — includes the unseen member post.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var cres map[string]interface{}
+	json2.Unmarshal(rsp(resp), &cres)
+	assert.GreaterOrEqual(t, cres["count"].(float64), float64(1), "mygroups count includes the unseen member-group post")
+}
