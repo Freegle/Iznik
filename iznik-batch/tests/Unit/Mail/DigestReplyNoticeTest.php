@@ -46,4 +46,25 @@ class DigestReplyNoticeTest extends TestCase
         $this->assertNotNull($tracking);
         $this->assertEquals('DigestReplyNotice', $tracking->email_type);
     }
+
+    public function test_preheader_contains_reply_instructions(): void
+    {
+        // The mj-preview for this email is a static instruction telling the
+        // recipient how to reply to a specific post in the digest. Assert the
+        // literal text appears in the rendered Blade/MJML output so we catch
+        // any accidental change to the preheader copy.
+        $html = view('emails.mjml.digest.reply-notice', [
+            'recipientName'    => 'Test User',
+            'recipientEmail'   => 'test@example.com',
+            'browseUrl'        => 'https://example.com/browse',
+            'settingsUrl'      => 'https://example.com/settings',
+            'trackingPixelHtml' => '',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>To reply to a post, use the Reply button next to it in the digest email.</mj-preview>',
+            $html,
+            'DigestReplyNotice preheader must contain the static reply instructions'
+        );
+    }
 }

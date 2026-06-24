@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Reminder: Your Freegle group is currently closed'])
+  @include('emails.mjml.partials.head', ['preview' => $groupName . ' is currently closed - re-open it from ModTools'])
 
   <mj-body background-color="#f4f4f4">
 

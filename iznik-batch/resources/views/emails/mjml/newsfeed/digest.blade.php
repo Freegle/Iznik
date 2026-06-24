@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => $count . ' conversation' . ($count !== 1 ? 's' : '') . ' from your neighbours'])
+  @include('emails.mjml.partials.head', ['preview' => \Illuminate\Support\Str::limit($items[0]['text'] ?? '', 80) . (count($items) > 1 ? ' - and ' . (count($items) - 1) . ' more' : '')])
 
   <mj-body background-color="#f4f4f4">
 

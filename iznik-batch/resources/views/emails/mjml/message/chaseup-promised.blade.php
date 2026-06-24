@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'You promised this to someone - has it been collected?'])
+    @include('emails.mjml.partials.head', ['preview' => 'Promised: ' . \Illuminate\Support\Str::limit(strip_tags($messageSubject), 60) . ' - has it been collected?'])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

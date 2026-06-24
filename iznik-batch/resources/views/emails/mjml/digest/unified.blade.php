@@ -31,7 +31,12 @@
         ';
     @endphp
     @include('emails.mjml.partials.head', [
-        'preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you',
+        {{-- Preheader = the actual content, so the inbox preview shows what the post(s)
+             are (V1 parity: single.mjml used the post body, multiple.mjml the subject list).
+             $post (loop-local) is not in scope here, so build from $posts (the array). --}}
+        'preview' => $mode === 'immediate'
+            ? (collect($posts)->first()['subject'] ?? ($postCount . ' new post near you'))
+            : (collect($posts)->pluck('itemName')->filter()->take(3)->implode(', ') ?: ($postCount . ' new posts near you')),
         'mediaStyles' => $mediaStyles ?? '',
     ])
 

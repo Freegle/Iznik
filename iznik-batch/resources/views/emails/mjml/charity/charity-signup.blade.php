@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'New Charity Partner signup'])
+  @include('emails.mjml.partials.head', ['preview' => 'New Charity Partner signup: ' . $orgName])
 
   <mj-body>
     @include('emails.mjml.partials.header', ['title' => 'Charity Partner Signup'])
