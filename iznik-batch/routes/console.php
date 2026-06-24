@@ -496,6 +496,22 @@ foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
         ->runInBackground();
 }
 
+// Reach mail - rippling reach notifications, decoupled from ExpandService's serial Phase-2
+// loop (which no longer mails inline; see ExpandService::initialiseNew). Mails members newly
+// inside a rippling post's reach, sharded by MOD(msgid, N) exactly as immediate mode shards by
+// MOD(groupid, N) - disjoint partitions, per-shard flock (lockKeySuffix), no locking between
+// shards. Scheduled unconditionally like ripple:release-replies above: sendReachDigests' window
+// query self-idles when no reach rows changed recently, so it costs nothing while rippling is
+// dark AND it covers both the global cron and the scoped group experiment (the old inline mail
+// ran in both paths). Each invocation drains the whole window in one pass, so no --max-iterations.
+$reachMailShardCount = 4;
+foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
+    Schedule::command("mail:digest:unified --mode=reach --shard={$reachShard} --shards={$reachMailShardCount}")
+        ->everyMinute()
+        ->sendOutputTo(cronLog("mail:digest:unified.reach.shard{$reachShard}"))
+        ->runInBackground();
+}
+
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')

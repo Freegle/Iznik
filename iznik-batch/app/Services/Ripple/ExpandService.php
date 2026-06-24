@@ -249,8 +249,11 @@ class ExpandService
                         ]
                     );
                     $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
-                    $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
-                        ->mailNewlyReachedForPost((int) $row->msgid);
+                    // Reach mail is decoupled into the sharded `mail:digest:unified --mode=reach`
+                    // pass (UnifiedDigestService::sendReachDigests). It must NOT run inline here:
+                    // the 2026-06-24 live profile showed it was ~75% of this serial Phase-2 loop's
+                    // wall-clock, and mail has no Galera single-writer constraint. The reach write
+                    // above bumps rippling_reach.updated_at, which is the signal that pass picks up.
                 }
 
                 $stats['initialized']++;
@@ -349,8 +352,8 @@ class ExpandService
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
                     $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
-                    $stats['mailed'] += app(\App\Services\UnifiedDigestService::class)
-                        ->mailNewlyReachedForPost((int) $row->msgid);
+                    // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
+                    // initialiseNew and UnifiedDigestService::sendReachDigests.
                 }
 
                 $stats['expanded']++;
