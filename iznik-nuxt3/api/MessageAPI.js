@@ -96,11 +96,18 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  view(id) {
-    return this.$postv2('/message', {
+  view(id, source) {
+    const body = {
       action: 'View',
       id,
-    })
+    }
+    // Optional context tag (e.g. 'browse' vs 'message_page', or a notification
+    // ?src= value) so the server can tell a browse-feed view from a detail view.
+    // handleView persists it via COALESCE; omit when absent so we never clear it.
+    if (source) {
+      body.source = source
+    }
+    return this.$postv2('/message', body)
   }
 
   async getIllustration(item) {

@@ -10,6 +10,7 @@ const mockFetch = vi.fn()
 const mockSearch = vi.fn()
 const mockFetchMessages = vi.fn()
 const mockFetchMT = vi.fn()
+const mockView = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -19,6 +20,7 @@ vi.mock('~/api', () => ({
       fetch: mockFetch,
       search: mockSearch,
       fetchMessages: mockFetchMessages,
+      view: mockView,
     },
   }),
 }))
@@ -43,6 +45,25 @@ const mockMiscStore = { modtools: false }
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
 }))
+
+describe('message store - view()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('forwards a browse source to the API', async () => {
+    const store = useMessageStore()
+    await store.view(1234, 'browse')
+    expect(mockView).toHaveBeenCalledWith(1234, 'browse')
+  })
+
+  it('forwards a message_page source to the API', async () => {
+    const store = useMessageStore()
+    await store.view(99, 'message_page')
+    expect(mockView).toHaveBeenCalledWith(99, 'message_page')
+  })
+})
 
 describe('message store - patch()', () => {
   beforeEach(() => {
