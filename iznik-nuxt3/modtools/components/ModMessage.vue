@@ -421,6 +421,7 @@
                 )
               "
               :messageid="message.id"
+              :groupid="currentGroupid"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
