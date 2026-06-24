@@ -50,7 +50,7 @@
                 v-if="payPalFallback && !isApp"
                 :key="amount + '-fallback'"
                 :text="'Donate £' + amount"
-                :value="amount"
+                :value="String(amount)"
               />
               <p v-else-if="payPalFallback && isApp" class="text-muted">
                 Payment is temporarily unavailable. Please try again later.
@@ -70,25 +70,6 @@
               We keep costs low with volunteers, but some things we have to pay
               for.
             </p>
-          </div>
-        </div>
-
-        <!-- PayPal favourite -->
-        <div class="section-card">
-          <div class="section-header">
-            <v-icon icon="star" class="section-icon" />
-            <h2>PayPal favourite</h2>
-          </div>
-          <div class="section-content">
-            <p>
-              Set Freegle as your favourite PayPal charity for easy donations at
-              checkout.
-            </p>
-            <ExternalLink
-              href="https://www.paypal.com/fundraiser/charity/55681"
-            >
-              <b-button variant="primary"> Go to PayPal Giving Fund </b-button>
-            </ExternalLink>
           </div>
         </div>
 
@@ -180,7 +161,6 @@ import { buildHead } from '~/composables/useBuildHead'
 import { useAuthStore } from '~/stores/auth'
 import { useMobileStore } from '~/stores/mobile'
 import DonationButton from '~/components/DonationButton'
-import ExternalLink from '~/components/ExternalLink'
 import DonationThank from '~/components/DonationThank'
 import StripeDonate from '~/components/StripeDonate'
 
