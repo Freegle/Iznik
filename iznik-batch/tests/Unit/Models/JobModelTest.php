@@ -17,11 +17,18 @@ class JobModelTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->seededJobIds) {
-            $this->removeSpatial('jobs', $this->seededJobIds);
-            $this->seededJobIds = [];
+        // parent::tearDown() must always run (it cleans up the DB connection);
+        // removeSpatial() is already best-effort, but guard with finally so no
+        // teardown failure can ever leave the connection holding locks and flake
+        // the next test's clearJobsTable() DELETE.
+        try {
+            if ($this->seededJobIds) {
+                $this->removeSpatial('jobs', $this->seededJobIds);
+                $this->seededJobIds = [];
+            }
+        } finally {
+            parent::tearDown();
         }
-        parent::tearDown();
     }
 
     /**
