@@ -52,6 +52,7 @@ onMounted(async () => {
   // Log the view and redirect to the job link.
   if (id.value && job.value?.id === id.value) {
     await jobStore.log({
+      id: job.value.id,
       link: job.value.url,
     })
 
