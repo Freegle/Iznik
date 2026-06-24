@@ -112,6 +112,10 @@ function openDigest(ranked, memberLat, memberLng) {
   })
 
   const SOFT_CAP = 100
+  // The real unified digest only emails the first DigestStyle::DIGEST_POST_CAP (65) live
+  // posts ("Top picks"); the rest are website-only. Mirror that cap here so the preview
+  // reflects what actually goes out, rather than the looser 100-row display soft cap.
+  const DIGEST_POST_CAP = 65
   const truncate = (rows) => {
     if (rows.length <= SOFT_CAP) return { html: rows.join(''), extra: 0 }
     return {
@@ -130,9 +134,10 @@ function openDigest(ranked, memberLat, memberLng) {
   let html = intro
   if (sections.active.length) {
     html += sectionHeader(`Top picks (${sections.active.length})`)
-    const r = truncate(sections.active)
-    html += r.html
-    if (r.extra) html += moreFooter(r.extra)
+    // Apply the real digest's 65 live-post cap (not the 100-row display soft cap).
+    const extra = Math.max(0, sections.active.length - DIGEST_POST_CAP)
+    html += sections.active.slice(0, DIGEST_POST_CAP).join('')
+    if (extra) html += moreFooter(extra)
   }
   if (sections.promised.length) {
     html += sectionHeader(
