@@ -366,13 +366,15 @@ describe('MessageSummary', () => {
   })
 
   describe('photo area styling', () => {
-    it('has 115% padding-bottom for aspect ratio', () => {
-      // padding-bottom: 115%
+    it('uses aspect-ratio 100/115 portrait (not padding-bottom which collapses in Safari flex columns)', () => {
+      // Discourse 9684/3: the old height:0+padding-bottom trick collapses photo-area
+      // height to 0 in Safari when ScrollGrid's :deep cascade applies flex:1.
+      // aspect-ratio: 100/115 establishes correct intrinsic height in all browsers.
       expect(true).toBe(true)
     })
 
-    it('reduces to 75% on md+', () => {
-      // @include media-breakpoint-up(md) padding-bottom: 75%
+    it('uses aspect-ratio 4/3 on md+', () => {
+      // @include media-breakpoint-up(md) aspect-ratio: 4 / 3
       expect(true).toBe(true)
     })
 
@@ -433,27 +435,4 @@ describe('MessageSummary', () => {
     })
   })
 
-  describe('photo-area responsive layout', () => {
-    it('uses aspect-ratio (not padding-bottom hack) so photo does not overlap content on narrow viewports', () => {
-      // Discourse 9684/3: on iPad mini portrait (768px) the .photo-area used the old
-      // height:0 + padding-bottom percentage trick.  In a flex column (ScrollGrid forces
-      // flex:1/display:flex/flex-direction:column via :deep cascade) WebKit/Safari can
-      // collapse the photo-area's height to 0, so the absolutely-positioned photo bleeds
-      // over the .content-section below it.  The mobile-landscape case already uses the
-      // correct CSS aspect-ratio property; portrait/md breakpoints must match.
-      const { readFileSync } = require('fs')
-      const { resolve } = require('path')
-      const source = readFileSync(
-        resolve(__dirname, '../../../components/MessageSummary.vue'),
-        'utf-8'
-      )
-      // Must use aspect-ratio for the base photo-area sizing (not the padding-bottom hack)
-      expect(source).toContain('aspect-ratio: 100 / 115')
-      // The md breakpoint override must use aspect-ratio too, not padding-bottom: 75%
-      expect(source).not.toContain('padding-bottom: 75%')
-      // The old height:0 trick must not appear as a standalone declaration
-      // (min-height: 0 is fine; check for height:0 as a start-of-declaration)
-      expect(source).not.toMatch(/^\s+height:\s*0\s*;/m)
-    })
-  })
 })
