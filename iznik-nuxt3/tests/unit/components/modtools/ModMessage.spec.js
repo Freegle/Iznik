@@ -412,6 +412,67 @@ describe('ModMessage', () => {
     })
   })
 
+  describe('Computed: alreadyOnHomeGroup', () => {
+    // Regression: a post must not be told it "Possibly should be on" a group it is ALREADY
+    // on (its origin, or a group it has rippled onto). The hint previously fired whenever the
+    // post was viewed under a different group's context than its nearest home group, so a
+    // multi-group/rippled post on its home group wrongly showed "Possibly should be on <home>".
+    it('is true and suppresses the hint when the post is already on its nearest home group', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Home Group',
+              collection: 'Approved',
+              arrival: '2024-01-01T00:00:00Z',
+            },
+            {
+              groupid: 790,
+              namedisplay: 'Other Group',
+              collection: 'Approved',
+              arrival: '2024-01-02T00:00:00Z',
+            },
+          ],
+          location: {
+            name: 'SW1A 1AA',
+            lat: 51.5,
+            lng: -0.1,
+            groupsnear: [{ id: 789, namedisplay: 'Home Group', ontn: true }],
+          },
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.alreadyOnHomeGroup).toBe(true)
+      expect(wrapper.text()).not.toContain('Possibly should be on')
+    })
+
+    it('is false when the post is NOT on its nearest home group', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 790,
+              namedisplay: 'Other Group',
+              collection: 'Approved',
+              arrival: '2024-01-02T00:00:00Z',
+            },
+          ],
+          location: {
+            name: 'SW1A 1AA',
+            lat: 51.5,
+            lng: -0.1,
+            groupsnear: [{ id: 789, namedisplay: 'Home Group', ontn: true }],
+          },
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.alreadyOnHomeGroup).toBe(false)
+    })
+  })
+
   describe('Computed: pending', () => {
     it.each([
       ['Pending', true],

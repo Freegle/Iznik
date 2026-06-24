@@ -148,7 +148,12 @@
               :only-groupid="currentGroupid"
             />
             <div
-              v-if="homegroup && groupid && groupid !== homegroupids[0]"
+              v-if="
+                homegroup &&
+                groupid &&
+                groupid !== homegroupids[0] &&
+                !alreadyOnHomeGroup
+              "
               class="small text-danger"
             >
               Possibly should be on {{ homegroup }}
@@ -953,6 +958,20 @@ const otherGroups = computed(() => {
     const id = parseInt(g.groupid)
     return id !== gid && id !== origin
   })
+})
+
+// Suppress the "Possibly should be on <homegroup>" hint when the post is ALREADY on that
+// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. The
+// template's `groupid !== homegroupids[0]` only covers the case where the home group is the
+// group currently being administered; a post on its home group but viewed under a different
+// group's context (common once a post ripples onto several groups) would otherwise be told
+// it "should be on" a group it's already a member of.
+const alreadyOnHomeGroup = computed(() => {
+  const homeId = homegroupids.value?.[0]
+  if (!homeId) return false
+  return (message.value?.groups || []).some(
+    (g) => parseInt(g.groupid) === homeId
+  )
 })
 
 // The groups this post is on that the current user actually moderates. When there's more
