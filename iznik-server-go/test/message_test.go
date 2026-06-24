@@ -490,6 +490,44 @@ func TestMessagesByUser(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+// Regression: rippling-out writes a messages_groups row (rippled_in=1) per group a post ripples
+// into, so the same post has many messages_groups rows. My Posts must still show the post ONCE
+// (at its origin group), not once per group — the join must restrict to the origin (rippled_in=0)
+// membership. Before the fix this returned the post once per group.
+func TestMyPostsRippledMessageAppearsOnce(t *testing.T) {
+	prefix := uniquePrefix("ripplededup")
+	originGroup := CreateTestGroup(t, prefix+"orig")
+	rippledGroupA := CreateTestGroup(t, prefix+"ripA")
+	rippledGroupB := CreateTestGroup(t, prefix+"ripB")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, originGroup, "Member")
+	msgID := CreateTestMessage(t, userID, originGroup, "OFFER: Rippled Downlighter", 51.5, -0.1)
+
+	// Simulate ExpandService::rippleIntoNewGroups: the post gains a messages_groups row
+	// (rippled_in=1) in each rippled-into group, exactly as the live rippler does.
+	db := database.DBConn
+	for _, g := range []uint64{rippledGroupA, rippledGroupB} {
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+			"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, g)
+	}
+
+	_, token := CreateTestSession(t, userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	require.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "a post rippled into multiple groups must appear exactly once in My Posts")
+}
+
 func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
 	prefix := uniquePrefix("expire")
 	groupID := CreateTestGroup(t, prefix)
