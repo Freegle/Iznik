@@ -66,6 +66,31 @@
       </div>
 
       <div class="mb-3">
+        <strong class="small">Are posts getting more replies?</strong>
+        <p class="text-muted small mb-1">
+          Mean number of replies a post gets within 36h.
+          <span class="text-success fw-bold">Good:</span> rippled-out posts
+          average more replies each than home-only - reach is deepening
+          interest, not just turning 0-reply posts into 1.
+        </p>
+        <GChart
+          v-if="repliesPerPostChart"
+          type="LineChart"
+          :data="repliesPerPostChart"
+          :options="cohortPctOptions('Mean replies / post')"
+          style="width: 100%; height: 300px"
+        />
+        <p
+          v-if="repliesPerPostChart"
+          class="text-muted small fst-italic mt-1 mb-0"
+        >
+          The dashed tail is still settling - the most recent posts haven't had
+          a full 36h to gather replies yet.
+        </p>
+        <p v-if="!repliesPerPostChart" class="text-muted small">No data yet.</p>
+      </div>
+
+      <div class="mb-3">
         <strong class="small">Share of replies from rippling</strong>
         <p class="text-muted small mb-1">
           Share of replies that came via rippling vs your own members.
@@ -220,6 +245,7 @@ const hotspots = ref([])
 const heldReplySummary = ref([])
 // Headline reply KPIs (per-day series for the line charts)
 const replyRate = ref([])
+const repliesPerPost = ref([])
 const replySource = ref([])
 const replyDistance = ref([])
 const takenRate = ref([])
@@ -242,6 +268,22 @@ const replyRateChart = computed(() => {
   const rows = [...replyRate.value].reverse().map((r) => {
     const certain = !r.provisional
     return [new Date(r.day), r.reply_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
+})
+const repliesPerPostChart = computed(() => {
+  if (!repliesPerPost.value.length) return null
+  const rows = [...repliesPerPost.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [
+      new Date(r.day),
+      r.mean_replies,
+      certain,
+      r.home_mean,
+      certain,
+      r.ripple_mean,
+      certain,
+    ]
   })
   return [COHORT_HEADER('All offers'), ...rows]
 })
@@ -367,6 +409,7 @@ async function fetchMetrics() {
     hotspots.value = result?.hotspots || []
     heldReplySummary.value = result?.held_reply_summary || []
     replyRate.value = result?.reply_rate_36h || []
+    repliesPerPost.value = result?.replies_per_post || []
     replySource.value = result?.reply_source_split || []
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []

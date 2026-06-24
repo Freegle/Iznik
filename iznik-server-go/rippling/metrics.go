@@ -110,6 +110,27 @@ type ReplyRateRow struct {
 	Provisional bool `json:"provisional"` // computed in Go (day within the 36h settling window)
 }
 
+// RepliesPerPostRow is the mean number of Interested replies a post got within 36h, per arrival day,
+// split into home-only vs rippled-out cohorts. Where reply RATE (ReplyRateRow) asks "did a post get
+// any reply", this asks "how many" - so it shows whether rippling lifts the depth of interest, not
+// just its presence. Means are computed in Go; counts come from SQL.
+type RepliesPerPostRow struct {
+	Day         string  `json:"day"          gorm:"column:day"`
+	Posts       int     `json:"posts"        gorm:"column:posts"`
+	Replies     int     `json:"replies"      gorm:"column:replies"`
+	MeanReplies float64 `json:"mean_replies"` // computed in Go (Replies / Posts)
+
+	HomePosts   int     `json:"home_posts"   gorm:"column:home_posts"`
+	HomeReplies int     `json:"home_replies" gorm:"column:home_replies"`
+	HomeMean    float64 `json:"home_mean"` // computed in Go
+
+	RipplePosts   int     `json:"ripple_posts"   gorm:"column:ripple_posts"`
+	RippleReplies int     `json:"ripple_replies" gorm:"column:ripple_replies"`
+	RippleMean    float64 `json:"ripple_mean"` // computed in Go
+
+	Provisional bool `json:"provisional"` // computed in Go (day within the 36h settling window)
+}
+
 // ReplySourceRow is the daily split of Interested replies by whether the replier reached the post
 // via rippling or via their own (home) group. A reply counts as "home" only if the replier was an
 // approved member of an ORIGIN (rippled_in=0) group of the post BEFORE the post arrived
@@ -253,6 +274,7 @@ func Metrics(c *fiber.Ctx) error {
 	var cg crossGroupRaw
 	var capture CaptureSummary
 	replyRates := []ReplyRateRow{}
+	repliesPerPost := []RepliesPerPostRow{}
 	replySources := []ReplySourceRow{}
 	replyDistances := []ReplyDistanceRow{}
 	takenRates := []TakenRateRow{}
@@ -388,6 +410,41 @@ func Metrics(c *fiber.Ctx) error {
 			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&replyRates)
 	}()
 
+	// (1b) Mean number of Interested replies per Offer within 36h, per arrival day, split by cohort.
+	// Mirrors query (1) exactly (same arg order via replyRateArgs) but COUNTs replies instead of
+	// asking did-any-reply. COUNT(DISTINCT cm.id) because a post sits in several messages_groups rows
+	// (it can ripple into many groups), which would otherwise multiply the reply count.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		db.Raw(`
+			SELECT day,
+			       COUNT(*) AS posts,
+			       SUM(reply_count) AS replies,
+			       SUM(1 - is_rippled) AS home_posts, -- is_rippled is 0/1 from EXISTS (never NULL)
+			       SUM(CASE WHEN is_rippled = 0 THEN reply_count ELSE 0 END) AS home_replies,
+			       SUM(is_rippled) AS ripple_posts,
+			       SUM(CASE WHEN is_rippled = 1 THEN reply_count ELSE 0 END) AS ripple_replies
+			FROM (
+			    SELECT m.id,
+			           DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+			           COUNT(DISTINCT cm.id) AS reply_count,
+			           EXISTS (SELECT 1 FROM messages_groups mgr
+			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			    FROM messages m
+			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+			    LEFT JOIN chat_messages cm
+			           ON cm.refmsgid = m.id AND cm.type = 'Interested'
+			          AND cm.date >= ? AND cm.date < (? + INTERVAL 36 HOUR)
+			          AND cm.date >= m.arrival AND cm.date < m.arrival + INTERVAL 36 HOUR
+			    WHERE m.type = 'Offer'
+			      AND m.arrival >= ? AND m.arrival < ?
+			    GROUP BY m.id, m.arrival
+			) per_msg
+			GROUP BY day
+			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&repliesPerPost)
+	}()
+
 	// (2) Rippling vs home-group replies, per day, from rippling_reply_attribution (captured at
 	//     reply time - the only sound attribution, since replying joins the member to the group).
 	wg.Add(1)
@@ -511,6 +568,20 @@ func Metrics(c *fiber.Ctx) error {
 		replyRates[i].Provisional = replyRates[i].Day >= reply36hCutoff
 	}
 
+	// Mean replies per post (overall + cohorts). Same 36h settling window as the reply rate.
+	for i := range repliesPerPost {
+		if repliesPerPost[i].Posts > 0 {
+			repliesPerPost[i].MeanReplies = float64(repliesPerPost[i].Replies) / float64(repliesPerPost[i].Posts)
+		}
+		if repliesPerPost[i].HomePosts > 0 {
+			repliesPerPost[i].HomeMean = float64(repliesPerPost[i].HomeReplies) / float64(repliesPerPost[i].HomePosts)
+		}
+		if repliesPerPost[i].RipplePosts > 0 {
+			repliesPerPost[i].RippleMean = float64(repliesPerPost[i].RippleReplies) / float64(repliesPerPost[i].RipplePosts)
+		}
+		repliesPerPost[i].Provisional = repliesPerPost[i].Day >= reply36hCutoff
+	}
+
 	// Compute derived fields for reply-source rows.
 	for i := range replySources {
 		replySources[i].Ripple = replySources[i].Replies - replySources[i].Home
@@ -561,6 +632,7 @@ func Metrics(c *fiber.Ctx) error {
 		"cross_group_summary":   crossGroup,
 		"capture_summary":       capture,
 		"reply_rate_36h":        replyRates,
+		"replies_per_post":      repliesPerPost,
 		"reply_source_split":    replySources,
 		"reply_distance_median": replyDistances,
 		"taken_rate":            takenRates,
