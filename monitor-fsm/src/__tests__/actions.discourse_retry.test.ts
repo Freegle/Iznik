@@ -40,6 +40,11 @@ const RATE_LIMIT_BODY = JSON.stringify({
   extras: { wait_seconds: 44, time_left: '44 seconds' },
 })
 
+// postDiscourseReply now refuses any raw without quoted text (the invariant), so the
+// retry-behaviour tests must pass a properly-quoted reply to reach the network path.
+const QUOTED_RAW =
+  '[quote="Jos, post:8, topic:9692"]\nthe reported problem\n[/quote]\n\nAI Edward: possible fix applied, please retest'
+
 describe('parseRetryAfter', () => {
   it('prefers the Retry-After header', () => {
     expect(parseRetryAfter('30', RATE_LIMIT_BODY)).toBe(30)
@@ -80,7 +85,7 @@ describe('postDiscourseReply 429 retry', () => {
       .mockResolvedValueOnce(res(429, RATE_LIMIT_BODY, '2'))
       .mockResolvedValueOnce(res(200))
 
-    const result = await postDiscourseReply(9692, 'a deployed-reply', 8, { sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, 8, { sleepFn })
 
     expect(result.ok).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -93,7 +98,7 @@ describe('postDiscourseReply 429 retry', () => {
       .mockResolvedValueOnce(res(429, RATE_LIMIT_BODY)) // wait_seconds: 44
       .mockResolvedValueOnce(res(201))
 
-    const result = await postDiscourseReply(9692, 'body', undefined, { sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { sleepFn })
 
     expect(result.ok).toBe(true)
     expect(sleeps).toEqual([44000])
@@ -104,14 +109,14 @@ describe('postDiscourseReply 429 retry', () => {
       .mockResolvedValueOnce(res(429, RATE_LIMIT_BODY, '9999'))
       .mockResolvedValueOnce(res(200))
 
-    await postDiscourseReply(9692, 'body', undefined, { sleepFn })
+    await postDiscourseReply(9692, QUOTED_RAW, undefined, { sleepFn })
     expect(sleeps).toEqual([60000])
   })
 
   it('gives up after maxRetries consecutive 429s and reports the error', async () => {
     fetchMock.mockResolvedValue(res(429, RATE_LIMIT_BODY, '1'))
 
-    const result = await postDiscourseReply(9692, 'body', undefined, { maxRetries: 3, sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { maxRetries: 3, sleepFn })
 
     expect(result.ok).toBe(false)
     expect(result.error).toContain('HTTP 429')
@@ -123,11 +128,46 @@ describe('postDiscourseReply 429 retry', () => {
   it('does not retry a non-429 error', async () => {
     fetchMock.mockResolvedValueOnce(res(422, 'unprocessable'))
 
-    const result = await postDiscourseReply(9692, 'body', undefined, { sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { sleepFn })
 
     expect(result.ok).toBe(false)
     expect(result.error).toContain('HTTP 422')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(sleeps).toEqual([])
+  })
+})
+
+// The invariant: a reply must NEVER be posted without quoted text. Enforced at the
+// posting chokepoint so no upstream bug can produce a context-less post.
+describe('postDiscourseReply quote invariant', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(res(200))
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses a reply with no quote block, without hitting the network', async () => {
+    const result = await postDiscourseReply(9692, 'AI Edward: possible fix applied, please retest', 8)
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/quoted text/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty quote block (whitespace-only content is not quoted text)', async () => {
+    const result = await postDiscourseReply(9692, '[quote]\n  \n[/quote]\n\nplease retest', 8)
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/quoted text/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('posts when the raw carries non-empty quoted text', async () => {
+    const result = await postDiscourseReply(9692, QUOTED_RAW, 8)
+    expect(result.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

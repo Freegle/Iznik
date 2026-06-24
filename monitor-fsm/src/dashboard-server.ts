@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import https from 'node:https'
 import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
-import { DISCOURSE_BASE, formatReplyRaw } from './discourse.js'
+import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from './discourse.js'
 import type { Database as DB } from 'better-sqlite3'
 
 const execAsync = promisify(exec)
@@ -263,6 +263,12 @@ async function fetchPrsLive(): Promise<any[]> {
 
 function postToDiscourse(topicId: number, raw: string, replyToPostNumber?: number): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
+    // HARD INVARIANT (matches postDiscourseReply): never post a reply without quoted
+    // text. Refuse rather than post a context-less reply.
+    if (!hasNonEmptyQuote(raw)) {
+      resolve({ ok: false, error: 'refusing to post a Discourse reply with no quoted text' })
+      return
+    }
     const apiKey = getDiscourseApiKey()
     // reply_to_post_number threads the reply under the SPECIFIC post that
     // reported the problem (not just the topic). Only set for post > 1; a reply

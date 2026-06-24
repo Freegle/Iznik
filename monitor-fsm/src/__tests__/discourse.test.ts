@@ -83,3 +83,43 @@ describe('formatReplyRaw', () => {
     expect(raw).toBe('[quote="Jos, post:2, topic:9"]\npadded\n[/quote]\n\nreply')
   })
 })
+
+describe('hasNonEmptyQuote (posting invariant)', () => {
+  it('is true for an attributed quote with content', async () => {
+    const { hasNonEmptyQuote } = await import('../discourse')
+    expect(hasNonEmptyQuote('[quote="Jos, post:3, topic:9"]\nthe report\n[/quote]\n\nplease retest')).toBe(true)
+  })
+
+  it('is true for a plain quote with content', async () => {
+    const { hasNonEmptyQuote } = await import('../discourse')
+    expect(hasNonEmptyQuote('[quote]\nsomething\n[/quote]\n\nbody')).toBe(true)
+  })
+
+  it('is false for a bare body with no quote block', async () => {
+    const { hasNonEmptyQuote } = await import('../discourse')
+    expect(hasNonEmptyQuote('AI Edward: possible fix applied, please retest')).toBe(false)
+  })
+
+  it('is false for an empty quote block', async () => {
+    const { hasNonEmptyQuote } = await import('../discourse')
+    expect(hasNonEmptyQuote('[quote][/quote]\n\nbody')).toBe(false)
+  })
+
+  it('is false for a whitespace-only quote block', async () => {
+    const { hasNonEmptyQuote } = await import('../discourse')
+    expect(hasNonEmptyQuote('[quote="x, post:1, topic:2"]\n   \n[/quote]\n\nbody')).toBe(false)
+  })
+
+  it('agrees with formatReplyRaw: a non-empty quote always yields a postable raw', async () => {
+    const { formatReplyRaw, hasNonEmptyQuote } = await import('../discourse')
+    const raw = formatReplyRaw({ username: 'Jos', post: 3, topic: 9, quote: 'the report', body: 'please retest' })
+    expect(hasNonEmptyQuote(raw)).toBe(true)
+  })
+
+  it('agrees with formatReplyRaw: an empty quote yields a raw the guard rejects', async () => {
+    const { formatReplyRaw, hasNonEmptyQuote } = await import('../discourse')
+    // This is the hole: formatReplyRaw returns the bare body, and the posting guard refuses it.
+    const raw = formatReplyRaw({ username: 'Jos', post: 3, topic: 9, quote: '', body: 'please retest' })
+    expect(hasNonEmptyQuote(raw)).toBe(false)
+  })
+})

@@ -39,6 +39,10 @@ export function formatReplyRaw(d: {
   const body = d.body
   if (/^\s*\[quote[=\]]/i.test(body)) return body
 
+  // With no quote text there is nothing to wrap, so this returns the bare body —
+  // but that MUST NOT reach Discourse. The posting layer (postDiscourseReply /
+  // postToDiscourse) enforces hasNonEmptyQuote() and refuses to post it, and
+  // callers populate `quote` from a fallback chain so it's never empty in practice.
   const quote = (d.quote ?? '').trim()
   if (!quote) return body
 
@@ -49,4 +53,17 @@ export function formatReplyRaw(d: {
       : '[quote]'
 
   return `${attribution}\n${quote}\n[/quote]\n\n${body}`
+}
+
+/**
+ * True iff `raw` contains a [quote ...]...[/quote] block with non-whitespace content.
+ *
+ * The posting layer enforces this as a HARD INVARIANT: a Discourse reply must never be
+ * posted without quoted text. A bare "possible fix applied, please retest" with no quote
+ * leaves the reader (and the digest/notification) with no idea what it answers — the
+ * recurring bug this guards. An empty [quote][/quote] does NOT count (needs real text).
+ */
+export function hasNonEmptyQuote(raw: string): boolean {
+  const m = raw.match(/\[quote[^\]]*\]([\s\S]*?)\[\/quote\]/i)
+  return !!m && m[1].trim().length > 0
 }
