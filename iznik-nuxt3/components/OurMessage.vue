@@ -142,6 +142,15 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Where this card is rendered, recorded with the view so browse-feed views are
+  // distinguishable from detail views. The feed leaves the default ('browse');
+  // the message page passes 'message_page' (or a notification ?src= tag). Both
+  // the passive dwell and the tap-to-expand are still "in the feed" → 'browse'.
+  viewSource: {
+    type: String,
+    required: false,
+    default: 'browse',
+  },
 })
 
 const emit = defineEmits(['notFound', 'view', 'visible'])
@@ -203,10 +212,10 @@ function closeMobileExpanded() {
   showMobileExpanded.value = false
 }
 
-async function view() {
+async function view(source = props.viewSource) {
   if (props.recordView) {
     if (me.value && message.value?.unseen) {
-      await messageStore.view(props.id)
+      await messageStore.view(props.id, source)
     }
 
     emit('view')
