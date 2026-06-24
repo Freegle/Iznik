@@ -56,14 +56,17 @@
           v-if="replyRateChart"
           type="LineChart"
           :data="replyRateChart"
-          :options="pctChartOptions('Reply rate (%)', '#28a745')"
+          :options="cohortPctOptions('Reply rate (%)')"
           style="width: 100%; height: 300px"
         />
-        <p v-else class="text-muted small">No data yet.</p>
+        <p class="text-muted small fst-italic mt-1 mb-0">
+          The dashed tail is still settling - the most recent posts haven't had a full 36h to get a reply yet.
+        </p>
+        <p v-if="!replyRateChart" class="text-muted small">No data yet.</p>
       </div>
 
       <div class="mb-3">
-        <strong class="small">How much of the lift is rippling?</strong>
+        <strong class="small">Share of replies from rippling</strong>
         <p class="text-muted small mb-1">
           Share of replies that came via rippling vs your own members.
           <span class="text-success fw-bold">Good:</span> a real share - the
@@ -96,7 +99,7 @@
           v-if="replyDistanceChart"
           type="LineChart"
           :data="replyDistanceChart"
-          :options="kmChartOptions()"
+          :options="cohortKmOptions()"
           style="width: 100%; height: 300px"
         />
         <p v-else class="text-muted small">No data yet.</p>
@@ -113,10 +116,13 @@
           v-if="takenRateChart"
           type="LineChart"
           :data="takenRateChart"
-          :options="pctChartOptions('Taken/received (%)', '#6f42c1')"
+          :options="cohortPctOptions('Taken/received (%)')"
           style="width: 100%; height: 300px"
         />
-        <p v-else class="text-muted small">No data yet.</p>
+        <p class="text-muted small fst-italic mt-1 mb-0">
+          The dashed tail is still settling - recent posts haven't had time to be collected yet.
+        </p>
+        <p v-if="!takenRateChart" class="text-muted small">No data yet.</p>
       </div>
 
       <h6 class="mt-4">Where to look — geographic hotspots</h6>
@@ -221,12 +227,23 @@ const takenRate = ref([])
 const groupOptions = ref([])
 const groupFilter = ref(0)
 
+const COHORT_HEADER = (allLabel) => [
+  'Date',
+  allLabel,
+  { role: 'certainty', type: 'boolean' },
+  'Home-only',
+  { role: 'certainty', type: 'boolean' },
+  'Rippled-out',
+  { role: 'certainty', type: 'boolean' },
+]
+
 const replyRateChart = computed(() => {
   if (!replyRate.value.length) return null
-  const rows = [...replyRate.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.reply_pct])
-  return [['Date', '% with reply in 36h'], ...rows]
+  const rows = [...replyRate.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [new Date(r.day), r.reply_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
 })
 const replySourceChart = computed(() => {
   if (!replySource.value.length) return null
@@ -237,17 +254,18 @@ const replySourceChart = computed(() => {
 })
 const replyDistanceChart = computed(() => {
   if (!replyDistance.value.length) return null
-  const rows = [...replyDistance.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.median_km])
-  return [['Date', 'Median km'], ...rows]
+  const rows = [...replyDistance.value].reverse().map((r) => [
+    new Date(r.day), r.median_km, true, r.home_median_km, true, r.ripple_median_km, true,
+  ])
+  return [COHORT_HEADER('All offers'), ...rows]
 })
 const takenRateChart = computed(() => {
   if (!takenRate.value.length) return null
-  const rows = [...takenRate.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.taken_pct])
-  return [['Date', '% taken/received'], ...rows]
+  const rows = [...takenRate.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [new Date(r.day), r.taken_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
 })
 
 function pctChartOptions(vTitle, color) {
@@ -269,6 +287,36 @@ function kmChartOptions() {
     vAxis: { title: 'Median km', viewWindow: { min: 0 }, format: '#.#' },
     hAxis: { title: 'Date', format: 'dd MMM' },
     series: { 0: { color: '#fd7e14' } },
+    animation: { startup: true, duration: 400, easing: 'out' },
+  }
+}
+function cohortPctOptions(vTitle) {
+  return {
+    curveType: 'function',
+    legend: { position: 'bottom' },
+    chartArea: { width: '85%', height: '65%' },
+    vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
+    hAxis: { title: 'Date', format: 'dd MMM' },
+    series: {
+      0: { color: '#6c757d' }, // All — grey
+      1: { color: '#17a2b8' }, // Home-only — teal
+      2: { color: '#28a745' }, // Rippled-out — green
+    },
+    animation: { startup: true, duration: 400, easing: 'out' },
+  }
+}
+function cohortKmOptions() {
+  return {
+    curveType: 'function',
+    legend: { position: 'bottom' },
+    chartArea: { width: '85%', height: '65%' },
+    vAxis: { title: 'Median km', viewWindow: { min: 0 }, format: '#.#' },
+    hAxis: { title: 'Date', format: 'dd MMM' },
+    series: {
+      0: { color: '#6c757d' },
+      1: { color: '#17a2b8' },
+      2: { color: '#fd7e14' }, // Rippled-out distance — orange
+    },
     animation: { startup: true, duration: 400, easing: 'out' },
   }
 }
