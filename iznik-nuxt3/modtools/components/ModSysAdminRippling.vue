@@ -246,10 +246,21 @@ const replyRateChart = computed(() => {
   return [COHORT_HEADER('All offers'), ...rows]
 })
 const replySourceChart = computed(() => {
-  if (!replySource.value.length) return null
-  const rows = [...replySource.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.ripple_pct])
+  if (!startDate.value || !endDate.value) return null
+  // Zero-fill the whole filter range. The backend only returns days that had a
+  // rippling-attributed reply, so early in the rollout this was a single lone
+  // point. A day with no rippling reply genuinely has a 0% rippling share, so
+  // filling the gaps draws a continuous line across the same range as the other
+  // charts instead of one dot floating on a one-day axis.
+  const byDay = new Map(replySource.value.map((r) => [r.day, r.ripple_pct]))
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return null
+  const rows = []
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10)
+    rows.push([new Date(d), byDay.has(key) ? byDay.get(key) : 0])
+  }
   return [['Date', '% of replies via rippling'], ...rows]
 })
 const replyDistanceChart = computed(() => {
