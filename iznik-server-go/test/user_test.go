@@ -4523,6 +4523,81 @@ func TestMessageHistory_NoDuplicatesOnRepost(t *testing.T) {
 		"exactly one messagehistory entry per (msgID, groupID) regardless of repost count")
 }
 
+// TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary covers Discourse #9783/7.
+//
+// "Strange case": a post is in Pending state (collection='Pending', mg.deleted=0,
+// m.deleted IS NULL) but also has an outcome='Withdrawn' in messages_outcomes.
+// This happens when a batch process (e.g. processExpiredFromSpatialIndex) records
+// a Withdrawn outcome for a post that remains in the Pending queue.
+//
+// Before PR #805 (commit 5bc319c1d): GetUserMessageHistory used mg.collection='Approved'
+// only, so such a post was invisible in Post Summary even though it appeared in the
+// Pending moderation queue.
+//
+// After PR #805: mg.collection IN ('Approved','Pending') - the post appears in Post
+// Summary with outcome='Withdrawn', consistent with what the Pending queue shows.
+//
+// This test asserts the FIXED behaviour and guards against regression.
+func TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary(t *testing.T) {
+	prefix := uniquePrefix("mh_wdpend")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create a Pending message (simulates a post awaiting mod approval).
+	subject := prefix + " OFFER free table"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', NOW())",
+		userID, subject)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		userID, subject).Scan(&msgID)
+	require.NotZero(t, msgID, "test message must be created")
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) VALUES (?, ?, NOW(), 'Pending')",
+		msgID, groupID)
+
+	// Record a Withdrawn outcome WITHOUT soft-deleting messages_groups or messages.
+	// This is the "strange case" from Discourse #9783/7: a batch process can insert
+	// an outcome row without cleaning up the Pending row, so the post remains visible
+	// in the Pending queue while carrying a Withdrawn outcome.
+	db.Exec(
+		"INSERT INTO messages_outcomes (msgid, outcome, comments, timestamp) VALUES (?, 'Withdrawn', 'Auto-expired', NOW())",
+		msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var foundEntry *user2.UserMessageHistory
+	for i := range history {
+		if history[i].ID == msgID {
+			foundEntry = &history[i]
+			break
+		}
+	}
+
+	// FIXED: the post appears in history with the Withdrawn outcome so Post Summary
+	// is consistent with the Pending queue display.
+	// Would FAIL on code with mg.collection='Approved' only (pre-PR #805 regression).
+	require.NotNil(t, foundEntry,
+		"Pending post with Withdrawn outcome must appear in messagehistory "+
+			"(Discourse #9783/7: was invisible before PR #805 added COLLECTION_PENDING)")
+	require.NotNil(t, foundEntry.Outcome,
+		"outcome field must be non-nil for a post with a Withdrawn outcome row")
+	assert.Equal(t, "Withdrawn", *foundEntry.Outcome,
+		"outcome field must reflect the Withdrawn outcome from messages_outcomes")
+	assert.Equal(t, "Pending", foundEntry.Collection,
+		"collection field must reflect the Pending state of the messages_groups row")
+}
+
 // TestMessageHistory_ArrivalUsesLatestGroupPosting verifies that when a message
 // is posted to two groups and each group has its own messages_postings rows, the
 // arrival date returned for each group reflects only that group's most recent
