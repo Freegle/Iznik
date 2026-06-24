@@ -111,7 +111,7 @@ function openDigest(ranked, memberLat, memberLng) {
     sections[cls.section].push(buildDigestRow(p, p._rank, memberLat, memberLng))
   })
 
-  const SOFT_CAP = 100
+  const SOFT_CAP = 100 // Display cap for the promised/completed sections (active uses DIGEST_POST_CAP).
   // The real unified digest only emails the first DigestStyle::DIGEST_POST_CAP (65) live
   // posts ("Top picks"); the rest are website-only. Mirror that cap here so the preview
   // reflects what actually goes out, rather than the looser 100-row display soft cap.

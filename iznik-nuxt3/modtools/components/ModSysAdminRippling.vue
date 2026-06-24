@@ -257,7 +257,8 @@ const replyDistanceChart = computed(() => {
   const rows = [...replyDistance.value].reverse().map((r) => [
     new Date(r.day), r.median_km, true, r.home_median_km, true, r.ripple_median_km, true,
   ])
-  return [COHORT_HEADER('All offers'), ...rows]
+  // Distance is a median over replies, not a count of offers, so label the "all" line accordingly.
+  return [COHORT_HEADER('All replies'), ...rows]
 })
 const takenRateChart = computed(() => {
   if (!takenRate.value.length) return null
