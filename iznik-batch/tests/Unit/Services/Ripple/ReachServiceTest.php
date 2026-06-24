@@ -98,4 +98,46 @@ class ReachServiceTest extends TestCase
         Http::fake(['*ripple-schedule*' => Http::response('boom', 500)]);
         $this->assertNull($s->computeSchedule(51.5, -0.1));
     }
+
+    public function test_compute_schedules_batch_returns_one_result_per_origin(): void
+    {
+        $s = $this->service();
+
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => [
+                'type' => 'Polygon',
+                'coordinates' => [[
+                    [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+                ]],
+            ],
+        ];
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 120,
+            'max_drive_min' => 30,
+            'schedule' => [
+                ['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 84, 'polygon' => $polygon],
+            ],
+        ], 200)]);
+
+        $results = $s->computeSchedulesBatch([
+            ['lat' => 51.5, 'lng' => -0.1],
+            ['lat' => 52.2, 'lng' => -1.5],
+        ]);
+
+        $this->assertCount(2, $results, 'one result per input origin, index-aligned');
+        $this->assertNotNull($results[0]);
+        $this->assertNotNull($results[1]);
+        $this->assertSame(120, $results[0]['total_freeglers']);
+        $this->assertStringStartsWith('POLYGON((', $results[0]['ticks'][0]['wkt']);
+        // One HTTP request per origin was fired (the pool fans them out concurrently).
+        $this->assertCount(2, Http::recorded());
+    }
+
+    public function test_compute_schedules_batch_is_empty_for_no_origins(): void
+    {
+        Http::fake();
+        $this->assertSame([], $this->service()->computeSchedulesBatch([]));
+        $this->assertCount(0, Http::recorded());
+    }
 }

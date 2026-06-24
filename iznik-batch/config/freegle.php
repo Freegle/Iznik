@@ -307,6 +307,15 @@ return [
         'mode' => env('RIPPLE_MODE', 'drive'),
         // Maximum drive-time (minutes) the reach may grow to.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // How many reach schedules to compute CONCURRENTLY (Http::pool fan-out in
+        // ExpandService::initialiseNew). Each /v1/ripple-schedule request is CPU-bound on the
+        // routing host (one Dijkstra + polygon rasterisations), so cap this near the routing
+        // host's core count; exceeding it just queues on the routing server. DB writes stay
+        // serial regardless. 1 = sequential (the old behaviour).
+        'compute_concurrency' => (int) env('RIPPLE_COMPUTE_CONCURRENCY', 8),
+        // Per-request timeout (seconds) for a /v1/ripple-schedule call. A dense-origin post can
+        // take tens of seconds; the pool path uses this so one slow post does not abort the chunk.
+        'request_timeout' => (int) env('RIPPLE_REQUEST_TIMEOUT', 60),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
         // chat_messages.refmsgid = msgid) stops expanding - it already has plenty of interest, so
