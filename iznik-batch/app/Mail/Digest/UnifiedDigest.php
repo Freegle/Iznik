@@ -692,10 +692,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // with the title and a parenthetical post count. Keep the item-name
         // teaser after it since it lifts open rates and mirrors the immediate
         // subject's "[Group] Item" shape.
+        //
+        // The body caps the listed posts at DIGEST_POST_CAP (a dense-area daily
+        // digest would otherwise be clipped by Gmail mid-post). When the count
+        // exceeds that cap the parenthetical overstates what's actually in the
+        // email, so drop it and just say "What's New" — below the cap the count
+        // still matches the body.
         $count = $this->posts->count();
         $itemNames = $this->getItemNamesForSubject();
 
-        $subject = "What's New ({$count} post" . ($count === 1 ? '' : 's') . ')';
+        $subject = $count > DigestStyle::DIGEST_POST_CAP
+            ? "What's New"
+            : "What's New ({$count} post" . ($count === 1 ? '' : 's') . ')';
 
         if ($itemNames) {
             $subject .= " - {$itemNames}";
