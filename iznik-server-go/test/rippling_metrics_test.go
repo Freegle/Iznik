@@ -407,9 +407,9 @@ func TestRipplingMetricsReplyRateCohorts(t *testing.T) {
 	cmID := CreateTestChatMessage(t, chatID, replierID, "I'd like it")
 	db.Exec("UPDATE chat_messages SET type = 'Interested', refmsgid = ?, date = NOW() - INTERVAL 5 DAY + INTERVAL 1 HOUR WHERE id = ?", rippMsg, cmID)
 
-	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", cmID)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
 	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", cmID)
 
 	var wantDay string
 	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
@@ -431,6 +431,7 @@ func TestRipplingMetricsReplyRateCohorts(t *testing.T) {
 	assert.GreaterOrEqual(t, row["ripple_posts"].(float64), float64(1), "the rippled-out post is in the ripple cohort")
 	assert.GreaterOrEqual(t, row["home_posts"].(float64), float64(1), "the home-only post is in the home cohort")
 	assert.GreaterOrEqual(t, row["ripple_replied"].(float64), float64(1), "the rippled-out post's reply is counted")
+	assert.Equal(t, float64(0), row["home_replied"], "the home-only post had no reply")
 }
 
 // Cohort split on taken_rate: a home-only Offer and a rippled-out Offer the same day; only the
@@ -454,9 +455,9 @@ func TestRipplingMetricsTakenRateCohorts(t *testing.T) {
 		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
 	db.Exec("INSERT INTO messages_outcomes (timestamp, msgid, outcome) VALUES (NOW() - INTERVAL 4 DAY, ?, 'Taken')", rippMsg)
 
-	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
 	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid IN (?, ?)", homeMsg, rippMsg)
 
 	var wantDay string
 	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
@@ -514,6 +515,7 @@ func TestRipplingMetricsDistanceCohorts(t *testing.T) {
 	// Set replier home locations.
 	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", nearLocID, nearReplier)
 	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", farLocID, farReplier)
+	defer db.Exec("UPDATE users SET lastlocation = NULL WHERE id IN (?, ?)", nearReplier, farReplier)
 
 	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homebike", 51.5, -0.1)
 	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippbike", 51.5, -0.1)
@@ -528,9 +530,9 @@ func TestRipplingMetricsDistanceCohorts(t *testing.T) {
 	rCm := CreateTestChatMessage(t, rChat, farReplier, "far")
 	db.Exec("UPDATE chat_messages SET type='Interested', refmsgid=?, date=NOW() - INTERVAL 5 DAY WHERE id=?", rippMsg, rCm)
 
-	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?)", hCm, rCm)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
 	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?)", hCm, rCm)
 
 	var wantDay string
 	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)

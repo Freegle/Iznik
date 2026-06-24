@@ -279,17 +279,7 @@ function pctChartOptions(vTitle, color) {
     animation: { startup: true, duration: 400, easing: 'out' },
   }
 }
-function kmChartOptions() {
-  return {
-    curveType: 'function',
-    legend: { position: 'none' },
-    chartArea: { width: '85%', height: '70%' },
-    vAxis: { title: 'Median km', viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
-    series: { 0: { color: '#fd7e14' } },
-    animation: { startup: true, duration: 400, easing: 'out' },
-  }
-}
+
 function cohortPctOptions(vTitle) {
   return {
     curveType: 'function',

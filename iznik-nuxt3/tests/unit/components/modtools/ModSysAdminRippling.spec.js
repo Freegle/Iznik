@@ -180,7 +180,7 @@ describe('ModSysAdminRippling', () => {
     expect(wrapper.html()).not.toContain('How much of the lift is rippling?')
 
     const charts = wrapper.findAllComponents({ name: 'GChart' })
-    // Order matches the template: 0 reply-rate, 1 reply-source, 2 distance, 3 taken.
+    // charts[0] is the reply-rate chart (reply-source is omitted from this mock, so it doesn't render).
     const replyHeader = charts[0].props('data')[0]
     expect(replyHeader).toContain('Home-only')
     expect(replyHeader).toContain('Rippled-out')

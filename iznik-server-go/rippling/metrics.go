@@ -218,22 +218,24 @@ func Metrics(c *fiber.Ctx) error {
 
 	// replyRateArgs orders args to match the SQL: optional group filter, then the fr-subquery
 	// window (start, end), then the outer arrival window (start, end).
-	replyRateArgs := func(gid int, start, end string) []interface{} {
+	// Parallel in structure to takenRateArgs — keep the two in sync.
+	replyRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
 		a := []interface{}{}
-		if gid > 0 {
-			a = append(a, gid)
+		if groupID > 0 {
+			a = append(a, groupID)
 		}
-		return append(a, start, end, start, end)
+		return append(a, windowStart, windowEnd, windowStart, windowEnd)
 	}
 
 	// takenRateArgs orders args to match the SQL: optional group filter, then the outcomes
 	// subquery lower bound (start), then the outer arrival window (start, end).
-	takenRateArgs := func(gid int, start, end string) []interface{} {
+	// Parallel in structure to replyRateArgs — keep the two in sync.
+	takenRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
 		a := []interface{}{}
-		if gid > 0 {
-			a = append(a, gid)
+		if groupID > 0 {
+			a = append(a, groupID)
 		}
-		return append(a, start, start, end)
+		return append(a, windowStart, windowStart, windowEnd)
 	}
 
 	// ---- Declare all result variables up front so goroutines can capture them --------
@@ -354,6 +356,7 @@ func Metrics(c *fiber.Ctx) error {
 	// The fr subquery is bounded to the requested window (+ 36h slack) so it doesn't
 	// scan the full chat_messages history. The young-cut (arrival < NOW()-36h) is removed
 	// because the window end already controls which days are complete.
+	// Parallel in structure to query (4) (taken rate) — keep the two in sync.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -361,7 +364,7 @@ func Metrics(c *fiber.Ctx) error {
 			SELECT day,
 			       COUNT(*) AS posts,
 			       SUM(replied) AS replied,
-			       SUM(1 - is_rippled) AS home_posts,
+			       SUM(1 - is_rippled) AS home_posts, -- is_rippled is 0/1 from EXISTS (never NULL)
 			       SUM(CASE WHEN is_rippled = 0 THEN replied ELSE 0 END) AS home_replied,
 			       SUM(is_rippled) AS ripple_posts,
 			       SUM(CASE WHEN is_rippled = 1 THEN replied ELSE 0 END) AS ripple_replied
@@ -409,9 +412,9 @@ func Metrics(c *fiber.Ctx) error {
 			SELECT day,
 			       MAX(cnt_all) AS replies,
 			       AVG(CASE WHEN rn_all IN (FLOOR((cnt_all + 1) / 2), FLOOR((cnt_all + 2) / 2)) THEN dist_km END) AS median_km,
-			       MAX(CASE WHEN is_rippled = 0 THEN cnt_coh END) AS home_replies,
+			       MAX(CASE WHEN is_rippled = 0 THEN cnt_coh ELSE 0 END) AS home_replies,
 			       AVG(CASE WHEN is_rippled = 0 AND rn_coh IN (FLOOR((cnt_coh + 1) / 2), FLOOR((cnt_coh + 2) / 2)) THEN dist_km END) AS home_median_km,
-			       MAX(CASE WHEN is_rippled = 1 THEN cnt_coh END) AS ripple_replies,
+			       MAX(CASE WHEN is_rippled = 1 THEN cnt_coh ELSE 0 END) AS ripple_replies,
 			       AVG(CASE WHEN is_rippled = 1 AND rn_coh IN (FLOOR((cnt_coh + 1) / 2), FLOOR((cnt_coh + 2) / 2)) THEN dist_km END) AS ripple_median_km
 			FROM (
 			  SELECT day, dist_km, is_rippled,
@@ -441,6 +444,7 @@ func Metrics(c *fiber.Ctx) error {
 	// The outcomes subquery is bounded to the requested window so it doesn't scan all
 	// history. The young-cut (arrival < NOW()-7d) is removed; the window end controls
 	// which days are complete.
+	// Parallel in structure to query (1) (reply rate) — keep the two in sync.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -448,7 +452,7 @@ func Metrics(c *fiber.Ctx) error {
 			SELECT day,
 			       COUNT(*) AS posts,
 			       SUM(taken) AS taken,
-			       SUM(1 - is_rippled) AS home_posts,
+			       SUM(1 - is_rippled) AS home_posts, -- is_rippled is 0/1 from EXISTS (never NULL)
 			       SUM(CASE WHEN is_rippled = 0 THEN taken ELSE 0 END) AS home_taken,
 			       SUM(is_rippled) AS ripple_posts,
 			       SUM(CASE WHEN is_rippled = 1 THEN taken ELSE 0 END) AS ripple_taken
@@ -490,7 +494,9 @@ func Metrics(c *fiber.Ctx) error {
 	// Compute derived percentage fields for reply-rate rows (overall + home/ripple cohorts).
 	// Days whose arrival is within 36h of now are still maturing (their 36h reply window hasn't
 	// fully elapsed) — flag them so the client dashes the tail. Day-granularity is enough for the
-	// visual; compare the ISO day string against the cutoff date.
+	// visual; compare the ISO day string against the cutoff date. This is intentionally cautious:
+	// a day may be flagged provisional for a short window around midnight even once its settling
+	// window has fully elapsed (errs toward dashing one extra day, which is safe).
 	reply36hCutoff := time.Now().Add(-36 * time.Hour).Format("2006-01-02")
 	for i := range replyRates {
 		if replyRates[i].Posts > 0 {
@@ -514,6 +520,9 @@ func Metrics(c *fiber.Ctx) error {
 	}
 
 	// Compute derived percentage fields for taken-rate rows (overall + home/ripple cohorts).
+	// The provisional flag is intentionally cautious: a day may be flagged provisional for a
+	// short window around midnight even once its settling window has fully elapsed (errs toward
+	// dashing one extra day, which is safe).
 	taken7dCutoff := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 	for i := range takenRates {
 		if takenRates[i].Posts > 0 {
