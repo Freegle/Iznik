@@ -159,7 +159,44 @@ class ExpandService
             $params
         );
 
-        foreach ($rows as $row) {
+        // ── Phase 1: compute reach schedules CONCURRENTLY, deduped by blurred origin ──
+        //
+        // computeSchedule is a deterministic function of the blurred origin (and config), so
+        // posts sharing a blurred origin (e.g. the same postcode centroid - measured ~2.6x on
+        // prod) need the routing server hit only ONCE. We blur every post, collapse to the set
+        // of DISTINCT origins, and fan those out across the routing server with Http::pool (one
+        // Dijkstra per request, CPU-bound on the routing host - cap the fan-out near its core
+        // count). This is the only parallelised part; the DB writes below stay strictly serial.
+        //
+        // Blur (~400m, BLUR_USER) keeps the reach no more precise than the location Freegle
+        // already exposes elsewhere, so the reach polygon is not a location oracle (#privacy);
+        // it is deterministic per location, which is exactly what makes the de-dup exact.
+        $blurredByRow = [];   // row index => ['lat'=>, 'lng'=>]
+        $distinctOrigins = []; // "lat,lng" => ['lat'=>, 'lng'=>]
+        foreach ($rows as $i => $row) {
+            if ($row->arrival === null) {
+                continue; // handled (with the warning) in Phase 2
+            }
+            [$lat, $lng] = $this->blurOrigin((float) $row->lat, (float) $row->lng);
+            $blurredByRow[$i] = ['lat' => $lat, 'lng' => $lng, 'key' => $lat . ',' . $lng];
+            $distinctOrigins[$lat . ',' . $lng] = ['lat' => $lat, 'lng' => $lng];
+        }
+
+        $scheduleByKey = []; // "lat,lng" => parsed schedule | null
+        $concurrency = max(1, (int) config('freegle.ripple.compute_concurrency', 8));
+        $keys = array_keys($distinctOrigins);
+        foreach (array_chunk($keys, $concurrency) as $keyChunk) {
+            $origins = array_map(static fn ($k) => $distinctOrigins[$k], $keyChunk);
+            $results = $this->reach->computeSchedulesBatch($origins);
+            foreach (array_values($keyChunk) as $j => $k) {
+                $scheduleByKey[$k] = $results[$j] ?? null;
+            }
+        }
+
+        // ── Phase 2: apply each post's schedule serially (one DB writer - Galera-safe) ──
+        // DO NOT parallelise this loop: the rippling_reach / messages_groups / memberships
+        // writes must stay single-writer and in order.
+        foreach ($rows as $i => $row) {
             try {
                 if ($row->arrival === null) {
                     // Without arrival we cannot place the post on its hazard schedule.
@@ -168,14 +205,10 @@ class ExpandService
                     continue;
                 }
 
-                // Blur the poster's origin (~400m, BLUR_USER) before computing the reach, so
-                // the reach polygon and its stored centre are no more precise than the
-                // location Freegle already exposes elsewhere (the Go API blurs displayed post
-                // locations identically). Avoids the reach polygon becoming a precise
-                // location oracle for the poster (#privacy). Deterministic per location.
-                [$lat, $lng] = $this->blurOrigin((float) $row->lat, (float) $row->lng);
+                $lat = $blurredByRow[$i]['lat'];
+                $lng = $blurredByRow[$i]['lng'];
 
-                $schedule = $this->reach->computeSchedule($lat, $lng);
+                $schedule = $scheduleByKey[$blurredByRow[$i]['key']] ?? null;
                 if ($schedule === null) {
                     // Routing unreachable or origin off-graph — retry next run.
                     $stats['skipped']++;
