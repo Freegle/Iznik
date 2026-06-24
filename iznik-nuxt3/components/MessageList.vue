@@ -150,6 +150,7 @@ import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
+import { useScrollDepth } from '~/composables/useScrollDepth'
 
 const OurMessage = defineAsyncComponent(() =>
   import('~/components/OurMessage.vue')
@@ -245,6 +246,15 @@ const emit = defineEmits(['update:none', 'update:visible'])
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const { me, myid, myGroups: myMemberships } = useMe()
+
+// Browse-feed scroll-depth instrumentation: record how far down the feed this
+// session scrolls (reported once on leave/hide). 'search' vs 'browse' so the
+// sysadmin "Scrolling" tab can tell the two feeds apart.
+const runtimeConfig = useRuntimeConfig()
+const { record: recordScrollDepth } = useScrollDepth(
+  runtimeConfig?.public?.APIv2,
+  () => (props.search ? 'search' : 'browse')
+)
 
 // Get the initial messages to show in a single call.
 // Wait for fetch to complete before enabling the split view (unseen/seen),
@@ -528,6 +538,11 @@ function pollUntilZero() {
 }
 
 async function handleLoadMore(currentIndex) {
+  // Record the furthest feed position this session has reached (the infinite-scroll
+  // index grows as the member scrolls down). The composable keeps the max and reports
+  // it once on leave/hide.
+  recordScrollDepth(currentIndex, reduceSuccessful.value?.length || 0)
+
   // Prefetch upcoming messages when scrolling.
   // ScrollGrid loads 10 items at a time, so we need to fetch at least 10 ahead.
   const batchSize = 15
