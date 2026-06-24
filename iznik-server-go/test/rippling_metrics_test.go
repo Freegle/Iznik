@@ -341,3 +341,217 @@ func TestRipplingMetricsDateRange(t *testing.T) {
 	assert.NotEmpty(t, rd["start"], "start defaults when absent")
 	assert.NotEmpty(t, rd["end"], "end defaults when absent")
 }
+
+// Stage A guard: bounding the outcomes subquery to the window must still count an
+// in-window Taken outcome. Seeds one Offer 3 days ago, marks it Taken, and asserts the
+// taken_rate row for that day reports posts>=1 and taken>=1.
+func TestRipplingMetricsTakenInWindowCounted(t *testing.T) {
+	prefix := uniquePrefix("rippletaken")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	groupID := CreateTestGroup(t, prefix+"_grp")
+
+	db := database.DBConn
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" sofa", 51.5, -0.1)
+	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 3 DAY WHERE id = ?", msgID)
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes (timestamp, msgid, outcome) VALUES (NOW() - INTERVAL 2 DAY, ?, 'Taken')", msgID)
+	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	var wantDay string
+	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 3 DAY, '%Y-%m-%d')").Scan(&wantDay)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	taken, _ := result["taken_rate"].([]interface{})
+	found := false
+	for _, r := range taken {
+		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
+			found = true
+			assert.GreaterOrEqual(t, m["posts"].(float64), float64(1), "the seeded post is counted")
+			assert.GreaterOrEqual(t, m["taken"].(float64), float64(1), "the Taken outcome is counted within the window")
+		}
+	}
+	assert.True(t, found, "the seeded day appears in taken_rate")
+}
+
+// Cohort split on reply_rate_36h: a home-only Offer (no rippled_in=1 row) and a rippled-out Offer
+// (has a rippled_in=1 row) arriving the same day. The rippled one gets an Interested reply within
+// 36h; the home one does not. Asserts the counts partition (home+ripple=posts) and the rippled
+// cohort shows the reply.
+func TestRipplingMetricsReplyRateCohorts(t *testing.T) {
+	prefix := uniquePrefix("ripplerc")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	homeGrp := CreateTestGroup(t, prefix+"_home")
+	awayGrp := CreateTestGroup(t, prefix+"_away")
+
+	db := database.DBConn
+	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homechair", 51.5, -0.1)
+	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippchair", 51.5, -0.1)
+	for _, id := range []uint64{homeMsg, rippMsg} {
+		db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 5 DAY WHERE id = ?", id)
+		db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ?", id)
+	}
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in, autoreposts) "+
+		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
+	chatID := CreateTestChatRoom(t, replierID, &posterID, &homeGrp, "User2User")
+	cmID := CreateTestChatMessage(t, chatID, replierID, "I'd like it")
+	db.Exec("UPDATE chat_messages SET type = 'Interested', refmsgid = ?, date = NOW() - INTERVAL 5 DAY + INTERVAL 1 HOUR WHERE id = ?", rippMsg, cmID)
+
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", cmID)
+
+	var wantDay string
+	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	rate, _ := result["reply_rate_36h"].([]interface{})
+	var row map[string]interface{}
+	for _, r := range rate {
+		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
+			row = m
+		}
+	}
+	assert.NotNil(t, row, "the seeded day appears in reply_rate_36h")
+	assert.Equal(t, row["posts"], row["home_posts"].(float64)+row["ripple_posts"].(float64), "post counts partition")
+	assert.GreaterOrEqual(t, row["ripple_posts"].(float64), float64(1), "the rippled-out post is in the ripple cohort")
+	assert.GreaterOrEqual(t, row["home_posts"].(float64), float64(1), "the home-only post is in the home cohort")
+	assert.GreaterOrEqual(t, row["ripple_replied"].(float64), float64(1), "the rippled-out post's reply is counted")
+	assert.Equal(t, float64(0), row["home_replied"], "the home-only post had no reply")
+}
+
+// Cohort split on taken_rate: a home-only Offer and a rippled-out Offer the same day; only the
+// rippled-out one is Taken. Asserts counts partition and the ripple cohort carries the take.
+func TestRipplingMetricsTakenRateCohorts(t *testing.T) {
+	prefix := uniquePrefix("rippletc")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	homeGrp := CreateTestGroup(t, prefix+"_home")
+	awayGrp := CreateTestGroup(t, prefix+"_away")
+
+	db := database.DBConn
+	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homedesk", 51.5, -0.1)
+	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippdesk", 51.5, -0.1)
+	for _, id := range []uint64{homeMsg, rippMsg} {
+		db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 5 DAY WHERE id = ?", id)
+		db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ?", id)
+	}
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in, autoreposts) "+
+		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
+	db.Exec("INSERT INTO messages_outcomes (timestamp, msgid, outcome) VALUES (NOW() - INTERVAL 4 DAY, ?, 'Taken')", rippMsg)
+
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+
+	var wantDay string
+	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	taken, _ := result["taken_rate"].([]interface{})
+	var row map[string]interface{}
+	for _, r := range taken {
+		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
+			row = m
+		}
+	}
+	assert.NotNil(t, row, "the seeded day appears in taken_rate")
+	assert.Equal(t, row["posts"], row["home_posts"].(float64)+row["ripple_posts"].(float64), "post counts partition")
+	assert.GreaterOrEqual(t, row["ripple_taken"].(float64), float64(1), "the rippled-out take is in the ripple cohort")
+	assert.Equal(t, float64(0), row["home_taken"], "the home-only post was not taken")
+}
+
+// Cohort medians on reply_distance_median: a home-only post whose replier is near the post
+// and a rippled-out post whose replier is far away, replying the same day. Asserts both cohort
+// medians are present and ripple_median_km > home_median_km.
+// Uses explicit locations inserted at known coordinates so the test does not depend on what
+// locations happen to exist in the test DB at runtime.
+func TestRipplingMetricsDistanceCohorts(t *testing.T) {
+	prefix := uniquePrefix("rippledc")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	nearReplier := CreateTestUser(t, prefix+"_near", "User")
+	farReplier := CreateTestUser(t, prefix+"_far", "User")
+	homeGrp := CreateTestGroup(t, prefix+"_home")
+	awayGrp := CreateTestGroup(t, prefix+"_away")
+
+	db := database.DBConn
+
+	// Insert explicit locations at known coordinates. Post location: London (51.5, -0.1).
+	// Near replier: same location as the post (~0 km away).
+	// Far replier: Edinburgh (55.95, -3.19) — ~535 km from London.
+	// Using name prefixed by uniquePrefix to avoid collisions.
+	// 'type' is required (NOT NULL); 'Point' is valid per the enum.
+	var postLocID, nearLocID, farLocID uint64
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 51.5, -0.1)", prefix+"_postloc")
+	db.Raw("SELECT id FROM locations WHERE name = ?", prefix+"_postloc").Scan(&postLocID)
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 51.5, -0.1)", prefix+"_nearloc")
+	db.Raw("SELECT id FROM locations WHERE name = ?", prefix+"_nearloc").Scan(&nearLocID)
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 55.95, -3.19)", prefix+"_farloc")
+	db.Raw("SELECT id FROM locations WHERE name = ?", prefix+"_farloc").Scan(&farLocID)
+
+	defer db.Exec("DELETE FROM locations WHERE name IN (?, ?, ?)", prefix+"_postloc", prefix+"_nearloc", prefix+"_farloc")
+
+	// Set replier home locations.
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", nearLocID, nearReplier)
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", farLocID, farReplier)
+	defer db.Exec("UPDATE users SET lastlocation = NULL WHERE id IN (?, ?)", nearReplier, farReplier)
+
+	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homebike", 51.5, -0.1)
+	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippbike", 51.5, -0.1)
+	// Override the locationid to the explicit post location we inserted.
+	db.Exec("UPDATE messages SET locationid = ? WHERE id IN (?, ?)", postLocID, homeMsg, rippMsg)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in, autoreposts) "+
+		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
+	hChat := CreateTestChatRoom(t, nearReplier, &posterID, &homeGrp, "User2User")
+	hCm := CreateTestChatMessage(t, hChat, nearReplier, "near")
+	db.Exec("UPDATE chat_messages SET type='Interested', refmsgid=?, date=NOW() - INTERVAL 5 DAY WHERE id=?", homeMsg, hCm)
+	rChat := CreateTestChatRoom(t, farReplier, &posterID, &homeGrp, "User2User")
+	rCm := CreateTestChatMessage(t, rChat, farReplier, "far")
+	db.Exec("UPDATE chat_messages SET type='Interested', refmsgid=?, date=NOW() - INTERVAL 5 DAY WHERE id=?", rippMsg, rCm)
+
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
+	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?)", hCm, rCm)
+
+	var wantDay string
+	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	dist, _ := result["reply_distance_median"].([]interface{})
+	var row map[string]interface{}
+	for _, r := range dist {
+		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
+			row = m
+		}
+	}
+	assert.NotNil(t, row, "the seeded day appears in reply_distance_median")
+	assert.GreaterOrEqual(t, row["home_replies"].(float64), float64(1), "home cohort has a reply")
+	assert.GreaterOrEqual(t, row["ripple_replies"].(float64), float64(1), "ripple cohort has a reply")
+	// Near replier is at the same spot as the post (~0 km); far replier is in Edinburgh (~535 km).
+	assert.Greater(t, row["ripple_median_km"].(float64), row["home_median_km"].(float64), "rippled replies are further away")
+}
