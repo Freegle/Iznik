@@ -92,11 +92,22 @@ type CaptureSummary struct {
 // Interested reply within 36h. This is the "are we turning 0-reply posts into 1-reply posts"
 // number. Computed live from messages + chat_messages, so it works over all history with no
 // instrumentation and no capture (reply timestamps don't change).
+// HomePosts/RipplePosts partition Posts by whether the post has any rippled-in messages_groups row.
 type ReplyRateRow struct {
 	Day      string  `json:"day"     gorm:"column:day"`
 	Posts    int     `json:"posts"   gorm:"column:posts"`
 	Replied  int     `json:"replied" gorm:"column:replied"`
 	ReplyPct float64 `json:"reply_pct"` // computed in Go
+
+	HomePosts   int     `json:"home_posts"   gorm:"column:home_posts"`
+	HomeReplied int     `json:"home_replied" gorm:"column:home_replied"`
+	HomePct     float64 `json:"home_pct"` // computed in Go
+
+	RipplePosts   int     `json:"ripple_posts"   gorm:"column:ripple_posts"`
+	RippleReplied int     `json:"ripple_replied" gorm:"column:ripple_replied"`
+	RipplePct     float64 `json:"ripple_pct"` // computed in Go
+
+	Provisional bool `json:"provisional"` // computed in Go (day within the 36h settling window)
 }
 
 // ReplySourceRow is the daily split of Interested replies by whether the replier reached the post
@@ -115,19 +126,36 @@ type ReplySourceRow struct {
 
 // ReplyDistanceRow is the daily median crow-flies distance (km) from a post's location to the
 // replier's home location, over Interested replies - how far rippling is pulling replies from.
+// HomeMedianKm/RippleMedianKm split the median by whether the post was rippled-out.
 type ReplyDistanceRow struct {
 	Day      string  `json:"day"       gorm:"column:day"`
 	Replies  int     `json:"replies"   gorm:"column:replies"`
 	MedianKm float64 `json:"median_km" gorm:"column:median_km"`
+
+	HomeReplies    int     `json:"home_replies"     gorm:"column:home_replies"`
+	HomeMedianKm   float64 `json:"home_median_km"   gorm:"column:home_median_km"`
+	RippleReplies  int     `json:"ripple_replies"   gorm:"column:ripple_replies"`
+	RippleMedianKm float64 `json:"ripple_median_km" gorm:"column:ripple_median_km"`
 }
 
 // TakenRateRow is the daily reuse outcome: of posts that arrived that day (and have had a settling
 // window to find a taker), what fraction reached a Taken (offer) or Received (wanted) outcome.
+// HomePosts/RipplePosts partition Posts by whether the post has any rippled-in messages_groups row.
 type TakenRateRow struct {
 	Day      string  `json:"day"   gorm:"column:day"`
 	Posts    int     `json:"posts" gorm:"column:posts"`
 	Taken    int     `json:"taken" gorm:"column:taken"`
 	TakenPct float64 `json:"taken_pct"` // computed in Go
+
+	HomePosts int     `json:"home_posts" gorm:"column:home_posts"`
+	HomeTaken int     `json:"home_taken" gorm:"column:home_taken"`
+	HomePct   float64 `json:"home_pct"` // computed in Go
+
+	RipplePosts int     `json:"ripple_posts" gorm:"column:ripple_posts"`
+	RippleTaken int     `json:"ripple_taken" gorm:"column:ripple_taken"`
+	RipplePct   float64 `json:"ripple_pct"` // computed in Go
+
+	Provisional bool `json:"provisional"` // computed in Go (day within the 7-day settling window)
 }
 
 // GroupOption is one entry in the per-group KPI filter: a group whose posts have rippled, so its
@@ -330,18 +358,30 @@ func Metrics(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		db.Raw(`
-			SELECT DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
-			       COUNT(DISTINCT m.id) AS posts,
-			       COUNT(DISTINCT CASE WHEN fr.first_reply <= m.arrival + INTERVAL 36 HOUR THEN m.id END) AS replied
-			FROM messages m
-			JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
-			LEFT JOIN (
-			    SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
-			    WHERE type = 'Interested' AND date >= ? AND date < (? + INTERVAL 36 HOUR) GROUP BY refmsgid
-			) fr ON fr.refmsgid = m.id
-			WHERE m.type = 'Offer'
-			  AND m.arrival >= ? AND m.arrival < ?
-			GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
+			SELECT day,
+			       COUNT(*) AS posts,
+			       SUM(replied) AS replied,
+			       SUM(1 - is_rippled) AS home_posts,
+			       SUM(CASE WHEN is_rippled = 0 THEN replied ELSE 0 END) AS home_replied,
+			       SUM(is_rippled) AS ripple_posts,
+			       SUM(CASE WHEN is_rippled = 1 THEN replied ELSE 0 END) AS ripple_replied
+			FROM (
+			    SELECT m.id,
+			           DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+			           MAX(CASE WHEN fr.first_reply <= m.arrival + INTERVAL 36 HOUR THEN 1 ELSE 0 END) AS replied,
+			           EXISTS (SELECT 1 FROM messages_groups mgr
+			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			    FROM messages m
+			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+			    LEFT JOIN (
+			        SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
+			        WHERE type = 'Interested' AND date >= ? AND date < (? + INTERVAL 36 HOUR) GROUP BY refmsgid
+			    ) fr ON fr.refmsgid = m.id
+			    WHERE m.type = 'Offer'
+			      AND m.arrival >= ? AND m.arrival < ?
+			    GROUP BY m.id, m.arrival
+			) per_msg
+			GROUP BY day
 			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&replyRates)
 	}()
 
@@ -366,14 +406,24 @@ func Metrics(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		db.Raw(`
-			SELECT day, MAX(cnt) AS replies, AVG(dist_km) AS median_km
+			SELECT day,
+			       MAX(cnt_all) AS replies,
+			       AVG(CASE WHEN rn_all IN (FLOOR((cnt_all + 1) / 2), FLOOR((cnt_all + 2) / 2)) THEN dist_km END) AS median_km,
+			       MAX(CASE WHEN is_rippled = 0 THEN cnt_coh END) AS home_replies,
+			       AVG(CASE WHEN is_rippled = 0 AND rn_coh IN (FLOOR((cnt_coh + 1) / 2), FLOOR((cnt_coh + 2) / 2)) THEN dist_km END) AS home_median_km,
+			       MAX(CASE WHEN is_rippled = 1 THEN cnt_coh END) AS ripple_replies,
+			       AVG(CASE WHEN is_rippled = 1 AND rn_coh IN (FLOOR((cnt_coh + 1) / 2), FLOOR((cnt_coh + 2) / 2)) THEN dist_km END) AS ripple_median_km
 			FROM (
-			  SELECT day, dist_km,
-			         ROW_NUMBER() OVER (PARTITION BY day ORDER BY dist_km) AS rn,
-			         COUNT(*)     OVER (PARTITION BY day) AS cnt
+			  SELECT day, dist_km, is_rippled,
+			         ROW_NUMBER() OVER (PARTITION BY day ORDER BY dist_km)              AS rn_all,
+			         COUNT(*)     OVER (PARTITION BY day)                                AS cnt_all,
+			         ROW_NUMBER() OVER (PARTITION BY day, is_rippled ORDER BY dist_km)   AS rn_coh,
+			         COUNT(*)     OVER (PARTITION BY day, is_rippled)                     AS cnt_coh
 			  FROM (
 			    SELECT DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
-			           ST_Distance_Sphere(POINT(ml.lng, ml.lat), POINT(ul.lng, ul.lat)) / 1000 AS dist_km
+			           ST_Distance_Sphere(POINT(ml.lng, ml.lat), POINT(ul.lng, ul.lat)) / 1000 AS dist_km,
+			           EXISTS (SELECT 1 FROM messages_groups mgr
+			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
 			    FROM chat_messages cm
 			    JOIN messages m   ON m.id = cm.refmsgid AND m.type = 'Offer'`+distGroup+`
 			    JOIN locations ml ON ml.id = m.locationid
@@ -383,7 +433,6 @@ func Metrics(c *fiber.Ctx) error {
 			      AND ml.lat IS NOT NULL AND ul.lat IS NOT NULL
 			  ) d
 			) r
-			WHERE r.rn IN (FLOOR((r.cnt + 1) / 2), FLOOR((r.cnt + 2) / 2))
 			GROUP BY day
 			ORDER BY day DESC`, gargs()...).Scan(&replyDistances)
 	}()
@@ -396,17 +445,29 @@ func Metrics(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		db.Raw(`
-			SELECT DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
-			       COUNT(DISTINCT m.id) AS posts,
-			       COUNT(DISTINCT o.msgid) AS taken
-			FROM messages m
-			JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
-			LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes
-			           WHERE outcome IN ('Taken','Received') AND timestamp >= ?) o
-			       ON o.msgid = m.id
-			WHERE m.type IN ('Offer','Wanted')
-			  AND m.arrival >= ? AND m.arrival < ?
-			GROUP BY DATE_FORMAT(m.arrival, '%Y-%m-%d')
+			SELECT day,
+			       COUNT(*) AS posts,
+			       SUM(taken) AS taken,
+			       SUM(1 - is_rippled) AS home_posts,
+			       SUM(CASE WHEN is_rippled = 0 THEN taken ELSE 0 END) AS home_taken,
+			       SUM(is_rippled) AS ripple_posts,
+			       SUM(CASE WHEN is_rippled = 1 THEN taken ELSE 0 END) AS ripple_taken
+			FROM (
+			    SELECT m.id,
+			           DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+			           MAX(CASE WHEN o.msgid IS NOT NULL THEN 1 ELSE 0 END) AS taken,
+			           EXISTS (SELECT 1 FROM messages_groups mgr
+			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			    FROM messages m
+			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+			    LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes
+			               WHERE outcome IN ('Taken','Received') AND timestamp >= ?) o
+			           ON o.msgid = m.id
+			    WHERE m.type IN ('Offer','Wanted')
+			      AND m.arrival >= ? AND m.arrival < ?
+			    GROUP BY m.id, m.arrival
+			) per_msg
+			GROUP BY day
 			ORDER BY day DESC`, takenRateArgs(gid, start, end)...).Scan(&takenRates)
 	}()
 
@@ -426,11 +487,22 @@ func Metrics(c *fiber.Ctx) error {
 
 	// ---- Post-processing (serial; all goroutines done) --------------------------------
 
-	// Compute derived percentage fields for reply-rate rows.
+	// Compute derived percentage fields for reply-rate rows (overall + home/ripple cohorts).
+	// Days whose arrival is within 36h of now are still maturing (their 36h reply window hasn't
+	// fully elapsed) — flag them so the client dashes the tail. Day-granularity is enough for the
+	// visual; compare the ISO day string against the cutoff date.
+	reply36hCutoff := time.Now().Add(-36 * time.Hour).Format("2006-01-02")
 	for i := range replyRates {
 		if replyRates[i].Posts > 0 {
 			replyRates[i].ReplyPct = float64(replyRates[i].Replied) / float64(replyRates[i].Posts) * 100
 		}
+		if replyRates[i].HomePosts > 0 {
+			replyRates[i].HomePct = float64(replyRates[i].HomeReplied) / float64(replyRates[i].HomePosts) * 100
+		}
+		if replyRates[i].RipplePosts > 0 {
+			replyRates[i].RipplePct = float64(replyRates[i].RippleReplied) / float64(replyRates[i].RipplePosts) * 100
+		}
+		replyRates[i].Provisional = replyRates[i].Day >= reply36hCutoff
 	}
 
 	// Compute derived fields for reply-source rows.
@@ -441,11 +513,19 @@ func Metrics(c *fiber.Ctx) error {
 		}
 	}
 
-	// Compute derived percentage fields for taken-rate rows.
+	// Compute derived percentage fields for taken-rate rows (overall + home/ripple cohorts).
+	taken7dCutoff := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 	for i := range takenRates {
 		if takenRates[i].Posts > 0 {
 			takenRates[i].TakenPct = float64(takenRates[i].Taken) / float64(takenRates[i].Posts) * 100
 		}
+		if takenRates[i].HomePosts > 0 {
+			takenRates[i].HomePct = float64(takenRates[i].HomeTaken) / float64(takenRates[i].HomePosts) * 100
+		}
+		if takenRates[i].RipplePosts > 0 {
+			takenRates[i].RipplePct = float64(takenRates[i].RippleTaken) / float64(takenRates[i].RipplePosts) * 100
+		}
+		takenRates[i].Provisional = takenRates[i].Day >= taken7dCutoff
 	}
 
 	// Assemble the cross-group summary struct from the raw scan.
