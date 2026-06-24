@@ -341,3 +341,42 @@ func TestRipplingMetricsDateRange(t *testing.T) {
 	assert.NotEmpty(t, rd["start"], "start defaults when absent")
 	assert.NotEmpty(t, rd["end"], "end defaults when absent")
 }
+
+// Stage A guard: bounding the outcomes subquery to the window must still count an
+// in-window Taken outcome. Seeds one Offer 3 days ago, marks it Taken, and asserts the
+// taken_rate row for that day reports posts>=1 and taken>=1.
+func TestRipplingMetricsTakenInWindowCounted(t *testing.T) {
+	prefix := uniquePrefix("rippletaken")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	groupID := CreateTestGroup(t, prefix+"_grp")
+
+	db := database.DBConn
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" sofa", 51.5, -0.1)
+	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 3 DAY WHERE id = ?", msgID)
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes (timestamp, msgid, outcome) VALUES (NOW() - INTERVAL 2 DAY, ?, 'Taken')", msgID)
+	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	var wantDay string
+	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 3 DAY, '%Y-%m-%d')").Scan(&wantDay)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	taken, _ := result["taken_rate"].([]interface{})
+	found := false
+	for _, r := range taken {
+		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
+			found = true
+			assert.GreaterOrEqual(t, m["posts"].(float64), float64(1), "the seeded post is counted")
+			assert.GreaterOrEqual(t, m["taken"].(float64), float64(1), "the Taken outcome is counted within the window")
+		}
+	}
+	assert.True(t, found, "the seeded day appears in taken_rate")
+}
