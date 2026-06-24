@@ -1312,17 +1312,33 @@ class PushNotificationService
         // images = up to 4 photo URLs across the top posts; the app tiles these into a
         //          collage for the multi-post expanded view (needs >=2, else it falls back
         //          to the text list).
-        $imageUrls = [];
+        //
+        // Prefer real (user-uploaded) photos over AI illustrations: collect real photos
+        // first (in digest order), then pad the remaining collage slots with AI photos
+        // only when there aren't enough real ones. The single `image` follows the same
+        // preference (real photos come first in the merged list).
+        $realUrls = [];
+        $aiUrls   = [];
         foreach ($posts as $item) {
-            if (count($imageUrls) >= 4) {
+            // Once four real photos are found they fill the whole collage, so there is
+            // no need to keep scanning for AI padding.
+            if (count($realUrls) >= 4) {
                 break;
             }
-            $url = $this->extractPostImageUrl($item['message']);
-            if ($url) {
-                $imageUrls[] = $url;
+            $img = $this->extractPostImage($item['message']);
+            if (! $img) {
+                continue;
+            }
+            if ($img['ai']) {
+                if (count($aiUrls) < 4) {
+                    $aiUrls[] = $img['url'];
+                }
+            } else {
+                $realUrls[] = $img['url'];
             }
         }
-        $imageUrl = $imageUrls[0] ?? null;
+        $imageUrls = array_slice(array_merge($realUrls, $aiUrls), 0, 4);
+        $imageUrl  = $imageUrls[0] ?? null;
 
         // The app-icon badge must reflect the user's actionable unread items
         // (unread chats + unseen notifications), NOT the number of posts in this
@@ -1410,8 +1426,8 @@ class PushNotificationService
     }
 
     /**
-     * Return a public image URL for the first usable attachment on a post,
-     * or null if the post has no photo.
+     * Return ['url' => string, 'ai' => bool] for the best usable attachment on a
+     * post (real photo preferred over AI illustration), or null if it has no photo.
      *
      * Mirrors UnifiedDigest::getMessageImageUrl() but returns the raw source
      * URL (no delivery-service resizing) so that FCM stores it on its CDN and
@@ -1420,28 +1436,50 @@ class PushNotificationService
      * resizing step is unnecessary and adds a round-trip that can time out in
      * the NSE's short execution window.
      */
-    private function extractPostImageUrl(\App\Models\Message $msg): ?string
+    private function extractPostImage(\App\Models\Message $msg): ?array
     {
         if (! $msg->attachments || $msg->attachments->isEmpty()) {
             return null;
         }
 
-        // Prefer primary=1; skip attachments that haven't finished uploading
-        // (no externaluid/externalurl/archived yet — same filter as prepareCard).
-        $attachment = $msg->attachments
-            ->filter(fn ($a) => ! empty($a->externaluid) || ! empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
-            ->sortByDesc('primary')
-            ->first();
+        // Skip attachments that haven't finished uploading (no
+        // externaluid/externalurl/archived yet — same filter as prepareCard).
+        $usable = $msg->attachments
+            ->filter(fn ($a) => ! empty($a->externaluid) || ! empty($a->externalurl) || (int) ($a->archived ?? 0) === 1);
 
-        if (! $attachment) {
+        if ($usable->isEmpty()) {
             return null;
         }
 
+        // Within a post, prefer a real (non-AI) photo over an AI illustration,
+        // then prefer primary=1. A post that transiently carries both contributes
+        // its real photo. Rank ascending: real+primary=0, real=1, ai+primary=2, ai=3.
+        $attachment = $usable
+            ->sortBy(fn ($a) => ($this->attachmentIsAi($a) ? 2 : 0) + ($a->primary ? 0 : 1))
+            ->first();
+
         if (! empty($attachment->externalurl)) {
-            return $attachment->externalurl;
+            $url = $attachment->externalurl;
+        } else {
+            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+            $url          = "{$imagesDomain}/img_{$attachment->id}.jpg";
         }
 
-        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        return "{$imagesDomain}/img_{$attachment->id}.jpg";
+        return ['url' => $url, 'ai' => $this->attachmentIsAi($attachment)];
+    }
+
+    /**
+     * Whether an attachment is an AI-generated illustration. The flag lives in the
+     * externalmods JSON as {"ai": true} (see iznik-server messages_illustrations cron).
+     */
+    private function attachmentIsAi(\App\Models\MessageAttachment $attachment): bool
+    {
+        if (empty($attachment->externalmods)) {
+            return false;
+        }
+
+        $mods = json_decode($attachment->externalmods, true);
+
+        return is_array($mods) && ($mods['ai'] ?? false) === true;
     }
 }
