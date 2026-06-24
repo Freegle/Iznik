@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import Wkt from 'wicket'
 import api from '~/api'
+import { useAuthStore } from '~/stores/auth'
 
 export const useIsochroneStore = defineStore({
   id: 'isochrone',
@@ -45,7 +46,12 @@ export const useIsochroneStore = defineStore({
           await this.fetchingMessages
           await nextTick()
         } else {
-          this.fetchingMessages = api(this.config).isochrone.fetchMessages()
+          // Pass the user's browse view so the list matches the count: 'mygroups' returns
+          // member-group posts, anything else the location/isochrone feed.
+          const browseView = useAuthStore().user?.settings?.browseView
+          this.fetchingMessages = api(this.config).isochrone.fetchMessages(
+            browseView ? { browseView } : undefined
+          )
           this.messageList = await this.fetchingMessages
           this.fetchingMessages = null
         }
