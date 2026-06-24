@@ -434,6 +434,57 @@ class AutoApproveServiceTest extends TestCase
             'rippled-in post vetted on origin is fast-tracked past the membership gate');
     }
 
+    /**
+     * A rippled-in post is auto-approved after the veto window even when a recent logs row
+     * exists for the message (e.g. the Approved/Autoapproved row created by ProcessBackgroundTasksCommand
+     * or AutoApproveService when the post was approved on its origin group).
+     *
+     * Bug: the $recentLogs check in process() was applied to ALL candidates including rippled-in rows.
+     * It found the origin-approval log (<48h old) and skipped auto-approval, keeping rippled-in posts
+     * Pending for up to 48h instead of the 1h veto window — then approving them all at once, which is
+     * what mods observed as "~30 posts disappeared suddenly" (Discourse 9812 post 3).
+     */
+    public function test_fast_tracks_rippled_in_despite_recent_origin_approval_log(): void
+    {
+        config(['freegle.ripple.rippled_in_pending_hours' => 1]);
+
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+
+        // Simulate the logs row that ProcessBackgroundTasksCommand inserts when a mod approves
+        // (or AutoApproveService inserts as 'Autoapproved') on the origin group. This is always
+        // present in production and is what the $recentLogs check finds.
+        DB::table('logs')->insert([
+            'timestamp' => now()->subHours(2),
+            'type' => 'Message',
+            'subtype' => 'Autoapproved',
+            'msgid' => $message->id,
+            'groupid' => $originGroup->id,
+            'user' => $user->id,
+        ]);
+
+        // Rippled into the nearby group 90 minutes ago — past the 1h veto window.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subMinutes(90),
+            'msgtype' => 'Offer', 'rippled_in' => 1,
+        ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
+            'rippled-in post must be auto-approved after veto window regardless of origin-approval logs');
+    }
+
     /** Within the short veto window a rippled-in post stays Pending (mods can still reject). */
     public function test_holds_rippled_in_post_within_veto_window(): void
     {
