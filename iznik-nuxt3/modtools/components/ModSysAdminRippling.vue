@@ -269,13 +269,45 @@ const takenRateChart = computed(() => {
   return [COHORT_HEADER('All offers'), ...rows]
 })
 
+// Shared x-axis so EVERY chart spans the same filter date range with the same
+// date ticks. Without this each chart auto-scaled to its own data: a single-point
+// chart collapsed to one repeated date ("23 Jun" all along) and dense charts
+// dropped their labels entirely. viewWindow pins the range; explicit ticks force
+// a consistent, readable set of date labels (~8 max) across all charts.
+function dateTicks() {
+  if (!startDate.value || !endDate.value) return undefined
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return undefined
+  const days = Math.round((end - start) / 86400000)
+  const step = Math.max(1, Math.ceil((days + 1) / 8))
+  const ticks = []
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + step)) {
+    ticks.push(new Date(d))
+  }
+  return ticks
+}
+function dateHAxis() {
+  const h = { title: 'Date', format: 'dd MMM' }
+  if (startDate.value && endDate.value) {
+    const min = new Date(startDate.value)
+    const max = new Date(endDate.value)
+    if (!isNaN(min) && !isNaN(max) && max >= min) {
+      h.viewWindow = { min, max }
+      const ticks = dateTicks()
+      if (ticks && ticks.length) h.ticks = ticks
+    }
+  }
+  return h
+}
+
 function pctChartOptions(vTitle, color) {
   return {
     curveType: 'function',
     legend: { position: 'none' },
     chartArea: { width: '85%', height: '70%' },
     vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: { 0: { color } },
     animation: { startup: true, duration: 400, easing: 'out' },
   }
@@ -287,7 +319,7 @@ function cohortPctOptions(vTitle) {
     legend: { position: 'bottom' },
     chartArea: { width: '85%', height: '65%' },
     vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: {
       0: { color: '#6c757d' }, // All — grey
       1: { color: '#17a2b8' }, // Home-only — teal
@@ -302,7 +334,7 @@ function cohortKmOptions() {
     legend: { position: 'bottom' },
     chartArea: { width: '85%', height: '65%' },
     vAxis: { title: 'Median km', viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: {
       0: { color: '#6c757d' },
       1: { color: '#17a2b8' },
