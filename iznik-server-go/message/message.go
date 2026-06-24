@@ -1087,6 +1087,11 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 			}
 
 			sql += "WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
+				// Rippling-out adds a messages_groups row (rippled_in=1) per group a post ripples
+				// into, so without this a rippled post appears once PER GROUP in My Posts. Restrict
+				// to the origin membership (rippled_in=0) so each of the user's own posts shows
+				// exactly once; the rippled-in copies are system propagation, not separate posts.
+				"messages_groups.rippled_in = 0 AND " +
 				"messages.type IN (?, ?)"
 
 			if active {

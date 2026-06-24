@@ -2090,4 +2090,83 @@ class UnifiedDigestServiceTest extends TestCase
         $ids = $captured->getPosts()->map(fn ($p) => $p['message']->id)->all();
         $this->assertSame([$near->id, $far->id], $ids); // near outranks far on closeness
     }
+
+    // ---- Decoupled, sharded reach-mail pass (sendReachDigests) -------------------
+    // Reach mail used to run inline in ExpandService's serial Phase-2 loop (~75% of
+    // run time). It is now a separate sharded pass over recently-changed reach rows,
+    // mirroring the immediate-digest cron's MOD(...,shards) partitioning.
+
+    /** Set up a rippling post whose reach covers one immediate-frequency member. */
+    private function setUpRippledPostWithReachableImmediateMember(): array
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['added' => now()->subHours(72)]); // immediate by default
+        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
+        $member->save();
+
+        $message = $this->createTestMessage($poster, $group);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(1),
+        ]);
+        // Reach polygon (status 'expanding', just updated) covering the member's location.
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+        );
+
+        return [$message, $member];
+    }
+
+    public function test_send_reach_digests_mails_newly_reached_immediate_member(): void
+    {
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+
+        $stats = $this->service->sendReachDigests();
+
+        $this->assertGreaterThanOrEqual(1, $stats['emails_sent'], 'a reachable immediate member is mailed');
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            'the reach-mail pass records the notification in the ledger'
+        );
+    }
+
+    public function test_send_reach_digests_is_idempotent_via_ledger(): void
+    {
+        $this->setUpRippledPostWithReachableImmediateMember();
+
+        $this->service->sendReachDigests();
+        $second = $this->service->sendReachDigests();
+
+        $this->assertSame(0, $second['emails_sent'], 'already-notified members are not re-mailed on a second pass');
+    }
+
+    public function test_send_reach_digests_partitions_posts_by_msgid_shard(): void
+    {
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+
+        $shards = 2;
+        $ownShard = (int) $message->id % $shards;
+        $otherShard = 1 - $ownShard;
+
+        // The shard that does NOT own this msgid must skip it entirely.
+        $this->service->sendReachDigests(null, false, $otherShard, $shards);
+        $this->assertFalse(
+            DB::table('rippling_reach_notified')->where('msgid', $message->id)->exists(),
+            'a shard does not process posts outside its MOD(msgid, shards) partition'
+        );
+
+        // The owning shard processes it.
+        $this->service->sendReachDigests(null, false, $ownShard, $shards);
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            'the owning shard mails the reachable member'
+        );
+    }
 }

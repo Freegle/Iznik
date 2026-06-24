@@ -44,12 +44,25 @@ trait SeedsSpatialIndex
 
     /**
      * Remove seeded ids from a dataset's live index (teardown).
+     *
+     * Best-effort: a failed/slow remove must never error the test. This runs in
+     * teardown, so a propagated exception (e.g. cURL 28 when the spatial server
+     * is briefly slow under CI load) would skip the rest of teardown — including
+     * parent::tearDown()'s connection cleanup — leaving the DB connection holding
+     * locks and flaking *subsequent* tests with "1205 Lock wait timeout" on the
+     * next clearJobsTable() DELETE. Swallow failures and let the next seed/remove
+     * or the nightly rebuild reconcile the index, exactly as the production
+     * SpatialAdminService::removeItems does.
      */
     protected function removeSpatial(string $dataset, array $ids): void
     {
-        Http::timeout(5)->post(
-            "{$this->spatialAdminUrl()}/v1/{$dataset}/remove",
-            ['ids' => array_values($ids)]
-        );
+        try {
+            Http::timeout(10)->post(
+                "{$this->spatialAdminUrl()}/v1/{$dataset}/remove",
+                ['ids' => array_values($ids)]
+            );
+        } catch (\Throwable $e) {
+            // Index cleanup is best-effort; see the note above.
+        }
     }
 }
