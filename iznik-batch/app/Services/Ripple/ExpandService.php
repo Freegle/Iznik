@@ -421,9 +421,28 @@ class ExpandService
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )
                    AND NOT EXISTS (
-                       SELECT 1 FROM logs l
-                       WHERE l.user = m.fromuser AND l.groupid = g.id
-                         AND l.type = 'Group' AND l.subtype = 'Left'
+                       -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log
+                       -- for this group is a ripple-join (text='Rippled') AND they then LEFT it -
+                       -- i.e. the membership they last opted out of was a rippled one. Most recent
+                       -- join wins: the NOT EXISTS lj2 makes lj the latest Joined, so a later
+                       -- manual/ordinary join (then leave) means they treated it as a normal group
+                       -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow
+                       -- that ripple-join. Sites B/C apply the identical rule.
+                       SELECT 1 FROM logs lj
+                       WHERE lj.user = m.fromuser AND lj.groupid = g.id
+                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
+                         AND NOT EXISTS (
+                             SELECT 1 FROM logs lj2
+                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
+                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
+                               AND lj2.id > lj.id
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM logs ll
+                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
+                               AND ll.type = 'Group' AND ll.subtype = 'Left'
+                               AND ll.id > lj.id
+                         )
                    )",
                 [$msgid, $msgid, $reachWkt, $msgid]
             );
@@ -457,7 +476,9 @@ class ExpandService
      * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
      * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
      * preserved). Existing memberships - including a Banned row - are left untouched (INSERT IGNORE
-     * + NOT EXISTS), and a group the poster has actively LEFT is never re-joined (Group/Left guard).
+     * + NOT EXISTS), and a group whose most recent join was a ripple-join the poster then LEFT is
+     * never re-joined ("most recent join wins"; an ordinary last membership they left does not block
+     * rippling).
      * Writes a memberships_history row (rippled=1) so abuse detection still runs while the per-group
      * welcome is suppressed, and sends one bundled intro email per post. Best-effort: never breaks
      * the expander.
@@ -495,10 +516,12 @@ class ExpandService
             $volunteeringallowed = $home->volunteeringallowed ?? 1;
 
             // Groups this post has rippled into where the poster has no membership row yet AND
-            // which the poster has not actively LEFT. A Group/Left log (self-leave, mod-remove,
-            // unban, partner-remove) is a durable "do not put me back here" signal: rippling must
-            // never re-join a group the poster chose to leave. (The post itself is also pulled from
-            // such groups by pullRippledPostsFromLeftGroups; here we only gate the membership.)
+            // which the poster has not "rippled in then left". Only a group whose MOST RECENT
+            // Group/Joined log is a ripple-join (text='Rippled') that the poster then LEFT is a
+            // durable "do not ripple me back here" signal ("most recent join wins"); a group they
+            // last joined manually/ordinarily and then left must NOT block rippling. (The post
+            // itself is also pulled from such groups by pullRippledPostsFromLeftGroups; here we only
+            // gate the membership.)
             $targets = DB::select(
                 "SELECT mg.groupid
                  FROM messages_groups mg
@@ -507,9 +530,21 @@ class ExpandService
                        SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
                    )
                    AND NOT EXISTS (
-                       SELECT 1 FROM logs l
-                       WHERE l.user = ? AND l.groupid = mg.groupid
-                         AND l.type = 'Group' AND l.subtype = 'Left'
+                       SELECT 1 FROM logs lj
+                       WHERE lj.user = ? AND lj.groupid = mg.groupid
+                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
+                         AND NOT EXISTS (
+                             SELECT 1 FROM logs lj2
+                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
+                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
+                               AND lj2.id > lj.id
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM logs ll
+                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
+                               AND ll.type = 'Group' AND ll.subtype = 'Left'
+                               AND ll.id > lj.id
+                         )
                    )",
                 [$msgid, $posterId, $posterId]
             );
@@ -614,12 +649,16 @@ class ExpandService
     }
 
     /**
-     * Leaving a group the post rippled into also pulls the POST from that group (the product
-     * decision: a leave means "I want nothing to do with this group", not just "stop my
-     * membership"). Soft-deletes (deleted=1) every rippled-in messages_groups row whose post's
-     * author has a Group/Left log for that group, and audits each removal with a Message/Deleted
-     * log. Idempotent (only touches deleted=0 rows); the membership re-join and any future
-     * re-ripple are separately blocked by the Group/Left guard. Best-effort: never breaks the run.
+     * Leaving a group the post was RIPPLED into also pulls the POST from that group (the product
+     * decision: leaving a group you were rippled into means "I want nothing to do with this group",
+     * not just "stop my membership"). Soft-deletes (deleted=1) every rippled-in messages_groups row
+     * whose author's MOST RECENT Group/Joined log for that group is a ripple-join (text='Rippled')
+     * that they then LEFT (a later Group/Left log) - "most recent join wins". An author whose last
+     * join was ordinary, or who manually rejoined after a rippled leave, is left alone (matching
+     * sites A/B) - so a fresh ripple into a group they once normally-left is not immediately pulled
+     * back out. Audits each removal with a Message/Deleted log. Idempotent (only touches deleted=0
+     * rows); the membership re-join and any future re-ripple are blocked by the same
+     * most-recent-join-wins rule. Best-effort: never breaks the run.
      */
     private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats): void
     {
@@ -628,9 +667,24 @@ class ExpandService
                 "SELECT mg.msgid, mg.groupid, m.fromuser
                  FROM messages_groups mg
                  JOIN messages m ON m.id = mg.msgid
-                 JOIN logs l ON l.user = m.fromuser AND l.groupid = mg.groupid
-                              AND l.type = 'Group' AND l.subtype = 'Left'
                  WHERE mg.rippled_in = 1 AND mg.deleted = 0
+                   AND EXISTS (
+                       SELECT 1 FROM logs lj
+                       WHERE lj.user = m.fromuser AND lj.groupid = mg.groupid
+                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
+                         AND NOT EXISTS (
+                             SELECT 1 FROM logs lj2
+                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
+                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
+                               AND lj2.id > lj.id
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM logs ll
+                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
+                               AND ll.type = 'Group' AND ll.subtype = 'Left'
+                               AND ll.id > lj.id
+                         )
+                   )
                  GROUP BY mg.msgid, mg.groupid, m.fromuser"
             );
 
