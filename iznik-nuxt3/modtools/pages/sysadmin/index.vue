@@ -53,15 +53,23 @@
           />
         </b-tab>
 
-        <!-- Digest Clicks Tab -->
+        <!-- Scrolling Tab: how far people scroll/engage — digest click-through by
+             position, and browse-feed scroll depth. -->
         <b-tab @click="onDigestClicksTab">
           <template #title>
-            <h2 class="ms-2 me-2">Digest Clicks</h2>
+            <h2 class="ms-2 me-2">Scrolling</h2>
           </template>
-          <ModSysAdminDigestClicks
-            v-if="showDigestClicks"
-            :key="'digestclicks-' + digestClicksBump"
-          />
+          <template v-if="showDigestClicks">
+            <h3 class="ms-2 mt-2">Digest click-through by position</h3>
+            <ModSysAdminDigestClicks
+              :key="'digestclicks-' + digestClicksBump"
+            />
+            <hr class="my-4" />
+            <h3 class="ms-2 mt-2">Browse-feed scroll depth</h3>
+            <ModSysAdminBrowseScroll
+              :key="'browsescroll-' + digestClicksBump"
+            />
+          </template>
         </b-tab>
 
         <!-- Incoming Email Tab -->
