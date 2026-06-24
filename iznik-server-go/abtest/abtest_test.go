@@ -59,6 +59,46 @@ func doPost(t *testing.T, app *fiber.App, body string) (int, []byte) {
 }
 
 // ---------------------------------------------------------------------------
+// chooseVariant — epsilon-greedy selection (rand injected for determinism)
+//
+// These cover the post-DB selection branches without a database: GetABTest only
+// reaches them with a non-empty, rate-sorted slice, and the branch taken depends
+// solely on the injected randFloat/randIntn. Both branches plus the threshold
+// boundary are exercised on every run, so abtest.go no longer has a line whose
+// coverage flaps with the global RNG seed.
+// ---------------------------------------------------------------------------
+
+func TestChooseVariant_Exploitation_PicksBestRate(t *testing.T) {
+	// randFloat >= 0.1 → exploitation → variants[0] (best rate); randIntn unused.
+	variants := []ABTestVariant{{Variant: "best"}, {Variant: "other"}}
+	got := chooseVariant(variants,
+		func() float64 { return 0.5 },
+		func(int) int { t.Fatal("randIntn must not be called on the exploitation branch"); return 0 })
+	assert.Equal(t, "best", got.Variant)
+}
+
+func TestChooseVariant_Exploration_PicksRandomIndex(t *testing.T) {
+	// randFloat < 0.1 → exploration → variants[randIntn(len(variants))].
+	variants := []ABTestVariant{{Variant: "a"}, {Variant: "b"}, {Variant: "c"}}
+	got := chooseVariant(variants,
+		func() float64 { return 0.0 },
+		func(n int) int {
+			assert.Equal(t, len(variants), n, "randIntn must be bounded by len(variants)")
+			return 2
+		})
+	assert.Equal(t, "c", got.Variant)
+}
+
+func TestChooseVariant_ThresholdBoundary_IsExploitation(t *testing.T) {
+	// Exactly 0.1 is NOT < 0.1 → exploitation branch (guards the boundary).
+	variants := []ABTestVariant{{Variant: "best"}, {Variant: "other"}}
+	got := chooseVariant(variants,
+		func() float64 { return 0.1 },
+		func(int) int { return 1 })
+	assert.Equal(t, "best", got.Variant)
+}
+
+// ---------------------------------------------------------------------------
 // GetABTest — pre-DB paths
 // ---------------------------------------------------------------------------
 
