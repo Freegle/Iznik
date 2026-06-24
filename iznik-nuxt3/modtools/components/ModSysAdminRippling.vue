@@ -59,7 +59,7 @@
           :options="cohortPctOptions('Reply rate (%)')"
           style="width: 100%; height: 300px"
         />
-        <p class="text-muted small fst-italic mt-1 mb-0">
+        <p v-if="replyRateChart" class="text-muted small fst-italic mt-1 mb-0">
           The dashed tail is still settling - the most recent posts haven't had a full 36h to get a reply yet.
         </p>
         <p v-if="!replyRateChart" class="text-muted small">No data yet.</p>
@@ -119,7 +119,7 @@
           :options="cohortPctOptions('Taken/received (%)')"
           style="width: 100%; height: 300px"
         />
-        <p class="text-muted small fst-italic mt-1 mb-0">
+        <p v-if="takenRateChart" class="text-muted small fst-italic mt-1 mb-0">
           The dashed tail is still settling - recent posts haven't had time to be collected yet.
         </p>
         <p v-if="!takenRateChart" class="text-muted small">No data yet.</p>
