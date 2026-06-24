@@ -103,6 +103,12 @@ settings for that community are set as follows:
 The poster receives one bundled intro email explaining all of this, rather than a separate
 welcome email from each community they were joined to.
 
+Because rippling moves more members onto the daily digest and joins them to more
+communities, those digests can gather posts from several communities at once. The daily
+"What's New" email therefore lists up to around 65 posts, to avoid being clipped by email
+providers like Gmail. If there are more, it shows the first batch with a link to browse
+the rest, and the subject line says simply "What's New" instead of a post count.
+
 ---
 
 ## The spam-flag and "seen on many groups"

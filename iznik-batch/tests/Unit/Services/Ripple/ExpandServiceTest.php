@@ -1043,4 +1043,33 @@ class ExpandServiceTest extends TestCase
         $this->assertNull($row->next_expansion_at, 'a saturated post is not rescheduled');
         $this->assertGreaterThanOrEqual(1, $stats['completed']);
     }
+
+    /**
+     * computeSchedule is deterministic per blurred origin, so posts sharing an origin hit the
+     * routing server only ONCE: initialiseNew de-dups origins before fanning the compute out.
+     * Every post still gets its own reach row (the shared schedule is applied per post).
+     */
+    public function test_dedups_routing_calls_for_posts_sharing_a_blurred_origin(): void
+    {
+        $this->fakeRouting(3);
+
+        // Two posts at the SAME origin -> one blurred origin -> one routing call.
+        $a = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
+        $b = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
+        // A third at a DIFFERENT origin -> a second routing call.
+        $c = $this->seedSpatialPost(now()->subMinutes(30), 52.2, -1.5);
+
+        $stats = $this->service()->process(false, 500);
+
+        // All three posts are initialised with their own reach rows...
+        $this->assertSame(3, $stats['initialized']);
+        $this->assertSame(3, DB::table('rippling_reach')->whereIn('msgid', [$a, $b, $c])->count());
+
+        // ...but only TWO distinct origins were sent to the routing server (the two same-origin
+        // posts shared one /v1/ripple-schedule call).
+        $scheduleCalls = collect(Http::recorded())
+            ->filter(fn ($pair) => str_contains($pair[0]->url(), 'ripple-schedule'))
+            ->count();
+        $this->assertSame(2, $scheduleCalls, 'same-origin posts dedup to a single routing call');
+    }
 }

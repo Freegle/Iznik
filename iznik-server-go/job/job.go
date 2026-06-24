@@ -2,6 +2,7 @@ package job
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
@@ -192,7 +193,10 @@ func GetJob(c *fiber.Ctx) error {
 
 // RecordJobClick records a job click for analytics
 func RecordJobClick(c *fiber.Ctx) error {
-	// Check query params first, then form body.
+	// Accept the click parameters from any of the transports our clients use:
+	// query string and form body (the digest email links), and a JSON body
+	// (the web app posts Content-Type: application/json, which FormValue does
+	// not parse - so without this branch every web click logged id=0/link='').
 	jobID := c.Query("id")
 	if jobID == "" {
 		jobID = c.FormValue("id")
@@ -201,6 +205,17 @@ func RecordJobClick(c *fiber.Ctx) error {
 	link := c.Query("link")
 	if link == "" {
 		link = c.FormValue("link")
+	}
+
+	if jobID == "" && link == "" {
+		var body struct {
+			ID   json.Number `json:"id"`
+			Link string      `json:"link"`
+		}
+		if err := c.BodyParser(&body); err == nil {
+			jobID = body.ID.String()
+			link = body.Link
+		}
 	}
 
 	// Get user ID from context if authenticated (optional)

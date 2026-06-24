@@ -66,6 +66,18 @@ happened to your account.
 
 ---
 
+## Your daily "What's New" email
+
+Because rippling switches your immediate alerts to a daily digest (see above), and joins
+you to more communities, your daily "What's New" email can now gather posts from several
+communities. To keep the email a sensible length - and to stop it being clipped partway
+through by email providers like Gmail - it lists up to around 65 posts. If there are more
+than that, the email shows the first batch and links you to the website to browse the
+rest, and the subject line simply says "What's New" rather than giving an exact post
+count. Nothing is missing - everything is always there on the browse page.
+
+---
+
 ## Staying in control
 
 ### Changing your email settings
