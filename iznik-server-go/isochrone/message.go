@@ -150,7 +150,10 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 		return bv
 	}
 	var setting string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')) FROM users WHERE id = ?", myid).Scan(&setting)
+	// COALESCE to '' so users who have never set browseView (JSON_EXTRACT -> SQL NULL) scan cleanly
+	// into the non-nullable string instead of erroring "converting NULL to string is unsupported"
+	// on every such request. NULL still falls through to the "nearby" default below.
+	db.Raw("SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')), '') FROM users WHERE id = ?", myid).Scan(&setting)
 	if setting == "mygroups" {
 		return "mygroups"
 	}
