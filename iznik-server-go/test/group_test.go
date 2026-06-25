@@ -66,6 +66,34 @@ func TestListGroups(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+func TestListGroupsReturnsPlatformFlags(t *testing.T) {
+	// The default /api/group list (used by partner integrations) must return the
+	// real onhere/ontn/onlovejunk values, not a hardcoded 0 - the SELECT used to
+	// omit these columns so they serialised as the zero value for every group.
+	prefix := uniquePrefix("grp-flags")
+	groupID := CreateTestGroup(t, prefix)
+	db := database.DBConn
+	db.Exec("UPDATE `groups` SET publish = 1, onhere = 1, ontn = 1, onlovejunk = 1 WHERE id = ?", groupID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var groups []group.GroupEntry
+	json2.Unmarshal(rsp(resp), &groups)
+
+	var found *group.GroupEntry
+	for i := range groups {
+		if groups[i].ID == groupID {
+			found = &groups[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "created group should appear in the default /api/group list")
+	assert.Equal(t, 1, found.Onhere, "onhere should reflect the stored value, not default to 0")
+	assert.Equal(t, 1, found.Ontn, "ontn should reflect the stored value")
+	assert.Equal(t, 1, found.Onlovejunk, "onlovejunk should reflect the stored value")
+}
+
 func TestGetGroup_NonFreegleType(t *testing.T) {
 	// Groups with non-Freegle types should still be fetchable by ID.
 	// V1 returns any group by ID regardless of type.
