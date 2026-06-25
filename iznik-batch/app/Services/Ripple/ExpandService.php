@@ -148,7 +148,7 @@ class ExpandService
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
             'memberships_added' => 0, 'pulled_on_leave' => 0,
-            'pulled_on_removal' => 0, 'memberships_removed' => 0,
+            'pulled_on_removal' => 0, 'memberships_removed' => 0, 'reach_capped' => 0,
         ];
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
@@ -848,6 +848,24 @@ class ExpandService
                 $params[] = $satStop;
             }
         }
+
+        // 1h HOLD (earned-reach gate; dark unless RIPPLE_EARNED_REACH_ENABLED). An auto-published
+        // post - approvedby IS NULL AND checkedat IS NULL on its origin row - must be at least
+        // RIPPLE_AUTOAPPROVE_HOLD_SECONDS old before it starts rippling, so a mod or the microvol
+        // pool can catch a bad one before it fans out. A post a mod approved (approvedby NOT NULL)
+        // or checked (checkedat NOT NULL) skips the hold; an explicit --msgid run bypasses it,
+        // exactly like the arrival cutoff. The hold param is pushed before $limit so it binds in order.
+        $holdSql = '';
+        if (config('freegle.ripple.earned_reach_enabled', false) && $onlyMsgid === null) {
+            $holdSeconds = (int) config('freegle.ripple.autoapprove_hold_seconds', 3600);
+            if ($holdSeconds > 0) {
+                $holdSql = ' AND (EXISTS (SELECT 1 FROM messages_groups mg_h'
+                    . ' WHERE mg_h.msgid = ms.msgid AND (mg_h.approvedby IS NOT NULL OR mg_h.checkedat IS NOT NULL))'
+                    . ' OR ms.arrival <= DATE_SUB(NOW(), INTERVAL ? SECOND))';
+                $params[] = $holdSeconds;
+            }
+        }
+
         $params[] = $limit;
 
         // Ripple-OUT opt-out (groups.settings.rippling.out): a post on a community that has
@@ -875,7 +893,7 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $holdSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -1359,6 +1377,25 @@ class ExpandService
      * (the default - no Pending flicker, since the post was already vetted on origin), else
      * Pending so AutoApproveService approves it after the mod-veto window.
      */
+    /**
+     * Review weight for the earned-reach cap: 1 per microvol Approve on the post, plus 2 per
+     * messages_groups row with checkedat set (a mod check, on any of the post's groups). The cap
+     * lets a post ripple into N communities while weight >= 2*N.
+     */
+    private function reviewWeight(int $msgid): int
+    {
+        $microvolApproves = (int) DB::selectOne(
+            "SELECT COUNT(*) AS n FROM microactions WHERE msgid = ? AND result = 'Approve'",
+            [$msgid]
+        )->n;
+        $modChecks = (int) DB::selectOne(
+            'SELECT COUNT(*) AS n FROM messages_groups WHERE msgid = ? AND checkedat IS NOT NULL',
+            [$msgid]
+        )->n;
+
+        return $microvolApproves + 2 * $modChecks;
+    }
+
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
     {
         try {
@@ -1479,6 +1516,52 @@ class ExpandService
                    )",
                 [$reachWkt, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
+
+            // EARNED-REACH CAP (dark unless RIPPLE_EARNED_REACH_ENABLED). An auto-published post
+            // (approvedby IS NULL on its origin row) may be rippled into at most N communities
+            // while its review weight >= 2*N (weight = 1 per microvol Approve + 2 per mod check).
+            // If the weight does not cover the communities this step would reach, pause: insert
+            // nothing, stamp awaiting_review_since, count it, return. When the weight later catches
+            // up the wait is banked into awaiting_review_seconds and the stamp is cleared. A
+            // mod-approved post (approvedby NOT NULL) is trusted and never capped.
+            if (config('freegle.ripple.earned_reach_enabled', false)) {
+                $originRow = DB::selectOne(
+                    'SELECT approvedby FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC LIMIT 1',
+                    [$msgid]
+                );
+                if ($originRow !== null && $originRow->approvedby === null) {
+                    $candidateCount = count($targetGroups);
+
+                    if ($candidateCount > 0) {
+                        $alreadyRippledIn = (int) DB::table('messages_groups')
+                            ->where('msgid', $msgid)->where('rippled_in', 1)->where('deleted', 0)->count();
+                        $requiredWeight = 2 * ($alreadyRippledIn + $candidateCount);
+
+                        if ($this->reviewWeight($msgid) < $requiredWeight) {
+                            DB::statement(
+                                'UPDATE rippling_reach
+                                 SET awaiting_review_since = IF(awaiting_review_since IS NULL, NOW(), awaiting_review_since),
+                                     updated_at = NOW()
+                                 WHERE msgid = ?',
+                                [$msgid]
+                            );
+                            $stats['reach_capped']++;
+
+                            return;
+                        }
+
+                        // Sufficient weight: if we were paused, bank the waited time and clear the stamp.
+                        DB::statement(
+                            'UPDATE rippling_reach
+                             SET awaiting_review_seconds = awaiting_review_seconds
+                                     + TIMESTAMPDIFF(SECOND, awaiting_review_since, NOW()),
+                                 awaiting_review_since = NULL, updated_at = NOW()
+                             WHERE msgid = ? AND awaiting_review_since IS NOT NULL',
+                            [$msgid]
+                        );
+                    }
+                }
+            }
 
             $n = 0;
             foreach ($targetGroups as $g) {

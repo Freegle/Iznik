@@ -3423,4 +3423,226 @@ class ExpandServiceTest extends TestCase
         )->c;
         $this->assertSame(0, $innerAccepts, 'inner bound must not cover the clipped-out rejected area');
     }
+
+    // ───────────────────────── Earned-reach gate (dark unless RIPPLE_EARNED_REACH_ENABLED) ─────
+
+    private function addMicrovolApprove(int $msgid): void
+    {
+        DB::table('microactions')->insert([
+            'actiontype' => 'CheckMessage', 'userid' => $this->createTestUser()->id,
+            'msgid' => $msgid, 'result' => 'Approve', 'timestamp' => now(),
+        ]);
+    }
+
+    public function test_autoapprove_hold_prevents_young_unreviewed_post_from_rippling(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // younger than the 1h hold
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'auto-published post within the hold window must not start rippling');
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'no reach row while held');
+    }
+
+    public function test_autoapprove_hold_allows_old_enough_unreviewed_post(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90)); // past the 1h hold
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'post past the hold ripples normally');
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count());
+    }
+
+    public function test_autoapprove_hold_skipped_when_approvedby_is_set(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(5));
+        $modId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['approvedby' => $modId]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'a mod-approved post bypasses the hold');
+    }
+
+    public function test_autoapprove_hold_skipped_when_checkedat_is_set(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(5));
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['checkedat' => now()]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'a mod-checked post bypasses the hold');
+    }
+
+    public function test_autoapprove_hold_bypassed_for_only_msgid_run(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 3600]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(5)); // under the hold
+
+        $stats = $this->service()->process(false, 500, $msgid);
+
+        $this->assertSame(1, $stats['initialized'], '--msgid bypasses the hold, like the arrival cutoff');
+    }
+
+    public function test_review_weight_counts_microvol_approves_and_mod_checks(): void
+    {
+        $svc = $this->service();
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $ref = new \ReflectionMethod($svc, 'reviewWeight');
+        $ref->setAccessible(true);
+
+        $this->assertSame(0, $ref->invoke($svc, $msgid), 'baseline weight 0');
+        $this->addMicrovolApprove($msgid);
+        $this->assertSame(1, $ref->invoke($svc, $msgid), '1 microvol approve = weight 1');
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['checkedat' => now()]);
+        $this->assertSame(3, $ref->invoke($svc, $msgid), '+1 mod check = weight 3 (1 + 2)');
+    }
+
+    public function test_earned_reach_cap_blocks_with_weight_below_2_for_one_group(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+        $this->addMicrovolApprove($msgid); // weight 1 < required 2 for N=1
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'reach is still initialised');
+        $this->assertSame(0, $stats['rippled_in'], 'not rippled in while weight < required');
+        $this->assertSame(1, $stats['reach_capped']);
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first());
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('awaiting_review_since'),
+            'awaiting_review_since stamped on pause'
+        );
+    }
+
+    public function test_earned_reach_cap_passes_with_two_microvol_approves(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+        $this->addMicrovolApprove($msgid);
+        $this->addMicrovolApprove($msgid); // weight 2 >= required 2
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['rippled_in'], 'weight 2 meets N=1; ripples in');
+        $this->assertSame(0, $stats['reach_capped']);
+    }
+
+    public function test_earned_reach_cap_passes_with_one_mod_check(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['checkedat' => now()]); // weight 2
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['rippled_in'], 'one mod check (weight 2) meets N=1');
+        $this->assertSame(0, $stats['reach_capped']);
+    }
+
+    public function test_earned_reach_cap_does_not_apply_to_mod_approved_post(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+        $modId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['approvedby' => $modId]); // mod-approved, zero weight
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['reach_capped'], 'mod-approved post is exempt from the cap');
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'mod-approved post ripples without review weight');
+    }
+
+    public function test_earned_reach_cap_pause_then_resume_accumulates_await_seconds(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $groupB = $this->seedCoveringGroup();
+
+        // Run 1: weight 1 < 2, capped.
+        $this->addMicrovolApprove($msgid);
+        $stats1 = $this->service()->process(false, 500);
+        $this->assertSame(1, $stats1['reach_capped']);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('awaiting_review_since'));
+
+        // Simulate time passing while paused, and make a LATER tick genuinely due. advanceDue only
+        // re-enters the cap when target > current tick, so age the reach back to the final hazard
+        // step and reset the tick to force a real advance.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'awaiting_review_since' => now()->subSeconds(60),
+            'arrival' => now()->subHours(7),
+            'tick' => 0,
+            'next_expansion_at' => now()->subMinute(),
+        ]);
+
+        // Run 2: second approve -> weight 2 >= 2, resumes and ripples.
+        $this->addMicrovolApprove($msgid);
+        $stats2 = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats2['reach_capped'], 'cap lifted on resume');
+        $this->assertGreaterThanOrEqual(1, $stats2['rippled_in'], 'ripples on resume');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNull($row->awaiting_review_since, 'await stamp cleared on resume');
+        $this->assertGreaterThanOrEqual(60, (int) $row->awaiting_review_seconds, 'waited time banked');
+    }
+
+    public function test_earned_reach_cap_does_not_reset_await_since_on_repeated_pause(): void
+    {
+        config(['freegle.ripple.earned_reach_enabled' => true, 'freegle.ripple.autoapprove_hold_seconds' => 0]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->seedCoveringGroup();
+
+        $this->addMicrovolApprove($msgid);
+        $this->service()->process(false, 500); // capped, stamp set
+
+        $original = now()->subMinutes(10);
+        DB::table('rippling_reach')->where('msgid', $msgid)
+            ->update(['awaiting_review_since' => $original, 'arrival' => now()->subHours(7), 'tick' => 0, 'next_expansion_at' => now()->subMinute()]);
+
+        $this->service()->process(false, 500); // still weight 1 < 2, still capped
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertEqualsWithDelta(
+            $original->timestamp,
+            \Carbon\Carbon::parse($row->awaiting_review_since)->timestamp,
+            2,
+            'awaiting_review_since must not be reset on a second consecutive pause'
+        );
+    }
+
+    public function test_earned_reach_gate_is_dark_by_default(): void
+    {
+        // Flag off (default): a young auto-published post with zero review weight ripples
+        // exactly as before - no hold, no cap.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->seedCoveringGroup();
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'gate off: young post still ripples (no hold)');
+        $this->assertSame(0, $stats['reach_capped'], 'gate off: cap never fires');
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'gate off: unreviewed post ripples freely');
+    }
 }

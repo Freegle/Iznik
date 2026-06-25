@@ -565,6 +565,14 @@ return [
         // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
         // 5 = the figure from the Discourse rippling thread.
         'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
+        // EARNED-REACH GATE (auto-approve x rippling). Ships DARK: when false, ExpandService
+        // behaves exactly as before - no 1h hold, no review-weight cap, no await-review
+        // instrumentation. Go-live is a deliberate env flip, exactly like RIPPLE_ENABLED.
+        'earned_reach_enabled' => (bool) env('RIPPLE_EARNED_REACH_ENABLED', false),
+        // When the gate is on: minimum age (seconds) an auto-published, unreviewed post must
+        // reach before it may start rippling. A post with approvedby or checkedat set (a mod
+        // approved or checked it) skips the hold. Default 3600 (1h); 0 disables just the hold.
+        'autoapprove_hold_seconds' => (int) env('RIPPLE_AUTOAPPROVE_HOLD_SECONDS', 3600),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
