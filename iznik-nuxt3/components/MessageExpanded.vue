@@ -390,17 +390,17 @@
               </div>
               <div v-if="messageGroups.length" class="posted-on-groups">
                 On:
-                <template
-                  v-for="(g, idx) in messageGroups"
-                  :key="g.id"
-                  ><NuxtLink
-                    no-prefetch
-                    :to="'/explore/' + g.nameshort"
-                    class="posted-on-group-link"
-                    @click.stop
-                    >{{ g.namedisplay }}</NuxtLink
-                  ><span v-if="idx < messageGroups.length - 1">, </span></template
-                >
+                <ShowMore :items="messageGroups" :limit="3" inline>
+                  <template #item="{ item }"
+                    ><NuxtLink
+                      no-prefetch
+                      :to="'/explore/' + item.nameshort"
+                      class="posted-on-group-link"
+                      @click.stop
+                      >{{ item.namedisplay }}</NuxtLink
+                    ></template
+                  >
+                </ShowMore>
               </div>
             </client-only>
           </div>

@@ -73,7 +73,7 @@
                  only the image-view scroll-depth ping is lost on the hero. --}}
             <mj-column width="38%" padding="0" vertical-align="top">
                 <mj-image
-                    href="{{ $post['messageUrl'] }}"
+                    href="{{ $post['viewUrl'] }}"
                     src="{{ $post['displayImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
@@ -89,7 +89,7 @@
                 </mj-text>
                 {{-- Title --}}
                 <mj-text padding="0 0 4px 0" font-size="18px" font-weight="700" color="#212529" line-height="1.25">
-                    <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
+                    <a href="{{ $post['viewUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
                 {{-- The full description is rendered in its own section
                      below; no snippet here, since the immediate digest is

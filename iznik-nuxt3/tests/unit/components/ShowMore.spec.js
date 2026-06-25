@@ -87,7 +87,7 @@ describe('ShowMore', () => {
       const wrapper = createWrapper({ items, limit: 10 })
 
       expect(wrapper.find('button').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Show more...')
+      expect(wrapper.text()).toContain('+5 more')
     })
 
     it('hides button when items under limit', () => {
@@ -97,13 +97,14 @@ describe('ShowMore', () => {
       expect(wrapper.find('button').exists()).toBe(false)
     })
 
-    it('hides button when expanded', async () => {
+    it('replaces "+N more" with a "show less" toggle when expanded', async () => {
       const items = Array.from({ length: 15 }, (_, i) => ({ id: i + 1 }))
       const wrapper = createWrapper({ items, limit: 10 })
 
       await wrapper.find('button').trigger('click')
 
-      expect(wrapper.find('button').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('+5 more')
+      expect(wrapper.text()).toContain('show less')
     })
   })
 
@@ -194,6 +195,58 @@ describe('ShowMore', () => {
 
       expect(wrapper.text()).toContain('Item Alice')
       expect(wrapper.text()).toContain('Item Bob')
+    })
+  })
+
+  describe('inline mode', () => {
+    const five = [
+      { id: 1, name: 'Alpha' },
+      { id: 2, name: 'Bravo' },
+      { id: 3, name: 'Charlie' },
+      { id: 4, name: 'Delta' },
+      { id: 5, name: 'Echo' },
+    ]
+
+    function inlineWrapper(props = {}) {
+      return mount(ShowMore, {
+        props: { items: five, limit: 3, inline: true, ...props },
+        slots: { item: (p) => p.item.name },
+        global: {
+          stubs: {
+            'b-button': {
+              template: '<button @click="$emit(\'click\')"><slot /></button>',
+            },
+          },
+        },
+      })
+    }
+
+    it('shows the first `limit` comma-separated with a "+N more" toggle', () => {
+      const wrapper = inlineWrapper()
+      expect(wrapper.text()).toContain('Alpha, Bravo, Charlie')
+      expect(wrapper.text()).toContain('+2 more')
+      expect(wrapper.text()).not.toContain('Delta')
+      // No stray/double separators around the truncation point.
+      expect(wrapper.text()).not.toMatch(/,\s*,/)
+      expect(wrapper.text().trim()).not.toMatch(/^,/)
+    })
+
+    it('expands to the full comma list and offers "show less", then collapses', async () => {
+      const wrapper = inlineWrapper()
+      await wrapper.find('button').trigger('click')
+      expect(wrapper.text()).toContain('Alpha, Bravo, Charlie, Delta, Echo')
+      expect(wrapper.text()).toContain('show less')
+      expect(wrapper.text()).not.toContain('+2 more')
+
+      await wrapper.find('button').trigger('click')
+      expect(wrapper.text()).not.toContain('Delta')
+      expect(wrapper.text()).toContain('+2 more')
+    })
+
+    it('renders no toggle when the list is within the limit', () => {
+      const wrapper = inlineWrapper({ items: five.slice(0, 3) })
+      expect(wrapper.text()).toContain('Alpha, Bravo, Charlie')
+      expect(wrapper.findAll('button')).toHaveLength(0)
     })
   })
 })

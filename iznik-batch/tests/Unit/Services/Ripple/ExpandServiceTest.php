@@ -1196,4 +1196,108 @@ class ExpandServiceTest extends TestCase
             ->count();
         $this->assertSame(2, $scheduleCalls, 'same-origin posts dedup to a single routing call');
     }
+
+    /** Seed a terminal outcome (Taken/Received/Withdrawn) on a post. */
+    private function seedOutcome(int $msgid, string $outcome): void
+    {
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid,
+            'outcome' => $outcome,
+            'timestamp' => now(),
+        ]);
+    }
+
+    /** Make a covering group whose polyindex intersects the fake reach polygon. */
+    private function seedCoveringGroup(): int
+    {
+        $group = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $group->id]
+        );
+
+        return (int) $group->id;
+    }
+
+    /**
+     * BUG FIX: the exact reported failure. A post with a terminal outcome (here Received) that is
+     * STILL in messages_spatial (messages:update-spatial-index lags the outcome) must never be
+     * rippled into a covering group. The outcome is checked directly against messages_outcomes, not
+     * inferred from the spatial index, so the lag window cannot leak a taken post into new groups.
+     */
+    public function test_taken_post_still_in_spatial_is_never_rippled_in(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // still in messages_spatial
+        $this->seedOutcome($msgid, \App\Models\MessageOutcome::OUTCOME_RECEIVED);
+        $groupB = $this->seedCoveringGroup();
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['rippled_in'], 'a post with a terminal outcome is never rippled in, even while still spatial');
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first(),
+            'post with a terminal outcome is not inserted into a covering group via the tick-0 init ripple'
+        );
+    }
+
+    /**
+     * A post that becomes Taken mid-expansion stops expanding (status done, not rescheduled) and is
+     * not rippled into a group whose area its reach now covers - mirrors the saturation-stop, but
+     * driven by the outcome. Covers advanceDue's outcome-stop on a scoped-or-unscoped tick where
+     * removeStale's spatial cleanup has not yet caught up.
+     */
+    public function test_post_taken_mid_expansion_stops_expanding(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // First pass: reach initialised and expanding (no covering group yet → nothing rippled in).
+        $this->service()->process(false, 500);
+        $this->assertSame(
+            'expanding',
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('status'),
+            'reach is expanding before the outcome'
+        );
+
+        // The post is now Taken, a covering group appears, and its next tick falls due.
+        $this->seedOutcome($msgid, \App\Models\MessageOutcome::OUTCOME_TAKEN);
+        $groupB = $this->seedCoveringGroup();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+            'status' => 'expanding',
+        ]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame('done', $row->status, 'a taken post stops expanding');
+        $this->assertNull($row->next_expansion_at, 'a taken post is not rescheduled');
+        $this->assertGreaterThanOrEqual(1, $stats['completed']);
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first(),
+            'a taken post is not rippled into a new group even though its reach now covers it'
+        );
+    }
+
+    /**
+     * 'Repost' is NOT a terminal outcome - a reposted item is still active and must ripple normally.
+     * Guards against the outcome check over-reaching to any messages_outcomes row.
+     */
+    public function test_repost_outcome_is_not_terminal_and_post_still_ripples(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->seedOutcome($msgid, \App\Models\MessageOutcome::OUTCOME_REPOST);
+        $groupB = $this->seedCoveringGroup();
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'a Repost outcome does not stop rippling');
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first(),
+            'post with only a Repost outcome still ripples into a covering group'
+        );
+    }
 }
