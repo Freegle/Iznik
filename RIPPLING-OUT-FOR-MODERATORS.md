@@ -10,9 +10,10 @@
 > ### Don't reject a post just because it looks "out of area"
 >
 > With rippling out, a post that started on a neighbouring community can appear on
-> **your** community's pending list, even if the poster lives some distance away.
-> **That is expected and correct.** It means the system is deliberately spreading a post
-> that has not been collected locally so your members get a chance at it.
+> **your** community, even if the poster lives some distance away (by default it arrives
+> already approved; see below). **That is expected and correct.** It means the system is
+> deliberately spreading a post that has not been collected locally so your members get a
+> chance at it.
 >
 > Only reject it for the usual reasons - spam, breaks the rules, wrong sort of thing,
 > and so on. "They're not from round here" is no longer a reason to reject.
@@ -46,39 +47,45 @@ What this means in practice:
 
 ### 1. Posts arriving from other communities
 
-Some posts in your pending list will have started on another community and rippled into
-yours. You will see a small notice on the post making this clear. These go through your
-normal pending list like any other post - approve or reject them as you normally would
-(remembering the "please don't" above).
+Some posts on your community will have started on another community and rippled into
+yours. You will see a small notice on the post making this clear ("This post has rippled
+in from a neighbouring community").
 
-**Auto-approval for pre-approved posts.** A post that rippled in and was already approved
-on the community where it started will auto-approve on your community after about an hour
-if nobody rejects it first. It was already vetted, so we do not make it sit out the full
-review window again. You still see it in your pending list and can reject it for the usual
-reasons - just do so reasonably promptly if you do not want it to go live locally. A post
-that has not been approved anywhere yet follows your normal pending process, unchanged.
+A post only ripples after it has already been approved on the community where it started,
+so it has already been vetted. We therefore do not make it sit out a full review again.
+**With the default settings it is approved on your community straight away** - it appears
+among your approved posts with the rippled-in notice, not in your pending list. You can
+still reject it for the usual reasons (spam, breaks the rules, wrong sort of thing) - see
+"Rejecting a rippled-in post" below.
+
+(If your instance is configured with a mod-veto window - `RIPPLE_RIPPLED_IN_PENDING_HOURS`
+set above zero - a rippled-in post instead waits in your pending list for that many hours
+and auto-approves if nobody rejects it first. Either way, "they're not from round here" is
+never a reason to reject.)
 
 ### 2. A reach/map view on posts
 
-On posts in your moderation screens there is a button (labelled something like "Who can
-see this?" or "Reach") that shows you on a map the area a post is currently visible in.
-This is useful for checking how far a post has spread or why it turned up on your list.
+On posts in your moderation screens there is a **"View rippling reach"** button (with a
+map-marker icon) that shows you on a map the area a post is currently visible in. This is
+useful for checking how far a post has spread or why it turned up on your list.
 
 ### 3. A reminder when you edit a shared post
 
 If you edit a post that is on more than one community, you will see a warning:
 
-> *"This edit will apply to the post on all groups."*
+> *"This edit will apply to the post on all N groups it appears on."*
 
-Edit as normal - just be aware your change is seen everywhere the post appears.
+(N is the actual number of communities the post is on.) Edit as normal - just be aware
+your change is seen everywhere the post appears.
 
 ### 4. Held replies in Chat Review
 
 Occasionally a reply is held because the post has not yet rippled out to where that
 member is. Chat Review shows you it is held because of rippling (not because you chose
 to hold it). You do not need to do anything - the reply is released automatically once
-the post reaches that member's area. Members are never shown this reason; only moderators
-see it.
+the post reaches that member's area, or once the post has finished spreading as far as it
+will go, so no reply is ever held indefinitely. Members are never shown this reason; only
+moderators see it.
 
 ---
 
@@ -111,6 +118,21 @@ the rest, and the subject line says simply "What's New" instead of a post count.
 
 ---
 
+## Repost reminders and chase-ups happen once per item
+
+Freegle reminds a poster shortly before it auto-reposts their item ("Will Repost: ...")
+and, once reposting is exhausted, chases them up to ask what happened ("What happened
+to: ..."). Under rippling a single item can be live on several communities at once, but
+the poster still gets **one** reminder and **one** chase-up per cycle - not one per
+community. Whatever they do in response (mark it taken, withdraw it, or promise it)
+applies to the item everywhere it has rippled, so one email is enough to settle it.
+
+Behind the scenes the item is still reposted on each community independently, so it stays
+near the top of every local browse list - that part is invisible to the poster and costs
+them no extra email.
+
+---
+
 ## The spam-flag and "seen on many groups"
 
 Rippling joins a poster to multiple communities. This does **not** trigger the "seen on
@@ -137,9 +159,11 @@ because the poster is from out of area.
 
 ## TrashNothing posts
 
-Posts coming in through TrashNothing behave exactly like any other post under rippling
-out. They ripple outwards from the community they started on, appear in your pending list
-with the same notice, and can be approved or rejected in the same way.
+TrashNothing posts are currently **not** rippled out into new communities. TrashNothing
+still cross-posts an item to several Freegle communities itself, so rippling deliberately
+stays out of its way to avoid the same item appearing twice. They behave on your community
+exactly as they always have. This exclusion is temporary - once TrashNothing posts to a
+single origin community, those posts will ripple like any other.
 
 ---
 
