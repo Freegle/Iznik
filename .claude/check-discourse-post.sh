@@ -27,14 +27,24 @@ DISCOURSE_URL=""
 [ -f "$ENV_FILE" ] && DISCOURSE_URL=$(grep -E '^DISCOURSE_URL=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'"'"'')
 CONFIGURED_HOST=$(echo "$DISCOURSE_URL" | sed 's|https\?://||; s|/.*||')
 
-# Only act on commands that hit a Discourse host.
-echo "$COMMAND" | grep -qi 'discourse\.ilovefreegle\.org' && HIT=1 || HIT=0
-if [ -n "$CONFIGURED_HOST" ] && echo "$COMMAND" | grep -qiF "$CONFIGURED_HOST"; then HIT=1; fi
-[ "$HIT" = 0 ] && exit 0
+# Build the regex of Discourse hosts we cover: the real forum, plus any host
+# configured via DISCOURSE_URL (regex-escaped).
+HOSTS='discourse\.ilovefreegle\.org'
+if [ -n "$CONFIGURED_HOST" ]; then
+  CH_ESC=$(printf '%s' "$CONFIGURED_HOST" | sed 's/[][\.*^$/]/\\&/g')
+  HOSTS="$HOSTS|$CH_ESC"
+fi
 
-# Must be a CREATE on /posts.json (or /posts). Edits are /posts/<id>.json — leave
-# those alone (the slash-id before .json means it won't match /posts.json).
-echo "$COMMAND" | grep -qiE '/posts(\.json|[?"'"'"' ]|$)' || exit 0
+# Only act on commands that hit a Discourse host.
+echo "$COMMAND" | grep -qiE "($HOSTS)" || exit 0
+
+# Must be a CREATE on the reply endpoint: <host>/posts.json or <host>/posts.
+# Anchoring /posts DIRECTLY to the host is what distinguishes a reply-create from the
+# read/edit endpoints that also contain the word "posts" — those must NOT be blocked:
+#   <host>/t/<id>/posts.json       topic listing (GET)  -> host is followed by /t/, not /posts
+#   <host>/posts/by_number/<t>/<n> single-post read(GET)-> /posts is followed by '/', excluded
+#   <host>/posts/<id>.json         post edit  (PUT)     -> /posts is followed by '/', excluded
+echo "$COMMAND" | grep -qiE "($HOSTS)/posts(\.json)?([^/a-z0-9]|\$)" || exit 0
 
 # Must be a POST: explicit -X POST/--request POST, or any data flag (curl -d et al.
 # default to POST). A bare GET (no data, no -X POST) is not a create.
@@ -53,7 +63,7 @@ $(cat "$f" 2>/dev/null)"
 done
 
 # New-TOPIC creation has a title and no reply target — nothing to quote, allow it.
-if echo "$PAYLOAD" | grep -qiE '("title"[[:space:]]*:|[[:space:]]title=)' && \
+if echo "$PAYLOAD" | grep -qiE '("title"[[:space:]]*:|[^a-z0-9_]title=)' && \
    ! echo "$PAYLOAD" | grep -qiE 'reply_to_post_number'; then
   exit 0
 fi
