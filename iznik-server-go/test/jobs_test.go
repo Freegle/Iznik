@@ -97,3 +97,18 @@ func TestJobClick_JSONBody(t *testing.T) {
 	assert.Equal(t, jobID, gotID)
 	assert.Equal(t, link, gotLink)
 }
+
+// TestJobClick_ContentFree guards the bot/scanner case: a POST /job with neither an id nor a
+// link must record NOTHING (it returns success but writes no row), so logs_jobs is not flooded
+// with jobid=0/link='' noise that buries the genuine clicks.
+func TestJobClick_ContentFree(t *testing.T) {
+	var before int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE (jobid IS NULL OR jobid = 0) AND (link IS NULL OR link = '')").Row().Scan(&before)
+
+	resp, _ := getApp().Test(httptest.NewRequest("POST", "/api/job", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var after int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE (jobid IS NULL OR jobid = 0) AND (link IS NULL OR link = '')").Row().Scan(&after)
+	assert.Equal(t, before, after, "content-free POST /job must not insert a logs_jobs row")
+}
