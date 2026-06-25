@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Queue;
 
+use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
@@ -1686,6 +1687,50 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             $this->assertEquals('Alice Mod', $mail->userName);
             $this->assertEquals($user->id, $mail->userId);
             $this->assertEquals($chatId, $mail->chatId);
+            return TRUE;
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_processes_email_chat_spam_report_task(): void
+    {
+        Mail::fake();
+
+        $reporter = $this->createTestUser(['fullname' => 'Melissa Reporter']);
+        $other = $this->createTestUser(['fullname' => 'Creepy Guy']);
+
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $reporter->id,
+            'user2' => $other->id,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chat_spam_report',
+            'data' => json_encode([
+                'chatid' => $chatId,
+                'userid' => $reporter->id,
+                'reason' => 'Spam',
+                'comment' => 'asked me out',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) use ($reporter, $other, $chatId) {
+            $this->assertEquals('Melissa Reporter', $mail->reporterName);
+            $this->assertEquals($reporter->id, $mail->reporterId);
+            $this->assertEquals('Creepy Guy', $mail->otherUserName);
+            $this->assertEquals($chatId, $mail->chatId);
+            $this->assertEquals('Spam', $mail->reason);
+            $this->assertEquals('asked me out', $mail->comment);
             return TRUE;
         });
 
