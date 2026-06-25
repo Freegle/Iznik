@@ -179,3 +179,45 @@ func TestMarkCheckedCrossGroupAndNonMod(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp0.StatusCode, "non-mod with groupid=0 must get 403")
 }
+
+// Reject pulls the specified Approved auto-published posts back to Pending, held by the
+// mod, clearing checkedat; it requires explicit ids (no bulk reject).
+func TestMarkCheckedReject(t *testing.T) {
+	prefix := uniquePrefix("markchk_reject")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	approved := CreateTestMessage(t, poster, groupA, prefix+" approved", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL, checkedat=NOW(), checkedby=? WHERE msgid=?", modID, approved)
+
+	// Reject requires explicit ids.
+	noIDs := fmt.Sprintf(`{"groupid": %d, "reject": true}`, groupA)
+	reqNo := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", modToken), strings.NewReader(noIDs))
+	reqNo.Header.Set("Content-Type", "application/json")
+	respNo, err := getApp().Test(reqNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, respNo.StatusCode, "reject without ids must be 400")
+
+	// Reject the approved post.
+	body := fmt.Sprintf(`{"groupid": %d, "reject": true, "ids": [%d]}`, groupA, approved)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", modToken), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var pendingHeld, stillChecked int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND collection='Pending' AND heldby=? AND checkedat IS NULL", approved, groupA, modID).Scan(&pendingHeld)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND checkedat IS NOT NULL", approved, groupA).Scan(&stillChecked)
+	assert.Equal(t, int64(1), pendingHeld, "rejected post is Pending, held by the mod, checkedat cleared")
+	assert.Equal(t, int64(0), stillChecked, "checkedat must be cleared on reject")
+
+	db.Exec("DELETE FROM messages_groups WHERE msgid=?", approved)
+	db.Exec("DELETE FROM messages WHERE id=?", approved)
+}
