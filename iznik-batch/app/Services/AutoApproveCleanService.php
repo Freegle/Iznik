@@ -94,6 +94,7 @@ class AutoApproveCleanService
             ->whereNotNull('mg.contentcheck_checked_at')   // content check has run ...
             ->whereNull('mg.contentcheck_reasons')         // ... and the post was clean
             ->where('mg.quality_sample', 0)               // already-sampled rows are excluded entirely
+            ->where('mg.rippled_in', 0)                   // rippled-in rows belong to AutoApproveService (carries the Taken/Received + rippled_in_pending_hours + recentLogs-bypass guards)
             ->whereRaw(
                 "mg.arrival <= (NOW() - INTERVAL COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(g.settings, '$.autoapprove.delay_minutes')) AS UNSIGNED), 0), ?) MINUTE)",
                 [$this->defaultDelayMinutes()]

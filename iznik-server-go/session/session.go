@@ -1206,7 +1206,7 @@ func GetSession(c *fiber.Ctx) error {
 				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
 				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
 				"AND m.deleted IS NULL AND u.deleted IS NULL "+
-				"AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL "+
+				"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL "+
 				checkedWindowSQL,
 				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
 		}()

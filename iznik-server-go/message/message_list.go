@@ -589,7 +589,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		case "checked":
 			// Auto-approved (approvedby NULL) from auto-moderated (NULL) members.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
-			filterWhere = "AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL " + checkedWindow
+			filterWhere = "AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL " + checkedWindow
 		case "trusted":
 			// Went live without moderation from trusted (group-settings) members.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
@@ -635,7 +635,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			"UPDATE messages_groups "+
 				"SET autoapprove_hold_until = GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE) "+
 				"WHERE msgid IN ? AND groupid IN ? "+
-				"AND collection = 'Pending' AND heldby IS NULL AND deleted = 0",
+				"AND collection = 'Pending' AND heldby IS NULL AND deleted = 0 AND rippled_in = 0",
 			msgIDs, groupIDs,
 		)
 	}
