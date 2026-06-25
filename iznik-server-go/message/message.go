@@ -3512,7 +3512,7 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 		"INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
 		newUserID, series, token)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
+		return 0, "", nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
 	// Generate JWT.
