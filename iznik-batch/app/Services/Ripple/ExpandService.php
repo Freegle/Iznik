@@ -310,6 +310,25 @@ class ExpandService
                     continue;
                 }
 
+                // Outcome stop: a post that has been taken/received/withdrawn has left the
+                // browsable set, so stop expanding and do not ripple it any further. Checked
+                // here against messages_outcomes (not just via removeStale) because removeStale
+                // runs on UNSCOPED runs only and keys off messages_spatial, which the separate
+                // messages:update-spatial-index cron lags - so without this an already-taken post
+                // keeps rippling into new groups for a tick or two after the outcome is recorded.
+                if ($this->hasTerminalOutcome((int) $row->msgid)) {
+                    if (!$dryRun) {
+                        DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                            'status' => 'done',
+                            'next_expansion_at' => null,
+                            'updated_at' => now(),
+                        ]);
+                    }
+                    $stats['completed']++;
+                    $this->logEvent($row->msgid, 'outcome_stop', (int) $row->tick, []);
+                    continue;
+                }
+
                 $elapsedHours = $arrival->diffInMinutes(now()) / 60.0;
                 // The post's own hazard-schedule length (stored at init), used as the ceiling
                 // for both the target tick and the 'done' transition.
@@ -386,6 +405,15 @@ class ExpandService
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats): void
     {
         try {
+            // Never ripple a post that has already been taken/received/withdrawn into new groups,
+            // even if its reach row has not yet been stopped - covers the tick-0 ripple from
+            // initialiseNew and the manual `ripple:expand --msgid=...` path, both of which reach
+            // here without advanceDue's outcome-stop having run. messages_outcomes is the source of
+            // truth; messages_spatial lags the outcome (see hasTerminalOutcome).
+            if ($this->hasTerminalOutcome($msgid)) {
+                return;
+            }
+
             // TN posts must not be rippled into new groups while TN still cross-posts the same
             // item to multiple Freegle groups by tnpostid. Once TN is restricted to a single
             // origin group (design.md #10), this guard can be removed.
@@ -908,6 +936,26 @@ class ExpandService
             "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
             [$msgid]
         )->n ?? 0);
+    }
+
+    /**
+     * Whether a post has a TERMINAL outcome (Taken/Received/Withdrawn) and so has left the
+     * browsable set and must not ripple any further. 'Repost' is deliberately NOT terminal -
+     * a reposted item is still active. Checked against messages_outcomes (the source of truth)
+     * rather than messages_spatial, which the messages:update-spatial-index cron lags behind, so
+     * a just-taken post can still appear spatial for a tick or two after the outcome is recorded.
+     */
+    private function hasTerminalOutcome(int $msgid): bool
+    {
+        return DB::selectOne(
+            'SELECT 1 AS x FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?, ?) LIMIT 1',
+            [
+                $msgid,
+                \App\Models\MessageOutcome::OUTCOME_TAKEN,
+                \App\Models\MessageOutcome::OUTCOME_RECEIVED,
+                \App\Models\MessageOutcome::OUTCOME_WITHDRAWN,
+            ]
+        ) !== null;
     }
 
     private function logEvent(int|string $msgid, string $kind, int $tick, array $entry): void
