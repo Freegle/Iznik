@@ -102,4 +102,17 @@ export default class ChatAPI extends BaseAPI {
   referToSupport(chatid) {
     return this.$postv2('/chatrooms', { id: chatid, action: 'ReferToSupport' })
   }
+
+  commonGroups(chatid) {
+    return this.$getv2('/chat/' + chatid + '/commongroups')
+  }
+
+  reportNoGroup(chatid, reason, comment) {
+    return this.$postv2('/chatrooms', {
+      id: chatid,
+      action: 'ReportNoGroup',
+      reason,
+      comment,
+    })
+  }
 }

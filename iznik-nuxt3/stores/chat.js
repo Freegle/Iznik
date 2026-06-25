@@ -385,6 +385,12 @@ export const useChatStore = defineStore({
       })
       this.fetchMessages(chatid)
     },
+    async commonGroups(chatid) {
+      return await api(this.config).chat.commonGroups(chatid)
+    },
+    async reportNoGroup(chatid, reason, comment) {
+      await api(this.config).chat.reportNoGroup(chatid, reason, comment)
+    },
     // Chat review moderation actions (approve/reject/hold/release/redact).
     async _sendChatMT(data) {
       // 404 means the message was already acted on (race condition with another mod).
