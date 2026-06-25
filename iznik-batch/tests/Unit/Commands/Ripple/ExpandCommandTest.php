@@ -33,13 +33,14 @@ class ExpandCommandTest extends TestCase
      */
     public function test_publishes_trial_group_set_to_config(): void
     {
+        Http::fake();
         config(['freegle.ripple.within_groups' => ['111', '222']]);
         DB::table('config')->where('key', 'ripple.within_groups')->delete();
 
-        $command = new \App\Console\Commands\Ripple\ExpandCommand();
-        $method = new \ReflectionMethod($command, 'publishTrialGroups');
-        $method->setAccessible(true);
-        $method->invoke($command);
+        // A real (non-dry-run) run mirrors RIPPLE_WITHIN_GROUPS into config via handle(),
+        // so the Go API (a different server, no access to this batch env var) can read the
+        // trial set. --dry-run deliberately skips the publish (covered by the run-clean test).
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
 
         $this->assertSame(
             '111,222',
@@ -47,9 +48,9 @@ class ExpandCommandTest extends TestCase
             'RIPPLE_WITHIN_GROUPS is mirrored into config for the Go API to read'
         );
 
-        // Re-publishing a changed set upserts (one row, updated value), not a duplicate.
+        // Re-running with a changed set upserts (one row, updated value), not a duplicate.
         config(['freegle.ripple.within_groups' => ['333']]);
-        $method->invoke($command);
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
         $this->assertSame('333', DB::table('config')->where('key', 'ripple.within_groups')->value('value'));
         $this->assertSame(1, DB::table('config')->where('key', 'ripple.within_groups')->count());
 
