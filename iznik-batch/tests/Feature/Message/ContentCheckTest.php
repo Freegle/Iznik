@@ -599,6 +599,135 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Reason keyword field + de-duplication across concern keywords and the
+    // legacy per-group worry words (which overlap: a per-group worry word that
+    // has also been migrated into concern_keywords would otherwise be flagged
+    // twice — once as ConcernKeyword and once as PerGroupWorryWord).
+    // -------------------------------------------------------------------------
+
+    public function test_concern_keyword_reason_includes_matched_keyword(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testkwfield_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: testkwfield_cc item', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('testkwfield_cc', $result['keyword']);
+    }
+
+    public function test_per_group_worry_reason_includes_matched_keyword(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'pgkwfield_cc']],
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: pgkwfield_cc item', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('pgkwfield_cc', $result['keyword']);
+    }
+
+    public function test_check_message_dedupes_same_keyword_in_concern_and_per_group(): void
+    {
+        // The word lives in BOTH concern_keywords (migrated copy) AND the legacy
+        // per-group settings list — exactly the production "cot mattress" case.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'dupeword_cc']],
+        ]);
+        $user = $this->createTestUser();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'dupeword_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $group->id,
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Wanted',
+            'subject'  => 'WANTED: dupeword_cc please (SW1A)',
+            'textbody' => 'Looking for a dupeword_cc.',
+            'message'  => 'Looking for a dupeword_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $forWord = array_values(array_filter(
+            $reasons,
+            fn ($r) => strtolower($r['keyword'] ?? '') === 'dupeword_cc'
+        ));
+        $this->assertCount(1, $forWord, 'the same keyword must not be flagged twice');
+        $this->assertEquals('ConcernKeyword', $forWord[0]['check'], 'the richer ConcernKeyword reason is kept');
+    }
+
+    public function test_check_message_keeps_per_group_word_not_in_concern_keywords(): void
+    {
+        // A per-group worry word that was never migrated into concern_keywords
+        // (e.g. production group 21486's "venue") must still be flagged.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'venueword_cc']],
+        ]);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: venueword_cc (SW1A)',
+            'textbody' => 'A venueword_cc.',
+            'message'  => 'A venueword_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $checks = array_column($reasons, 'check');
+        $this->assertContains('PerGroupWorryWord', $checks, 'un-migrated per-group word must still flag');
+    }
+
+    public function test_check_message_keeps_distinct_concern_and_per_group_words(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'pgonly_cc']],
+        ]);
+        $user = $this->createTestUser();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'ckonly_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $group->id,
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: ckonly_cc and pgonly_cc (SW1A)',
+            'textbody' => 'Has ckonly_cc and pgonly_cc.',
+            'message'  => 'Has ckonly_cc and pgonly_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $checks = array_column($reasons, 'check');
+        $this->assertContains('ConcernKeyword', $checks);
+        $this->assertContains('PerGroupWorryWord', $checks);
+    }
+
+    // -------------------------------------------------------------------------
     // processUnprocessed — promotion and notification logic
     // -------------------------------------------------------------------------
 
