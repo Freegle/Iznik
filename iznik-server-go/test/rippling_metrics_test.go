@@ -581,3 +581,37 @@ func TestRipplingMetricsDistanceCohorts(t *testing.T) {
 	// Near replier is at the same spot as the post (~0 km); far replier is in Edinburgh (~535 km).
 	assert.Greater(t, row["ripple_median_km"].(float64), row["home_median_km"].(float64), "rippled replies are further away")
 }
+
+// ?trialOnly=1 scopes the metrics to the RIPPLE_WITHIN_GROUPS trial set, which Laravel mirrors
+// into config['ripple.within_groups'] (the Go API runs on a different server and can't read that
+// batch env var). The endpoint echoes the resolved set so the dashboard can show it. Without the
+// param there is no trial scope and the set is empty.
+func TestRipplingMetricsTrialScope(t *testing.T) {
+	prefix := uniquePrefix("rippletrial")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	db.Exec("INSERT INTO config (`key`, value) VALUES ('ripple.within_groups', '99000001,99000002') " +
+		"ON DUPLICATE KEY UPDATE value = VALUES(value)")
+	defer db.Exec("DELETE FROM config WHERE `key` = 'ripple.within_groups'")
+
+	// With the param: trial_only flagged and trial_group_ids echoes the config-mirrored set.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?trialOnly=1&jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, true, result["trial_only"], "trial_only flagged when ?trialOnly=1")
+	ids, _ := result["trial_group_ids"].([]interface{})
+	assert.ElementsMatch(t, []interface{}{float64(99000001), float64(99000002)}, ids,
+		"trial_group_ids echoes RIPPLE_WITHIN_GROUPS mirrored via config")
+
+	// Without the param: no trial scope, empty set (even though the config row exists).
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp2.StatusCode)
+	var result2 map[string]interface{}
+	json.Unmarshal(rsp(resp2), &result2)
+	assert.Equal(t, false, result2["trial_only"], "trial_only false without the param")
+	ids2, _ := result2["trial_group_ids"].([]interface{})
+	assert.Empty(t, ids2, "trial_group_ids empty without the param")
+}

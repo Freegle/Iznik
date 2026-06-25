@@ -368,9 +368,12 @@ class ChaseUpService
      * after max reposts reached.
      *
      * Multi-group: a chase-up is about the item's global outcome, so a cross-posted
-     * message is chased up at most once per interval (not once per group). When one
-     * is sent we stamp lastchaseup on EVERY group of the message (WHERE msgid = ?),
-     * matching V1, so the other groups skip it. Reposting stays per-group.
+     * message is chased up at most once per interval (not once per group). Two guards
+     * combine: (1) only the HOME posting (rippled_in = 0) may initiate a chase-up, so a
+     * post that rippled into other groups never chases up once per rippled group; and
+     * (2) when one is sent we stamp lastchaseup on EVERY group of the message
+     * (WHERE msgid = ?), matching V1, so any home cross-posts skip it too. Reposting
+     * stays per-group.
      *
      * V1 side effects included:
      *   - UPDATE messages_groups SET lastchaseup = NOW() (all the message's groups)
@@ -434,6 +437,17 @@ class ChaseUpService
         foreach ($messages as $msg) {
             // V1: Mail::ourDomain check.
             if (!MailHelper::isOurDomain($msg->fromaddr)) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            // Rippling-out fix: anchor the chase-up to the message's HOME posting
+            // (rippled_in = 0). A "What happened to…" chase-up asks about the item's
+            // global outcome, so a row that rippled INTO this group must not initiate
+            // its own chase-up — that would email the poster once per rippled group.
+            // The home posting drives it (still deduped across any home cross-posts by
+            // the cross-group lastchaseup stamp below).
+            if ($msg->rippled_in) {
                 $stats['skipped']++;
                 continue;
             }
@@ -549,6 +563,7 @@ class ChaseUpService
                 'messages_groups.groupid',
                 'messages_groups.lastchaseup',
                 'messages_groups.autoreposts',
+                'messages_groups.rippled_in',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
@@ -569,6 +584,7 @@ class ChaseUpService
                 'messages_groups.groupid',
                 'messages_groups.lastchaseup',
                 'messages_groups.autoreposts',
+                'messages_groups.rippled_in',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',

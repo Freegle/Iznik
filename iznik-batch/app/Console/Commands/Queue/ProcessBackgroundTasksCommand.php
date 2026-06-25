@@ -4,6 +4,7 @@ namespace App\Console\Commands\Queue;
 
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Charity\CharitySignupMail;
+use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
@@ -219,6 +220,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE => $this->handlePushNotifyChatMessage($data, $pushService),
             BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS  => $this->handlePushNotifyGroupMods($data, $pushService),
             BackgroundTask::TASK_EMAIL_CHITCHAT_REPORT   => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_CHAT_SPAM_REPORT  => $this->handleEmailChatSpamReport($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_CHARITY_SIGNUP    => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_DONATE_EXTERNAL   => $this->handleEmailDonateExternal($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_FORGOT_PASSWORD   => $this->handleEmailForgotPassword($data, $spooler, $shouldSpool),
@@ -1079,6 +1081,57 @@ class ProcessBackgroundTasksCommand extends Command
         Log::info('Sent refer to support email', [
             'chat_id' => $chatId,
             'user_id' => $userId,
+        ]);
+    }
+
+    /**
+     * Email the central spam team when a user reports a chat with someone they
+     * share no Freegle group with (so it can't be routed to a community's mods).
+     */
+    protected function handleEmailChatSpamReport(
+        array $data,
+        EmailSpoolerService $spooler,
+        bool $shouldSpool
+    ): void {
+        $chatId = (int) ($data['chatid'] ?? 0);
+        $userId = (int) ($data['userid'] ?? 0);
+
+        if ($chatId === 0 || $userId === 0) {
+            throw new \RuntimeException('email_chat_spam_report requires chatid and userid');
+        }
+
+        $chat = DB::table('chat_rooms')->where('id', $chatId)->first();
+        if (! $chat) {
+            Log::warning("Chat not found for email_chat_spam_report: {$chatId}");
+            return;
+        }
+
+        $user = User::find($userId);
+        if (! $user) {
+            Log::warning("User not found for email_chat_spam_report: {$userId}");
+            return;
+        }
+
+        $otherUserId = $chat->user1 == $userId ? $chat->user2 : $chat->user1;
+        $otherUser = $otherUserId ? User::find($otherUserId) : null;
+        $otherUserName = $otherUser ? ($otherUser->fullname ?: 'Unknown') : 'Unknown';
+
+        $mail = new ChatSpamReportMail(
+            reporterName: $user->fullname ?: 'Unknown',
+            reporterId: $userId,
+            otherUserName: $otherUserName,
+            otherUserId: (int) ($otherUserId ?? 0),
+            chatId: $chatId,
+            reason: (string) ($data['reason'] ?? ''),
+            comment: (string) ($data['comment'] ?? ''),
+        );
+
+        $recipients = array_map('trim', explode(',', config('freegle.mail.spam_addr')));
+        $spooler->spool($mail, $recipients);
+
+        Log::info('Sent chat spam report email', [
+            'reporter_id' => $userId,
+            'chat_id' => $chatId,
         ]);
     }
 

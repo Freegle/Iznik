@@ -290,6 +290,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} chat.ChatMessage
 		rg.Get("/chat/:id/message", chat.GetChatMessages)
 
+		// @Router /chat/{id}/commongroups [get]
+		// @Summary Groups in common between the two chat participants
+		// @Tags chat
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Security BearerAuth
+		// @Success 200 {array} chat.CommonGroup
+		rg.Get("/chat/:id/commongroups", chat.GetCommonGroups)
+
 		// Create Chat Message
 		// @Router /chat/{id}/message [post]
 		// @Summary Create chat message
