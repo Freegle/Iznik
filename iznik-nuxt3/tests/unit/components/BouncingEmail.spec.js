@@ -1,9 +1,19 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BouncingEmail from '~/components/BouncingEmail.vue'
 
+const { mockMe } = vi.hoisted(() => {
+  const { ref } = require('vue')
+  return { mockMe: ref(null) }
+})
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ me: mockMe }),
+}))
+
 describe('BouncingEmail', () => {
   function createWrapper(meValue = null) {
+    mockMe.value = meValue
     return mount(BouncingEmail, {
       global: {
         stubs: {
@@ -26,13 +36,13 @@ describe('BouncingEmail', () => {
             props: ['to', 'noPrefetch'],
           },
         },
-        // Provide me via mocks which works in vue-test-utils
-        mocks: {
-          me: meValue,
-        },
       },
     })
   }
+
+  beforeEach(() => {
+    mockMe.value = null
+  })
 
   describe('rendering', () => {
     it('renders row and column structure', () => {
@@ -41,9 +51,14 @@ describe('BouncingEmail', () => {
       expect(wrapper.find('.col').exists()).toBe(true)
     })
 
-    it('renders notice message component', () => {
+    it('renders notice message component when bouncing', () => {
       const wrapper = createWrapper({ bouncing: true })
       expect(wrapper.find('.notice-message').exists()).toBe(true)
+    })
+
+    it('does not render notice when not bouncing', () => {
+      const wrapper = createWrapper({ bouncing: false })
+      expect(wrapper.find('.notice-message').exists()).toBe(false)
     })
 
     it('applies danger variant to notice', () => {
@@ -75,9 +90,86 @@ describe('BouncingEmail', () => {
     })
   })
 
+  describe('names the bouncing address', () => {
+    it('shows the specific bouncing email and not the healthy one', () => {
+      const wrapper = createWrapper({
+        bouncing: true,
+        emails: [
+          {
+            id: 1,
+            email: 'good@example.com',
+            ourdomain: false,
+            bounced: null,
+          },
+          {
+            id: 2,
+            email: 'bad@example.com',
+            ourdomain: false,
+            bounced: '2026-06-25 10:00:00',
+          },
+        ],
+      })
+      expect(wrapper.text()).toContain('bad@example.com')
+      expect(wrapper.text()).not.toContain('good@example.com')
+      // Singular wording for a single bouncing address.
+      expect(wrapper.text()).not.toContain('addresses')
+    })
+
+    it('lists multiple bouncing addresses with plural wording', () => {
+      const wrapper = createWrapper({
+        bouncing: true,
+        emails: [
+          {
+            id: 1,
+            email: 'one@example.com',
+            ourdomain: false,
+            bounced: '2026-06-25 10:00:00',
+          },
+          {
+            id: 2,
+            email: 'two@example.com',
+            ourdomain: false,
+            bounced: '2026-06-25 11:00:00',
+          },
+        ],
+      })
+      expect(wrapper.text()).toContain('one@example.com')
+      expect(wrapper.text()).toContain('two@example.com')
+      expect(wrapper.text()).toContain('email addresses')
+    })
+
+    it('never shows internal ourdomain addresses', () => {
+      const wrapper = createWrapper({
+        bouncing: true,
+        emails: [
+          {
+            id: 1,
+            email: 'real@example.com',
+            ourdomain: false,
+            bounced: '2026-06-25 10:00:00',
+          },
+          {
+            id: 2,
+            email: 'internal@users.ilovefreegle.org',
+            ourdomain: true,
+            bounced: '2026-06-25 10:00:00',
+          },
+        ],
+      })
+      expect(wrapper.text()).toContain('real@example.com')
+      expect(wrapper.text()).not.toContain('users.ilovefreegle.org')
+    })
+
+    it('falls back to generic wording when bouncing but no specific address is known', () => {
+      const wrapper = createWrapper({ bouncing: true, emails: [] })
+      expect(wrapper.find('.notice-message').exists()).toBe(true)
+      expect(wrapper.text()).toContain("can't send to your email address")
+      expect(wrapper.text()).toContain('fix or retry')
+    })
+  })
+
   describe('conditional rendering', () => {
     it('component exists regardless of me value', () => {
-      // Component always renders, the v-if is on the NoticeMessage
       const wrapper = createWrapper(null)
       expect(wrapper.exists()).toBe(true)
     })
@@ -89,20 +181,6 @@ describe('BouncingEmail', () => {
 
     it('renders with me.bouncing true', () => {
       const wrapper = createWrapper({ bouncing: true })
-      expect(wrapper.exists()).toBe(true)
-    })
-  })
-
-  describe('layout', () => {
-    it('uses 12 column layout', () => {
-      const wrapper = createWrapper({ bouncing: true })
-      // Component uses cols="12" on b-col
-      expect(wrapper.html()).toContain('col')
-    })
-
-    it('has bottom and verytop classes for fixed positioning', () => {
-      const wrapper = createWrapper({ bouncing: true })
-      // These are in the component's scoped styles
       expect(wrapper.exists()).toBe(true)
     })
   })

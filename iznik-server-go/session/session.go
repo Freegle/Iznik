@@ -365,13 +365,20 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 
 	db := database.DBConn
 
-	// Find user by email. Deleted users can still use forgot-password so they
-	// can recover their account.
-	var userID uint64
-	db.Raw("SELECT users.id FROM users "+
+	// Find user by the email they actually typed. Deleted users can still use
+	// forgot-password so they can recover their account. Capture the stored
+	// (canonical) form of the matched address so we send the login link to the
+	// exact email the user used - not their preferred address, which may differ
+	// and may be the one that is bouncing.
+	var match struct {
+		ID    uint64 `gorm:"column:id"`
+		Email string `gorm:"column:email"`
+	}
+	db.Raw("SELECT users.id, users_emails.email FROM users "+
 		"INNER JOIN users_emails ON users_emails.userid = users.id "+
 		"WHERE users_emails.email = ? "+
-		"LIMIT 1", email).Scan(&userID)
+		"LIMIT 1", email).Scan(&match)
+	userID := match.ID
 
 	if userID == 0 {
 		// Return ret=2 for unknown email.
@@ -414,18 +421,17 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 	userSite := os.Getenv("USER_SITE")
 	resetURL := fmt.Sprintf("https://%s/settings?u=%d&k=%s&src=forgotpass", userSite, userID, key)
 
-	// Get user's preferred email for sending.
-	var preferredEmail string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1", userID).Scan(&preferredEmail)
-
-	if preferredEmail == "" {
-		preferredEmail = email
+	// Send the login link to the address the user actually used. Prefer the
+	// canonical stored form of the matched address; fall back to the typed value.
+	destEmail := match.Email
+	if destEmail == "" {
+		destEmail = email
 	}
 
 	// Queue the forgot-password email.
 	if err := queue.QueueTask(queue.TaskEmailForgotPassword, map[string]interface{}{
 		"user_id":   userID,
-		"email":     preferredEmail,
+		"email":     destEmail,
 		"reset_url": resetURL,
 	}); err != nil {
 		stdlog.Printf("Failed to queue forgot-password email for user %d: %v", userID, err)
@@ -846,6 +852,7 @@ func GetSession(c *fiber.Ctx) error {
 		Email     string     `json:"email"`
 		Preferred int        `json:"preferred"`
 		Validated *time.Time `json:"validated"`
+		Bounced   *time.Time `json:"bounced"`
 		Ourdomain int        `json:"ourdomain"`
 	}
 
@@ -923,7 +930,7 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, email, preferred, validated FROM users_emails WHERE userid = ? ORDER BY preferred DESC", myid).Scan(&emails)
+		db.Raw("SELECT id, email, preferred, validated, bounced FROM users_emails WHERE userid = ? ORDER BY preferred DESC", myid).Scan(&emails)
 	}()
 	go func() {
 		defer wg.Done()
