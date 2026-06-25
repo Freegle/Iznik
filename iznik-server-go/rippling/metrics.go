@@ -3,6 +3,8 @@
 package rippling
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -186,6 +188,32 @@ type GroupOption struct {
 	Name string `json:"name" gorm:"column:name"`
 }
 
+// trialGroupIDs returns the rippling trial group set. Laravel mirrors the current
+// RIPPLE_WITHIN_GROUPS value into the shared `config` table (key 'ripple.within_groups')
+// because the Go API runs on a different server and can't read that batch env var
+// directly. Returns an empty slice when the key is absent/empty or holds no valid ids.
+func trialGroupIDs() []uint64 {
+	var value string
+	database.DBConn.Raw("SELECT value FROM config WHERE `key` = 'ripple.within_groups'").Scan(&value)
+	ids := []uint64{}
+	for _, p := range strings.Split(value, ",") {
+		if n, err := strconv.ParseUint(strings.TrimSpace(p), 10, 64); err == nil && n > 0 {
+			ids = append(ids, n)
+		}
+	}
+	return ids
+}
+
+// uint64InList renders ids as a comma-separated SQL IN(...) body. Safe to inline:
+// the values are validated uint64s, not user-supplied strings.
+func uint64InList(ids []uint64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.FormatUint(id, 10)
+	}
+	return strings.Join(parts, ",")
+}
+
 // Metrics returns the rippling-out event counters plus the §15/§16 rollout-health metrics.
 // Events: reply_blocked (#2), held/released/taken_gone (#3), secondary_reject (#6),
 // immediate_mailed (#0), rippled_in (#6). Support/Admin only.
@@ -211,6 +239,18 @@ func Metrics(c *fiber.Ctx) error {
 	// rippled_in=0 messages_groups row), so results read per place - dense Croydon won't look
 	// like rural Ribble Valley. 0 = all groups. Each scoped query takes one gid arg.
 	gid := c.QueryInt("groupid", 0)
+	// Optional ?trialOnly=1 scopes every KPI to the rippling TRIAL groups (the set in
+	// RIPPLE_WITHIN_GROUPS). During the trial only a handful of groups ripple, so stats
+	// over all groups bury the signal under the majority that aren't rippling. The Go API
+	// runs on a different server from the batch container that holds that env var, so
+	// Laravel mirrors the current value into the shared `config` table (key
+	// 'ripple.within_groups') and we read it here. ?groupid= (a single group) wins when both
+	// are given.
+	trialOnly := c.QueryBool("trialOnly", false)
+	trialIDs := []uint64{}
+	if trialOnly && gid == 0 {
+		trialIDs = trialGroupIDs()
+	}
 	// Optional ?start= & ?end= date range bounds every KPI below; default to the last 30 days.
 	// This is what lets you read a treatment group's before vs after rippling went on.
 	start := c.Query("start")
@@ -226,6 +266,19 @@ func Metrics(c *fiber.Ctx) error {
 		rateGroup = " AND mg.groupid = ? AND mg.rippled_in = 0"
 		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
 		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+	} else if trialOnly {
+		// Inline the trial group ids as an IN(...) literal: they are validated uint64s read
+		// from trusted config, so there is no injection risk and no new bind args (the
+		// arg-builders only add a value when gid>0, so they stay correct). When the trial set
+		// is unset we scope to IN(0) so "trial only" honestly yields no data rather than
+		// silently showing all groups.
+		inList := "0"
+		if len(trialIDs) > 0 {
+			inList = uint64InList(trialIDs)
+		}
+		rateGroup = " AND mg.groupid IN (" + inList + ") AND mg.rippled_in = 0"
+		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid IN (" + inList + ") AND mg.rippled_in = 0 AND mg.deleted = 0"
+		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid IN (" + inList + ") AND mg.rippled_in = 0 AND mg.deleted = 0"
 	}
 	// Per-query args: the group filter (when set) sits in a JOIN before the date-bounded WHERE,
 	// so gid comes first, then start, end.
@@ -638,6 +691,8 @@ func Metrics(c *fiber.Ctx) error {
 		"taken_rate":            takenRates,
 		"groups":                groupOpts,
 		"groupid":               gid,
+		"trial_only":            trialOnly,
+		"trial_group_ids":       trialIDs,
 		"start":                 start,
 		"end":                   end,
 	})

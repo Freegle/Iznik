@@ -21,8 +21,25 @@
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else>
+      <b-form-checkbox
+        v-model="trialOnly"
+        switch
+        size="sm"
+        class="mb-2"
+        @change="onTrialChange"
+      >
+        Trial groups only<span
+          v-if="trialOnly && trialGroupIds.length"
+          class="text-muted small"
+        >
+          ({{ trialGroupIds.length }} in RIPPLE_WITHIN_GROUPS)</span>
+      </b-form-checkbox>
+      <p v-if="trialOnly && !trialGroupIds.length" class="text-warning small mb-2">
+        No trial groups configured (RIPPLE_WITHIN_GROUPS is empty) - nothing to show.
+      </p>
+
       <b-form-group
-        v-if="groupOptions.length"
+        v-if="groupOptions.length && !trialOnly"
         label="Group:"
         label-cols="auto"
         label-class="small fw-bold"
@@ -252,6 +269,11 @@ const takenRate = ref([])
 // Per-group KPI filter (results differ a lot by place; 0 = all groups).
 const groupOptions = ref([])
 const groupFilter = ref(0)
+// Trial scope: limit every KPI to the RIPPLE_WITHIN_GROUPS trial set so the trial
+// signal isn't masked by the majority of groups that aren't rippling. trialGroupIds
+// echoes the resolved set back from the server (drives the count + empty warning).
+const trialOnly = ref(false)
+const trialGroupIds = ref([])
 
 const COHORT_HEADER = (allLabel) => [
   'Date',
@@ -404,7 +426,8 @@ async function fetchMetrics() {
     const result = await apiInstance.rippling.fetchMetrics(
       groupFilter.value,
       startDate.value,
-      endDate.value
+      endDate.value,
+      trialOnly.value
     )
     hotspots.value = result?.hotspots || []
     heldReplySummary.value = result?.held_reply_summary || []
@@ -414,6 +437,7 @@ async function fetchMetrics() {
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []
     groupOptions.value = result?.groups || []
+    trialGroupIds.value = result?.trial_group_ids || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
@@ -425,6 +449,13 @@ function onGroupChange() {
   fetchMetrics()
 }
 
+function onTrialChange() {
+  // Trial scope and a single-group filter are mutually exclusive (the server lets
+  // groupid win), so clear the group filter when switching to trial-only.
+  groupFilter.value = 0
+  fetchMetrics()
+}
+
 // ModEmailDateFilter fires this on mount and whenever the period changes, so it
 // drives the initial load too (no separate onMounted fetch needed).
 function onFilterFetch({ start, end }) {
@@ -433,5 +464,13 @@ function onFilterFetch({ start, end }) {
   fetchMetrics()
 }
 
-defineExpose({ fetchMetrics, groupFilter, onGroupChange, onFilterFetch })
+defineExpose({
+  fetchMetrics,
+  groupFilter,
+  onGroupChange,
+  onFilterFetch,
+  trialOnly,
+  trialGroupIds,
+  onTrialChange,
+})
 </script>

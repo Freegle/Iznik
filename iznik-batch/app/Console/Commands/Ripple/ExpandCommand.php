@@ -32,6 +32,15 @@ class ExpandCommand extends Command
         $this->registerShutdownHandlers();
 
         $dryRun = (bool) $this->option('dry-run');
+
+        // Mirror the current trial group set (RIPPLE_WITHIN_GROUPS) into the shared
+        // `config` table (key 'ripple.within_groups') so the Go API - which runs on a
+        // different server and can't read this batch env var - can scope the rippling
+        // dashboard to just the trial groups. Cheap upsert; skipped on --dry-run.
+        if (!$dryRun) {
+            $this->publishTrialGroups();
+        }
+
         $limit = max(1, (int) $this->option('limit'));
         $onlyMsgid = $this->option('msgid') !== null ? (int) $this->option('msgid') : null;
 
@@ -77,6 +86,25 @@ class ExpandCommand extends Command
         Log::info('ripple:expand complete', $stats);
 
         return $stats['errors'] > 0 ? Command::FAILURE : Command::SUCCESS;
+    }
+
+    /**
+     * Publish the current rippling trial group set into the shared `config` table.
+     *
+     * The trial groups live in RIPPLE_WITHIN_GROUPS (config freegle.ripple.within_groups),
+     * which only the batch container sees. The Go API runs on a separate server, so it reads
+     * the value from the `config` table (key 'ripple.within_groups') to scope the rippling
+     * dashboard to the trial groups. We upsert a comma-separated id list on each run.
+     */
+    protected function publishTrialGroups(): void
+    {
+        $withinGroups = array_map('strval', (array) config('freegle.ripple.within_groups', []));
+
+        DB::table('config')->upsert(
+            [['key' => 'ripple.within_groups', 'value' => implode(',', $withinGroups)]],
+            ['key'],
+            ['value'],
+        );
     }
 
     /**

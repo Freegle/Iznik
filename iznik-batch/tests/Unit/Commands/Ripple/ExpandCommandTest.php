@@ -27,6 +27,36 @@ class ExpandCommandTest extends TestCase
     }
 
     /**
+     * publishTrialGroups mirrors RIPPLE_WITHIN_GROUPS into the shared `config` table so the Go API
+     * (which runs on a different server and can't read this batch env var) can scope the rippling
+     * dashboard to the trial groups. Upserts a comma-separated id list keyed 'ripple.within_groups'.
+     */
+    public function test_publishes_trial_group_set_to_config(): void
+    {
+        config(['freegle.ripple.within_groups' => ['111', '222']]);
+        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+
+        $command = new \App\Console\Commands\Ripple\ExpandCommand();
+        $method = new \ReflectionMethod($command, 'publishTrialGroups');
+        $method->setAccessible(true);
+        $method->invoke($command);
+
+        $this->assertSame(
+            '111,222',
+            DB::table('config')->where('key', 'ripple.within_groups')->value('value'),
+            'RIPPLE_WITHIN_GROUPS is mirrored into config for the Go API to read'
+        );
+
+        // Re-publishing a changed set upserts (one row, updated value), not a duplicate.
+        config(['freegle.ripple.within_groups' => ['333']]);
+        $method->invoke($command);
+        $this->assertSame('333', DB::table('config')->where('key', 'ripple.within_groups')->value('value'));
+        $this->assertSame(1, DB::table('config')->where('key', 'ripple.within_groups')->count());
+
+        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+    }
+
+    /**
      * --within-group accepts a comma-separated list of group ids (the experiment scope) and resolves
      * it to the union of those groups' polyindex polygons. MySQL ST_Union is binary, so the command
      * chains it over per-id subqueries; this exercises that path with two real group polygons.
