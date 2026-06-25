@@ -1738,6 +1738,69 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNotNull($task->processed_at);
     }
 
+    public function test_email_chat_spam_report_sends_without_a_comment(): void
+    {
+        Mail::fake();
+
+        $reporter = $this->createTestUser(['fullname' => 'Melissa Reporter']);
+        $other = $this->createTestUser(['fullname' => 'Creepy Guy']);
+
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $reporter->id,
+            'user2' => $other->id,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chat_spam_report',
+            'data' => json_encode([
+                'chatid' => $chatId,
+                'userid' => $reporter->id,
+                'reason' => 'Other',
+                'comment' => '',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) {
+            $this->assertEquals('', $mail->comment);
+            $this->assertEquals('Other', $mail->reason);
+            return TRUE;
+        });
+    }
+
+    public function test_email_chat_spam_report_skips_when_chat_missing(): void
+    {
+        Mail::fake();
+
+        $reporter = $this->createTestUser();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chat_spam_report',
+            'data' => json_encode([
+                'chatid' => 99999999,
+                'userid' => $reporter->id,
+                'reason' => 'Spam',
+                'comment' => '',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ChatSpamReportMail::class);
+    }
+
     public function test_email_verify_sends_verification_email(): void
     {
         Mail::fake();
