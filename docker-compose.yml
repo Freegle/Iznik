@@ -457,6 +457,10 @@ services:
       - dev
     environment:
       - CI=${CI:-false}
+      # Make file-sync.sh and the rebuild monitor worktree-aware: without this the
+      # container has no COMPOSE_PROJECT_NAME, so both fall back to "freegle" and a
+      # worktree's host-scripts syncs/rebuilds into the MAIN instance's containers.
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
@@ -480,10 +484,10 @@ services:
               svc=$$(docker inspect "$$container" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || echo "$$container")
               if [ "$$svc" != "" ] && [ "$$container" != "null" ]; then
                 echo "Rebuilding service: $$svc ($$container)"
-                docker-compose -p freegle stop "$$svc" 2>/dev/null || true
-                docker-compose -p freegle rm -f "$$svc" 2>/dev/null || true
-                if docker-compose -p freegle build "$$svc" &&
-                   docker-compose -p freegle up --no-deps -d "$$svc"; then
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" stop "$$svc" 2>/dev/null || true
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" rm -f "$$svc" 2>/dev/null || true
+                if docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" build "$$svc" &&
+                   docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" up --no-deps -d "$$svc"; then
                   echo "Rebuild completed successfully for $$service"
                 else
                   echo "Rebuild failed for $$service"
