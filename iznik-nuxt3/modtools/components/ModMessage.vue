@@ -161,12 +161,17 @@
             </div>
             <div v-if="otherGroups.length > 0" class="small text-muted">
               Also on:
-              <span v-for="(g, idx) in otherGroups" :key="g.groupid"
-                >{{
-                  groupStore.get(g.groupid)?.namedisplay ||
-                  'Group ' + g.groupid
-                }}<span v-if="idx < otherGroups.length - 1">, </span></span
+              <ShowMore
+                :items="otherGroups"
+                :limit="3"
+                inline
+                keyfield="groupid"
               >
+                <template #item="{ item }">{{
+                  groupStore.get(item.groupid)?.namedisplay ||
+                  'Group ' + item.groupid
+                }}</template>
+              </ShowMore>
             </div>
             <NoticeMessage
               v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
@@ -742,6 +747,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Highlighter from 'vue-highlight-words'
+import ShowMore from '~/components/ShowMore.vue'
 
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'

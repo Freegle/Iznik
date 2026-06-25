@@ -83,10 +83,9 @@
               <v-icon icon="users" />
               <span>
                 Posted on
-                <span v-for="(group, index) in groups" :key="index">
-                  <span v-if="index > 0">, </span>
-                  {{ group.namedisplay }}
-                </span>
+                <ShowMore :items="groups" :limit="3" inline>
+                  <template #item="{ item }">{{ item.namedisplay }}</template>
+                </ShowMore>
               </span>
             </div>
           </div>
