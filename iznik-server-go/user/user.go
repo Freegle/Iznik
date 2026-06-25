@@ -1974,11 +1974,19 @@ func PutUser(c *fiber.Ctx) error {
 	// which collided across every session for the same user.
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, series, token)
-
+	// Use the INSERT's LastInsertId (write connection) rather than a
+	// "SELECT ... WHERE userid ORDER BY id DESC LIMIT 1", which the read/write
+	// split routes to a replica that can return the user's PREVIOUS session under
+	// Galera's cross-node apply window - putting the wrong session id in the JWT.
 	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", newUserID).Scan(&sessionID)
+	if sqlDB, dberr := db.DB(); dberr == nil {
+		if res, exErr := sqlDB.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+			newUserID, series, token); exErr == nil {
+			if lastID, idErr := res.LastInsertId(); idErr == nil && lastID > 0 {
+				sessionID = uint64(lastID)
+			}
+		}
+	}
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
