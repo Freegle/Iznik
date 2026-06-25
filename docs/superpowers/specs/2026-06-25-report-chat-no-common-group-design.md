@@ -119,9 +119,9 @@ memberships), so a small backend lookup supplies it.
 
 ### Backend — PHP `apiv1` (`iznik-server`)
 
-Parity for both the `commongroups` read and the fallback action, matching the
-existing `chatmessages.php` / `ChatRoom.php` `referToSupport` structure, so the
-two APIs stay equivalent.
+Not modified. The live frontend calls apiv2 (Go) exclusively for chat
+(`$getv2`/`$postv2`/`$putv2`); apiv1 is reference-only and not in use, so adding
+parity there would be wasted effort.
 
 ### Batch — `iznik-batch`
 
