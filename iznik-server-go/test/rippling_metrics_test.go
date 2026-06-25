@@ -38,6 +38,32 @@ func TestRipplingMetricsEndpoint(t *testing.T) {
 	assert.True(t, found, "reply_blocked total present in the rollup")
 }
 
+// The mean-replies-per-post metric is surfaced as a well-formed cohort series. (Like the other
+// per-day reply metrics it carries no seeded fixture here; this guards the wiring + the response
+// shape - the SQL is validated separately, and the query mirrors the proven reply-rate one.)
+func TestRipplingMetricsRepliesPerPost(t *testing.T) {
+	prefix := uniquePrefix("ripplerpp")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	rpp, ok := result["replies_per_post"].([]interface{})
+	assert.True(t, ok, "replies_per_post field present in the response")
+	for _, row := range rpp {
+		m, ok := row.(map[string]interface{})
+		assert.True(t, ok, "each replies_per_post row is an object")
+		assert.Contains(t, m, "day")
+		assert.Contains(t, m, "mean_replies")
+		assert.Contains(t, m, "home_mean")
+		assert.Contains(t, m, "ripple_mean")
+	}
+}
+
 // A non-admin must be forbidden from the sysadmin metrics endpoint.
 func TestRipplingMetricsRequiresAdmin(t *testing.T) {
 	prefix := uniquePrefix("ripplemetrics_noauth")
