@@ -602,6 +602,53 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 	return chatID, nil
 }
 
+// CommonGroup is a group that both participants of a chat belong to.
+type CommonGroup struct {
+	ID          uint64 `json:"id"`
+	Namedisplay string `json:"namedisplay"`
+}
+
+// GetCommonGroups handles GET /chat/{id}/commongroups - the groups the two
+// participants of a chat have in common. The report flow uses this to decide
+// whether to route a report to a community's moderators (a common group exists)
+// or to the central spam team (none). Caller must be a participant.
+func GetCommonGroups(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || id == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid chat ID")
+	}
+
+	db := database.DBConn
+
+	var room struct {
+		ID    uint64
+		User1 uint64
+		User2 uint64
+	}
+	db.Raw("SELECT id, user1, user2 FROM chat_rooms WHERE id = ?", id).Scan(&room)
+	if room.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
+	}
+	if room.User1 != myid && room.User2 != myid {
+		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
+	}
+
+	groups := []CommonGroup{}
+	db.Raw("SELECT g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay "+
+		"FROM `groups` g "+
+		"INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ? "+
+		"INNER JOIN memberships m2 ON m2.groupid = g.id AND m2.userid = ? "+
+		"ORDER BY namedisplay",
+		room.User1, room.User2).Scan(&groups)
+
+	return c.JSON(groups)
+}
+
 // =============================================================================
 // POST handler (roster updates, nudge, typing, actions)
 // =============================================================================
@@ -612,6 +659,8 @@ type ChatRoomPostRequest struct {
 	Status      string `json:"status"`
 	Lastmsgseen uint64 `json:"lastmsgseen"`
 	Allowback   bool   `json:"allowback"`
+	Reason      string `json:"reason"`
+	Comment     string `json:"comment"`
 }
 
 type RosterEntry struct {
@@ -642,6 +691,8 @@ func PostChatRoom(c *fiber.Ctx) error {
 		return handleTyping(c, db, myid, req.ID)
 	case "ReferToSupport":
 		return handleReferToSupport(c, db, myid, req.ID)
+	case "ReportNoGroup":
+		return handleReportNoGroup(c, db, myid, req)
 	default:
 		if req.ID == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
@@ -1474,6 +1525,44 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 	// Queue sending a support referral email.
 	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?))",
 		"refer_to_support", chatid, myid)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// handleReportNoGroup queues a report to the central spam team for a User2User
+// chat whose participants share no Freegle group (so it can't be routed to a
+// community's moderators). The server re-checks "no common group" so a client
+// cannot misuse this to bypass community routing.
+func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
+	}
+	if req.Reason == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Reason required")
+	}
+
+	var room ChatRoom
+	db.Raw("SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?", req.ID).Scan(&room)
+	if room.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
+	}
+	if room.User1 != myid && room.User2 != myid {
+		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
+	}
+
+	// Re-check that there really is no group in common; if there is, the client
+	// should have used the normal group-routed report flow.
+	var common int64
+	db.Raw("SELECT COUNT(*) FROM memberships m1 "+
+		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
+		"WHERE m1.userid = ? AND m2.userid = ?",
+		room.User1, room.User2).Scan(&common)
+	if common > 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Groups in common exist; use the normal report flow")
+	}
+
+	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?))",
+		"email_chat_spam_report", req.ID, myid, req.Reason, req.Comment)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
