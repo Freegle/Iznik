@@ -10,7 +10,7 @@
           variant="white"
           icon-name="save"
           label="Save"
-          :disabled="readonly"
+          :disabled="disabledOrReadonly"
           @handle="save"
         />
       </slot>
@@ -22,7 +22,7 @@
           variant="white"
           icon-name="save"
           label="Save"
-          :disabled="readonly"
+          :disabled="disabledOrReadonly"
           @handle="save"
         />
       </slot>
@@ -40,7 +40,7 @@
             icon-name="save"
             label="Save"
             class="mt-2"
-            :disabled="readonly"
+            :disabled="disabledOrReadonly"
             @handle="save"
           />
         </b-col>
@@ -56,10 +56,11 @@
         :sync="true"
         :labels="{ checked: toggleChecked, unchecked: toggleUnchecked }"
         variant="modgreen"
-        :disabled="readonly"
+        :disabled="disabledOrReadonly"
         @change="save"
       />
     </div>
+    <slot name="note" />
   </b-form-group>
 </template>
 <script setup>
@@ -114,6 +115,13 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Force the control read-only regardless of role - e.g. for flags that only
+  // track external state (TrashNothing listing) and can't be changed from here.
+  disabled: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const modGroupStore = useModGroupStore()
@@ -124,6 +132,10 @@ const mounted = ref(false)
 const group = computed(() => modGroupStore.get(props.groupid))
 
 const readonly = computed(() => group.value?.myrole !== 'Owner')
+
+// A control is non-editable if the user lacks the role OR it's been forced
+// read-only via the `disabled` prop.
+const disabledOrReadonly = computed(() => readonly.value || props.disabled)
 
 /**
  * From https://stackoverflow.com/questions/18936915/dynamically-set-property-of-nested-object
@@ -183,6 +195,12 @@ function getValueFromGroup() {
 }
 
 async function save(callbackorvalue) {
+  // A forced read-only control must never write, even if something triggers
+  // save programmatically.
+  if (props.disabled) {
+    if (typeof callbackorvalue === 'function') callbackorvalue()
+    return
+  }
   if (mounted.value) {
     const data = {
       id: props.groupid,

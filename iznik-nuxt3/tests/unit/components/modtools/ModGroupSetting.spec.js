@@ -544,4 +544,78 @@ describe('ModGroupSetting', () => {
       }
     )
   })
+
+  describe('disabled prop (forced read-only)', () => {
+    it('disabledOrReadonly is true when disabled is set, even for an Owner', () => {
+      const wrapper = mountComponent({ disabled: true }) // Owner by default
+      expect(wrapper.vm.readonly).toBe(false)
+      expect(wrapper.vm.disabledOrReadonly).toBe(true)
+    })
+
+    it('disables the toggle for an Owner when disabled is set', async () => {
+      const wrapper = mountComponent({
+        name: 'ontn',
+        type: 'toggle',
+        disabled: true,
+      })
+      await flushPromises()
+      expect(wrapper.find('.our-toggle').attributes('data-disabled')).toBe(
+        'true'
+      )
+    })
+
+    it('does not write when the disabled toggle is clicked', async () => {
+      const wrapper = mountComponent(
+        { name: 'ontn', type: 'toggle', disabled: true },
+        { ontn: 1 }
+      )
+      await flushPromises()
+      vi.runAllTimers()
+      await flushPromises()
+
+      await wrapper.find('.our-toggle').trigger('click')
+      expect(mockModGroupStore.updateMT).not.toHaveBeenCalled()
+    })
+
+    it('save() never writes when disabled, even if called directly', async () => {
+      const wrapper = mountComponent({
+        name: 'ontn',
+        type: 'toggle',
+        disabled: true,
+      })
+      await flushPromises()
+      vi.runAllTimers()
+      await flushPromises()
+
+      await wrapper.vm.save(true)
+      expect(mockModGroupStore.updateMT).not.toHaveBeenCalled()
+    })
+
+    it('still runs the callback when disabled (so spin buttons reset)', async () => {
+      const wrapper = mountComponent({ name: 'ontn', disabled: true })
+      await flushPromises()
+      vi.runAllTimers()
+      await flushPromises()
+
+      const callback = vi.fn()
+      await wrapper.vm.save(callback)
+      expect(callback).toHaveBeenCalled()
+      expect(mockModGroupStore.updateMT).not.toHaveBeenCalled()
+    })
+
+    it('renders the note slot', () => {
+      const wrapper = mount(ModGroupSetting, {
+        props: {
+          ...defaultProps,
+          name: 'ontn',
+          type: 'toggle',
+          disabled: true,
+        },
+        slots: { note: '<span class="my-note">Managed on TrashNothing</span>' },
+        global: { stubs: defaultStubs },
+      })
+      expect(wrapper.find('.my-note').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Managed on TrashNothing')
+    })
+  })
 })
