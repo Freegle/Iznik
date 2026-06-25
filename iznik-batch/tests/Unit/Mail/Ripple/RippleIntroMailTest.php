@@ -3,6 +3,7 @@
 namespace Tests\Unit\Mail\Ripple;
 
 use App\Mail\Ripple\RippleIntroMail;
+use App\Models\Message;
 use Tests\TestCase;
 
 class RippleIntroMailTest extends TestCase
@@ -60,5 +61,84 @@ class RippleIntroMailTest extends TestCase
         $this->assertSame($groups, $mail->welcomeGroups);
         // Builds (renders the welcome section) without error.
         $this->assertInstanceOf(RippleIntroMail::class, $mail->build());
+    }
+
+    public function test_preheader_shows_post_subject_when_post_is_present(): void
+    {
+        // When a Message is provided, the inbox preview should name the post so
+        // the recipient knows immediately which item triggered the ripple.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        $html = view('emails.mjml.ripple.intro', [
+            'firstName'      => $user->firstname,
+            'postSubject'    => $message->subject,
+            'email'          => 'test@example.com',
+            'userSite'       => config('freegle.sites.user'),
+            'settingsUrl'    => config('freegle.sites.user') . '/settings',
+            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
+            'welcomeGroups'  => [],
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Nearby freeglers might be interested in: OFFER: Sofa (London)</mj-preview>',
+            $html,
+            'Preheader must include the post subject so the inbox preview names the item'
+        );
+    }
+
+    public function test_preheader_shows_fallback_when_no_post_subject(): void
+    {
+        // When no Message is provided (or subject is empty), the preheader should
+        // fall back to a sensible generic string rather than an empty preview.
+        $user = $this->createTestUser();
+
+        $html = view('emails.mjml.ripple.intro', [
+            'firstName'      => null,
+            'postSubject'    => null,
+            'email'          => 'test@example.com',
+            'userSite'       => config('freegle.sites.user'),
+            'settingsUrl'    => config('freegle.sites.user') . '/settings',
+            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
+            'welcomeGroups'  => [],
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Nearby freeglers might be interested in your post</mj-preview>',
+            $html,
+            'Preheader must use the fallback string when no post subject is available'
+        );
+    }
+
+    public function test_preheader_truncates_long_post_subject(): void
+    {
+        // Str::limit($postSubject, 60) is applied in the template, so subjects
+        // longer than 60 characters should be truncated with "..." in the preheader.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $longSubject = 'OFFER: Very Long Item Name That Exceeds Sixty Characters Easily Here (London)';
+        $message = $this->createTestMessage($user, $group, ['subject' => $longSubject]);
+
+        $html = view('emails.mjml.ripple.intro', [
+            'firstName'      => null,
+            'postSubject'    => $message->subject,
+            'email'          => 'test@example.com',
+            'userSite'       => config('freegle.sites.user'),
+            'settingsUrl'    => config('freegle.sites.user') . '/settings',
+            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
+            'welcomeGroups'  => [],
+        ])->render();
+
+        // The full long subject must NOT appear verbatim.
+        $this->assertStringNotContainsString($longSubject, $html);
+        // The preview preamble must still be present.
+        $this->assertStringContainsString('Nearby freeglers might be interested in:', $html);
+        // The truncation marker must be present.
+        $this->assertStringContainsString('...', $html);
     }
 }

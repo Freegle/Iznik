@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head')
+  @include('emails.mjml.partials.head', ['preview' => $firstName ? 'Welcome, ' . $firstName . '! Give stuff away or find what you need for free.' : 'Welcome to Freegle! Give stuff away or find what you need for free.'])
   <mj-body>
     <mj-wrapper padding="0px" full-width="full-width">
       {{-- Welcome header --}}

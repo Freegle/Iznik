@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Member conversation needs a reply'])
+  @include('emails.mjml.partials.head', ['preview' => $memberName . ' on ' . $groupName . ' - member conversation needs a reply'])
 
   <mj-body background-color="#f4f4f4">
 

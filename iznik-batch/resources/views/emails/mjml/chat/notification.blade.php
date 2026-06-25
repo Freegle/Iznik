@@ -1,12 +1,12 @@
 <mjml>
   @if($isMod2Mod ?? false)
-  @include('emails.mjml.partials.head', ['preview' => $senderName . ' sent a message in Volunteer Chat'])
+  @include('emails.mjml.partials.head', ['preview' => $senderName . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 70)])
   @elseif($isModerator ?? false)
-  @include('emails.mjml.partials.head', ['preview' => 'Member conversation with ' . ($memberName ?? 'a member')])
+  @include('emails.mjml.partials.head', ['preview' => ($memberName ?? 'Member') . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 70)])
   @elseif($isOwnMessage ?? false)
-  @include('emails.mjml.partials.head', ['preview' => 'Copy of your message to ' . ($otherUserName ?? 'the other user')])
+  @include('emails.mjml.partials.head', ['preview' => 'Your message to ' . ($otherUserName ?? 'the other user') . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 55)])
   @else
-  @include('emails.mjml.partials.head', ['preview' => $senderName . ' sent you a message'])
+  @include('emails.mjml.partials.head', ['preview' => $senderName . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 75)])
   @endif
   <mj-body background-color="#ffffff">
     {{-- Header - ModTools blue for moderators, Freegle green for members --}}

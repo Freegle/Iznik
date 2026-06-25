@@ -1,6 +1,6 @@
 <mjml>
   @include('emails.mjml.partials.head', [
-    'preview' => 'Daily donation summary',
+    'preview' => 'Total today: £' . number_format($total, 2),
     /* MJML parses mj-style contents as XML, so the comments below avoid
        literal angle brackets — those would be read as tag delimiters and
        blow up compilation with "Malformed MJML". */

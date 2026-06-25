@@ -1,6 +1,8 @@
 <mjml>
   @include('emails.mjml.partials.head', [
-    'preview' => 'Your post is reaching more people on ' . config('freegle.branding.name')
+    'preview' => !empty($postSubject)
+        ? 'Nearby freeglers might be interested in: ' . \Illuminate\Support\Str::limit($postSubject, 60)
+        : 'Nearby freeglers might be interested in your post'
   ])
   <mj-body background-color="#ffffff">
 
@@ -29,9 +31,9 @@
           @if(!empty($firstName))Hi {{ $firstName }},@else Hi,@endif
         </mj-text>
         <mj-text font-size="14px" color="#000000" line-height="1.6" padding="6px 25px">
-          Good news - your recent {{ config('freegle.branding.name') }} post is being shown to
-          nearby communities beyond your own, so even more people can take what you're offering
-          or help with what you're looking for.
+          Good news - we've noticed that some of the nearby freeglers in neighbouring communities
+          might be interested in your recent {{ config('freegle.branding.name') }} post, so we're
+          showing it to them too.
         </mj-text>
         <mj-text font-size="15px" font-weight="bold" color="#338808" line-height="1.6" padding="6px 25px">
           There's nothing you need to do - this just helps your post reach the right person.

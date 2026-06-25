@@ -124,6 +124,27 @@ class SendAIImageReviewDigestCommandTest extends TestCase
         $this->assertStringContainsString('0%', $envelope->subject);
     }
 
+    public function test_preheader_shows_verdicts_and_needs_improving(): void
+    {
+        // The inbox preview should immediately surface the two headline stats —
+        // how many verdicts were cast today and how many images still need work.
+        $html = view('emails.mjml.admin.ai-image-review-digest', [
+            'todayVerdicts'   => 42,
+            'totalReviewed'   => 80,
+            'totalImages'     => 200,
+            'percentReviewed' => 40,
+            'needsImproving'  => 7,
+            'topProblems'     => [],
+            'siteName'        => config('freegle.branding.name', 'Freegle'),
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>42 verdicts today, 7 need improving</mj-preview>',
+            $html,
+            'Preheader must show the verdict count and needs-improving count'
+        );
+    }
+
     protected function createTestUserForDigest(string $name): int
     {
         DB::table('users')->insert([

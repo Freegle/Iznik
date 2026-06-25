@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Groups with no recent messages'])
+  @include('emails.mjml.partials.head', ['preview' => $count . ' group' . ($count === 1 ? '' : 's') . ' not receiving messages'])
 
   <mj-body background-color="#f4f4f4">
 

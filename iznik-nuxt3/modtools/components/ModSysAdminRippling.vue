@@ -66,6 +66,31 @@
       </div>
 
       <div class="mb-3">
+        <strong class="small">Are posts getting more replies?</strong>
+        <p class="text-muted small mb-1">
+          Mean number of replies a post gets within 36h.
+          <span class="text-success fw-bold">Good:</span> rippled-out posts
+          average more replies each than home-only - reach is deepening
+          interest, not just turning 0-reply posts into 1.
+        </p>
+        <GChart
+          v-if="repliesPerPostChart"
+          type="LineChart"
+          :data="repliesPerPostChart"
+          :options="cohortPctOptions('Mean replies / post')"
+          style="width: 100%; height: 300px"
+        />
+        <p
+          v-if="repliesPerPostChart"
+          class="text-muted small fst-italic mt-1 mb-0"
+        >
+          The dashed tail is still settling - the most recent posts haven't had
+          a full 36h to gather replies yet.
+        </p>
+        <p v-if="!repliesPerPostChart" class="text-muted small">No data yet.</p>
+      </div>
+
+      <div class="mb-3">
         <strong class="small">Share of replies from rippling</strong>
         <p class="text-muted small mb-1">
           Share of replies that came via rippling vs your own members.
@@ -220,6 +245,7 @@ const hotspots = ref([])
 const heldReplySummary = ref([])
 // Headline reply KPIs (per-day series for the line charts)
 const replyRate = ref([])
+const repliesPerPost = ref([])
 const replySource = ref([])
 const replyDistance = ref([])
 const takenRate = ref([])
@@ -245,11 +271,38 @@ const replyRateChart = computed(() => {
   })
   return [COHORT_HEADER('All offers'), ...rows]
 })
+const repliesPerPostChart = computed(() => {
+  if (!repliesPerPost.value.length) return null
+  const rows = [...repliesPerPost.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [
+      new Date(r.day),
+      r.mean_replies,
+      certain,
+      r.home_mean,
+      certain,
+      r.ripple_mean,
+      certain,
+    ]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
+})
 const replySourceChart = computed(() => {
-  if (!replySource.value.length) return null
-  const rows = [...replySource.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.ripple_pct])
+  if (!startDate.value || !endDate.value) return null
+  // Zero-fill the whole filter range. The backend only returns days that had a
+  // rippling-attributed reply, so early in the rollout this was a single lone
+  // point. A day with no rippling reply genuinely has a 0% rippling share, so
+  // filling the gaps draws a continuous line across the same range as the other
+  // charts instead of one dot floating on a one-day axis.
+  const byDay = new Map(replySource.value.map((r) => [r.day, r.ripple_pct]))
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return null
+  const rows = []
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10)
+    rows.push([new Date(d), byDay.has(key) ? byDay.get(key) : 0])
+  }
   return [['Date', '% of replies via rippling'], ...rows]
 })
 const replyDistanceChart = computed(() => {
@@ -269,13 +322,45 @@ const takenRateChart = computed(() => {
   return [COHORT_HEADER('All offers'), ...rows]
 })
 
+// Shared x-axis so EVERY chart spans the same filter date range with the same
+// date ticks. Without this each chart auto-scaled to its own data: a single-point
+// chart collapsed to one repeated date ("23 Jun" all along) and dense charts
+// dropped their labels entirely. viewWindow pins the range; explicit ticks force
+// a consistent, readable set of date labels (~8 max) across all charts.
+function dateTicks() {
+  if (!startDate.value || !endDate.value) return undefined
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return undefined
+  const days = Math.round((end - start) / 86400000)
+  const step = Math.max(1, Math.ceil((days + 1) / 8))
+  const ticks = []
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + step)) {
+    ticks.push(new Date(d))
+  }
+  return ticks
+}
+function dateHAxis() {
+  const h = { title: 'Date', format: 'dd MMM' }
+  if (startDate.value && endDate.value) {
+    const min = new Date(startDate.value)
+    const max = new Date(endDate.value)
+    if (!isNaN(min) && !isNaN(max) && max >= min) {
+      h.viewWindow = { min, max }
+      const ticks = dateTicks()
+      if (ticks && ticks.length) h.ticks = ticks
+    }
+  }
+  return h
+}
+
 function pctChartOptions(vTitle, color) {
   return {
     curveType: 'function',
     legend: { position: 'none' },
     chartArea: { width: '85%', height: '70%' },
     vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: { 0: { color } },
     animation: { startup: true, duration: 400, easing: 'out' },
   }
@@ -287,7 +372,7 @@ function cohortPctOptions(vTitle) {
     legend: { position: 'bottom' },
     chartArea: { width: '85%', height: '65%' },
     vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: {
       0: { color: '#6c757d' }, // All — grey
       1: { color: '#17a2b8' }, // Home-only — teal
@@ -302,7 +387,7 @@ function cohortKmOptions() {
     legend: { position: 'bottom' },
     chartArea: { width: '85%', height: '65%' },
     vAxis: { title: 'Median km', viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: {
       0: { color: '#6c757d' },
       1: { color: '#17a2b8' },
@@ -324,6 +409,7 @@ async function fetchMetrics() {
     hotspots.value = result?.hotspots || []
     heldReplySummary.value = result?.held_reply_summary || []
     replyRate.value = result?.reply_rate_36h || []
+    repliesPerPost.value = result?.replies_per_post || []
     replySource.value = result?.reply_source_split || []
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []

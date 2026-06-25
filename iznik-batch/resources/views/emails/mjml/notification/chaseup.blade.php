@@ -1,6 +1,19 @@
 <mjml>
   @include('emails.mjml.partials.head', [
-    'preview' => 'You have ' . $count . ' notification' . ($count === 1 ? '' : 's') . ' on Freegle'
+    'preview' => (function() use ($notifications, $count) {
+        $n = $notifications[0] ?? null;
+        if (!$n) { return 'You have a notification'; }
+        $type = $n['type'] ?? '';
+        $from = $n['fromname'] ?? 'Someone';
+        $msg = \Illuminate\Support\Str::limit(strip_tags($n['newsfeed']['message'] ?? ''), 40);
+        if ($type === 'CommentOnCommented') { $first = $from . ' replied: ' . $msg; }
+        elseif ($type === 'CommentOnYourPost') { $first = $from . ' commented: ' . $msg; }
+        elseif ($type === 'LovedPost') { $first = $from . ' loved your post' . ($msg ? ': ' . $msg : ''); }
+        elseif ($type === 'LovedComment') { $first = $from . ' loved your comment' . ($msg ? ': ' . $msg : ''); }
+        elseif ($type === 'Exhort') { $first = $n['title'] ?? 'You have a notification'; }
+        else { $first = 'You have a notification from ' . $from; }
+        return \Illuminate\Support\Str::limit($first, 80) . ($count > 1 ? ' (and ' . ($count - 1) . ' more)' : '');
+    })()
   ])
   <mj-body background-color="#ffffff">
 
