@@ -34,6 +34,10 @@ function mountComponent() {
           template: '<select><slot /></select>',
           props: ['modelValue'],
         },
+        'b-form-checkbox': {
+          template: '<label><slot /></label>',
+          props: ['modelValue'],
+        },
         // Drive the initial fetch deterministically: the real filter fires
         // 'fetch' on mount, so the stub mirrors that with a fixed range.
         ModEmailDateFilter: {
@@ -64,7 +68,40 @@ describe('ModSysAdminRippling', () => {
     const wrapper = mountComponent()
     await flushPromises()
 
-    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23')
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23', false)
+    wrapper.unmount()
+  })
+
+  it('scopes the metrics to the trial groups when "Trial groups only" is on', async () => {
+    mockFetchMetrics.mockResolvedValue({ trial_group_ids: [111, 222] })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+    mockFetchMetrics.mockClear()
+
+    // Turn on the trial scope and refetch via the exposed handler.
+    wrapper.vm.trialOnly = true
+    wrapper.vm.onTrialChange()
+    await flushPromises()
+
+    // The refetch carries trialOnly=true (4th arg) with the group filter reset to 0,
+    // and the resolved trial set is surfaced in the UI.
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23', true)
+    expect(wrapper.html()).toContain('in RIPPLE_WITHIN_GROUPS')
+    wrapper.unmount()
+  })
+
+  it('warns when trial scope is on but no trial groups are configured', async () => {
+    mockFetchMetrics.mockResolvedValue({ trial_group_ids: [] })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    wrapper.vm.trialOnly = true
+    wrapper.vm.onTrialChange()
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('No trial groups configured')
     wrapper.unmount()
   })
 

@@ -27,6 +27,37 @@ class ExpandCommandTest extends TestCase
     }
 
     /**
+     * publishTrialGroups mirrors RIPPLE_WITHIN_GROUPS into the shared `config` table so the Go API
+     * (which runs on a different server and can't read this batch env var) can scope the rippling
+     * dashboard to the trial groups. Upserts a comma-separated id list keyed 'ripple.within_groups'.
+     */
+    public function test_publishes_trial_group_set_to_config(): void
+    {
+        Http::fake();
+        config(['freegle.ripple.within_groups' => ['111', '222']]);
+        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+
+        // A real (non-dry-run) run mirrors RIPPLE_WITHIN_GROUPS into config via handle(),
+        // so the Go API (a different server, no access to this batch env var) can read the
+        // trial set. --dry-run deliberately skips the publish (covered by the run-clean test).
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
+
+        $this->assertSame(
+            '111,222',
+            DB::table('config')->where('key', 'ripple.within_groups')->value('value'),
+            'RIPPLE_WITHIN_GROUPS is mirrored into config for the Go API to read'
+        );
+
+        // Re-running with a changed set upserts (one row, updated value), not a duplicate.
+        config(['freegle.ripple.within_groups' => ['333']]);
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
+        $this->assertSame('333', DB::table('config')->where('key', 'ripple.within_groups')->value('value'));
+        $this->assertSame(1, DB::table('config')->where('key', 'ripple.within_groups')->count());
+
+        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+    }
+
+    /**
      * --within-group accepts a comma-separated list of group ids (the experiment scope) and resolves
      * it to the union of those groups' polyindex polygons. MySQL ST_Union is binary, so the command
      * chains it over per-id subqueries; this exercises that path with two real group polygons.
