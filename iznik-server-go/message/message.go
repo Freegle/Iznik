@@ -3503,12 +3503,16 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	// user and defeated UNIQUE KEY (id, series, token).
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+	// Read the new session id from the INSERT's LastInsertId on the write connection. A
+	// "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the read/write
+	// split and can return a stale/0 id (Discourse 9832 class), embedding a wrong sessionid in
+	// the JWT below.
+	sessionID, err := database.ExecInsertGetID(db,
+		"INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
 		newUserID, series, token)
-
-	// Use token to find our specific session (avoids race with concurrent requests).
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? AND token = ? ORDER BY id DESC LIMIT 1", newUserID, token).Scan(&sessionID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
+	}
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
