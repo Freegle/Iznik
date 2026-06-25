@@ -136,31 +136,24 @@
                     </span>
                   </div>
                   <div class="group-row">
-                    <template
-                      v-for="(mg, idx) in messageGroups"
-                      :key="mg.id"
-                    >
-                      <nuxt-link
-                        :to="'/explore/' + mg.nameshort"
-                        class="group-link"
-                        @click.stop
+                    <ShowMore :items="messageGroups" :limit="3" inline>
+                      <template #item="{ item }"
+                        ><nuxt-link
+                          :to="'/explore/' + item.nameshort"
+                          class="group-link"
+                          @click.stop
+                          >{{ item.namedisplay }}</nuxt-link
+                        ></template
                       >
-                        {{ mg.namedisplay }}
-                      </nuxt-link>
-                      <span
-                        v-if="idx < messageGroups.length - 1"
-                        class="group-time-separator"
-                        >,</span
-                      >
-                    </template>
+                    </ShowMore>
                     <span
                       v-if="messageGroups.length && timeAgoExpandedDisplay"
                       class="group-time-separator"
                       >·</span
                     >
-                    <span v-if="timeAgoExpandedDisplay" class="group-time"
-                      >{{ timeAgoExpandedDisplay }}</span
-                    >
+                    <span v-if="timeAgoExpandedDisplay" class="group-time">{{
+                      timeAgoExpandedDisplay
+                    }}</span>
                     <span class="group-time-separator">·</span>
                     <nuxt-link
                       :to="'/message/' + message.id"
@@ -204,22 +197,16 @@
                     </template>
                     <template v-if="messageGroups.length">
                       <span v-if="message.area" class="desktop-sep">·</span>
-                      <template
-                        v-for="(mg, idx) in messageGroups"
-                        :key="mg.id"
-                      >
-                        <nuxt-link
-                          :to="'/explore/' + mg.nameshort"
-                          class="desktop-group-link"
-                          @click.stop
+                      <ShowMore :items="messageGroups" :limit="3" inline>
+                        <template #item="{ item }"
+                          ><nuxt-link
+                            :to="'/explore/' + item.nameshort"
+                            class="desktop-group-link"
+                            @click.stop
+                            >{{ item.namedisplay }}</nuxt-link
+                          ></template
                         >
-                          {{ mg.namedisplay }}
-                        </nuxt-link>
-                        <span
-                          v-if="idx < messageGroups.length - 1"
-                          >,
-                        </span>
-                      </template>
+                      </ShowMore>
                     </template>
                     <template v-if="timeAgoExpandedDisplay">
                       <span class="desktop-sep">·</span>
@@ -592,7 +579,6 @@ const {
   message,
   strippedSubject,
   gotAttachments: hasPhoto,
-  timeAgoExpanded,
   timeAgoExpandedDisplay,
   placeholderClass,
   categoryIcon,
@@ -814,10 +800,6 @@ const messageGroups = computed(() => {
       .filter(Boolean)
   }
   return []
-})
-
-const messageGroup = computed(() => {
-  return messageGroups.value.length ? messageGroups.value[0] : null
 })
 
 // Methods

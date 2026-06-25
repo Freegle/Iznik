@@ -131,10 +131,12 @@
           </div>
           <p v-if="user?.id" class="posted-by">
             Posted by {{ user.displayname }}
-            <span v-for="(group, index) in groups" :key="index">
-              <span v-if="index > 0">, </span><span v-else>&nbsp;on</span>
-              {{ group.namedisplay }}
-            </span>
+            <template v-if="groups.length">
+              &nbsp;on
+              <ShowMore :items="groups" :limit="3" inline>
+                <template #item="{ item }">{{ item.namedisplay }}</template>
+              </ShowMore>
+            </template>
           </p>
         </div>
         <VeeForm v-else-if="event" ref="form">

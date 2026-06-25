@@ -15,10 +15,13 @@
       </span>
       <span v-if="event.groups?.length" class="meta-item">
         on
-        <span v-for="(groupid, index) in event.groups" :key="groupid">
-          <span v-if="index > 0">, </span>
-          <span v-if="group(groupid)">{{ group(groupid).namedisplay }}</span>
-        </span>
+        <ShowMore
+          :items="event.groups.map((id) => group(id)).filter(Boolean)"
+          :limit="3"
+          inline
+        >
+          <template #item="{ item }">{{ item.namedisplay }}</template>
+        </ShowMore>
       </span>
     </div>
 
