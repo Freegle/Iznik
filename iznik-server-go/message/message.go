@@ -3644,19 +3644,27 @@ func PutMessage(c *fiber.Ctx) error {
 	if req.Groupid > 0 {
 		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
 	}
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+	// Use the INSERT's own auto-increment id. A "SELECT id ... ORDER BY id DESC
+	// LIMIT 1" here is unsafe under the read/write split: the SELECT is routed to
+	// a read replica that may not yet have applied this INSERT, so it can return
+	// the user's PREVIOUS message - causing the new post (and its photos) to be
+	// grafted onto an existing one (Discourse 9832 "mixed up offers"). Read the id
+	// back from the write connection via LastInsertId, as CreateGroup does.
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	}
+	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
 		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
-
-	if result.Error != nil {
+	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}
 
-	var newMsgID uint64
-	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", myid).Scan(&newMsgID)
-
-	if newMsgID == 0 {
+	lastID, err := sqlResult.LastInsertId()
+	if err != nil || lastID <= 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
+	newMsgID := uint64(lastID)
 
 	// For Draft collection, store in messages_drafts.
 	// For other collections, add to messages_groups.
