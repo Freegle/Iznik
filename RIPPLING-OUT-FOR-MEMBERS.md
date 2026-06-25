@@ -81,6 +81,19 @@ count. Nothing is missing - everything is always there on the browse page.
 
 ---
 
+## Getting posts that ripple towards you
+
+Rippling works in the other direction too: posts from neighbouring communities ripple
+towards you. If you have a community set to **immediate emails**, you will get an alert
+the moment a rippling post first reaches your area - just as you would for a post made
+directly in that community. You only ever get **one** alert per post, however far it
+later travels, and only once it is actually close enough for you to reply.
+
+If you would rather not hear about them straight away, set that community to daily digest
+in Settings - those posts then simply appear in your next "What's New" instead.
+
+---
+
 ## Reminders about your post
 
 If your item is still available after a while, we remind you shortly before we

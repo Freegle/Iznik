@@ -176,6 +176,12 @@ answer is reassuring:
 > to it first. As soon as it reaches you, you will be able to reply - you do not need
 > to do anything.*
 
+Members on **immediate emails** may also notice they get an alert when a post that
+started on a neighbouring community ripples close enough to reach them. That is expected:
+they get one immediate alert per such post, the moment it reaches their area - exactly as
+they would for a post made directly on the community. If they would rather not, they can
+switch that community to daily digest in Settings.
+
 Some members may also ask why they have been joined to communities they did not sign up
 for. The answer is that their post has been travelling to reach more people, and the
 membership is what makes replies and contact work properly. They can leave any of those
