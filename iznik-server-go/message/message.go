@@ -2994,9 +2994,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		var itemID uint64
 		db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
 		if itemID == 0 {
-			// Genuinely new item — insert it.
-			db.Exec("INSERT INTO items (name) VALUES (?)", *req.Item)
-			db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
+			// Genuinely new item — insert it. ON DUPLICATE KEY handles a concurrent/lagged
+			// insert; read the id from the write result, not a read-split-routable SELECT (9832).
+			itemID, _ = database.ExecInsertGetID(db,
+				"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", *req.Item)
 		}
 		// Do NOT update items.name when found by case-insensitive match.
 		// items is a shared canonical dictionary; normalising the casing from a single
@@ -3709,9 +3710,10 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create item record.
 	if req.Item != "" {
-		db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
-		var itemID uint64
-		db.Raw("SELECT id FROM items WHERE name = ? LIMIT 1", req.Item).Scan(&itemID)
+		// ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id) already lets the write report the id for
+		// both new and existing rows; take it from the result, not a read-split-routable SELECT.
+		itemID, _ := database.ExecInsertGetID(db,
+			"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
 		if itemID > 0 {
 			db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", newMsgID, itemID)
 		}
