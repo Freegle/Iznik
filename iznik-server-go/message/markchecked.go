@@ -80,7 +80,7 @@ func MarkChecked(c *fiber.Ctx) error {
 			"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
 			"SET mg.checkedat = NOW(), mg.checkedby = ? "+
 			"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-			"AND mg.approvedby IS NULL AND "+statusWhere+" "+
+			"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND "+statusWhere+" "+
 			fmt.Sprintf("AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY", utils.MESSAGE_CHECK_WINDOW_DAYS),
 			myid, groupIDs, utils.COLLECTION_APPROVED)
 		rowsAffected = r.RowsAffected
