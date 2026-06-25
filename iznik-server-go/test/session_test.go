@@ -52,6 +52,33 @@ func TestLostPasswordSuccess(t *testing.T) {
 	assert.Equal(t, int64(1), keyCount)
 }
 
+func TestLostPasswordSendsToEmailUsedNotPreferred(t *testing.T) {
+	// A user with two emails who triggers a reset using their NON-preferred
+	// address must get the login link at the address they actually used - not
+	// at their preferred address, which may differ and may be the one bouncing.
+	prefix := uniquePrefix("lostpw-used")
+	userID := CreateTestUser(t, prefix, "User")
+	primaryEmail := fmt.Sprintf("%s@test.com", prefix)
+	secondaryEmail := fmt.Sprintf("%s-secondary@test.com", prefix)
+
+	db := database.DBConn
+	// Make the auto-created address the preferred one, and add a non-preferred
+	// secondary address.
+	db.Exec("UPDATE users_emails SET preferred = 1 WHERE userid = ? AND email = ?", userID, primaryEmail)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", userID, secondaryEmail)
+
+	body := fmt.Sprintf(`{"action":"LostPassword","email":"%s"}`, secondaryEmail)
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var queuedEmail string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.email')) FROM background_tasks "+
+		"WHERE task_type = 'email_forgot_password' AND JSON_EXTRACT(data, '$.user_id') = ? "+
+		"ORDER BY id DESC LIMIT 1", userID).Scan(&queuedEmail)
+	assert.Equal(t, secondaryEmail, queuedEmail,
+		"reset link must be queued to the email the user actually used, not their preferred address")
+}
+
 func TestLostPasswordUnknownEmail(t *testing.T) {
 	body := `{"action":"LostPassword","email":"nonexistent-session-test@example.com"}`
 	resp := postSession(body)
@@ -355,6 +382,49 @@ func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	me := result["me"].(map[string]interface{})
 	email, _ := me["email"].(string)
 	assert.NotContains(t, email, "@users.ilovefreegle.org")
+}
+
+func TestGetSessionEmailsExposeBouncedTimestamp(t *testing.T) {
+	// The session payload must expose which specific address is bouncing so the
+	// website banner can name it. A healthy email has bounced=null; a bounced
+	// one carries a timestamp.
+	prefix := uniquePrefix("sess_bounced")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	healthyEmail := fmt.Sprintf("%s@test.com", prefix)
+	bouncingEmail := fmt.Sprintf("%s-bounce@test.com", prefix)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, bounced) VALUES (?, ?, 0, NOW())",
+		userID, bouncingEmail)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	emails, ok := result["emails"].([]interface{})
+	assert.True(t, ok, "emails should be an array")
+
+	var healthyBounced, bouncingBounced interface{}
+	healthyFound, bouncingFound := false, false
+	for _, e := range emails {
+		em := e.(map[string]interface{})
+		switch em["email"] {
+		case healthyEmail:
+			healthyFound = true
+			healthyBounced = em["bounced"]
+		case bouncingEmail:
+			bouncingFound = true
+			bouncingBounced = em["bounced"]
+		}
+	}
+	assert.True(t, healthyFound, "healthy email should be present")
+	assert.True(t, bouncingFound, "bouncing email should be present")
+	assert.Nil(t, healthyBounced, "healthy email should have bounced=null")
+	assert.NotNil(t, bouncingBounced, "bouncing email should expose a bounced timestamp")
 }
 
 func TestGetSessionReturnsMailFlags(t *testing.T) {
