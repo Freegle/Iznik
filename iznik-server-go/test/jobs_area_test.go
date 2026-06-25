@@ -56,9 +56,20 @@ func TestJobsForIDs_ExcludesOversizedPolygon(t *testing.T) {
 	jobs := job.JobsForIDs([]int64{smallID, hugeID}, distByID, lat, lng, "")
 
 	var ids []uint64
+	var smallDist float64
 	for _, j := range jobs {
 		ids = append(ids, j.ID)
+		if int64(j.ID) == smallID {
+			smallDist = j.Dist
+		}
 	}
 	assert.Contains(t, ids, uint64(smallID), "local small-area job should be returned")
 	assert.NotContains(t, ids, uint64(hugeID), "nation-scale-polygon job should be filtered out as not 'nearby'")
+
+	// The returned distance is the real great-circle km to the job's centroid
+	// (ST_Distance_Sphere), not the planar sub-degree KNN value passed in distByID
+	// (0.004) — so the client's "Nearby" / distance label is honest. The small
+	// London job sits a fraction of a km from the query point.
+	assert.Greater(t, smallDist, 0.01, "distance should be real km, not the sub-degree KNN value")
+	assert.Less(t, smallDist, 5.0, "the small London job is within a few km of the query point")
 }
