@@ -15,6 +15,7 @@ type MarkCheckedRequest struct {
 	Groupid uint64   `json:"groupid"`          // 0 = all of the mod's groups
 	Filter  string   `json:"filter"`           // "checked" or "trusted" (used when no ids given)
 	IDs     []uint64 `json:"ids,omitempty"`    // specific messages, else mark the whole bucket
+	Reject  bool     `json:"reject,omitempty"` // true = pull the specified posts back to Pending (held) instead of marking checked
 }
 
 // MarkChecked records that a moderator has reviewed auto-published posts. These
@@ -54,6 +55,21 @@ func MarkChecked(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this group")
 		}
 		groupIDs = []uint64{req.Groupid}
+	}
+
+	// Reject: pull the specified auto-published posts back out of the live feed for a
+	// proper moderation decision. Setting collection=Pending removes them from
+	// messages_spatial (so rippling stops drawing them), and heldby blocks the
+	// auto-approve cron from immediately re-publishing them. Targeted only — there is
+	// no bulk "reject the whole bucket" (that would be far too blunt).
+	if req.Reject {
+		if len(req.IDs) == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "reject requires specific ids")
+		}
+		r := db.Exec("UPDATE messages_groups SET collection = ?, heldby = ?, checkedat = NULL "+
+			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0",
+			utils.COLLECTION_PENDING, myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
+		return c.JSON(fiber.Map{"success": true, "rejected": r.RowsAffected})
 	}
 
 	var rowsAffected int64
