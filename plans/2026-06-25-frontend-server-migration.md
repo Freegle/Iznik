@@ -4,7 +4,9 @@
 
 This supersedes and broadens `docs/superpowers/specs/2026-04-11-frontend-server-design.md` (which scoped only images + tiles). Scope is now: **anything reached from the outside world moves; internal batch processing stays.**
 
-> Status: PLAN ONLY. Nothing in production has been changed. One inert artifact has been drafted: `frontend-nginx.conf` at repo root (referenced in §5). The Katapult key is available. SSH confirmed to app1 (`10.220.0.45`), `ha-internal` (HAProxy), this `docker` host, and `db{1,2,3}-internal`.
+> Status: **PREP IMPLEMENTED + DEV-VALIDATED — nothing in production has been changed.** The repo-side §5 artifacts now exist and were brought up and exercised end-to-end on an isolated dev worktree (`edge-dev`, see §6); no VM has been provisioned and no prod/HAProxy/DNS change has been made. The Katapult key is available. SSH confirmed to app1 (`10.220.0.45`), `ha-internal` (HAProxy), this `docker` host, and `db{1,2,3}-internal`.
+>
+> Implemented & validated on dev (2026-06-25): `docker-compose.yml` `edge` profile (`delivery`+`tusd` joined, parameterized `${TUSD_COMMAND}`, new `frontend-nginx`+`tile-server`, `delivery-cache`/`tusd-data`/`osm-data`/`osm-tiles` volumes); `frontend-nginx.conf` (front door); `docker-compose.override.edge.yml` (VM-only ports + tusd NFS bind). See §6 for the dev test results and the four behaviours they pin down.
 
 ---
 
@@ -76,7 +78,7 @@ The `delivery` and `tusd` services already **exist** in `docker-compose.yml` (us
 ## 5. Repo changes (author on a branch; test on dev first)
 
 1. **`docker-compose.yml`**: add the `edge` profile to `delivery` + `tusd`; parameterize tusd `command` via `${TUSD_COMMAND:-<current dev default>}` so dev/CI are unchanged and the VM overrides it; add `frontend-nginx`, `tile-server` services (profile `edge` only); add `delivery-cache`/`tusd-data`/`osm-data`/`osm-tiles` volumes. (Later: `photon`, reuse `wiki-media`/`wiki-mysql` under `edge`.)
-2. **`frontend-nginx.conf`** — DRAFTED at repo root (inert). Encodes: uploads `:80`+`:8080` (no CORS), delivery cache with the **verified** `proxy_cache_key "https://wsrv.nl$request_uri"` + `@handle_redirect` + `X-Cache-Status`, tiles single-CORS, PROXY-protocol real-IP, catch-all. Validate with `nginx -t` on dev/VM before use.
+2. **`frontend-nginx.conf`** — at repo root, **implemented + dev-validated** (§6). Encodes: uploads `:80`+`:8080` (no CORS), delivery cache with the **verified** `proxy_cache_key "https://wsrv.nl$request_uri"` + `@handle_redirect` + `X-Cache-Status` (the upstream weserv's own `X-Cache-Status` is `proxy_hide_header`-ed so the front door exposes exactly one), tiles single-CORS, PROXY-protocol real-IP, a plain `:8081 /healthz`, and a `return 444` catch-all. `nginx -t` clean.
 3. **`docker-compose.override.edge.yml`** (VM-only, opted in via `COMPOSE_FILE`): bind `tusd` upload dir to the NFS host mount `/srv/tusd-data`.
 4. VM `.env`: `COMPOSE_PROFILES=edge`, `COMPOSE_FILE` **without** `docker-compose.ports.yml` (traefik off → no `:80`/`:8080` contention), unique `COMPOSE_PROJECT_NAME`, `TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors`.
 5. **Local-dev/CI unaffected**: `edge` is not in any default profile set; `frontend-nginx`/`tile-server` never start there; the parameterized tusd command defaults to today's literal.
@@ -98,6 +100,29 @@ Dev = local FreegleDocker (`frontend,database,backend,dev,monitoring`, traefik r
 6. Iterate the compose/nginx config on dev until green, then it's ready to deploy to the Katapult VM (§7).
 
 This proves the front-door + cache-key + CORS behavior with zero prod and zero traefik impact before any VM exists.
+
+### 6a. DONE — dev validation results (2026-06-25, worktree `edge-dev`)
+
+Built on the isolated `edge-dev` worktree (own compose project/ports; main dev env untouched). Edge services brought up over the compose network (no host `:80`/`:8080` bind → no traefik clash); `:80` proxy_protocol vhosts exercised with **real PROXY framing** via `curl --haproxy-protocol` (per §10's "test with real PROXY framing, not plain curl").
+
+| Check | Method | Result |
+|---|---|---|
+| `docker-compose config` — dev unaffected | default profiles | `tusd` command renders to the **unchanged** dev literal; `frontend-nginx`/`tile-server` absent ✓ |
+| `docker-compose config` — edge | `COMPOSE_PROFILES=edge` | renders `delivery`/`tusd`/`frontend-nginx`/`tile-server` only ✓ |
+| `docker-compose config` — VM | edge + `override.edge.yml` + `TUSD_COMMAND` | `frontend-nginx` publishes `:80`/`:8080`; tusd cmd = prod flags; tusd bound `/srv/tusd-data` ✓ |
+| `nginx -t` | throwaway `nginx:1.27-alpine` | syntax ok (variable upstreams + resolver parse with no backends) ✓ |
+| uploads `:8080` (plain) → tusd | `GET /tus/` | `405` (correct tus); **no** nginx-added `Access-Control-*` (HAProxy owns tus CORS) ✓ |
+| delivery `:80` (proxy_protocol) | real image, repeat | `200` `image/webp`, `X-Cache-Status: MISS` → `HIT`; **exactly one** `X-Cache-Status` ✓ |
+| tiles `:80` (proxy_protocol) | `/tile/0/0/0.png` | `502` (no osm import on dev) but **exactly one** `Access-Control-Allow-Origin` — the §2 double-CORS fix holds even on errors ✓ |
+| catch-all `:80` | unknown `Host` | `444` (empty reply / closed) ✓ |
+
+Findings folded back into the artifacts:
+- **Healthcheck must use `127.0.0.1`, not `localhost`** — busybox resolves `localhost`→`::1`, nginx listens IPv4-only → false "unhealthy". (Would have bitten on the VM too.)
+- **Don't send `Host: images.weserv.local`** to the local weserv container — that's its `allow 127.0.0.1; deny all` internal engine vhost (→ 403). Proxy to its public/default server with the original Host.
+- **`proxy_hide_header X-Cache-Status`** on the delivery vhost — weserv emits its own (tiny inner cache); without hiding it the front door returned two, muddying §10 HIT-rate measurement.
+- Dev-iteration note: `frontend-nginx.conf` is a **single-file bind mount**, so editing it needs a container **recreate** (not `nginx -s reload`) to re-resolve the inode.
+
+Not locally verifiable (deferred to §7 on the VM): real tile render (needs the ~56 GB osm-data import), Photon/MediaWiki stages, NFS latency, and HAProxy `send-proxy`↔`proxy_protocol` framing against the real HAProxy (validated here with synthetic PROXY framing only).
 
 ---
 

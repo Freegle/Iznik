@@ -1,0 +1,29 @@
+# docker-compose.override.edge.yml — VM-ONLY override for the `edge` profile.
+#
+# Opt in ONLY on the front-end Katapult VM by adding this file to COMPOSE_FILE in
+# that VM's .env, e.g.:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.edge.yml
+#   COMPOSE_PROFILES=edge
+#   COMPOSE_PROJECT_NAME=freegle-edge
+#   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
+#
+# It is NEVER part of the default COMPOSE_FILE, so local dev and CI are unaffected
+# (plan §5.4/§5.5). It does two things the base file deliberately omits:
+#   1. Publishes the front-door host ports (no traefik on the VM).
+#   2. Binds tusd's upload dir to the shared-NFS host mount so uploaded image
+#      originals are zero-copy (the same NFS app1 serves today — plan §2/§7).
+
+services:
+  frontend-nginx:
+    ports:
+      - "80:80"       # HAProxy reaches this with send-proxy (PROXY protocol)
+      - "8080:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
+
+  tusd:
+    volumes:
+      # /srv/tusd-data on the VM host is the shared-NFS mount
+      # (nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE), mounted
+      # read-only during prep and flipped to rw only at the human-gated upload
+      # cutover (plan §7/§11). Replace with a `tusd-data:` named volume only for a
+      # non-NFS deployment.
+      - /srv/tusd-data:/srv/tusd-data
