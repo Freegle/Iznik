@@ -69,6 +69,11 @@ class Job extends Model
             ->orderByRaw('cpc * clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), posted_at), 0) * 0.07) DESC, id ASC')
             ->get();
 
+        // Dedup of duplicate WhatJobs postings (one recruitment ad spammed to many
+        // towns as separate rows — Discourse 9363) is done upstream in the spatial
+        // KNN server, which returns the nearest distinct (company, title), so the
+        // candidate ids here are already distinct.
+
         // Randomize the candidate pool so consecutive immediate-mode digests
         // (or chat notifications) to the same user don't show identical job
         // rows every time. The pool is already CPC-biased, so the picks

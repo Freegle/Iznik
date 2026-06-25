@@ -26,7 +26,15 @@ var bufferLevels = [12]float64{
 // match optionally restricts the candidate pool: items whose Extra fields fail
 // the predicate are skipped and do NOT count towards limit, so the buffer keeps
 // expanding until enough matching items are found. nil matches everything.
-func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extra map[string]any) bool) ([]QueryResult, error) {
+//
+// dedupKey optionally collapses duplicates: items sharing the same non-empty key
+// are returned only once — and because the buffer rings expand outward from the
+// query point, the instance kept is the nearest. Skipped duplicates do NOT count
+// towards limit, so the buffer keeps expanding past them until `limit` distinct
+// items are found (the jobs dataset uses this so one ad spammed to many towns
+// doesn't fill the result with copies). An empty key disables dedup for that
+// item (treated as always-distinct); nil disables dedup entirely.
+func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extra map[string]any) bool, dedupKey func(extra map[string]any) string) ([]QueryResult, error) {
 	type cand struct {
 		level int
 		area  float64
@@ -35,6 +43,10 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extr
 	}
 	var collected []cand
 	seen := make(map[int64]struct{})
+	var dupKeys map[string]struct{}
+	if dedupKey != nil {
+		dupKeys = make(map[string]struct{})
+	}
 
 	for level, radius := range bufferLevels {
 		candidates, err := QueryBBox(idx, lng-radius, lng+radius, lat-radius, lat+radius)
@@ -61,12 +73,32 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extr
 				seen[c.ExtID] = struct{}{}
 				continue
 			}
+			// Skip the (relatively expensive) polygon intersection for items whose
+			// dedup key was already collected at this or a nearer ring: they are
+			// duplicates of an already-returned item regardless of whether they
+			// intersect, so dropping them now keeps the jobs query fast where one ad
+			// is spammed to thousands of nearby rows. The key is only *claimed* on a
+			// genuine intersection below, so a not-yet-claimed key still gets the full
+			// test (claiming it earlier — for a bbox-near item that fails the circle
+			// test — would suppress the real nearest instance at a later, wider ring).
+			var key string
+			if dedupKey != nil {
+				if key = dedupKey(c.Extra); key != "" {
+					if _, dup := dupKeys[key]; dup {
+						seen[c.ExtID] = struct{}{}
+						continue
+					}
+				}
+			}
 			g, err := geom.UnmarshalWKB(c.WKB, geom.NoValidate{})
 			if err != nil {
 				continue
 			}
 			if geom.Intersects(g, circle) {
 				seen[c.ExtID] = struct{}{}
+				if key != "" {
+					dupKeys[key] = struct{}{}
+				}
 				collected = append(collected, cand{level, c.Area, c.ExtID, c.Extra})
 			}
 		}

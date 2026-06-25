@@ -75,7 +75,7 @@ func (d *LocationsDataset) Query(idx *Index, params QueryParams) ([]QueryResult,
 		}
 	}
 
-	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, match)
+	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, match, nil)
 }
 
 // Within returns all location IDs whose geometry intersects params.Polygon.
