@@ -38,7 +38,7 @@
     {{-- The anchor uses class="post-img-link" (position:absolute, all edges
          at 0) to fill the .post-img-wrap cell so the whole photo is
          clickable, not just a zero-height inline box. --}}
-    <a href="{{ $post['fallbackReplyUrl'] }}" class="post-img-link">
+    <a href="{{ $post['viewUrl'] }}" class="post-img-link">
       <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
     </a>
   </div>
@@ -51,7 +51,7 @@
          reliably hugs its text. --}}
     <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span></p>
     <p class="post-title">
-      <a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a>
+      <a href="{{ $post['viewUrl'] }}">{{ $post['itemName'] }}</a>
       @if($post['locationName'] ?? null)
       {{-- Location sits directly under the title to match the HTML
            variant's pill+title block — no pin emoji here either; the
