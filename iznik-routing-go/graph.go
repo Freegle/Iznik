@@ -513,6 +513,13 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 	if tags["motor_vehicle"] == "no" || tags["vehicle"] == "no" || tags["access"] == "no" {
 		speeds[Drive] = -1
 	}
+	// Exclude toll roads from car routing entirely (the Humber/Dartford/Mersey/Tyne
+	// crossings, the M6 Toll, etc.). OSM tags the tolled carriageway toll=yes; the free
+	// foot/cycle ways alongside are separate, untagged ways, so this drops only the car
+	// edge and leaves walking/cycling routes intact.
+	if tags["toll"] == "yes" {
+		speeds[Drive] = -1
+	}
 	if ms := tags["maxspeed"]; ms != "" && speeds[Drive] > 0 {
 		if s := parseMaxspeed(ms); s > 0 {
 			speeds[Drive] = s
