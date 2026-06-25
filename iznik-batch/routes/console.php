@@ -203,6 +203,16 @@ Schedule::command('cleanup:sessions')
     ->sendOutputTo(cronLog('cleanup:sessions'))
     ->runInBackground();
 
+// Compress rotated batch log files and prune those older than the retention
+// window (default 7 days). The Monolog 'daily' channel rotates app logs but
+// does not compress them, and supervisor's scheduler/worker/spooler logs are
+// not Monolog-managed at all - this keeps storage/logs bounded.
+Schedule::command('logs:rotate')
+    ->dailyAt('00:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('logs:rotate'))
+    ->runInBackground();
+
 // Remove spam members from groups and clean up their content.
 // V1: cron/check_spammers.php (every 5 minutes)
 Schedule::command('users:remove-spammers')
