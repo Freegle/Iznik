@@ -218,6 +218,17 @@ func RecordJobClick(c *fiber.Ctx) error {
 		}
 	}
 
+	// Drop content-free hits. Bots/scanners POST /job with neither an id nor a link, which
+	// otherwise floods logs_jobs with jobid=0/link='' rows that bury the genuine clicks. A real
+	// click always carries at least a job id (web app) or a link (digest email link), so record
+	// nothing when both are absent - but still return success so the caller sees no error.
+	if (jobID == "" || jobID == "0") && link == "" {
+		return c.JSON(fiber.Map{
+			"ret":    0,
+			"status": "Success",
+		})
+	}
+
 	// Get user ID from context if authenticated (optional)
 	var userID *uint64
 	if c.Locals("session") != nil {
