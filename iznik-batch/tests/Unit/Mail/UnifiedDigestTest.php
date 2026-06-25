@@ -1097,4 +1097,97 @@ class UnifiedDigestTest extends TestCase
             'A reposted message must render the "First posted" date line'
         );
     }
+
+    public function test_daily_preheader_lists_item_names(): void
+    {
+        // Daily-mode preheader: comma-separated item names from the first three
+        // posts so the inbox preview shows what's in the digest rather than a
+        // generic count. Assert the distinct item names appear in the rendered
+        // email (the <mj-preview> content becomes a hidden element in the
+        // compiled HTML).
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Wardrobe (Bristol)']);
+        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'WANTED: Bicycle (Bristol)']);
+        $msg3 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Dining Table (Bristol)']);
+
+        $posts = collect([
+            ['message' => $msg1, 'postedToGroups' => [$group->id]],
+            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+            ['message' => $msg3, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled daily digest HTML should not be empty');
+
+        // The daily preheader lists up to three item names. Each of these
+        // distinctive item names must appear somewhere in the compiled HTML
+        // (within the hidden preheader element).
+        $this->assertStringContainsString(
+            'Wardrobe',
+            $html,
+            'Daily preheader must include the first post item name'
+        );
+        $this->assertStringContainsString(
+            'Bicycle',
+            $html,
+            'Daily preheader must include the second post item name'
+        );
+        $this->assertStringContainsString(
+            'Dining Table',
+            $html,
+            'Daily preheader must include the third post item name'
+        );
+    }
+
+    public function test_immediate_preheader_shows_post_subject(): void
+    {
+        // Immediate-mode preheader: the full post subject so the inbox preview
+        // shows exactly what the post is about (V1 parity: single.mjml used the
+        // post subject as the preheader). The subject is written into the hidden
+        // <mj-preview> element; after MJML compilation it becomes a display:none
+        // span in the compiled HTML.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Rocking Chair (Edinburgh)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled immediate digest HTML should not be empty');
+
+        // The subject "OFFER: Rocking Chair (Edinburgh)" is passed directly as
+        // the preheader. "Rocking Chair" is a distinctive term that only
+        // originates from the preheader (or the card body — both are correct
+        // signals that the subject reached the email).
+        $this->assertStringContainsString(
+            'Rocking Chair',
+            $html,
+            'Immediate-mode preheader must contain the post subject item name'
+        );
+        $this->assertStringContainsString(
+            'Edinburgh',
+            $html,
+            'Immediate-mode preheader must contain the post subject location'
+        );
+    }
 }

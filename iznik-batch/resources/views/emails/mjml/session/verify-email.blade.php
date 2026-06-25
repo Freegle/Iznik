@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Please verify your email address'])
+  @include('emails.mjml.partials.head', ['preview' => 'Click to verify ' . $email . ' and complete your Freegle sign-up'])
 
   <mj-body background-color="#ffffff">
     @include('emails.mjml.partials.header', ['title' => 'Verify your email'])

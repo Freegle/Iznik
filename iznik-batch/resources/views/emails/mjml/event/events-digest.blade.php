@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Upcoming community events near you'])
+  @include('emails.mjml.partials.head', ['preview' => count($events) === 1 ? (\Illuminate\Support\Str::limit(strip_tags($events[0]['title']), 60) . ' - ' . $events[0]['start']) : (\Illuminate\Support\Str::limit(strip_tags($events[0]['title']), 50) . ' and ' . (count($events) - 1) . ' more community event' . (count($events) > 2 ? 's' : '') . ' near you')])
 
   <mj-body background-color="#f4f4f4">
 

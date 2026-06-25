@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Add your Freegle handover to your calendar'])
+  @include('emails.mjml.partials.head', ['preview' => 'Handover arranged: ' . $title])
 
   <mj-body background-color="#f4f4f4">
 

@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'You may have multiple Freegle accounts'])
+  @include('emails.mjml.partials.head', ['preview' => 'We think ' . $email1 . ' and ' . $email2 . ' may be the same person - merge them?'])
 
   <mj-body background-color="#ffffff">
     @include('emails.mjml.partials.header', ['title' => 'Multiple Freegle accounts'])

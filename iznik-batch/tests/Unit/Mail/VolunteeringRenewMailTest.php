@@ -56,4 +56,28 @@ class VolunteeringRenewMailTest extends TestCase
         $this->assertStringNotContainsString('https://https://', $html,
             'Renewal email must not contain doubled https://');
     }
+
+    // ─── Preheader (mj-preview) assertions ────────────────────────────────────
+
+    public function test_preheader_contains_title_and_group_name(): void
+    {
+        // The preheader is: "Please confirm: {title} on {groupName} - is it still active?"
+        // Assert both the dynamic title and the group name appear so inbox preview
+        // clearly identifies which listing needs attention.
+        $userSite = config('freegle.sites.user');
+
+        $html = view('emails.mjml.volunteering.renew', [
+            'title'          => 'Litter-pick helpers needed',
+            'renewUrl'       => $userSite . '/volunteering/77?u=3&k=xyz',
+            'groupName'      => 'Freegle Riverside',
+            'email'          => 'owner@example.com',
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Please confirm: Litter-pick helpers needed on Freegle Riverside - is it still active?</mj-preview>',
+            $html,
+            'Renewal preheader must name the opportunity title and the group so the inbox preview is informative'
+        );
+    }
 }

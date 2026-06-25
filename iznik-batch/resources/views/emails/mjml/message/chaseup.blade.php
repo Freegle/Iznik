@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'What happened to your message?'])
+    @include('emails.mjml.partials.head', ['preview' => 'What happened to: ' . \Illuminate\Support\Str::limit(strip_tags($messageSubject), 76)])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

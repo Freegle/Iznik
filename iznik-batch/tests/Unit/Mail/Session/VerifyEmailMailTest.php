@@ -97,4 +97,17 @@ class VerifyEmailMailTest extends TestCase
             $envelope->from->address
         );
     }
+
+    public function test_preheader_contains_email_address(): void
+    {
+        $html = view('emails.mjml.session.verify-email', [
+            'email'      => 'newuser@example.com',
+            'confirmUrl' => 'https://www.ilovefreegle.org/settings/confirmmail/abc123',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Click to verify newuser@example.com and complete your Freegle sign-up</mj-preview>',
+            $html
+        );
+    }
 }

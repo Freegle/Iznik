@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'We will automatically repost your message soon'])
+    @include('emails.mjml.partials.head', ['preview' => 'Will repost soon: ' . \Illuminate\Support\Str::limit(strip_tags($messageSubject), 75)])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

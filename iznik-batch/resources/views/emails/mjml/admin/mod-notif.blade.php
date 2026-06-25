@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => "There's stuff to do on ModTools"])
+    @include('emails.mjml.partials.head', ['preview' => $modNotifSubject ?? "There's stuff to do on ModTools"])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.modtools-header')

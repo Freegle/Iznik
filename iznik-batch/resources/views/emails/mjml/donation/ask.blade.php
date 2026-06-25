@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'Thanks for freegling!'])
+    @include('emails.mjml.partials.head', ['preview' => $itemSubject ? 'Did you just get this from Freegle? ' . \Illuminate\Support\Str::limit(strip_tags($itemSubject), 65) : 'Thanks for freegling!'])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

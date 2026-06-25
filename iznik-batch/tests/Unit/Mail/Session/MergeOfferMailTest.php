@@ -68,4 +68,20 @@ class MergeOfferMailTest extends TestCase
             $envelope->from->address
         );
     }
+
+    public function test_preheader_contains_both_email_addresses(): void
+    {
+        $html = view('emails.mjml.session.merge-offer', [
+            'name1'    => 'Account One',
+            'email1'   => 'one@example.com',
+            'name2'    => 'Account Two',
+            'email2'   => 'two@example.com',
+            'mergeUrl' => 'https://www.ilovefreegle.org/merge/abc123',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>We think one@example.com and two@example.com may be the same person - merge them?</mj-preview>',
+            $html
+        );
+    }
 }
