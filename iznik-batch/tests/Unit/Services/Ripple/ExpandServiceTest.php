@@ -1300,4 +1300,250 @@ class ExpandServiceTest extends TestCase
             'post with only a Repost outcome still ripples into a covering group'
         );
     }
+
+    // ── Stop-and-retract on origin removal (rejected/withdrawn/expired → left spatial) ──
+
+    /**
+     * Ripple a fresh post into one covering group via the real engine and return
+     * [msgid, posterId, groupBId]. Afterwards the post is live on its origin group AND
+     * rippled (rippled_in=1, deleted=0) into group B, with the poster auto-joined to B
+     * (memberships.rippled=1) and a Group/Joined text='Rippled' log written.
+     */
+    private function rippleIntoOneGroup(): array
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $groupB = $this->seedCoveringGroup();
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first();
+        $this->assertNotNull($row, 'precondition: post rippled into B');
+        $this->assertSame(0, (int) $row->deleted, 'precondition: rippled-in copy live');
+
+        return [$msgid, $posterId, $groupB];
+    }
+
+    /** The post is removed from the browsable set (rejected on origin / withdrawn): it leaves messages_spatial. */
+    private function leaveSpatial(int $msgid): void
+    {
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+    }
+
+    /** A post with a reach row but NOT in messages_spatial, with one rippled-in copy + ripple-membership on a fresh group. Returns [msgid, groupB, posterId]. */
+    private function seedStaleReachWithRippledCopy(float $lat = 51.5, float $lng = -0.1): array
+    {
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: stale', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subHours(2), 'arrival' => now()->subHours(2), 'lat' => $lat, 'lng' => $lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id, 'groupid' => $origin->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(2),
+        ]);
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $groupB->id, 'collection' => 'Approved',
+            'approvedat' => now(), 'arrival' => now(), 'autoreposts' => 0,
+            'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
+        ]);
+        DB::table('memberships')->insert([
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, self::WKT, now()->subHours(2)]
+        );
+
+        return [(int) $message->id, (int) $groupB->id, (int) $user->id];
+    }
+
+    /** Origin removal pulls every rippled-in copy (soft-delete + Message/Deleted log) and drops the reach row. */
+    public function test_origin_removal_pulls_rippled_copies_and_drops_reach(): void
+    {
+        [$msgid, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'precondition: reach row exists');
+
+        $this->leaveSpatial($msgid);
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'reach row dropped - expansion stopped');
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->first();
+        $this->assertSame(1, (int) $b->deleted, 'rippled-in copy pulled on origin removal');
+        $this->assertGreaterThanOrEqual(1, $stats['pulled_on_removal']);
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
+            'groupid' => $groupB, 'msgid' => $msgid, 'text' => 'Rippling: removed on origin removal',
+        ]);
+    }
+
+    /** The poster's ripple-membership is removed when the retracted post was their only post on that group. */
+    public function test_origin_removal_removes_ripple_membership_when_no_other_post(): void
+    {
+        [$msgid, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->first();
+        $this->assertNotNull($m, 'precondition: poster ripple-joined to B');
+        $this->assertSame(1, (int) $m->rippled);
+
+        $this->leaveSpatial($msgid);
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->first(),
+            'ripple-membership removed when the retracted post was the poster\'s only post on the group'
+        );
+        $this->assertGreaterThanOrEqual(1, $stats['memberships_removed']);
+    }
+
+    /** The membership is KEPT when the poster still has another live post on the group. */
+    public function test_origin_removal_keeps_membership_when_poster_has_another_live_post(): void
+    {
+        [$msgid, $posterId, $groupB] = $this->rippleIntoOneGroup();
+
+        // A second, live post by the same poster directly on group B.
+        $other = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $posterId,
+            'subject' => 'OFFER: other', 'textbody' => 'y', 'source' => 'Platform',
+            'date' => now(), 'arrival' => now(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $other->id, 'groupid' => $groupB,
+            'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now(),
+        ]);
+
+        $this->leaveSpatial($msgid);
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->first(),
+            'membership kept because the poster still has another live post on the group'
+        );
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'the retracted post is still pulled from the group'
+        );
+    }
+
+    /** An organic (non-ripple) membership is never removed by retraction. */
+    public function test_origin_removal_keeps_organic_membership(): void
+    {
+        [$msgid, $posterId, $groupB] = $this->rippleIntoOneGroup();
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->update(['rippled' => 0]);
+
+        $this->leaveSpatial($msgid);
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->first(),
+            'organic (rippled=0) membership is never removed by retraction'
+        );
+    }
+
+    /**
+     * Membership removal writes NO Group/Left log (which would poison the re-ripple guard),
+     * so a later post by the same poster still ripples into the same group and re-adds the membership.
+     */
+    public function test_origin_removal_logs_no_group_left_and_future_reripple_works(): void
+    {
+        [$msgid, $posterId, $groupB] = $this->rippleIntoOneGroup();
+
+        $this->leaveSpatial($msgid);
+        $this->service()->process(false, 500);
+
+        $this->assertSame(
+            0,
+            (int) DB::table('logs')->where('user', $posterId)->where('groupid', $groupB)
+                ->where('type', 'Group')->where('subtype', 'Left')->count(),
+            'system retraction must not log a Group/Left (it is not a user opt-out)'
+        );
+
+        // A later post by the SAME poster, in the covering area, must still ripple into B.
+        $newMsg = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $posterId,
+            'subject' => 'OFFER: later', 'textbody' => 'z', 'source' => 'Platform',
+            'date' => now()->subMinutes(10), 'arrival' => now()->subMinutes(10), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        $newOrigin = $this->createTestGroup();
+        MessageGroup::create([
+            'msgid' => $newMsg->id, 'groupid' => $newOrigin->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subMinutes(10),
+        ]);
+        DB::insert(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$newMsg->id, $newOrigin->id, Message::TYPE_OFFER, now()->subMinutes(10)]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $newMsg->id)->where('groupid', $groupB)->first(),
+            'a later post by the same poster still ripples into B (retraction did not poison re-ripple)'
+        );
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->first(),
+            'membership re-added by the later ripple'
+        );
+    }
+
+    /** A scoped (onlyMsgid) run retracts only the in-scope post, leaving others untouched. */
+    public function test_scoped_only_msgid_retracts_only_in_scope_post(): void
+    {
+        Http::fake();
+        [$m1, $g1] = $this->seedStaleReachWithRippledCopy();
+        [$m2, $g2] = $this->seedStaleReachWithRippledCopy();
+
+        $this->service()->process(false, 500, $m1);
+
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $m1)->count(), 'in-scope reach dropped');
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $m2)->count(), 'out-of-scope reach untouched');
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $m1)->where('groupid', $g1)->value('deleted'), 'in-scope copy pulled');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $m2)->where('groupid', $g2)->value('deleted'), 'out-of-scope copy untouched');
+    }
+
+    /** A scoped (withinPolyWkt) run retracts only posts whose origin falls inside the polygon. */
+    public function test_scoped_within_poly_retracts_only_posts_inside_polygon(): void
+    {
+        Http::fake();
+        [$london] = $this->seedStaleReachWithRippledCopy(51.5, -0.1);
+        [$edinburgh] = $this->seedStaleReachWithRippledCopy(55.95, -3.19);
+
+        $poly = 'POLYGON((-0.5 51.3, 0.3 51.3, 0.3 51.8, -0.5 51.8, -0.5 51.3))';
+        $this->service()->process(false, 500, null, $poly);
+
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $london)->count(), 'London post (inside polygon) retracted');
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $edinburgh)->count(), 'Edinburgh post (outside polygon) untouched');
+    }
+
+    /** The poster-leaves-a-rippled-group pull also runs under a scoped run (was dark during the experiment). */
+    public function test_pull_on_leave_runs_under_scoped_run(): void
+    {
+        [$msgid, $posterId, $groupB] = $this->rippleIntoOneGroup();
+
+        // Poster leaves B (Go leave path: delete membership + Group/Left log).
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB)->delete();
+        DB::table('logs')->insert([
+            'timestamp' => now(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB,
+        ]);
+
+        // Scoped run (the post is still in spatial, so only the leave-pull should act).
+        $stats = $this->service()->process(false, 500, $msgid);
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'leave-pull runs under a scoped run'
+        );
+        $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
+    }
 }
