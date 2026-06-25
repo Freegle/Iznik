@@ -112,6 +112,33 @@ class UnifiedDigestSummaryTest extends TestCase
         return $url;
     }
 
+    /**
+     * Faithful reconstruction of a tracked link's destination, mirroring the Go
+     * handler (iznik-server-go/emailtracking/compact.go) INCLUDING the ?reply=1
+     * that the reply CTA (type 'm') appends and the view link (type 's') omits.
+     * Falls back to the literal destination when tracking is off.
+     */
+    private static function reconstructDestination(string $url): string
+    {
+        if (preg_match('#/e/d/r/[^/]+/([a-z])/([^/]+)/#', $url, $m)) {
+            $id = self::decodeCompactId($m[2]);
+
+            return match ($m[1]) {
+                'm' => '/message/'.$id.'?reply=1',
+                's' => '/message/'.$id,
+                'g' => '/explore/'.$id,
+                default => $url,
+            };
+        }
+
+        // No-tracking / legacy: the literal destination carries its own query.
+        if (preg_match('/[?&]url=([^&]+)/', $url, $m)) {
+            return base64_decode(urldecode($m[1])) ?: $url;
+        }
+
+        return $url;
+    }
+
     /** Inverse of EmailTracking::encodeId (base64url of big-endian bytes). */
     private static function decodeCompactId(string $enc): int
     {
@@ -144,6 +171,7 @@ class UnifiedDigestSummaryTest extends TestCase
                 'messageText' => 'Body text for '.$words[$i],
                 'messageUrl' => 'https://example.com/message/'.(1000 + $i).'?reply=1',
                 'summaryUrl' => 'https://example.com/message/'.(1000 + $i),
+                'viewUrl' => 'https://example.com/message/'.(1000 + $i),
                 'fallbackReplyUrl' => 'https://example.com/message/'.(1000 + $i).'?reply=1',
                 'ampReplyUrl' => 'https://api.example.com/amp/digest/'.(1000 + $i).'/reply',
                 'distanceText' => '2 miles',
@@ -202,6 +230,29 @@ class UnifiedDigestSummaryTest extends TestCase
         $this->assertStringNotContainsString('#', $target);
         // The summary link is its own jump-to-post link, not the reply CTA.
         $this->assertStringNotContainsString('reply=1', $target);
+    }
+
+    // ── preparePosts: card photo/title VIEW url vs Reply CTA url ─────────────
+
+    public function test_prepared_posts_view_url_omits_reply_while_reply_cta_keeps_it(): void
+    {
+        [$mail, $messages] = $this->buildDigest(1, UnifiedDigestService::MODE_DAILY);
+        $card = $this->preparedPostsOf($mail)->first();
+        $id = $messages[0]->id;
+
+        // The photo + title use viewUrl; clicking them just shows the item.
+        $this->assertArrayHasKey('viewUrl', $card);
+        $viewTarget = self::reconstructDestination($card['viewUrl']);
+        $this->assertStringContainsString('/message/'.$id, $viewTarget);
+        $this->assertStringNotContainsString('reply=1', $viewTarget);
+
+        // The Reply CTA (messageUrl) still opens the reply compose pane.
+        $replyTarget = self::reconstructDestination($card['messageUrl']);
+        $this->assertStringContainsString('/message/'.$id, $replyTarget);
+        $this->assertStringContainsString('reply=1', $replyTarget);
+
+        // Photo/title and Reply are genuinely different links.
+        $this->assertNotSame($card['messageUrl'], $card['viewUrl']);
     }
 
     // ── HTML (MJML → <details>) ─────────────────────────────────────────────

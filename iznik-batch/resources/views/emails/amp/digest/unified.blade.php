@@ -713,7 +713,7 @@
           layout="fixed"
         ></amp-img>
         @foreach($headerThumbs as $post)
-        <a class="header-thumb header-thumb-{{ $loop->index }}" href="{{ $post['fallbackReplyUrl'] }}">
+        <a class="header-thumb header-thumb-{{ $loop->index }}" href="{{ $post['viewUrl'] }}">
           {{-- thumbImageUrl is the 240×240 square crop from the delivery
                proxy; combined with object-fit:cover (above) the rendered
                44×44 box always shows a square photo regardless of source. --}}
@@ -819,7 +819,7 @@
          immediate hero keeps its bespoke flat layout (full body, secondary
          actions); the multi-post card is the shared _card partial. --}}
     <div style="padding: 16px 16px 0 16px;">
-      <a href="{{ $post['fallbackReplyUrl'] }}" style="display: block; line-height: 0;">
+      <a href="{{ $post['viewUrl'] }}" style="display: block; line-height: 0;">
         <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
       </a>
     </div>
@@ -833,7 +833,7 @@
              reliably hugs its text. --}}
         <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span></p>
         <p class="post-title">
-          <a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a>
+          <a href="{{ $post['viewUrl'] }}">{{ $post['itemName'] }}</a>
           @if($post['locationName'] ?? null)
           {{-- Location sits directly under the title to match the HTML
                variant's pill+title block — no pin emoji here either; the

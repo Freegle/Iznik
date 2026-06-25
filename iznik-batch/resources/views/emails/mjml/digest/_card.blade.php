@@ -48,7 +48,7 @@
                  the column shrinks on mobile, no fluid-on-mobile blow-up. --}}
             <mj-image
                 src="{{ $post['thumbImageUrl'] }}"
-                href="{{ $post['messageUrl'] }}"
+                href="{{ $post['viewUrl'] }}"
                 alt="{{ $post['itemName'] }}"
                 width="100%"
                 border-radius="4px"
@@ -66,7 +66,7 @@
                     <span style="display: inline-block; background-color: {{ $pillColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 3px; line-height: 1; letter-spacing: 0.3px; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </div>
                 <div style="padding-bottom: 4px;">
-                    <a href="{{ $post['messageUrl'] }}" style="color: {{ $titleColor }}; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 1.4;">{{ $post['itemName'] }}</a>
+                    <a href="{{ $post['viewUrl'] }}" style="color: {{ $titleColor }}; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 1.4;">{{ $post['itemName'] }}</a>
                     @if($post['locationName'])
                     <br/><span style="color: {{ $titleColor }}; font-size: 12px; font-weight: 500;">{{ $post['locationName'] }}</span>
                     @endif
