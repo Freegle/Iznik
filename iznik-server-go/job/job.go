@@ -121,11 +121,25 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 		CPC          float64        `gorm:"column:cpc"`
 		Clickability float64        `gorm:"column:clickability"`
 		Externaluid  sql.NullString `gorm:"column:externaluid"`
+		DistKm       float64        `gorm:"column:dist_km"`
 	}
+
+	// The KNN distance is a planar degree value (the geometry stores lat/lng tagged
+	// SRID 3857), which the client mis-reads as km and shows as "Nearby" for
+	// everything. Return the real great-circle km via ST_Distance_Sphere on the
+	// geometry centroid so the distance / "Nearby" label is honest. Dedup of the
+	// duplicate WhatJobs postings (one recruitment ad spammed to thousands of towns
+	// as separate rows — Discourse 9363) is done upstream in the spatial KNN server,
+	// which returns the nearest distinct (company, title), so the ids arriving here
+	// are already distinct and we just enrich them.
+	distExpr := "ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry))))"
+	args := []any{lng, lat}
+	args = append(args, categoryArgs...)
 
 	db.Raw(fmt.Sprintf(
 		"SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, "+
-			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid "+
+			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, "+
+			distExpr+" / 1000 AS dist_km "+
 			"FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
 			"WHERE jobs.id IN (%s) AND %s AND %s "+
 			// Rank by expected value (cpc * clickability) discounted by a mild
@@ -136,13 +150,13 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 			// digest ordering in iznik-batch Job::nearLocation.
 			"ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT %d",
 		placeholders, categoryClause, areaClause, JOBS_LIMIT,
-	), categoryArgs...).Scan(&rows)
+	), args...).Scan(&rows)
 
 	ret := make([]Job, 0, len(rows))
 	for _, r := range rows {
 		job := Job{
 			ID:           r.ID,
-			Dist:         distByID[int64(r.ID)],
+			Dist:         r.DistKm,
 			Url:          r.Url,
 			Title:        r.Title,
 			Location:     r.Location,

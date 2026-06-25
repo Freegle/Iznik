@@ -52,7 +52,7 @@ func setupTestIndex(t *testing.T) *Index {
 // polygons — the smaller area must win.
 func TestFindNearestPolygon_PointInsideBothPolygons(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, 0, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(1), results[0].ID, "smallest enclosing area should be returned")
@@ -61,7 +61,7 @@ func TestFindNearestPolygon_PointInsideBothPolygons(t *testing.T) {
 // TestFindNearestPolygon_PointInsideLargeOnly: query inside Large but outside Small.
 func TestFindNearestPolygon_PointInsideLargeOnly(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, -0.04, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, -0.04, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "large area should be returned when point inside large only")
@@ -71,7 +71,7 @@ func TestFindNearestPolygon_PointInsideLargeOnly(t *testing.T) {
 func TestFindNearestPolygon_PointNearButOutside(t *testing.T) {
 	idx := setupTestIndex(t)
 	// (-0.06, 51.5) is 0.01° west of Large's west edge (-0.05).
-	results, err := FindNearestPolygon(idx, -0.06, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, -0.06, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "large area should be found via buffer expansion")
@@ -80,7 +80,7 @@ func TestFindNearestPolygon_PointNearButOutside(t *testing.T) {
 // TestFindNearestPolygon_NoMatch: query far from all test geometries returns empty slice.
 func TestFindNearestPolygon_NoMatch(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, 5, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, 5, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, results, "should return no results when no area is within max buffer radius")
 }
@@ -89,7 +89,7 @@ func TestFindNearestPolygon_NoMatch(t *testing.T) {
 func TestFindNearestPolygon_LimitReturnsMultiple(t *testing.T) {
 	idx := setupTestIndex(t)
 	// Query at centre: both polygons match. limit=2 should return both.
-	results, err := FindNearestPolygon(idx, 0, 51.5, 2, nil)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// First result should be small (smallest area), second large.
@@ -109,7 +109,7 @@ func TestFindNearestPolygon_SmallAreaIsReturnedWithoutFilter(t *testing.T) {
 		"POLYGON((0 51.5, 0.001 51.5, 0.001 51.501, 0 51.501, 0 51.5))")
 	require.NoError(t, InsertItems(idx, []Item{tiny}, nil))
 
-	results, err := FindNearestPolygon(idx, 0.0005, 51.5005, 1, nil)
+	results, err := FindNearestPolygon(idx, 0.0005, 51.5005, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(99), results[0].ID)
@@ -126,10 +126,66 @@ func TestFindNearestPolygon_MatchFilterExpandsPastNonMatching(t *testing.T) {
 		name, _ := extra["name"].(string)
 		return name == "Large Area"
 	}
-	results, err := FindNearestPolygon(idx, 0, 51.5, 1, onlyLarge)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 1, onlyLarge, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "filter must skip non-matching items without counting them")
+}
+
+// makeJobItem builds a polygon Item carrying the jobs dataset's Extra fields
+// (company/title), so jobsDedupKey can key on them.
+func makeJobItem(t *testing.T, extID int64, company, title, wkt string) Item {
+	t.Helper()
+	g, err := geom.UnmarshalWKT(wkt)
+	require.NoError(t, err)
+	minXY, maxXY, ok := g.Envelope().MinMaxXYs()
+	require.True(t, ok, "geometry must have an envelope")
+	return Item{
+		ExtID:  extID,
+		Area:   g.Area(),
+		WKB:    g.AsBinary(),
+		MinLng: minXY.X,
+		MaxLng: maxXY.X,
+		MinLat: minXY.Y,
+		MaxLat: maxXY.Y,
+		Extra:  map[string]any{"company": company, "title": title},
+	}
+}
+
+// TestFindNearestPolygon_DedupKeyExpandsPastDuplicate: the jobs use-case. WhatJobs
+// posts the same (company, title) ad to many towns; with a dedupKey the nearest
+// instance is kept and the buffer expands past the farther copies to fill the
+// limit with distinct jobs (Discourse 9363). Three items along +lng from the
+// query point: id=1 and id=2 are the SAME (company, title) at increasing distance,
+// id=3 is a distinct ad farther still.
+func TestFindNearestPolygon_DedupKeyExpandsPastDuplicate(t *testing.T) {
+	idx, err := CreateIndex(":memory:")
+	require.NoError(t, err)
+	defer idx.Close()
+
+	nearDup := makeJobItem(t, 1, "Deliveroo", "Rider",
+		"POLYGON((-0.001 51.499, 0.001 51.499, 0.001 51.501, -0.001 51.501, -0.001 51.499))")
+	farDup := makeJobItem(t, 2, "Deliveroo", "Rider",
+		"POLYGON((0.009 51.499, 0.011 51.499, 0.011 51.501, 0.009 51.501, 0.009 51.499))")
+	distinct := makeJobItem(t, 3, "Acme", "Cleaner",
+		"POLYGON((0.019 51.499, 0.021 51.499, 0.021 51.501, 0.019 51.501, 0.019 51.499))")
+	require.NoError(t, InsertItems(idx, []Item{nearDup, farDup, distinct}, nil))
+
+	// Without dedup, the nearest two are both "Deliveroo Rider" (the duplicate).
+	plain, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, plain, 2)
+	plainIDs := []int64{plain[0].ID, plain[1].ID}
+	assert.ElementsMatch(t, []int64{1, 2}, plainIDs, "no dedup: nearest two are the duplicate pair")
+
+	// With dedup, the farther copy (id=2) is skipped and expansion continues to the
+	// distinct ad (id=3), so the result is one of each.
+	deduped, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, jobsDedupKey)
+	require.NoError(t, err)
+	require.Len(t, deduped, 2)
+	dedupIDs := []int64{deduped[0].ID, deduped[1].ID}
+	assert.ElementsMatch(t, []int64{1, 3}, dedupIDs, "dedup keeps nearest of the pair and fills with the distinct ad")
+	assert.NotContains(t, dedupIDs, int64(2), "the farther duplicate must be dropped")
 }
 
 // TestFindNearestPoints_ReturnsNearestPoint: point dataset query returns nearest point.

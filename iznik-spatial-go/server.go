@@ -327,5 +327,13 @@ func (srv *server) startScheduler() {
 }
 
 func (srv *server) idxPath(name string) string {
+	// The jobs index Extra schema gained a `company` field (for KNN-side dedup of
+	// the duplicate WhatJobs postings — Discourse 9363). A pre-company on-disk index
+	// would be adopted at startup and dedup on (", title) — collapsing distinct
+	// employers — until the next nightly/swap rebuild. Bumping the filename means a
+	// deploy can't find the old index and rebuilds once from MySQL with `company`.
+	if name == "jobs" {
+		return srv.idxDir + "/" + name + ".v2.db"
+	}
 	return srv.idxDir + "/" + name + ".db"
 }
