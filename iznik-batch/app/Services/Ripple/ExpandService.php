@@ -47,11 +47,13 @@ class ExpandService
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
             'memberships_added' => 0, 'pulled_on_leave' => 0,
+            'pulled_on_removal' => 0, 'memberships_removed' => 0,
         ];
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
-        // testing): stale-removal is skipped because it operates over the WHOLE reach set and is not
-        // scope-aware, and both init and advance are restricted to the same subset.
+        // testing): init, advance AND retraction are all restricted to the same subset, so the group
+        // experiment retracts a rejected/removed post (drops reach + pulls its rippled copies) instead
+        // of leaving live copies behind and continuing to ripple it into yet more groups.
         $scoped = $onlyMsgid !== null || $withinPolyWkt !== null;
 
         // Master activation switch. While rippling is globally disabled an UNSCOPED run does nothing
@@ -63,13 +65,14 @@ class ExpandService
             return $stats;
         }
 
-        if (!$scoped) {
-            // 1. Drop reach for posts that have left the browsable set (taken/withdrawn).
-            $stats['removed'] = $this->removeStale($dryRun);
-            // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
-            //     leave removes the poster's post from that group (not just their membership).
-            $this->pullRippledPostsFromLeftGroups($dryRun, $stats);
-        }
+        // 1. Stop-and-retract for posts that have left the browsable set — rejected/removed on
+        //    their origin group, withdrawn, expired or deleted (Taken/Received stay in
+        //    messages_spatial and are excluded): drop reach AND pull every rippled-in copy,
+        //    removing now-purposeless ripple-joined memberships.
+        $this->removeStaleAndRetract($dryRun, $stats, $onlyMsgid, $withinPolyWkt);
+        // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
+        //     leave removes the poster's post from that group (not just their membership).
+        $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid, $withinPolyWkt);
 
         // 2. Initialise reach for posts new to messages_spatial.
         $this->initialiseNew($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
@@ -82,27 +85,137 @@ class ExpandService
         return $stats;
     }
 
-    private function removeStale(bool $dryRun): int
+    /**
+     * Stop-and-retract for every post that has left messages_spatial — rejected/removed on its
+     * origin group, withdrawn, expired or deleted (Taken/Received stay in messages_spatial and
+     * are intentionally excluded). For each such post we drop its rippling_reach row (which both
+     * stops further expansion and lets ripple:release-replies treat the post as gone, releasing
+     * any held replies) and retract every rippled-in copy (see retractRippledCopiesForRemovedPost).
+     *
+     * Scope-aware: a scoped run restricts removal to the in-scope subset (onlyMsgid, or reach
+     * origin within withinPolyWkt — the same filter advanceDue uses), so the group experiment
+     * retracts correctly. $stats['removed'] keeps its meaning: reach rows dropped.
+     */
+    private function removeStaleAndRetract(bool $dryRun, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
-        if ($dryRun) {
-            return (int) DB::table('rippling_reach as mr')
-                ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('messages_spatial as ms')
-                        ->whereColumn('ms.msgid', 'mr.msgid');
-                })->count();
+        try {
+            $scopeSql = '';
+            $params = [];
+            if ($onlyMsgid !== null) {
+                $scopeSql = ' AND mr.msgid = ?';
+                $params[] = $onlyMsgid;
+            } elseif ($withinPolyWkt !== null) {
+                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(mr.lng, mr.lat), ' . self::SRID . '))';
+                $params[] = $withinPolyWkt;
+            }
+
+            $stale = DB::select(
+                'SELECT mr.msgid AS msgid
+                 FROM rippling_reach mr
+                 LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
+                 WHERE ms.msgid IS NULL' . $scopeSql,
+                $params
+            );
+            if (empty($stale)) {
+                return;
+            }
+            $msgids = array_map(static fn ($r) => (int) $r->msgid, $stale);
+
+            if ($dryRun) {
+                $stats['removed'] += count($msgids);
+                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
+                    ->whereIn('msgid', $msgids)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->count();
+
+                return;
+            }
+
+            foreach ($msgids as $msgid) {
+                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
+                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
+                $stats['removed']++;
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: remove-stale-and-retract failed: {$e->getMessage()}");
         }
+    }
 
-        // Single DELETE then ROW_COUNT() so the reported figure is exactly what was
-        // deleted (a separate COUNT then DELETE can drift — messages:update-spatial-index
-        // mutates messages_spatial concurrently).
-        DB::statement(
-            'DELETE mr FROM rippling_reach mr
-             LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
-             WHERE ms.msgid IS NULL'
-        );
+    /**
+     * Pull every rippled-in copy of a post that has left the browsable set and clean up the
+     * memberships rippling created for it. Soft-deletes (deleted=1) each rippled_in
+     * messages_groups copy with a Message/Deleted audit log, then — for each group the copy was
+     * pulled from — removes the poster's ripple-joined (rippled=1) membership IFF they have no
+     * other live post on that group, so a retracted post does not strand the poster in groups
+     * they only joined to carry it.
+     *
+     * Deliberately writes NO Group/Left log for the membership removal. The re-ripple guard
+     * (rippleIntoNewGroups / addPosterMembershipToRippledGroups / pullRippledPostsFromLeftGroups)
+     * treats ANY Group/Left after a Group/Joined text='Rippled' as the poster opting out of that
+     * group, so a Left here would permanently bar this poster's FUTURE posts from rippling into
+     * the group (the trigger also fires on withdraw/expire, not just rejection). The removal is a
+     * system cleanup, not an opt-out — the retraction itself is audited by Message/Deleted, and
+     * the dangling Joined='Rippled' (no Left, no membership) is exactly what lets a later ripple
+     * re-add the membership. Idempotent (only touches deleted=0 rows). Best-effort: never breaks
+     * the run.
+     */
+    private function retractRippledCopiesForRemovedPost(int $msgid, array &$stats): void
+    {
+        $posterId = DB::table('messages')->where('id', $msgid)->value('fromuser');
 
-        return (int) (DB::selectOne('SELECT ROW_COUNT() AS n')->n ?? 0);
+        $groupids = DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('rippled_in', 1)
+            ->where('deleted', 0)
+            ->pluck('groupid');
+
+        foreach ($groupids as $groupid) {
+            $n = DB::affectingStatement(
+                'UPDATE messages_groups SET deleted = 1
+                 WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
+                [$msgid, $groupid]
+            );
+            if ($n < 1) {
+                continue;
+            }
+            $stats['pulled_on_removal']++;
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => 'Deleted',
+                'user' => $posterId,
+                'byuser' => null,
+                'groupid' => $groupid,
+                'msgid' => $msgid,
+                'text' => 'Rippling: removed on origin removal',
+            ]);
+
+            if (!$posterId) {
+                continue;
+            }
+            // Only remove the membership when this poster has no OTHER live post on the group
+            // (the copy we just pulled is now deleted=1, so it is excluded by deleted=0).
+            $hasOtherPost = DB::table('messages_groups as mg')
+                ->join('messages as m', 'm.id', '=', 'mg.msgid')
+                ->where('m.fromuser', $posterId)
+                ->where('mg.groupid', $groupid)
+                ->where('mg.deleted', 0)
+                ->exists();
+            if ($hasOtherPost) {
+                continue;
+            }
+            // Only a ripple-join (rippled=1) is removed; an organic membership is never touched.
+            $removed = DB::table('memberships')
+                ->where('userid', $posterId)
+                ->where('groupid', $groupid)
+                ->where('rippled', 1)
+                ->delete();
+            if ($removed > 0) {
+                $stats['memberships_removed']++;
+            }
+        }
     }
 
     private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
@@ -691,14 +804,26 @@ class ExpandService
      * rows); the membership re-join and any future re-ripple are blocked by the same
      * most-recent-join-wins rule. Best-effort: never breaks the run.
      */
-    private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats): void
+    private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         try {
+            // Scope-aware so this runs under a scoped (group-experiment) run too: restrict to the
+            // chosen post, or to posts whose origin point falls inside the area polygon.
+            $scopeSql = '';
+            $params = [];
+            if ($onlyMsgid !== null) {
+                $scopeSql = ' AND mg.msgid = ?';
+                $params[] = $onlyMsgid;
+            } elseif ($withinPolyWkt !== null) {
+                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(m.lng, m.lat), ' . self::SRID . '))';
+                $params[] = $withinPolyWkt;
+            }
+
             $rows = DB::select(
                 "SELECT mg.msgid, mg.groupid, m.fromuser
                  FROM messages_groups mg
                  JOIN messages m ON m.id = mg.msgid
-                 WHERE mg.rippled_in = 1 AND mg.deleted = 0
+                 WHERE mg.rippled_in = 1 AND mg.deleted = 0" . $scopeSql . "
                    AND EXISTS (
                        SELECT 1 FROM logs lj
                        WHERE lj.user = m.fromuser AND lj.groupid = mg.groupid
@@ -716,7 +841,8 @@ class ExpandService
                                AND ll.id > lj.id
                          )
                    )
-                 GROUP BY mg.msgid, mg.groupid, m.fromuser"
+                 GROUP BY mg.msgid, mg.groupid, m.fromuser",
+                $params
             );
 
             if (empty($rows)) {

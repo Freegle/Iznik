@@ -157,6 +157,29 @@ because the poster is from out of area.
 
 ---
 
+## Rejecting or removing a post on its home community
+
+This is different from a secondary rejection above. When a post is rejected, deleted or
+withdrawn on the community it was **originally posted to** (its home community), it is no
+longer a live offer anywhere - so:
+
+1. **It is pulled from every community it had rippled into**, automatically. You do not have
+   to chase it around the neighbouring communities; removing it at home cleans it up
+   everywhere it had spread.
+2. **It stops spreading.** Its rippling is halted, so it will not appear on any further
+   communities.
+
+This is exactly what you want when you catch spam or a rule-breaking post on its home
+community: dealing with it once removes it everywhere, instead of leaving live copies
+sitting on the neighbouring communities it had already reached.
+
+The poster is also removed from any community they had been auto-joined to **only** to carry
+that post (i.e. where they have no other posts). They keep their home community and any
+community where they have other activity, and - because this is a tidy-up rather than them
+choosing to leave - a later post of theirs can still ripple into those communities normally.
+
+---
+
 ## TrashNothing posts
 
 TrashNothing posts are currently **not** rippled out into new communities. TrashNothing
