@@ -1026,6 +1026,98 @@ class ExpandServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Regression (Discourse rippling-out #176/#179, msg 117580503): the group experiment runs
+     * SCOPED (global rippling off). A post rippled into B while its origin group was in the trial;
+     * the poster then LEFT B; later the origin group was REMOVED from the trial, so the post's
+     * origin fell OUTSIDE the current scope union. The leave-retraction must STILL pull the copy -
+     * cleanup of a committed rippled_in artifact is not gated by the current area scope, otherwise
+     * the post is stranded in a group the poster explicitly opted out of.
+     */
+    public function test_leave_retraction_is_not_gated_by_current_area_scope(): void
+    {
+        config(['freegle.ripple.enabled' => false]); // mirror production: scoped experiment only
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // origin (51.5, -0.1) London
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // Origin group still in the trial: scope union COVERS the origin -> post ripples into B,
+        // poster auto-joined (Group/Joined text='Rippled').
+        $coveringScope = 'POLYGON((-0.30 51.40,0.10 51.40,0.10 51.70,-0.30 51.70,-0.30 51.40))';
+        $this->service()->process(false, 500, null, $coveringScope);
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($row, 'precondition: post rippled into B');
+        $this->assertSame(0, (int) $row->deleted, 'precondition: rippled-in row live before leave');
+
+        // Poster leaves B (Go leave path: delete membership + Group/Left log).
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->delete();
+        DB::table('logs')->insert([
+            'timestamp' => now(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB->id,
+        ]);
+
+        // Origin group REMOVED from the trial: the scope union no longer covers the post's origin
+        // (a far-away Edinburgh polygon). Retraction must still run.
+        $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
+        $stats = $this->service()->process(false, 500, null, $nonCoveringScope);
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame(1, (int) $row->deleted,
+            'rippled copy must be pulled on leave even though the origin is outside the current trial scope');
+        $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
+            'groupid' => $groupB->id, 'msgid' => $msgid, 'text' => 'Rippling: removed on leave',
+        ]);
+    }
+
+    /**
+     * Companion to the leave case: when the origin post leaves the browsable set (withdrawn / taken
+     * / deleted) AFTER its origin group has left the trial, removeStaleAndRetract must still drop the
+     * reach and retract the rippled copies - it is no longer area-scoped, so an out-of-scope origin
+     * does not leave stale reach rows and orphaned copies behind.
+     */
+    public function test_stale_origin_retraction_is_not_gated_by_current_area_scope(): void
+    {
+        config(['freegle.ripple.enabled' => false]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // origin (51.5, -0.1) London
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $coveringScope = 'POLYGON((-0.30 51.40,0.10 51.40,0.10 51.70,-0.30 51.70,-0.30 51.40))';
+        $this->service()->process(false, 500, null, $coveringScope);
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'precondition: reach exists');
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'precondition: post rippled into B');
+        $this->assertSame(0, (int) $b->deleted, 'precondition: rippled-in row live');
+
+        // The post leaves the browsable set (withdrawn/taken/deleted -> gone from messages_spatial).
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+
+        // Origin group removed from the trial: scope no longer covers the origin.
+        $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
+        $stats = $this->service()->process(false, 500, null, $nonCoveringScope);
+
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'reach dropped even though the origin is outside the current trial scope');
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame(1, (int) $b->deleted,
+            'rippled copy retracted on origin removal regardless of the current area scope');
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
+    }
+
     /** The bundled intro email is claimed exactly once per post, even as more groups are added. */
     public function test_intro_email_claimed_once_per_post_across_groups(): void
     {
@@ -1510,8 +1602,15 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $m2)->where('groupid', $g2)->value('deleted'), 'out-of-scope copy untouched');
     }
 
-    /** A scoped (withinPolyWkt) run retracts only posts whose origin falls inside the polygon. */
-    public function test_scoped_within_poly_retracts_only_posts_inside_polygon(): void
+    /**
+     * The withinPolyWkt area scope limits EXPANSION only, NOT retraction: a scoped run retracts
+     * EVERY stale post, including one whose origin is outside the polygon. (Previously this asserted
+     * the out-of-polygon post was left untouched - that area-scoped retraction stranded rippled
+     * copies when a group was removed from the trial; see the two _not_gated_by_current_area_scope
+     * tests and Discourse rippling-out #176/#179.) Area-scoped expansion is still covered by
+     * test_within_poly_restricts_run_to_posts_inside_polygon.
+     */
+    public function test_scoped_within_poly_does_not_limit_retraction(): void
     {
         Http::fake();
         [$london] = $this->seedStaleReachWithRippledCopy(51.5, -0.1);
@@ -1521,7 +1620,7 @@ class ExpandServiceTest extends TestCase
         $this->service()->process(false, 500, null, $poly);
 
         $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $london)->count(), 'London post (inside polygon) retracted');
-        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $edinburgh)->count(), 'Edinburgh post (outside polygon) untouched');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $edinburgh)->count(), 'Edinburgh post (outside polygon) ALSO retracted - cleanup is not area-scoped');
     }
 
     /** The poster-leaves-a-rippled-group pull also runs under a scoped run (was dark during the experiment). */
