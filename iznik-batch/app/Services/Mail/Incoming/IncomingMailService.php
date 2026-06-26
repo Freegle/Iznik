@@ -3156,7 +3156,7 @@ class IncomingMailService
 
         // Use TYPE_INTERESTED only when we found the post being replied to.
         // Without a refmsgid, use TYPE_DEFAULT since we can't link to a specific post.
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $senderUser->id,
             $email,
@@ -3165,6 +3165,14 @@ class IncomingMailService
             spamScore: $spamScore,
             prependSubject: $prependSubject
         );
+
+        // Rippling-out (#3): a direct-email reply to a SPECIFIC post (refmsgid resolved via the
+        // x-fd-msgid header or subject match) must be held when the replier's area isn't covered
+        // by the post's reach yet - the same gate as the digest reply path - so the poster isn't
+        // notified out-of-reach via this route. Only when we linked the reply to a post.
+        if ($refMsgId !== null && $chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser);
+        }
 
         // Track email reply in email_tracking for AMP comparison stats.
         $this->trackEmailReply($chat->id, $senderUser->id);
