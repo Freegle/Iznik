@@ -128,7 +128,11 @@ func (d *JobsDataset) Query(idx *Index, params QueryParams) ([]QueryResult, erro
 	// KNN returns the nearest *distinct* jobs — the buffer expands past the
 	// duplicates to fill the limit with variety. Keyed on the Extra fields seeded
 	// in loadJobs/ApplyDelta.
-	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, nil, jobsDedupKey)
+	//
+	// Use jobBufferLevels (reach ~64km) rather than the shared 0.32° ceiling: a
+	// rural user has few nearby ads, so the search must widen far enough to fill
+	// the result, matching the pre-spatial expanding-box reach (JOBS_DISTANCE=64).
+	return findNearestPolygonLevels(idx, params.Lng, params.Lat, params.Limit, nil, jobsDedupKey, jobBufferLevels[:])
 }
 
 // jobsDedupKey collapses the many town-copies of one WhatJobs ad to a single
