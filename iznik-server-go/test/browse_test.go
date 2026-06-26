@@ -44,6 +44,35 @@ func TestRecordScrollDepth_IgnoresOutOfRange(t *testing.T) {
 	assert.Equal(t, 0, count, "an out-of-range position is not recorded")
 }
 
+// With a session id the handler upserts a single row per session, keeping the furthest
+// position - so the debounced client can report repeatedly (and on re-entry) without
+// double-counting.
+func TestRecordScrollDepth_SessionUpsertKeepsMax(t *testing.T) {
+	db := database.DBConn
+	session := uniquePrefix("sdsess")
+	defer db.Exec("DELETE FROM browse_scroll_depth WHERE session = ?", session)
+
+	post := func(max int) {
+		body := fmt.Sprintf(`{"session":%q,"maxposition":%d,"context":"browse"}`, session, max)
+		req := httptest.NewRequest("POST", "/api/scrolldepth", bytes.NewReader([]byte(body)))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	post(10)
+	post(25) // scrolled deeper - should win
+	post(8)  // shallower re-report - ignored
+
+	var count int
+	db.Raw("SELECT COUNT(*) FROM browse_scroll_depth WHERE session = ?", session).Scan(&count)
+	assert.Equal(t, 1, count, "repeat reports for one session collapse to a single row")
+
+	var maxpos int
+	db.Raw("SELECT max_position FROM browse_scroll_depth WHERE session = ?", session).Scan(&maxpos)
+	assert.Equal(t, 25, maxpos, "the row keeps GREATEST(max_position)")
+}
+
 // GET /modtools/scroll/depth returns the scroll-depth curve (Support/Admin only). Position 0 is,
 // by construction, reached by 100% of sessions, so that's a stable assertion regardless of what
 // other sessions are in the window.

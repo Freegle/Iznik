@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div ref="feedRoot">
     <h2 v-if="group && showGroupHeader" class="visually-hidden">
       Community Information
     </h2>
@@ -141,6 +141,7 @@ import {
   computed,
   watch,
   defineAsyncComponent,
+  onMounted,
   onBeforeUnmount,
 } from 'vue'
 import dayjs from 'dayjs'
@@ -250,13 +251,61 @@ const isochroneStore = useIsochroneStore()
 const { me, myid, myGroups: myMemberships } = useMe()
 
 // Browse-feed scroll-depth instrumentation: record how far down the feed this
-// session scrolls (reported once on leave/hide). 'search' vs 'browse' so the
-// sysadmin "Scrolling" tab can tell the two feeds apart.
+// session scrolls. 'search' vs 'browse' so the sysadmin "Scrolling" tab can tell
+// the two feeds apart. The composable debounces the send and upserts one row per
+// session (keyed on its session id), so repeat sends never double-count.
 const runtimeConfig = useRuntimeConfig()
 const { record: recordScrollDepth } = useScrollDepth(
   runtimeConfig?.public?.APIv2,
   () => (props.search ? 'search' : 'browse')
 )
+
+// Record the furthest feed position actually reached as the member scrolls -
+// not just at infinite-scroll batch boundaries (handleLoadMore), so even small
+// scrolls register. The message wrappers are in feed order, so the furthest one
+// whose top has entered the viewport is the deepest position reached; binary
+// search keeps this to O(log n) layout reads. The composable debounces the send.
+const feedRoot = ref(null)
+let scrollDepthTimer = null
+function captureScrollDepth() {
+  const root = feedRoot.value
+  if (!root || typeof window === 'undefined') return
+  const wrappers = root.querySelectorAll('.messagewrapper')
+  if (!wrappers.length) return
+  const vh = window.innerHeight || 0
+  let lo = 0
+  let hi = wrappers.length - 1
+  let furthest = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (wrappers[mid].getBoundingClientRect().top < vh) {
+      furthest = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  if (furthest >= 0) {
+    recordScrollDepth(furthest, wrappers.length)
+  }
+}
+function onFeedScroll() {
+  if (scrollDepthTimer) clearTimeout(scrollDepthTimer)
+  scrollDepthTimer = setTimeout(captureScrollDepth, 200)
+}
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('scroll', onFeedScroll, { passive: true })
+    // Count what's already on screen at landing (reached without scrolling).
+    captureScrollDepth()
+  }
+})
+onBeforeUnmount(() => {
+  if (scrollDepthTimer) clearTimeout(scrollDepthTimer)
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('scroll', onFeedScroll)
+  }
+})
 
 // Get the initial messages to show in a single call.
 // Wait for fetch to complete before enabling the split view (unseen/seen),
@@ -534,7 +583,10 @@ function pollUntilZero() {
   }
 
   markSeenTimer = setTimeout(async () => {
-    const count = await messageStore.fetchCount(me.value?.settings?.browseView, false)
+    const count = await messageStore.fetchCount(
+      me.value?.settings?.browseView,
+      false
+    )
     pollCount++
 
     if (count > 0 && pollCount < MAX_POLL_COUNT) {
