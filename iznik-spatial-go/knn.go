@@ -10,10 +10,27 @@ import (
 )
 
 // bufferLevels are the radii in decimal degrees for the 12 progressive buffer
-// levels, matching the V1 PostGIS expanding-buffer algorithm.
+// levels, matching the V1 PostGIS expanding-buffer algorithm. The 0.32° ceiling
+// (~21km E-W / ~35km N-S at UK latitudes) is sized for postcode→area / locations
+// lookups, where you only ever need the single nearest containing polygon.
 var bufferLevels = [12]float64{
 	0.00015625, 0.0003125, 0.000625, 0.00125, 0.0025, 0.005,
 	0.01, 0.02, 0.04, 0.08, 0.16, 0.32,
+}
+
+// jobBufferLevels extends the ladder so the jobs dataset reaches ~64km as the
+// pre-spatial expanding-box query (JOBS_DISTANCE=64) did, instead of stopping at
+// the 0.32° postcode-scale ceiling. Jobs need wide reach — a rural user has few
+// nearby ads, so the search must keep widening to fill the result with variety —
+// whereas postcode/area lookups want the tight ceiling. Routing jobs through the
+// shared 0.32° ladder (PR #764, 2026-06-16) starved rural/small-town users of
+// inventory (e.g. Fort William 4 ads vs ~36 within 64km), dropping WhatJobs
+// click volume ~40% with no fallback. The extra rings only ever run where the
+// inner ladder exhausts below `limit` — i.e. exactly the sparse areas that lost
+// reach — so dense urban queries are unaffected (they stop early as before).
+var jobBufferLevels = [14]float64{
+	0.00015625, 0.0003125, 0.000625, 0.00125, 0.0025, 0.005,
+	0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.48, 0.64,
 }
 
 // FindNearestPolygon returns up to limit polygon items that intersect an
@@ -35,6 +52,13 @@ var bufferLevels = [12]float64{
 // doesn't fill the result with copies). An empty key disables dedup for that
 // item (treated as always-distinct); nil disables dedup entirely.
 func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extra map[string]any) bool, dedupKey func(extra map[string]any) string) ([]QueryResult, error) {
+	return findNearestPolygonLevels(idx, lng, lat, limit, match, dedupKey, bufferLevels[:])
+}
+
+// findNearestPolygonLevels is FindNearestPolygon with an explicit buffer ladder,
+// so the jobs dataset can search wider than the shared 0.32° ceiling (see
+// jobBufferLevels) without affecting postcode/area/location callers.
+func findNearestPolygonLevels(idx *Index, lng, lat float64, limit int, match func(extra map[string]any) bool, dedupKey func(extra map[string]any) string, levels []float64) ([]QueryResult, error) {
 	type cand struct {
 		level int
 		area  float64
@@ -48,7 +72,7 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extr
 		dupKeys = make(map[string]struct{})
 	}
 
-	for level, radius := range bufferLevels {
+	for level, radius := range levels {
 		candidates, err := QueryBBox(idx, lng-radius, lng+radius, lat-radius, lat+radius)
 		if err != nil {
 			return nil, err
@@ -123,7 +147,7 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int, match func(extr
 	for i, m := range collected {
 		results[i] = QueryResult{
 			ID:       m.id,
-			Distance: bufferLevels[m.level],
+			Distance: levels[m.level],
 			Extra:    m.extra,
 		}
 	}

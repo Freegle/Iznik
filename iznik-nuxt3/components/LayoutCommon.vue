@@ -198,7 +198,9 @@ const allowAd = computed(() => {
   if (recentDonor.value) return false
   if (
     routePath.value === '/partnerships' ||
-    routePath.value === '/partnerships/'
+    routePath.value === '/partnerships/' ||
+    routePath.value === '/together' ||
+    routePath.value === '/together/'
   ) {
     return false
   }

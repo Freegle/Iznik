@@ -273,3 +273,41 @@ func TestCircleWKT_FirstPointRightmost(t *testing.T) {
 	require.True(t, ok)
 	assert.InDelta(t, -0.05, maxXY.X, 1e-9, "rightmost x should be cx+r")
 }
+
+// TestJobBufferLevelsExtendReach is the regression guard for the WhatJobs
+// rural-reach drop (PR #764 routed jobs through the shared 0.32° ladder, halving
+// reach and dropping click volume ~40%). A job ~0.4° away — beyond the shared
+// 0.32° ceiling but within the jobs ladder's 0.64° — must be invisible to the
+// default ladder yet found via jobBufferLevels, exactly as the jobs Query uses it.
+func TestJobBufferLevelsExtendReach(t *testing.T) {
+	// jobBufferLevels must strictly extend the shared ladder (same prefix, wider tail).
+	require.Greater(t, len(jobBufferLevels), len(bufferLevels),
+		"jobs ladder must add reach beyond the shared ceiling")
+	for i := range bufferLevels {
+		assert.Equal(t, bufferLevels[i], jobBufferLevels[i],
+			"jobs ladder must share the inner-level prefix so dense queries behave identically")
+	}
+	assert.Greater(t, jobBufferLevels[len(jobBufferLevels)-1], 0.32,
+		"jobs ladder must reach past the 0.32° postcode-scale ceiling")
+
+	idx, err := CreateIndex(":memory:")
+	require.NoError(t, err)
+	defer idx.Close()
+
+	// A small job polygon centred ~0.4° east of the query point — ~0.39° from it,
+	// i.e. past 0.32° (out of reach for postcode/area lookups) but inside 0.64°.
+	job := makeTestItem(t, 7, "Far Job", "Polygon",
+		"POLYGON((0.39 51.49, 0.41 51.49, 0.41 51.51, 0.39 51.51, 0.39 51.49))")
+	require.NoError(t, InsertItems(idx, []Item{job}, nil))
+
+	// Default ladder (0.32° ceiling) cannot reach it — this is the regression we fix.
+	shortReach, err := FindNearestPolygon(idx, 0, 51.5, 1, nil, nil)
+	require.NoError(t, err)
+	assert.Empty(t, shortReach, "0.32° ceiling must not reach a 0.39°-distant job (proves the bug exists)")
+
+	// Jobs ladder reaches it — restoring the pre-spatial 64km behaviour.
+	jobReach, err := findNearestPolygonLevels(idx, 0, 51.5, 1, nil, nil, jobBufferLevels[:])
+	require.NoError(t, err)
+	require.Len(t, jobReach, 1, "jobs ladder must reach the 0.39°-distant job")
+	assert.Equal(t, int64(7), jobReach[0].ID)
+}

@@ -548,13 +548,25 @@ class ExpandService
             $collection = $immediateApprove ? 'Approved' : 'Pending';
             $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
 
-            $n = DB::affectingStatement(
-                "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
-                 SELECT ?, g.id, '$collection', $approvedAt, NOW(), 0, m.type, 1
+            // Resolve the target groups with a plain, NON-LOCKING snapshot SELECT first, then
+            // insert each membership row on its own. The previous single INSERT ... SELECT took
+            // shared next-key locks on EVERY source row it read - the groups scan, the
+            // messages_groups dup check and the triple-nested `logs` "rippled-then-left" scan
+            // (100k-2.6M rows) - and held them for the whole statement under REPEATABLE READ. Run
+            // concurrently (the scheduler piled up dozens of overlapping runs) those locks collided
+            // on the messages_groups msgid index and on `logs`, starving the serial background
+            // worker's audit inserts (2026-06-26 1205 lock-wait storm + backlog). A read SELECT
+            // takes no row locks; each per-row INSERT IGNORE locks only the row it writes, briefly,
+            // and is Galera-safe (one row per statement). Mirrors addPosterMembershipToRippledGroups.
+            $msg = DB::table('messages')->where('id', $msgid)->first(['type', 'fromuser']);
+            if (!$msg) {
+                return;
+            }
+
+            $targetGroups = DB::select(
+                "SELECT g.id
                  FROM `groups` g
-                 CROSS JOIN messages m
-                 WHERE m.id = ?
-                   AND g.publish = 1
+                 WHERE g.publish = 1
                    AND g.type = 'Freegle'
                    AND g.onhere = 1
                    AND g.nameshort NOT LIKE '%playground%'
@@ -573,7 +585,7 @@ class ExpandService
                        -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow
                        -- that ripple-join. Sites B/C apply the identical rule.
                        SELECT 1 FROM logs lj
-                       WHERE lj.user = m.fromuser AND lj.groupid = g.id
+                       WHERE lj.user = ? AND lj.groupid = g.id
                          AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
                          AND NOT EXISTS (
                              SELECT 1 FROM logs lj2
@@ -588,8 +600,18 @@ class ExpandService
                                AND ll.id > lj.id
                          )
                    )",
-                [$msgid, $msgid, $reachWkt, $msgid]
+                [$reachWkt, $msgid, $msg->fromuser]
             );
+
+            $n = 0;
+            foreach ($targetGroups as $g) {
+                $n += DB::affectingStatement(
+                    "INSERT IGNORE INTO messages_groups
+                        (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
+                     VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
+                    [$msgid, $g->id, $msg->type]
+                );
+            }
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
                 // §15/§16 instrumentation: count groups a post was rippled into.
