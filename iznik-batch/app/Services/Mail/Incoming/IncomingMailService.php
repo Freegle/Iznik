@@ -2128,7 +2128,12 @@ class IncomingMailService
                 // visible link. Without the lookup the chat message exists
                 // but ModTools wouldn't be able to show the original SMTP
                 // source.
+                // useWritePdo: a concurrent sibling process inserted this row on the
+                // write host. Under the read/write split a plain read could hit a
+                // lagging replica that hasn't applied that insert yet, returning null
+                // and dropping the chat-message-to-SMTP-source link.
                 $existingId = DB::table('messages')
+                    ->useWritePdo()
                     ->where('messageid', $messageId)
                     ->value('id');
                 if ($existingId) {
@@ -3982,15 +3987,20 @@ class IncomingMailService
      */
     private function addToSpatialIndex(int $messageId, int $groupId): void
     {
-        $message = Message::find($messageId);
+        // useWritePdo: this runs immediately after the message is created and its
+        // messages_groups row set to Approved (see routeToGroup). Under the read/write
+        // split a plain read could hit a lagging replica and return null, silently
+        // skipping the spatial-index entry until the reconciler cron catches up.
+        $message = Message::query()->useWritePdo()->find($messageId);
         if (! $message || (! $message->lat && ! $message->lng)) {
             return;
         }
 
         $srid = config('freegle.srid', 3857);
 
-        // Get arrival from messages_groups
+        // Get arrival from messages_groups (same read-your-write reasoning as above).
         $mg = DB::table('messages_groups')
+            ->useWritePdo()
             ->where('msgid', $messageId)
             ->where('groupid', $groupId)
             ->first();

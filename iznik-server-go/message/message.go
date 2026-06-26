@@ -32,6 +32,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 // Pre-compiled regexps to avoid recompiling on every message fetch.
@@ -1857,7 +1858,12 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 		Arrival string
 	}
 	var rows []spatialRow
-	db.Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
+	// Pin to the write host: the caller has just UPDATEd messages_groups.collection
+	// to Approved on the source. Under the read/write split a plain SELECT would be
+	// routed to the read replica, which may not have applied that write yet (Galera
+	// apply-lag), so the row would be missed and the post left out of the spatial
+	// index until the periodic reconciler runs.
+	db.Clauses(dbresolver.Write).Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
 		"messages_groups.groupid AS groupid, "+
 		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
 		"FROM messages "+
@@ -1915,8 +1921,10 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
+	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -2066,7 +2074,9 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		// Cascade soft-delete: if no non-deleted groups remain, mark messages.deleted
 		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
 		var remainingGroups int64
-		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 		if remainingGroups == 0 {
 			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
@@ -2175,7 +2185,9 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// If no non-deleted groups remain, soft-delete the message itself.
 	var remainingGroups int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 	if remainingGroups == 0 {
 		if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 			log.Printf("Failed to soft-delete message %d: %v", req.ID, result.Error)
@@ -2238,7 +2250,9 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// If no non-deleted groups remain, soft-delete the message itself.
 	var remainingGroups int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 	if remainingGroups == 0 {
 		db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", req.ID)
 
@@ -2345,8 +2359,10 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
+	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -2701,7 +2717,10 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// This catches pre-validation drafts created before PUT /message required
 	// item, and any other path that leaves subject empty by submit time.
 	var finalSubject string
-	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
+	// Pin to the write host: we may have just UPDATEd messages.subject above, and this
+	// read gates a hard validation error. A lagging replica could see the old/empty
+	// subject and wrongly reject a valid post.
+	db.Clauses(dbresolver.Write).Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
 	if strings.TrimSpace(finalSubject) == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
 	}
@@ -2728,7 +2747,9 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// Record history entry for spam checking (V1 parity: Message::save() inserts into messages_history).
 	// We fetch user email/name from the DB since platform messages don't have envelope headers.
 	var histSubject string
-	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&histSubject)
+	// Pin to the write host: this is the subject we may have just UPDATEd, written here
+	// into messages_history. A lagging replica read would persist a stale/empty subject.
+	db.Clauses(dbresolver.Write).Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&histSubject)
 	var histFromname string
 	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&histFromname)
 	// V1 parity: submit() calls inventEmail() to get/create the user's @users.ilovefreegle.org

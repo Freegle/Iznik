@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 // =============================================================================
@@ -1212,7 +1213,11 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 	}
 
 	var counts []countRow
-	db.Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
+	// Pin to the write host: callers invoke this immediately after UPDATEing
+	// chat_messages.reviewrequired/reviewrejected on the source, and these recounted
+	// totals are written back to chat_rooms. A lagging replica read would persist
+	// stale valid/invalid counts that survive until the next approve/reject.
+	db.Clauses(dbresolver.Write).Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
 		"COUNT(*) AS count FROM chat_messages WHERE chatid = ? "+
 		"GROUP BY CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END",
 		chatID).Scan(&counts)
