@@ -149,8 +149,16 @@ class ExpandCommandTest extends TestCase
         $this->assertTrue($held->get());
 
         try {
+            // Assert the dry-run notice line ('...no reach will be written') AND the summary line
+            // ('Initialised:'), proving the body ran despite the held lock. Deliberately NOT
+            // 'DRY RUN': the summary line is prefixed '[DRY RUN] Initialised: ...', so it contains
+            // BOTH substrings. Laravel's PendingCommand registers one doWrite matcher per expected
+            // substring; a line matching several is consumed by the FIRST matcher only, so a
+            // 'DRY RUN' expectation would swallow the summary line and starve the 'Initialised:'
+            // matcher (false "Output does not contain 'Initialised:'"). 'no reach will be written'
+            // appears only on the notice line, so the two expectations never overlap.
             $this->artisan('ripple:expand', ['--dry-run' => true, '--limit' => 1])
-                ->expectsOutputToContain('DRY RUN')
+                ->expectsOutputToContain('no reach will be written')
                 ->expectsOutputToContain('Initialised:')
                 ->assertExitCode(0);
         } finally {
