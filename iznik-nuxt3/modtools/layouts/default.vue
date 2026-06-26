@@ -237,7 +237,6 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
-          v-if="supportOrAdmin"
           link="/rippling"
           name="Rippling"
           @mobilehidemenu="mobilehidemenu"
