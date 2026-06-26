@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Make your group more welcoming'])
+  @include('emails.mjml.partials.head', ['preview' => 'Make ' . $groupName . ' more welcoming for your members'])
 
   <mj-body background-color="#f4f4f4">
 

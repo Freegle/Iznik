@@ -46,18 +46,17 @@ const avatar = computed(() => {
 })
 
 const snippet = computed(() => {
-  let ret = props.topic.raw
+  const src = props.topic.raw || props.topic.cooked?.replace(/<[^>]+>/g, '') || ''
+  let ret = src
     .replace('\n', ' ')
     .replace(/!\[image.*?\]/g, '')
     .replace(/\[quote.*?\]/g, '"')
     .replace(/\[\/quote\]/g, '"')
   const p = ret.indexOf('>')
-
   if (p !== -1) {
     ret = ret.substring(0, p)
   }
-
-  return ret.substring(0, 120) + '...'
+  return ret.substring(0, 120) + (ret.length > 120 ? '...' : '')
 })
 
 const link = computed(() => {

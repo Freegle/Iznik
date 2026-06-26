@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div ref="feedRoot">
     <h2 v-if="group && showGroupHeader" class="visually-hidden">
       Community Information
     </h2>
@@ -14,10 +14,7 @@
 
     <div
       v-if="
-        initialFetchDone &&
-        selectedSort === 'Unseen' &&
-        showCountsUnseen &&
-        me
+        initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
       "
     >
       <MessageListCounts
@@ -34,10 +31,7 @@
          must not hide once shown, as toggling it on re-fetch causes CLS. -->
     <template
       v-if="
-        initialFetchDone &&
-        selectedSort === 'Unseen' &&
-        showCountsUnseen &&
-        me
+        initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
       "
     >
       <!-- Unseen messages grid -->
@@ -147,6 +141,7 @@ import {
   computed,
   watch,
   defineAsyncComponent,
+  onMounted,
   onBeforeUnmount,
 } from 'vue'
 import dayjs from 'dayjs'
@@ -154,8 +149,10 @@ import MessageListUpToDate from './MessageListUpToDate'
 import ScrollGrid from '~/components/ScrollGrid'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
+import { useIsochroneStore } from '~/stores/isochrone'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
+import { useScrollDepth } from '~/composables/useScrollDepth'
 
 const OurMessage = defineAsyncComponent(() =>
   import('~/components/OurMessage.vue')
@@ -250,7 +247,65 @@ const emit = defineEmits(['update:none', 'update:visible'])
 
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
-const { me, myid } = useMe()
+const isochroneStore = useIsochroneStore()
+const { me, myid, myGroups: myMemberships } = useMe()
+
+// Browse-feed scroll-depth instrumentation: record how far down the feed this
+// session scrolls. 'search' vs 'browse' so the sysadmin "Scrolling" tab can tell
+// the two feeds apart. The composable debounces the send and upserts one row per
+// session (keyed on its session id), so repeat sends never double-count.
+const runtimeConfig = useRuntimeConfig()
+const { record: recordScrollDepth } = useScrollDepth(
+  runtimeConfig?.public?.APIv2,
+  () => (props.search ? 'search' : 'browse')
+)
+
+// Record the furthest feed position actually reached as the member scrolls -
+// not just at infinite-scroll batch boundaries (handleLoadMore), so even small
+// scrolls register. The message wrappers are in feed order, so the furthest one
+// whose top has entered the viewport is the deepest position reached; binary
+// search keeps this to O(log n) layout reads. The composable debounces the send.
+const feedRoot = ref(null)
+let scrollDepthTimer = null
+function captureScrollDepth() {
+  const root = feedRoot.value
+  if (!root || typeof window === 'undefined') return
+  const wrappers = root.querySelectorAll('.messagewrapper')
+  if (!wrappers.length) return
+  const vh = window.innerHeight || 0
+  let lo = 0
+  let hi = wrappers.length - 1
+  let furthest = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (wrappers[mid].getBoundingClientRect().top < vh) {
+      furthest = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  if (furthest >= 0) {
+    recordScrollDepth(furthest, wrappers.length)
+  }
+}
+function onFeedScroll() {
+  if (scrollDepthTimer) clearTimeout(scrollDepthTimer)
+  scrollDepthTimer = setTimeout(captureScrollDepth, 200)
+}
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('scroll', onFeedScroll, { passive: true })
+    // Count what's already on screen at landing (reached without scrolling).
+    captureScrollDepth()
+  }
+})
+onBeforeUnmount(() => {
+  if (scrollDepthTimer) clearTimeout(scrollDepthTimer)
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('scroll', onFeedScroll)
+  }
+})
 
 // Get the initial messages to show in a single call.
 // Wait for fetch to complete before enabling the split view (unseen/seen),
@@ -363,6 +418,19 @@ const filteredMessagesInStore = computed(() => {
   return ret
 })
 
+// Group ids the logged-in user is a member of, for duplicate-preference below.
+const myGroupIdSet = computed(
+  () => new Set((myMemberships?.value || []).map((g) => parseInt(g.id)))
+)
+
+// True if a message is posted to a group the user already belongs to.
+function isOnMyGroup(message) {
+  if (!message?.groups || !myGroupIdSet.value.size) {
+    return false
+  }
+  return message.groups.some((g) => myGroupIdSet.value.has(parseInt(g.groupid)))
+}
+
 const deDuplicatedMessages = computed(() => {
   let ret = []
   const dups = []
@@ -385,12 +453,18 @@ const deDuplicatedMessages = computed(() => {
         // Already got this id
       } else if (m.id !== props.exclude) {
         ids[m.id] = true
-        let key = message.fromuser + '|' + message.subject
+        // Strip trailing (location) so that "bike (Bethnal Green)" and "bike (Bethel)"
+        // from the same poster collapse to one entry (Discourse 9733/7).
+        const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
+        let key = message.fromuser + '|' + stripLocation(message.subject)
         const p = message.subject.indexOf(':')
 
         if (p !== -1) {
           key =
-            message.fromuser + '|' + message.type + message.subject.substring(p)
+            message.fromuser +
+            '|' +
+            message.type +
+            stripLocation(message.subject.substring(p))
         }
 
         const already = key in dups
@@ -400,9 +474,29 @@ const deDuplicatedMessages = computed(() => {
             ret = ret.filter((m) => m.id !== dups[key])
           }
           ret.push(m)
+          dups[key] = m.id
         } else if (!already) {
           ret.push(m)
           dups[key] = m.id
+        } else {
+          // Duplicate of one we're already showing (same poster + item, e.g. a
+          // crosspost or a re-post on another group). Prefer the copy on a group
+          // the user is already a member of: otherwise we'd dedup to a non-member
+          // group and replying to it would silently sign them up to that group
+          // (Discourse 9733 / 9729). firstSeenMessage always wins and is never
+          // replaced here.
+          const keptId = dups[key]
+          if (
+            keptId !== props.firstSeenMessage &&
+            isOnMyGroup(message) &&
+            !isOnMyGroup(filteredMessagesInStore.value[keptId])
+          ) {
+            const idx = ret.findIndex((x) => x.id === keptId)
+            if (idx !== -1) {
+              ret[idx] = m
+            }
+            dups[key] = m.id
+          }
         }
       }
     })
@@ -459,10 +553,15 @@ function visibilityChanged(visible) {
 }
 
 function markSeen() {
-  // Collect all unseen message IDs
+  // Mark the whole list the count is computed over (the full isochrone/mygroups response),
+  // not just the rendered/viewport subset — otherwise unseen posts that are off-screen or
+  // filtered out keep the server count above zero and "Mark seen" can never clear it.
+  const source = isochroneStore.messageList?.length
+    ? isochroneStore.messageList
+    : props.messagesForList
   const ids = []
 
-  props.messagesForList.forEach((m) => {
+  source.forEach((m) => {
     if (m.unseen) {
       ids.push(m.id)
     }
@@ -484,7 +583,10 @@ function pollUntilZero() {
   }
 
   markSeenTimer = setTimeout(async () => {
-    const count = await messageStore.fetchCount(me?.settings?.browseView, false)
+    const count = await messageStore.fetchCount(
+      me.value?.settings?.browseView,
+      false
+    )
     pollCount++
 
     if (count > 0 && pollCount < MAX_POLL_COUNT) {
@@ -495,6 +597,11 @@ function pollUntilZero() {
 }
 
 async function handleLoadMore(currentIndex) {
+  // Record the furthest feed position this session has reached (the infinite-scroll
+  // index grows as the member scrolls down). The composable keeps the max and reports
+  // it once on leave/hide.
+  recordScrollDepth(currentIndex, reduceSuccessful.value?.length || 0)
+
   // Prefetch upcoming messages when scrolling.
   // ScrollGrid loads 10 items at a time, so we need to fetch at least 10 ahead.
   const batchSize = 15

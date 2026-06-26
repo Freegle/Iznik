@@ -1,12 +1,12 @@
 <mjml>
   @if($isMod2Mod ?? false)
-  @include('emails.mjml.partials.head', ['preview' => $senderName . ' sent a message in Volunteer Chat'])
+  @include('emails.mjml.partials.head', ['preview' => $senderName . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 70)])
   @elseif($isModerator ?? false)
-  @include('emails.mjml.partials.head', ['preview' => 'Member conversation with ' . ($memberName ?? 'a member')])
+  @include('emails.mjml.partials.head', ['preview' => ($memberName ?? 'Member') . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 70)])
   @elseif($isOwnMessage ?? false)
-  @include('emails.mjml.partials.head', ['preview' => 'Copy of your message to ' . ($otherUserName ?? 'the other user')])
+  @include('emails.mjml.partials.head', ['preview' => 'Your message to ' . ($otherUserName ?? 'the other user') . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 55)])
   @else
-  @include('emails.mjml.partials.head', ['preview' => $senderName . ' sent you a message'])
+  @include('emails.mjml.partials.head', ['preview' => $senderName . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 75)])
   @endif
   <mj-body background-color="#ffffff">
     {{-- Header - ModTools blue for moderators, Freegle green for members --}}
@@ -379,8 +379,12 @@
                 <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
               </a>
             </td>
-            @endif
             <td style="padding: 6px 0; vertical-align: middle;">
+            @else
+            {{-- No image: span both columns so the title fills the row instead of
+                 being squeezed into the right column reserved by sibling rows. --}}
+            <td colspan="2" style="padding: 6px 0; vertical-align: middle;">
+            @endif
               <a href="{{ $job->tracked_url }}" style="color: {{ $accentColor }}; font-weight: bold; text-decoration: none; font-size: 14px;">
                 {{ $job->title }}
               </a>

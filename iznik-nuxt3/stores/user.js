@@ -281,6 +281,9 @@ export const useUserStore = defineStore({
     async purge(id) {
       await api(this.config).user.purge(id)
     },
+    async unsubscribe(id) {
+      await api(this.config).user.unsubscribe(id)
+    },
     async ratingReviewed(params) {
       await api(this.config).user.ratingReviewed(params.id)
     },

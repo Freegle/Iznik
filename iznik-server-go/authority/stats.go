@@ -6,6 +6,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
+	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 // Constants for authority statistics types.
@@ -31,7 +33,14 @@ type PostcodeStats struct {
 // GetStatsByAuthority retrieves statistics for an authority area.
 // Returns a map of partial postcodes to their stats.
 func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]PostcodeStats, error) {
-	db := database.DBConn
+	// Every statement here must run on the WRITE host. The temporary table `pc`
+	// is connection-local, so the SELECTs that read it must hit the same server
+	// that created it. Under the read/write split a plain SELECT would otherwise
+	// be routed to the read replica, where `pc` does not exist. writer() returns
+	// a fresh handle pinned to the source; .Clauses(dbresolver.Write) is a no-op
+	// when no replica is configured. A new handle per call is required because a
+	// .Clauses() result is not safe to reuse across multiple queries.
+	writer := func() *gorm.DB { return database.DBConn.Clauses(dbresolver.Write) }
 
 	// Parse dates, defaulting to last 365 days.
 	startTime, err := parseRelativeDate(start)
@@ -48,12 +57,12 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 
 	// Create temporary table of locationids for postcodes within the authority.
 	// Use a temporary table of postcode locationids within the authority.
-	err = db.Exec(`DROP TEMPORARY TABLE IF EXISTS pc`).Error
+	err = writer().Exec(`DROP TEMPORARY TABLE IF EXISTS pc`).Error
 	if err != nil {
 		return nil, err
 	}
 
-	err = db.Exec(`CREATE TEMPORARY TABLE pc AS (
+	err = writer().Exec(`CREATE TEMPORARY TABLE pc AS (
 		SELECT locationid
 		FROM authorities
 		INNER JOIN locations_spatial ON authorities.id = ?
@@ -72,7 +81,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		db.Raw(`
+		writer().Raw(`
 			SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
 				   COUNT(*) as count
 			FROM pc
@@ -103,7 +112,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		db.Raw(`
+		writer().Raw(`
 			SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
 				   COUNT(*) as count
 			FROM pc
@@ -130,7 +139,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		Count           int    `gorm:"column:count"`
 	}
 
-	db.Raw(`
+	writer().Raw(`
 		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
 			   COUNT(*) AS count
 		FROM pc
@@ -155,7 +164,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 	var avgResult struct {
 		Average *float64 `gorm:"column:average"`
 	}
-	db.Raw(`SELECT SUM(popularity * weight) / SUM(popularity) AS average
+	writer().Raw(`SELECT SUM(popularity * weight) / SUM(popularity) AS average
 		FROM items WHERE weight IS NOT NULL AND weight != 0`).Scan(&avgResult)
 
 	avg := float64(0)
@@ -168,7 +177,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		Weight          float64 `gorm:"column:weight"`
 	}
 
-	db.Raw(fmt.Sprintf(`
+	writer().Raw(fmt.Sprintf(`
 		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
 			   SUM(COALESCE(weight, %f)) AS weight
 		FROM pc
@@ -196,7 +205,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		Count           int    `gorm:"column:count"`
 	}
 
-	db.Raw(`
+	writer().Raw(`
 		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
 			   COUNT(*) AS count
 		FROM pc
@@ -215,7 +224,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 	}
 
 	// Clean up temporary table.
-	db.Exec(`DROP TEMPORARY TABLE IF EXISTS pc`)
+	writer().Exec(`DROP TEMPORARY TABLE IF EXISTS pc`)
 
 	return ret, nil
 }

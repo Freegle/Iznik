@@ -27,7 +27,7 @@
       their introductions appear automatically on here, and also show to other
       freeglers in chats.)
     </div>
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal"
       :id="userid"
       @hidden="showProfileModal = false"
@@ -40,10 +40,6 @@ import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 import NewsUserInfo from '~/components/NewsUserInfo'
 import ProfileImage from '~/components/ProfileImage'
-
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
 
 const props = defineProps({
   userid: {

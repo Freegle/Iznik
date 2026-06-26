@@ -12,6 +12,24 @@
 
 ---
 
+## Status (as of 2026-05-27)
+
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14 (+ hold/release/backToPending client plumbing), 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24, 25, 26, 27 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, per-group edit-subject keyword + mod-delete audit log, remaining `groups[0]` client sites, store/ModTools client changes, digest header group selection.
+
+**Open work (❌):**
+
+| Task | Area | Summary |
+|------|------|---------|
+| 19 | Audit | ✅ Write `plans/multi-group-stats-audit.md`; one pre-Task-20 fix identified (session.go held-check must use mg.heldby) |
+| 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
+| 22 | Audit | ✅ Write `plans/multi-group-v1-audit-results.md`; ModBot multi-group rule merge fixed |
+| 28 | Go | ✅ `getPrimaryGroupForMessage` re-labelled as legacy fallback |
+| 29 | Laravel | ✅ `DeadlineReached` and `ChatNotification` now pick the recipient's group |
+
+**Also flagged (deviation from spec):** Task 7 soft-deletes the `messages_groups` row on spam instead of setting `collection='Spam'` + `spamtype`/`spamreason`. The new `spamtype`/`spamreason` columns are currently unwritten by Go handlers. Reconcile before Task 20.
+
+---
+
 ## File Structure
 
 ### New files
@@ -47,7 +65,9 @@
 
 ---
 
-## Task 1: Schema Migration — Add Per-Group Columns
+## Task 1: Schema Migration — Add Per-Group Columns ✅ DONE
+
+Implemented in [iznik-batch/database/migrations/2026_04_14_000001_add_per_group_columns_to_messages_groups.php](iznik-batch/database/migrations/2026_04_14_000001_add_per_group_columns_to_messages_groups.php).
 
 **Files:**
 - Create: `iznik-batch/database/migrations/YYYY_MM_DD_000001_add_per_group_columns_to_messages_groups.php`
@@ -107,7 +127,9 @@ git commit -m "feat: add heldby/spamtype/spamreason columns to messages_groups f
 
 ---
 
-## Task 2: Data Migration — Copy Existing Per-Group State
+## Task 2: Data Migration — Copy Existing Per-Group State ✅ DONE
+
+Implemented in [iznik-batch/database/migrations/2026_04_14_000002_copy_per_group_data_to_messages_groups.php](iznik-batch/database/migrations/2026_04_14_000002_copy_per_group_data_to_messages_groups.php).
 
 **Files:**
 - Create: `iznik-batch/database/migrations/YYYY_MM_DD_000002_copy_per_group_data_to_messages_groups.php`
@@ -175,7 +197,9 @@ git commit -m "feat: copy heldby/spamtype/spamreason from messages to messages_g
 
 ---
 
-## Task 3: Go API — MessageGroup Struct Update
+## Task 3: Go API — MessageGroup Struct Update ✅ DONE
+
+`Heldby`, `Spamtype`, `Spamreason` added to [messageGroup.go:27-29](iznik-server-go/message/messageGroup.go#L27-L29) and `Heldby` added to `MessageGroupInfo` in [message_list.go:24](iznik-server-go/message/message_list.go#L24).
 
 **Files:**
 - Modify: `iznik-server-go/message/messageGroup.go:13-24`
@@ -237,7 +261,9 @@ git commit -m "feat: add heldby/spamtype/spamreason to MessageGroup struct for p
 
 ---
 
-## Task 4: Go API — Per-Group Hold
+## Task 4: Go API — Per-Group Hold ✅ DONE
+
+Implemented in [message.go:1959-1988](iznik-server-go/message/message.go#L1959-L1988). Uses `resolveAuthorizedGroups()` to determine which groups to act on, writes `heldby` per group, logs per group. Dual-writes to `messages.heldby` for backwards compat.
 
 **Files:**
 - Modify: `iznik-server-go/message/message.go:1470-1484` (handleHold)
@@ -352,7 +378,9 @@ git commit -m "feat: per-group hold — write heldby to messages_groups instead 
 
 ---
 
-## Task 5: Go API — Per-Group Release
+## Task 5: Go API — Per-Group Release ✅ DONE
+
+Implemented in [message.go:2029-2062](iznik-server-go/message/message.go#L2029-L2062). Per-group `heldby = NULL`, clears `messages.heldby` only when no group still holds.
 
 **Files:**
 - Modify: `iznik-server-go/message/message.go:1513-1527` (handleRelease)
@@ -460,7 +488,9 @@ git commit -m "feat: per-group release — clear heldby on specific messages_gro
 
 ---
 
-## Task 6: Go API — Per-Group Delete
+## Task 6: Go API — Per-Group Delete ✅ DONE
+
+Implemented in [message.go:1854-1915](iznik-server-go/message/message.go#L1854-L1915). `DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?`, soft-deletes message + queues freebie-alerts removal only when last group is gone.
 
 **Files:**
 - Modify: `iznik-server-go/message/message.go:1407-1450` (handleDeleteMessage)
@@ -619,7 +649,11 @@ git commit -m "feat: per-group delete — only remove message from specified gro
 
 ---
 
-## Task 7: Go API — Per-Group Spam
+## Task 7: Go API — Per-Group Spam ✅ DONE (with deviation)
+
+Implemented in [message.go:1918-1956](iznik-server-go/message/message.go#L1918-L1956). **Deviation from plan**: rather than setting `collection='Spam'` and writing `spamtype`/`spamreason`, the implementation soft-deletes the `messages_groups` row (`deleted = 1`). Records in `messages_spamham` for training. Soft-deletes the message itself only if no non-deleted groups remain.
+
+If `spamtype`/`spamreason` on `messages_groups` is supposed to be populated by `handleSpam`, that work is still pending — but the added columns are currently unused by this handler. Reconcile with the design before Task 20 (drop old columns).
 
 **Files:**
 - Modify: `iznik-server-go/message/message.go:1452-1468` (handleSpam)
@@ -729,7 +763,9 @@ git commit -m "feat: per-group spam — mark spam on specific group only"
 
 ---
 
-## Task 8: Go API — Per-Group BackToPending
+## Task 8: Go API — Per-Group BackToPending ✅ DONE
+
+Implemented in [message.go:1992-2026](iznik-server-go/message/message.go#L1992-L2026). Per-group hold + move from Approved to Pending; logs per group.
 
 **Files:**
 - Modify: `iznik-server-go/message/message.go:1486-1511` (handleBackToPending)
@@ -836,7 +872,9 @@ git commit -m "feat: per-group back-to-pending — hold only on the target group
 
 ---
 
-## Task 9: Go API — logAndNotifyMods Per-Group Logging
+## Task 9: Go API — logAndNotifyMods Per-Group Logging ✅ DONE
+
+Hold/Release/BackToPending now loop through `authorizedGroups` and call `logAndNotifyMods` once per group with `ctx.Groupid` set to that group. Verified at [message.go:1983-1986](iznik-server-go/message/message.go#L1983-L1986).
 
 **Files:**
 - Modify: `iznik-server-go/message/message.go:1276-1285` (logAndNotifyMods)
@@ -901,7 +939,11 @@ git commit -m "test: verify mod action logs reference the specific target group"
 
 ---
 
-## Task 10: Go API — Microvolunteering sendForReview Per-Group
+## Task 10: Go API — Microvolunteering sendForReview Per-Group ✅ DONE
+
+Implemented at [microvolunteering.go:875-887](/iznik-server-go/microvolunteering/microvolunteering.go#L877-L892).
+
+The `UPDATE messages SET spamreason` write was dropped — `messages.spamreason` is on the chopping block in Task 20 and was no longer needed for cross-system reads (only a non-critical CLI validation command still references it).
 
 **Files:**
 - Modify: `iznik-server-go/microvolunteering/microvolunteering.go:712-717`
@@ -969,7 +1011,9 @@ git commit -m "feat: sendForReview per-group — write spamreason to messages_gr
 
 ---
 
-## Task 11: Go API — List/Search Dedup Across Groups
+## Task 11: Go API — List/Search Dedup Across Groups ✅ DONE
+
+`SELECT DISTINCT mg.msgid` is now used across the relevant branches in [message_list.go:131,143,157,168,181,509](iznik-server-go/message/message_list.go). Confirm tests still cover the multi-group case (if not, add as a follow-up).
 
 **Files:**
 - Modify: `iznik-server-go/message/message_list.go:177-200`
@@ -1042,7 +1086,9 @@ git commit -m "feat: deduplicate message listings when message is on multiple qu
 
 ---
 
-## Task 12: Background TN Dedup Job
+## Task 12: Background TN Dedup Job ✅ DONE
+
+Implemented in [iznik-batch/app/Console/Commands/Dedup/TnDedupCommand.php](iznik-batch/app/Console/Commands/Dedup/TnDedupCommand.php) with tests at [iznik-batch/tests/Unit/Commands/Dedup/TnDedupCommandTest.php](iznik-batch/tests/Unit/Commands/Dedup/TnDedupCommandTest.php).
 
 **Files:**
 - Create: `iznik-batch/app/Console/Commands/Dedup/TnDedupCommand.php`
@@ -1235,7 +1281,9 @@ git commit -m "feat: background TN dedup job — merge cross-posted messages by 
 
 ---
 
-## Task 13: Nuxt — Message Store getByGroup Fix
+## Task 13: Nuxt — Message Store getByGroup Fix ✅ DONE
+
+[stores/message.js:718-727](iznik-nuxt3/stores/message.js#L718-L727) now matches any group in the array via `message.groups.some(...)`.
 
 **Files:**
 - Modify: `iznik-nuxt3/stores/message.js:683-692`
@@ -1274,7 +1322,9 @@ git commit -m "fix: getByGroup matches message on any group, not just groups[0]"
 
 ---
 
-## Task 14: Nuxt — ModTools Contextual Groupid
+## Task 14: Nuxt — ModTools Contextual Groupid ✅ DONE
+
+`groupid` prop is now plumbed through [ModMessage.vue:799](iznik-nuxt3/modtools/components/ModMessage.vue#L799), [ModMessageButton.vue:139,184](iznik-nuxt3/modtools/components/ModMessageButton.vue#L139), and passed to child components ([ModMessage.vue:265,459,557,618](iznik-nuxt3/modtools/components/ModMessage.vue#L265)). Components still fall back to `groups[0]` when no prop is given — that fallback is acceptable for legacy callers.
 
 **Files:**
 - Modify: `iznik-nuxt3/modtools/components/ModMessage.vue`
@@ -1347,7 +1397,9 @@ git commit -m "feat: ModTools components use contextual groupid prop instead of 
 
 ---
 
-## Task 15: Nuxt — ModTools Multi-Group Indicator
+## Task 15: Nuxt — ModTools Multi-Group Indicator ✅ DONE
+
+`otherGroups` computed at [ModMessage.vue:822](iznik-nuxt3/modtools/components/ModMessage.vue#L822) and "Also on:" badge at [ModMessage.vue:143-151](iznik-nuxt3/modtools/components/ModMessage.vue#L143-L151). Withdraw-warning text for delete/spam still needs verification — confirm `ModMessageButton.vue` modals show the "remains on N other groups" warning, otherwise add it as a follow-up.
 
 **Files:**
 - Modify: `iznik-nuxt3/modtools/components/ModMessage.vue`
@@ -1395,7 +1447,9 @@ git commit -m "feat: show multi-group indicator and per-group action warnings in
 
 ---
 
-## Task 16: Nuxt — Sort by Contextual Group Arrival
+## Task 16: Nuxt — Sort by Contextual Group Arrival ✅ DONE
+
+[useModMessages.js:46-91](iznik-nuxt3/modtools/composables/useModMessages.js#L46-L91) now uses `contextGid = parseInt(groupid.value)` and prefers the matching group's arrival.
 
 **Files:**
 - Modify: `iznik-nuxt3/modtools/composables/useModMessages.js:59-72`
@@ -1438,7 +1492,15 @@ git commit -m "feat: sort mod messages by contextual group arrival time"
 
 ---
 
-## Task 17: Nuxt — Non-Mod Components
+## Task 17: Nuxt — Non-Mod Components ✅ DONE (mostly)
+
+- [OutcomeModal.vue:300-315](iznik-nuxt3/components/OutcomeModal.vue#L300-L315) — `groupid` computed now picks the message group the user is also a member of (sorted by most-recent arrival), falling back to `groups[0]`. The `outcome` bus event still carries one group ID — required for the donation-ask modal which renders fundraising context per-group; "outcomes themselves are global" still holds.
+- [MyMessage.vue:938-950](iznik-nuxt3/components/MyMessage.vue#L938-L950) — repost flow now picks the most-recently-arrived group from `msg.groups` instead of `groups[0]`. The poster is by definition a member of all of `msg.groups`, so no separate `authStore.groups` intersection is needed here.
+- `ExportPost.vue` and `ModLog.vue` re-verified — neither contains `groups[0]`.
+
+**Left for Task 21:** [MessageReportModal.vue:140](iznik-nuxt3/components/MessageReportModal.vue#L140) — reports use a different rule ("best shared group with most recent posting"), tracked there.
+
+**Test fix as part of this task:** [MyMessage.spec.js:297-307](iznik-nuxt3/tests/unit/components/MyMessage.spec.js#L297-L307) — two tests failed on master because the template uses `<LazyPromiseModal>` (Nuxt auto-import lazy form) but the spec only stubbed `PromiseModal`. Added a `LazyPromiseModal` stub; 171/171 pass.
 
 **Files:**
 - Modify: `iznik-nuxt3/components/MyMessage.vue:796,827,907`
@@ -1481,7 +1543,15 @@ git commit -m "feat: non-mod components handle multi-group messages"
 
 ---
 
-## Task 18: Digest Dedup
+## Task 18: Digest Dedup ✅ DONE
+
+`UnifiedDigestService::deduplicatePosts()` already handles the multi-group model correctly: `getPostsForUser()` joins `messages` to `messages_groups`, so a single message on N groups returns N rows (same `messages.id`, different `groupid`); the dedup key + body match collapse them into one entry with both groups in `postedToGroups`. Verified by a new test.
+
+**What was added:**
+- [UnifiedDigestServiceTest::test_deduplication_single_message_on_multiple_groups](iznik-batch/tests/Unit/Services/UnifiedDigestServiceTest.php) — creates one message with two `messages_groups` rows, reproduces the join output (same message instance twice with different `groupid`), asserts `deduplicatePosts` returns it once with both groups in `postedToGroups`.
+- Imported `App\Models\MessageGroup` into the test file.
+
+**Incidental fix (was erroring in the suite):** `test_daily_digest_excludes_posts_from_immediate_only_groups` accessed the protected `UnifiedDigest::$posts` property directly and errored. Added a public `getPosts()` accessor on [UnifiedDigest.php](iznik-batch/app/Mail/Digest/UnifiedDigest.php) (mirrors the existing `getEmailType()` accessor; backing property stays protected) and switched the test to use it. Full `UnifiedDigestServiceTest` class now 41/41 clean.
 
 **Files:**
 - Modify: `iznik-batch/app/Services/UnifiedDigestService.php`
@@ -1515,7 +1585,9 @@ git commit -m "test: verify digest dedup handles multi-group messages"
 
 ---
 
-## Task 19: Stats Audit
+## Task 19: Stats Audit ❌ NOT DONE
+
+`plans/multi-group-stats-audit.md` does not exist. The audit hasn't been written up.
 
 **Files:** Various — this is an investigation task.
 
@@ -1544,7 +1616,9 @@ git commit -m "docs: stats audit for multi-group messages impact"
 
 ---
 
-## Task 20: Schema Cleanup — Drop Old Columns
+## Task 20: Schema Cleanup — Drop Old Columns ❌ NOT DONE
+
+No `drop_per_group_columns_from_messages` migration exists yet. Several handlers still dual-write to `messages.heldby` for backwards compat, so this can't run until those writes are removed (and V1 PHP is retired).
 
 **Files:**
 - Create: `iznik-batch/database/migrations/YYYY_MM_DD_000001_drop_per_group_columns_from_messages.php`
@@ -1595,45 +1669,20 @@ git commit -m "cleanup: drop heldby/spamtype/spamreason from messages table (now
 
 ---
 
-## Task 21: Nuxt — Message Report Uses Best Shared Group
+## Task 21: Nuxt — Message Report Uses Best Shared Group ✅ DONE
 
-**Files:**
-- Modify: `iznik-nuxt3/components/MessageReportModal.vue:147`
+Already implemented and tested in commit `d68107b59` (verified on this branch).
 
-When a user reports a message, the report should go to a single group — the group that both the user and the message share, choosing the most recently posted one. Currently it uses `groups[0].groupid` which may not be a group the reporter is on.
+- [MessageReportModal.vue:131-141](iznik-nuxt3/components/MessageReportModal.vue#L131-L141) — `reportGroupId` computed picks the group shared by the user (`authStore.groups`) and the message, sorted by most-recent arrival, falling back to `message.groups[0]` when there's no overlap. [report() at line 160](iznik-nuxt3/components/MessageReportModal.vue#L160) passes `reportGroupId.value` to `chatStore.openChatToMods`.
+- [MessageReportModal.spec.js:238-277](iznik-nuxt3/tests/unit/components/MessageReportModal.spec.js#L238-L277) — three tests cover: shared-group selection, fallback when no shared group, and most-recent-arrival preference. Full file 24/24 ✓.
 
-- [ ] **Step 1: Update MessageReportModal.vue**
-
-Replace line 147's `message.value.groups[0].groupid` with logic to find the best shared group:
-
-```javascript
-const reportGroupId = computed(() => {
-  if (!message.value?.groups?.length) return null
-  const myGroups = meStore.me?.groups?.map(g => g.id) || []
-  // Find groups that both the user and the message are on, sorted by most recent arrival.
-  const shared = message.value.groups
-    .filter(g => myGroups.includes(parseInt(g.groupid)))
-    .sort((a, b) => new Date(b.arrival) - new Date(a.arrival))
-  return shared.length > 0 ? shared[0].groupid : message.value.groups[0].groupid
-})
-```
-
-Use `reportGroupId.value` in the `openChatToMods` call.
-
-- [ ] **Step 2: Write vitest**
-
-Test that when a message is on groups A and B, and the user is only on group B, the report goes to group B's mods.
-
-- [ ] **Step 3: Run vitest, commit**
-
-```bash
-cd iznik-nuxt3 && git add components/MessageReportModal.vue tests/
-git commit -m "feat: message report targets the shared group with most recent posting"
-```
+(The original audit listed this as outstanding; on inspection the implementation already landed with the multi-group moderation PR.)
 
 ---
 
-## Task 22: V1 PHP Audit Confirmation
+## Task 22: V1 PHP Audit Confirmation ✅ DONE
+
+Results in [plans/multi-group-v1-audit-results.md](multi-group-v1-audit-results.md).
 
 **Files:** None — this is a verification task.
 
@@ -1677,6 +1726,124 @@ git commit -m "docs: V1 audit confirmation for multi-group messages"
 
 ---
 
+## Task 23: Go API — Per-Group Repost Scheduling ✅ DONE
+
+The repost goroutine in [message.go:702-748](iznik-server-go/message/message.go#L702-L748) was rewritten to evaluate eligibility per group.
+
+**What changed:**
+- The repost-settings query now selects `messages_groups.groupid` alongside the `reposts` JSON, and the results are keyed into a `map[groupid]RepostSettings`. Previously the settings were a flat list with no group association, and `repostAt` was always computed from `MessageGroups[0].Arrival`.
+- The loop now iterates `message.MessageGroups`, pairing each group's own `Arrival` with that group's own interval (`Offer`/`Wanted`). **A message is repostable only when it is valid for reposting in EVERY group** — `canRepost` starts true and is cleared if any group is still within its interval, has no settings, or has reposting disabled (interval ≥ 365). `repostAt` is the **latest** per-group repost time (when the last group becomes eligible).
+
+**Test:** [TestMessageRepostPerGroupArrival](iznik-server-go/test/message_test.go) — message on groupA (arrival now) + groupB (arrival 30 days ago) with a real `reposts` config (offer interval 3 days). Asserts `canrepost == false` while groupA is still inside its interval, then ages groupA's arrival back 30 days and asserts `canrepost == true` once all groups are eligible. Full Go suite 2917/2917 ✓.
+
+**Note:** the query's fallback default for groups with no `reposts` setting is a PHP-hash literal (`{'offer' => 3, ...}`) that doesn't parse as JSON, so it yields interval 0 (always eligible). This is pre-existing behaviour carried over verbatim from the original code — real groups store proper JSON settings. Not changed here; flag for a separate cleanup if the default ever matters in production.
+
+**Follow-on fix (from Task 10):** `TestMicroVolunteeringRejectQuorumSendsForReview` was updated to send `groupid` in the reject votes and to assert `spamreason` on `messages_groups` (not `messages`) — the per-group `sendForReview` contract from Task 10. It had been missed because Task 10 was only validated with a filtered vitest run; the full Go suite caught it here.
+
+---
+
+## Task 24: Go API — Per-Group convertToDraft (RejectToDraft) ✅ DONE
+
+`handleRejectToDraft` ([message.go:2234](iznik-server-go/message/message.go#L2234), dispatched on the `RejectToDraft`/`BackToDraft` actions) was made per-group.
+
+**Behaviour by caller (per follow-up refinement):**
+- **No `groupid` (owner withdrawing their own message):** the message is taken back to draft for **ALL** groups it's on — withdrawal is global to the poster. This matches V1's whole-message redraft.
+- **`groupid` supplied (a moderator acting on their own group):** only that group's row is removed; other groups keep their live posting.
+
+**What changed:**
+- Target groups: `[req.Groupid]` when supplied (`> 0`); otherwise every `messages_groups.groupid` for the message (with a `getPrimaryGroupForMessage` fallback for a message that has no live group rows).
+- Delete is now `DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?` over the targeted set — was an unconditional `WHERE msgid = ?` (all groups).
+- A single `messages_drafts` row is recorded against the first targeted group. `messages_drafts.msgid` is **UNIQUE**, so a message has at most one draft row regardless of group count (the earlier plan note suggesting one-row-per-group was wrong); on re-post via JoinAndPost the owner re-picks the destination group(s).
+- The global state resets — `messages_outcomes`, `messages_outcomes_intended`, `availablenow`/`availableinitially`, `messages_by`, and the expired-deadline clear — run **only when no groups remain** (`COUNT(*) FROM messages_groups == 0`). While the message is still live on another group those shared fields are left untouched.
+
+**Tests:** [TestRejectToDraftPerGroup](iznik-server-go/test/message_test.go) (mod, `groupid` set: per-group removal, state preserved until last group) and [TestRejectToDraftOwnerWithdrawsAllGroups](iznik-server-go/test/message_test.go) (owner, no `groupid`: all groups removed, one draft row, global state reset). Full Go suite 2919/2919 ✓.
+
+**Nuxt side:** the existing repost flow ([MyMessage.vue](iznik-nuxt3/components/MyMessage.vue)) drives reposting through `composeStore` rather than calling the `RejectToDraft` action directly, so no client change was needed. Owner-withdrawal callers omit `groupid` (all groups); moderator callers pass their `groupid`.
+
+---
+
+## Task 25: Go API — Per-Group Edit Subject Reconstruction ✅ DONE
+
+Both sites now prefer the contextual group, falling back to the primary group only for legacy callers.
+
+**What changed:**
+- **Edit subject rebuild** ([message.go, `applyPatchMessageCore`](iznik-server-go/message/message.go)): the keyword group is `req.Groupid` when supplied (`patchMessageRequest` already has a `Groupid` field), else `getPrimaryGroupForMessage`. Group keywords (e.g. a group overriding `OFFER` → `GIVING`) differ per group, so the prefix now matches the group the editor is acting in.
+- **Mod-delete audit log** ([message.go, `DeleteMessageEndpoint`](iznik-server-go/message/message.go)): this is the REST `DELETE /message/:id` path (no request body). It now reads an optional `?groupid=` query param and logs against it when supplied, falling back to the primary group for owner-initiated (global) deletes.
+
+**Test:** [TestPatchMessageSubjectUsesContextualGroupKeyword](iznik-server-go/test/message_test.go) — message on groupA (keyword `GIVING`) + groupB (keyword `FREEBIE`); editing with `groupid: groupB` rebuilds the subject as `FREEBIE: …`, and editing with `groupid: groupA` rebuilds it as `GIVING: …`. Full Go suite 2920/2920 ✓.
+
+**Client wiring (so the server gets the groupid rather than falling back):** every edit path that triggers subject reconstruction now sends `groupid`:
+- [ModMessage.vue](iznik-nuxt3/modtools/components/ModMessage.vue) save → `groupid: editgroup.value` (the group selected in the edit form).
+- [ModStdMessageModal.vue](iznik-nuxt3/modtools/components/ModStdMessageModal.vue) Edit → `groupid: groupid.value` (contextual group).
+- [MessageEditModal.vue](iznik-nuxt3/components/MessageEditModal.vue) owner edit → `groupid: groupid.value` (the message's group).
+- `PATCH /message/tn/:tnpostid` (TN partner) and the unused REST `DELETE /message/:id` rely on the server-side fallback; deadline/delivery/photo patches don't rebuild the subject so they don't need a groupid. Test assertions in `ModMessage.spec.js` updated accordingly (vitest green).
+
+**Note:** the remaining `getPrimaryGroupForMessage` call sites are now all legacy/owner-global fallbacks (draft conversion fallback, JoinAndPost, mod context bootstrap, submit subject reconstruction). Re-labelling the function's doc comment as a legacy fallback is Task 28.
+
+---
+
+## Task 26: Nuxt — Remaining `groups[0]` Sites ✅ DONE
+
+(`MyMessage.vue:942` was handled in Task 17; the four sites below are this task.)
+
+- **[useKeywords.js](iznik-nuxt3/modtools/composables/useKeywords.js)** — the `groups[0]` reference was inside a fully commented-out dead block (`keywordGroup`/`keywordGroupid`, both early-returning). Removed the dead block entirely; `setupKeywords` now exports only the live `typeOptions`.
+- **[MessageHistory.vue](iznik-nuxt3/components/MessageHistory.vue)** — `grouparrivalago` was a computed hardcoded to `groups[0].arrival`, but it's rendered inside `v-for="group in message.groups"`, so **every row showed the first group's arrival**. Converted to a function `grouparrivalago(arrival)` called as `grouparrivalago(group.arrival)` — each row now shows its own group's arrival. Real display bug fixed.
+- **[ModLogGroup.vue](iznik-nuxt3/modtools/components/ModLogGroup.vue)** — `loggroup` checked `message.groups[0]` *before* `log.groupid`, so a per-group log entry resolved to the wrong group. Reordered: `log.group` → `log.groupid` (preferring the matching `message.groups` entry, then the store lookups) → `message.groups[0]` as documented last resort. Existing tests still green (they cover the no-groupid and groupid-via-user cases).
+- **[pages/message/[id].vue](iznik-nuxt3/pages/message/[id].vue)** — the "post unavailable" check used `groups[0]?.collection === 'Rejected'`. Changed to `groups.every((g) => g.collection === 'Rejected')` so a message still Approved on any group remains visible.
+
+**Tests:** MessageHistory 42/42 ✓, ModLogGroup 25/25 ✓, pages/message 9/9 ✓.
+
+**Remaining `groups[0]` hits in the tree are intentional and out of scope:** the `shared[0] || groups[0]` fallbacks (Tasks 10/14/17/21), the documented contextual-group computeds in ModMessage/ModMessageButton/ModMessageCrosspost/ModMessageDuplicate/ModStdMessageModal (fall back when no prop), the `useModMessages` sort fallback (Task 16), and non-message contexts (community events, volunteer opportunities, member-list sort).
+
+---
+
+## Task 27: Laravel — Digest Header Group Selection ✅ DONE
+
+`UnifiedDigest.__construct` and `rebuildFromDescriptor` both now use `preferredGroupForPost()` (which picks the recipient's member group) rather than `[0]` for choosing the tracking group ID and the sponsors-lookup group ID. The method already existed and was used by `build()` and `getSubject()`.
+
+**What changed:**
+- Constructor (was line 71): `$this->posts->first()['postedToGroups'][0]` → `$this->preferredGroupForPost($this->posts->first())` for `$trackingGroupId`
+- `rebuildFromDescriptor()` (was line 257): inline preferred-group logic using `$user->memberships` instead of `$descriptor['posts'][0]['groups'][0]` for the sponsors group ID
+
+**Tests added:**
+- `UnifiedDigestTest::test_immediate_tracking_groupid_uses_recipients_group_for_cross_post` — recipient on groupB only, post on A+B → tracking `groupid` = B
+- `UnifiedDigestRetryTest::test_rebuild_uses_recipients_group_for_sponsors_on_cross_post` — rebuild picks groupB sponsor (recipient's group) over groupA
+
+Full Unit suite 3226/3226 ✓.
+
+---
+
+## Task 28: Comment Cleanup — `getPrimaryGroupForMessage` ✅ DONE
+
+Updated comment at [message.go:1543](iznik-server-go/message/message.go#L1543).
+
+**What changed:** Replaced the original one-line comment with a multi-line doc comment marking the function as a legacy fallback, explaining that multi-group messages have N groups so this picks arbitrarily, and listing the remaining legitimate callers (owner-initiated global paths: draft conversion, JoinAndPost, mod context bootstrap, submit subject reconstruction).
+
+---
+
+## Task 29: Laravel — Mailable Tracking & Body Use Recipient's Group ✅ DONE
+
+**Files modified:**
+- `iznik-batch/app/Mail/Message/DeadlineReached.php` — new `recipientGroupForMessage()` helper used in both `__construct` (tracking) and `build()` (body group name)
+- `iznik-batch/app/Mail/Chat/ChatNotification.php:648` — inline recipient-group filter for the "showed interest in X on Y" snippet
+- `iznik-batch/tests/Unit/Mail/MessageMailTest.php` — two new tests: tracking uses recipient's group on cross-post, fallback to first when no membership overlap
+
+**What changed:**
+
+`DeadlineReached::__construct` and `build()` both called `$message->groups->first()` to derive the group ID for `initTracking()` and the body `$groupName`. For multi-group posts this picked an arbitrary group, filing `EmailTracking` against the wrong group and potentially showing a group name the recipient isn't a member of.
+
+Added `recipientGroupForMessage(Message $message, User $user): ?object` which filters `$message->groups` to groups the recipient is a member of (sorted by most-recent pivot arrival), falling back to `groups->first()` only if there is no overlap.
+
+`ChatNotification::getLastInterestedMessageInfo()` had the same issue at line 648 — the "you showed interest in X on Y" snippet picked an arbitrary group. Fixed with the same inline filter against `$this->recipient->memberships`. Tracking in `ChatNotification` passes `null` groupid (chat is global), so only the display snippet was affected.
+
+**Tests added:**
+- `MessageMailTest::test_deadline_reached_tracking_uses_recipients_group_for_cross_post` — message on A+B, recipient on B only → tracking groupid = B
+- `MessageMailTest::test_deadline_reached_falls_back_to_first_group_when_no_membership_overlap` — no membership overlap → not null (graceful fallback)
+
+Full Laravel suite 4236/4236 ✓.
+
+---
+
 ## Execution Notes
 
 **Backwards compatibility during rollout:** Tasks 4, 5, and 8 include a dual-write to both `messages.heldby` and `messages_groups.heldby`. This keeps V1 PHP code working during the transition. Task 20 removes the old columns only after V1 is fully retired.
@@ -1693,3 +1860,7 @@ git commit -m "docs: V1 audit confirmation for multi-group messages"
 - Task 20 (cleanup) must be last — after all code deployed and V1 retired
 - Task 21 (reports) depends on Tasks 1-2, independent of other Go tasks
 - Task 22 (V1 audit) can be done at any time, good to do early as a sanity check
+- Tasks 23-25 (Go API repost/draft/edit per-group) depend on Tasks 1-2; independent of each other
+- Task 26 (remaining Nuxt `groups[0]` sites) depends on Task 13 store change; otherwise independent
+- Task 27 (digest header group) depends on Task 18
+- Task 28 (`getPrimaryGroupForMessage` comment) should be done after Tasks 23-25 reduce its callers

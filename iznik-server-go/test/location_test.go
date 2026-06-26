@@ -11,6 +11,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -179,6 +180,45 @@ func TestCreateLocationNotLoggedIn(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 401, resp.StatusCode)
+}
+
+// TestUpdateLocationPreservesNearbyVertex verifies that a vertex placed within 0.001
+// degrees of the line between its neighbours is NOT silently dropped on save.
+// Reproduces Discourse #9770: dragging a polygon midpoint creates a new vertex that
+// ST_Simplify(polygon, 0.001) removes because it lies within ~111 m of the original edge.
+func TestUpdateLocationPreservesNearbyVertex(t *testing.T) {
+	prefix := uniquePrefix("locwr_nearvert")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+
+	// Seed an initial 4-vertex polygon (Edinburgh area).
+	db.Exec("INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Polygon', ?, 0)",
+		"NearVertTest "+prefix, "nearverttest "+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "NearVertTest "+prefix).Scan(&locID)
+	assert.Greater(t, locID, uint64(0))
+
+	// Polygon with 5 distinct vertices: the 5th is the midpoint-drag result.
+	// It sits 0.0005 degrees (≈55 m) above the bottom edge — well within the
+	// previous ST_Simplify(polygon, 0.001) tolerance, so the bug dropped it.
+	withMidpoint := "POLYGON((-3.21 55.94, -3.21 55.97, -3.18 55.97, -3.18 55.94, -3.195 55.9405, -3.21 55.94))"
+	body := fmt.Sprintf(`{"id":%d,"polygon":"%s"}`, locID, withMidpoint)
+	req := httptest.NewRequest("PATCH", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The midpoint vertex must be persisted — ST_NumPoints should be 6 (5 distinct + closing).
+	var numPoints int
+	db.Raw("SELECT ST_NumPoints(ST_ExteriorRing(ourgeometry)) FROM locations WHERE id = ?", locID).Scan(&numPoints)
+	assert.Equal(t, 6, numPoints, "midpoint-drag vertex must be preserved (not simplified away)")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
 func TestUpdateLocation(t *testing.T) {
@@ -948,4 +988,68 @@ func TestLocationTaskRemapIntegrationWithPostgresSync(t *testing.T) {
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
 	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
+// TestClosestGroupsContainingPolygonIsAuthoritative reproduces bug #9518: when a
+// location point lies inside a group's polygon, that group is the correct answer
+// even if its centre (lat/lng) is far away — polygon containment must beat the
+// centre-distance heuristic. The V1 PHP groupsNear() does this with an ST_Contains
+// check; the Go ClosestGroups() previously omitted it and so returned only the
+// group with the closest centre, dropping the containing group whose centre lies
+// beyond the search radius (it gets filtered out by the HAVING hav < radius clause).
+//
+// We seed two groups in an empty region (Gulf of Guinea — no real Freegle groups
+// there) so only our test groups are candidates:
+//   - Group A: a large polygon that CONTAINS the point, but whose centre is ~230
+//     miles away (so it is excluded by the centre-distance HAVING clause).
+//   - Group B: a small polygon that does NOT contain the point, but whose centre
+//     is ~5 miles away (so it passes the centre-distance filter).
+// The containing group A must be returned.
+func TestClosestGroupsContainingPolygonIsAuthoritative(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("closest_contain")
+
+	pointLat := 0.5
+	pointLng := 0.5
+
+	// Group A: large containing polygon, distant centre, NULL alt centre.
+	nameA := "ContainA_" + prefix
+	db.Exec(fmt.Sprintf(
+		"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
+			"VALUES (?, ?, 'Freegle', 1, 1, 1, 2.9, 2.9, NULL, NULL, ST_GeomFromText('POLYGON((-2 -2, -2 3, 3 3, 3 -2, -2 -2))', %d))",
+		utils.SRID), nameA, "Containing Group A")
+	var groupA uint64
+	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", nameA).Scan(&groupA)
+	assert.Greater(t, groupA, uint64(0))
+
+	// Group B: small non-containing polygon near the point, close centre.
+	nameB := "ContainB_" + prefix
+	db.Exec(fmt.Sprintf(
+		"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
+			"VALUES (?, ?, 'Freegle', 1, 1, 1, 0.55, 0.55, NULL, NULL, ST_GeomFromText('POLYGON((0.6 0.6, 0.6 0.7, 0.7 0.7, 0.7 0.6, 0.6 0.6))', %d))",
+		utils.SRID), nameB, "Near Group B")
+	var groupB uint64
+	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", nameB).Scan(&groupB)
+	assert.Greater(t, groupB, uint64(0))
+
+	defer func() {
+		db.Exec("DELETE FROM `groups` WHERE id IN (?, ?)", groupA, groupB)
+	}()
+
+	groups := location.ClosestGroups(pointLat, pointLng, float64(location.NEARBY), 10)
+
+	assert.Greater(t, len(groups), 0, "should find the containing group")
+	if len(groups) > 0 {
+		assert.Equal(t, groupA, groups[0].ID,
+			"the group whose polygon contains the point must be returned, even though its centre is far away")
+		assert.Equal(t, "Containing Group A", groups[0].Namedisplay,
+			"namedisplay should be populated for the containing group")
+	}
+
+	// The containing-groups path is authoritative: a non-containing group with a
+	// closer centre must not be returned ahead of (or instead of) the containing one.
+	for _, g := range groups {
+		assert.NotEqual(t, groupB, g.ID,
+			"non-containing group B must not appear when a containing group exists")
+	}
 }

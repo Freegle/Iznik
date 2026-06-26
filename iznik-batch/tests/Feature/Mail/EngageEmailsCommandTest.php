@@ -3,19 +3,30 @@
 namespace Tests\Feature\Mail;
 
 use App\Mail\Engage\EngageMail;
+use App\Services\EmailSpoolerService;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Services\EngageEmailService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
 class EngageEmailsCommandTest extends TestCase
 {
+    use IsolatedSpoolDirectory;
+
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setUpIsolatedSpoolDirectory();
         Mail::fake();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->tearDownIsolatedSpoolDirectory();
+        parent::tearDown();
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -97,7 +108,13 @@ class EngageEmailsCommandTest extends TestCase
         $result = (new EngageEmailService())->processEngageEmails(false);
 
         $this->assertSame(1, $result['at_risk_sent']);
-        Mail::assertSent(EngageMail::class);
+
+        // Flush the spool — the EngageEmailService writes to the spool via
+        // EmailSpoolerService::spool() rather than Mail::send, so Mail::fake
+        // never observes the mailable directly. processSpool() then sends
+        // via Mail::html(); assert the processor reports a successful send.
+        $stats = app(EmailSpoolerService::class)->processSpool();
+        $this->assertSame(1, $stats['sent']);
     }
 
     public function test_at_risk_sends_even_when_relevantallowed_false(): void
@@ -138,7 +155,10 @@ class EngageEmailsCommandTest extends TestCase
         $result = (new EngageEmailService())->processEngageEmails(false);
 
         $this->assertSame(1, $result['inactive_sent']);
-        Mail::assertSent(EngageMail::class);
+
+        // See test_sends_at_risk_email above for why we check spool stats.
+        $stats = app(EmailSpoolerService::class)->processSpool();
+        $this->assertSame(1, $stats['sent']);
     }
 
     public function test_skips_inactive_user_with_relevantallowed_false(): void

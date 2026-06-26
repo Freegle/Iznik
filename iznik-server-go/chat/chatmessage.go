@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 // =============================================================================
@@ -24,29 +25,33 @@ import (
 // =============================================================================
 
 type ChatMessage struct {
-	ID                 uint64          `json:"id" gorm:"primary_key"`
-	Chatid             uint64          `json:"chatid"`
-	Userid             uint64          `json:"userid"`
-	Type               string          `json:"type"`
-	Refmsgid           *uint64         `json:"refmsgid"`
-	Refchatid          *uint64         `json:"refchatid"`
-	Imageid            *uint64         `json:"imageid"`
-	Image              *ChatAttachment `json:"image" gorm:"-"`
-	Date               time.Time       `json:"date"`
-	Message            string          `json:"message"`
-	Seenbyall          bool            `json:"seenbyall"`
-	Mailedtoall        bool            `json:"mailedtoall"`
-	Replyexpected      bool            `json:"replyexpected"`
-	Replyreceived      bool            `json:"replyreceived"`
+	ID                   uint64          `json:"id" gorm:"primary_key"`
+	Chatid               uint64          `json:"chatid"`
+	Userid               uint64          `json:"userid"`
+	Type                 string          `json:"type"`
+	Refmsgid             *uint64         `json:"refmsgid"`
+	Refchatid            *uint64         `json:"refchatid"`
+	Imageid              *uint64         `json:"imageid"`
+	Image                *ChatAttachment `json:"image" gorm:"-"`
+	Date                 time.Time       `json:"date"`
+	Message              string          `json:"message"`
+	Seenbyall            bool            `json:"seenbyall"`
+	Mailedtoall          bool            `json:"mailedtoall"`
+	Replyexpected        bool            `json:"replyexpected"`
+	Replyreceived        bool            `json:"replyreceived"`
 	Reportreason         *string         `json:"reportreason"`
 	Reviewrequired       bool            `json:"reviewrequired"`
 	Reviewrejected       bool            `json:"reviewrejected"`
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
-	Addressid          *uint64         `json:"addressid" gorm:"-"`
-	Modnote            bool            `json:"modnote" gorm:"-"`
-	Archived           int             `json:"-" gorm:"-"`
-	Deleted            bool            `json:"-"`
+	// HeldByRippling is true when this message is held by the rippling reply-hold engine
+	// (a non-released row exists in rippling_held_replies). Only populated for moderators;
+	// stripped from responses to normal users along with other review fields.
+	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
+	Addressid      *uint64 `json:"addressid" gorm:"-"`
+	Modnote        bool    `json:"modnote" gorm:"-"`
+	Archived       int     `json:"-" gorm:"-"`
+	Deleted        bool    `json:"-"`
 }
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the
@@ -148,22 +153,42 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 	// Build the query - don't return messages:
 	// - held for review unless we sent them or we have mod access
-	// - for deleted users unless that's us
+	// - for deleted users unless that's us (or we have mod access — mods must
+	//   see all messages including from accounts deleted after the fact, e.g.
+	//   a phisher who deletes their account immediately after sending spam)
 	var reviewFilter string
 	if modAccess {
 		// Mods can see all messages including those held for review.
 		reviewFilter = "(reviewrejected = 0 OR userid = ?)"
 	} else {
-		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1))"
+		// Also gate rippling held replies: an email/TN reply from outside the post's reach is
+		// held (rippling_held_replies, status <> 'released') so it doesn't reach the poster early.
+		// The PHP notification paths honour this gate; the in-app chat fetch must too, or the
+		// poster reads the held reply here once chats:process-incoming flips processingsuccessful.
+		// The sender still sees their own message (userid = ? branch); only the poster is gated.
+		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
+			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
+	}
+
+	// Mods reviewing a chat must see messages from soft-deleted users (V1 parity:
+	// the PHP GetMessages query had no users.deleted filter). Regular users only
+	// see their own messages when the sender has been deleted.
+	var deletedFilter string
+	if !modAccess {
+		deletedFilter = " AND (users.deleted IS NULL OR users.id = ?)"
 	}
 
 	query := "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages " +
 		"LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id " +
 		"INNER JOIN users ON users.id = chat_messages.userid " +
-		"WHERE chatid = ? AND " + reviewFilter + " " +
-		"AND (users.deleted IS NULL OR users.id = ?)"
+		"WHERE chatid = ? AND " + reviewFilter + deletedFilter
 
-	args := []interface{}{chatID, userID, userID}
+	var args []interface{}
+	if modAccess {
+		args = []interface{}{chatID, userID}
+	} else {
+		args = []interface{}{chatID, userID, userID}
+	}
 
 	if excludeID > 0 {
 		query += " AND chat_messages.id != ?"
@@ -182,6 +207,29 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 	messages := []ChatMessageQuery{}
 	db.Raw(query, args...).Scan(&messages)
+
+	// For moderators, flag messages that are held by the rippling reply-hold engine.
+	// Non-released rows in rippling_held_replies mean the message is delivery-blocked
+	// (not a manual mod hold — that is chat_messages_held). Batch lookup to avoid N+1.
+	if modAccess && len(messages) > 0 {
+		msgIDs := make([]string, 0, len(messages))
+		idxByID := make(map[uint64]int, len(messages))
+		for ix, m := range messages {
+			msgIDs = append(msgIDs, fmt.Sprintf("%d", m.ID))
+			idxByID[m.ID] = ix
+		}
+		type ripplingHeld struct {
+			Chatmsgid uint64 `gorm:"column:chatmsgid"`
+		}
+		var held []ripplingHeld
+		db.Raw("SELECT chatmsgid FROM rippling_held_replies WHERE chatmsgid IN (" +
+			strings.Join(msgIDs, ",") + ") AND status <> 'released'").Scan(&held)
+		for _, h := range held {
+			if ix, ok := idxByID[h.Chatmsgid]; ok {
+				messages[ix].HeldByRippling = true
+			}
+		}
+	}
 
 	// Process images and deleted messages
 	for ix, a := range messages {
@@ -352,6 +400,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// Rippling-out reply gate (#5): an in-app reply to a post (CHAT_MESSAGE_INTERESTED) the
+	// viewer can see but whose reach has not yet reached them (replyeligible=false in the read
+	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
+	// or modified client, or a ?reply= deep link. Mirror the read-path reply-eligibility check:
+	// a rippling_reach row exists for the post and does NOT contain the replier's location.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+		latlng := user.GetLatLng(myid)
+		if latlng.Lat != 0 || latlng.Lng != 0 {
+			var blocked int
+			// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
+			if err := db.Raw("SELECT COUNT(*) FROM rippling_reach WHERE msgid = ? "+
+				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+				*payload.Refmsgid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error; err == nil && blocked > 0 {
+				return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+			}
+		}
+	}
+
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
 	payload.Userid = myid
@@ -364,6 +430,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	if newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
+
+	// Rippling reply attribution (sysadmin KPI): for an Interested reply, snapshot whether the
+	// replier was already an ESTABLISHED home-group member at the instant they replied. The Nuxt
+	// reply flow joins the group in order to reply (useReplyStateMachine.handleJoinGroup), so a
+	// membership existing right now isn't enough - we require an approved membership of an ORIGIN
+	// (non-rippled-in) group of the post that predates this reply by more than the join grace
+	// (300s). A join made to reply (added ~ now) is therefore excluded and counts as rippling.
+	// Frozen here so a later leave can't erase the signal. INSERT IGNORE = first reply only.
+	// Best-effort: never blocks the reply.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+		var wasHome int
+		db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+			myid, utils.COLLECTION_APPROVED, *payload.Refmsgid).Scan(&wasHome)
+		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
+			"VALUES (?, ?, NOW(), ?)", *payload.Refmsgid, myid, wasHome)
 	}
 
 	if payload.Imageid != nil {
@@ -765,6 +850,17 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		reviewFilter = "(chat_messages.reviewrejected = 0 OR chat_messages.userid = ?)"
 	}
 
+	// Mods reviewing a chat must see messages from soft-deleted users.
+	// Participants only see their own messages when the sender is deleted.
+	var deletedFilterRoom string
+	var roomArgs []interface{}
+	if isParticipant {
+		deletedFilterRoom = " AND (users.deleted IS NULL OR users.id = ?)"
+		roomArgs = []interface{}{roomid, myid, myid, limit}
+	} else {
+		roomArgs = []interface{}{roomid, myid, limit}
+	}
+
 	var msgs []msgRow
 	db.Raw("SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, "+
 		"chat_messages.type, chat_messages.message, chat_messages.date, "+
@@ -772,10 +868,9 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		"FROM chat_messages "+
 		"INNER JOIN users ON users.id = chat_messages.userid "+
 		"WHERE chat_messages.chatid = ? "+
-		"AND "+reviewFilter+" "+
-		"AND users.deleted IS NULL"+ctxq+
+		"AND "+reviewFilter+deletedFilterRoom+ctxq+
 		" ORDER BY chat_messages.id DESC LIMIT ?",
-		roomid, myid, limit).Scan(&msgs)
+		roomArgs...).Scan(&msgs)
 
 	if msgs == nil {
 		msgs = []msgRow{}
@@ -962,9 +1057,9 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			ids = append(ids, strconv.FormatUint(id, 10))
 		}
 		var heldInfos []heldUserInfo
-		db.Raw("SELECT u.id, u.fullname AS name, "+
-			"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email "+
-			"FROM users u WHERE u.id IN ("+strings.Join(ids, ",")+")").Scan(&heldInfos)
+		db.Raw("SELECT u.id, u.fullname AS name, " +
+			"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email " +
+			"FROM users u WHERE u.id IN (" + strings.Join(ids, ",") + ")").Scan(&heldInfos)
 		for _, h := range heldInfos {
 			heldUsers[h.ID] = h
 		}
@@ -1118,7 +1213,11 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 	}
 
 	var counts []countRow
-	db.Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
+	// Pin to the write host: callers invoke this immediately after UPDATEing
+	// chat_messages.reviewrequired/reviewrejected on the source, and these recounted
+	// totals are written back to chat_rooms. A lagging replica read would persist
+	// stale valid/invalid counts that survive until the next approve/reject.
+	db.Clauses(dbresolver.Write).Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
 		"COUNT(*) AS count FROM chat_messages WHERE chatid = ? "+
 		"GROUP BY CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END",
 		chatID).Scan(&counts)
@@ -1282,6 +1381,19 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 	}
 
 	// Step 1: Check concern_keywords with literal/regex match modes.
+	//
+	// Mirror PHP ContentCheckService::checkConcernKeywords filters:
+	//   - scope='global' only (per-group worry words are scoped to a specific
+	//     group_id and must not match chat messages from other groups; chat
+	//     messages have no group context here, so per-group keywords are
+	//     dropped entirely)
+	//   - category != 'allowed' (allowed-category place names like 'road' /
+	//     'Butt Road' / 'Cock Lane' are tracked for context, not flagging)
+	//
+	// Without these filters, every chat message containing common place-name
+	// or per-group worry tokens (e.g. 'road', 'donate', 'charity') was
+	// labelled "Known spam keyword" in MT chat review even when the original
+	// flag came from a URL or other content check.
 	type spamWord struct {
 		Word    string  `gorm:"column:word"`
 		Type    string  `gorm:"column:type"`
@@ -1289,7 +1401,7 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		Exclude *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
+	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
 
 	for _, kw := range keywords {
 		word := strings.TrimSpace(kw.Word)

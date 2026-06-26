@@ -57,8 +57,16 @@ describe('ModMessageWorry', () => {
 
     it('renders one NoticeMessage per reason', () => {
       const wrapper = mountWithReasons([
-        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
-        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+        {
+          check: 'Vague',
+          category: null,
+          detail: "Item name 'stuff' is too generic",
+        },
+        {
+          check: 'PhoneNumber',
+          category: null,
+          detail: 'Post contains what looks like a phone number',
+        },
       ])
       expect(wrapper.findAll('.notice-message').length).toBe(2)
     })
@@ -98,10 +106,13 @@ describe('ModMessageWorry', () => {
     })
 
     it('shows one NoticeMessage per worry match', () => {
-      const message = makeMessage([], [
-        { word: 'gun', worryword: { keyword: 'gun', type: 'Review' } },
-        { word: 'knife', worryword: { keyword: 'knife', type: 'Regulated' } },
-      ])
+      const message = makeMessage(
+        [],
+        [
+          { word: 'gun', worryword: { keyword: 'gun', type: 'Review' } },
+          { word: 'knife', worryword: { keyword: 'knife', type: 'Regulated' } },
+        ]
+      )
       mockMessageStore.byId.mockReturnValue(message)
       const wrapper = mount(ModMessageWorry, {
         props: { messageid: 123 },
@@ -111,9 +122,10 @@ describe('ModMessageWorry', () => {
     })
 
     it('shows the matched keyword and review text for Review type', () => {
-      const message = makeMessage([], [
-        { word: 'gun', worryword: { keyword: 'gun', type: 'Review' } },
-      ])
+      const message = makeMessage(
+        [],
+        [{ word: 'gun', worryword: { keyword: 'gun', type: 'Review' } }]
+      )
       mockMessageStore.byId.mockReturnValue(message)
       const wrapper = mount(ModMessageWorry, {
         props: { messageid: 123 },
@@ -124,9 +136,10 @@ describe('ModMessageWorry', () => {
     })
 
     it('shows Regulated substance text for Regulated type', () => {
-      const message = makeMessage([], [
-        { word: 'gun', worryword: { keyword: 'gun', type: 'Regulated' } },
-      ])
+      const message = makeMessage(
+        [],
+        [{ word: 'gun', worryword: { keyword: 'gun', type: 'Regulated' } }]
+      )
       mockMessageStore.byId.mockReturnValue(message)
       const wrapper = mount(ModMessageWorry, {
         props: { messageid: 123 },
@@ -136,9 +149,10 @@ describe('ModMessageWorry', () => {
     })
 
     it('shows Reportable substance text for Reportable type', () => {
-      const message = makeMessage([], [
-        { word: 'acid', worryword: { keyword: 'acid', type: 'Reportable' } },
-      ])
+      const message = makeMessage(
+        [],
+        [{ word: 'acid', worryword: { keyword: 'acid', type: 'Reportable' } }]
+      )
       mockMessageStore.byId.mockReturnValue(message)
       const wrapper = mount(ModMessageWorry, {
         props: { messageid: 123 },
@@ -148,9 +162,15 @@ describe('ModMessageWorry', () => {
     })
 
     it('shows Medicine text for Medicine type', () => {
-      const message = makeMessage([], [
-        { word: 'codeine', worryword: { keyword: 'codeine', type: 'Medicine' } },
-      ])
+      const message = makeMessage(
+        [],
+        [
+          {
+            word: 'codeine',
+            worryword: { keyword: 'codeine', type: 'Medicine' },
+          },
+        ]
+      )
       mockMessageStore.byId.mockReturnValue(message)
       const wrapper = mount(ModMessageWorry, {
         props: { messageid: 123 },
@@ -176,21 +196,33 @@ describe('ModMessageWorry', () => {
   describe('Vague check', () => {
     it('shows Vague post heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
+        {
+          check: 'Vague',
+          category: null,
+          detail: "Item name 'stuff' is too generic",
+        },
       ])
       expect(wrapper.text()).toContain('Vague post')
     })
 
     it('shows the detail text', () => {
       const wrapper = mountWithReasons([
-        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
+        {
+          check: 'Vague',
+          category: null,
+          detail: "Item name 'stuff' is too generic",
+        },
       ])
       expect(wrapper.text()).toContain("Item name 'stuff' is too generic")
     })
 
     it('asks mod to request a more specific description', () => {
       const wrapper = mountWithReasons([
-        { check: 'Vague', category: null, detail: "Item name 'junk' is too generic" },
+        {
+          check: 'Vague',
+          category: null,
+          detail: "Item name 'junk' is too generic",
+        },
       ])
       expect(wrapper.text()).toContain('describe the item more specifically')
     })
@@ -199,14 +231,22 @@ describe('ModMessageWorry', () => {
   describe('PhoneNumber check', () => {
     it('shows Phone number heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+        {
+          check: 'PhoneNumber',
+          category: null,
+          detail: 'Post contains what looks like a phone number',
+        },
       ])
       expect(wrapper.text()).toContain('Phone number')
     })
 
     it('asks mod to request phone number removal', () => {
       const wrapper = mountWithReasons([
-        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+        {
+          check: 'PhoneNumber',
+          category: null,
+          detail: 'Post contains what looks like a phone number',
+        },
       ])
       expect(wrapper.text()).toContain('remove their phone number')
     })
@@ -215,14 +255,22 @@ describe('ModMessageWorry', () => {
   describe('EmailAddress check', () => {
     it('shows Email address heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'EmailAddress', category: null, detail: 'Post contains an external email address' },
+        {
+          check: 'EmailAddress',
+          category: null,
+          detail: 'Post contains an external email address',
+        },
       ])
       expect(wrapper.text()).toContain('Email address')
     })
 
     it('asks mod to request email removal', () => {
       const wrapper = mountWithReasons([
-        { check: 'EmailAddress', category: null, detail: 'Post contains an external email address' },
+        {
+          check: 'EmailAddress',
+          category: null,
+          detail: 'Post contains an external email address',
+        },
       ])
       expect(wrapper.text()).toContain('remove their email address')
     })
@@ -231,21 +279,35 @@ describe('ModMessageWorry', () => {
   describe('MessagingLink check', () => {
     it('shows Messaging app link heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'MessagingLink', category: null, detail: 'Post contains a messaging app link (wa.me)' },
+        {
+          check: 'MessagingLink',
+          category: null,
+          detail: 'Post contains a messaging app link (wa.me)',
+        },
       ])
       expect(wrapper.text()).toContain('Messaging app link')
     })
 
     it('shows the detail text', () => {
       const wrapper = mountWithReasons([
-        { check: 'MessagingLink', category: null, detail: 'Post contains a messaging app link (wa.me)' },
+        {
+          check: 'MessagingLink',
+          category: null,
+          detail: 'Post contains a messaging app link (wa.me)',
+        },
       ])
-      expect(wrapper.text()).toContain('Post contains a messaging app link (wa.me)')
+      expect(wrapper.text()).toContain(
+        'Post contains a messaging app link (wa.me)'
+      )
     })
 
     it('asks mod to request link removal', () => {
       const wrapper = mountWithReasons([
-        { check: 'MessagingLink', category: null, detail: 'Post contains a messaging app link (wa.me)' },
+        {
+          check: 'MessagingLink',
+          category: null,
+          detail: 'Post contains a messaging app link (wa.me)',
+        },
       ])
       expect(wrapper.text()).toContain('remove the link')
     })
@@ -254,21 +316,33 @@ describe('ModMessageWorry', () => {
   describe('ConcernKeyword check — categories', () => {
     it('substance_regulated: shows Regulated substance heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_regulated', detail: "Matched concern keyword 'cocaine'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_regulated',
+          detail: "Matched concern keyword 'cocaine'",
+        },
       ])
       expect(wrapper.text()).toContain('Regulated substance')
     })
 
     it('substance_regulated: mentions not legal on Freegle', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_regulated', detail: "Matched concern keyword 'cocaine'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_regulated',
+          detail: "Matched concern keyword 'cocaine'",
+        },
       ])
       expect(wrapper.text()).toContain('not legal on Freegle')
     })
 
     it('substance_regulated: links to Central', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_regulated', detail: "Matched concern keyword 'cocaine'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_regulated',
+          detail: "Matched concern keyword 'cocaine'",
+        },
       ])
       const links = wrapper.findAll('a')
       const centralLink = links.find((l) =>
@@ -279,79 +353,161 @@ describe('ModMessageWorry', () => {
 
     it('substance_reportable: shows Reportable substance heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_reportable', detail: "Matched concern keyword 'asbestos'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_reportable',
+          detail: "Matched concern keyword 'asbestos'",
+        },
       ])
       expect(wrapper.text()).toContain('Reportable substance')
     })
 
     it('substance_reportable: mentions reporting to police', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_reportable', detail: "Matched concern keyword 'asbestos'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_reportable',
+          detail: "Matched concern keyword 'asbestos'",
+        },
       ])
       expect(wrapper.text()).toContain('reported to the police')
     })
 
     it('substance_medicine: shows Medicine or drug heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_medicine', detail: "Matched concern keyword 'aspirin'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_medicine',
+          detail: "Matched concern keyword 'aspirin'",
+        },
       ])
       expect(wrapper.text()).toContain('Medicine or drug')
     })
 
     it('substance_medicine: mentions not legal on Freegle', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'substance_medicine', detail: "Matched concern keyword 'aspirin'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'substance_medicine',
+          detail: "Matched concern keyword 'aspirin'",
+        },
       ])
       expect(wrapper.text()).toContain('not legal on Freegle')
     })
 
     it('scam: shows Possible scam heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'scam', detail: "Matched concern keyword 'lottery'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'scam',
+          detail: "Matched concern keyword 'lottery'",
+        },
       ])
       expect(wrapper.text()).toContain('Possible scam')
     })
 
     it('scam: says fine to approve if nothing wrong', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'scam', detail: "Matched concern keyword 'lottery'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'scam',
+          detail: "Matched concern keyword 'lottery'",
+        },
       ])
-      expect(wrapper.text()).toContain("fine to approve")
+      expect(wrapper.text()).toContain('fine to approve')
     })
 
     it('review (generic category): shows Flagged for review heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'review', detail: "Matched concern keyword 'test'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'review',
+          detail: "Matched concern keyword 'test'",
+        },
       ])
       expect(wrapper.text()).toContain('Flagged for review')
     })
 
     it('review: shows detail text', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'review', detail: "Matched concern keyword 'suspicious'" },
+        {
+          check: 'ConcernKeyword',
+          category: 'review',
+          detail: "Matched concern keyword 'suspicious'",
+        },
       ])
       expect(wrapper.text()).toContain("Matched concern keyword 'suspicious'")
     })
 
     it('unknown category: falls through to Flagged for review', () => {
       const wrapper = mountWithReasons([
-        { check: 'ConcernKeyword', category: 'unknown_future_category', detail: 'some detail' },
+        {
+          check: 'ConcernKeyword',
+          category: 'unknown_future_category',
+          detail: 'some detail',
+        },
       ])
       expect(wrapper.text()).toContain('Flagged for review')
+    })
+  })
+
+  describe('NotAnItem check', () => {
+    it('shows Possibly not an item heading', () => {
+      const wrapper = mountWithReasons([
+        {
+          check: 'NotAnItem',
+          category: 'service',
+          detail:
+            'Post may be a non-physical request (service) rather than an item — matched "cleaner wanted"',
+        },
+      ])
+      expect(wrapper.text()).toContain('Possibly not an item')
+    })
+
+    it('shows the detail text (matched phrase)', () => {
+      const wrapper = mountWithReasons([
+        {
+          check: 'NotAnItem',
+          category: 'accommodation',
+          detail:
+            'Post may be a non-physical request (accommodation) rather than an item — matched "to rent"',
+        },
+      ])
+      expect(wrapper.text()).toContain('matched "to rent"')
+    })
+
+    it('explains it may not be a physical item', () => {
+      const wrapper = mountWithReasons([
+        {
+          check: 'NotAnItem',
+          category: 'work',
+          detail:
+            'Post may be a non-physical request (work) rather than an item — matched "job vacancy"',
+        },
+      ])
+      expect(wrapper.text()).toContain('rather than a physical item')
     })
   })
 
   describe('unknown check type', () => {
     it('shows generic Flagged heading', () => {
       const wrapper = mountWithReasons([
-        { check: 'SomeFutureCheck', category: null, detail: 'something flagged' },
+        {
+          check: 'SomeFutureCheck',
+          category: null,
+          detail: 'something flagged',
+        },
       ])
       expect(wrapper.text()).toContain('Flagged')
     })
 
     it('shows the detail text', () => {
       const wrapper = mountWithReasons([
-        { check: 'SomeFutureCheck', category: null, detail: 'something flagged' },
+        {
+          check: 'SomeFutureCheck',
+          category: null,
+          detail: 'something flagged',
+        },
       ])
       expect(wrapper.text()).toContain('something flagged')
     })
@@ -360,9 +516,21 @@ describe('ModMessageWorry', () => {
   describe('multiple reasons', () => {
     it('renders a separate NoticeMessage for each reason', () => {
       const wrapper = mountWithReasons([
-        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
-        { check: 'ConcernKeyword', category: 'scam', detail: "Matched concern keyword 'lottery'" },
-        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+        {
+          check: 'Vague',
+          category: null,
+          detail: "Item name 'stuff' is too generic",
+        },
+        {
+          check: 'ConcernKeyword',
+          category: 'scam',
+          detail: "Matched concern keyword 'lottery'",
+        },
+        {
+          check: 'PhoneNumber',
+          category: null,
+          detail: 'Post contains what looks like a phone number',
+        },
       ])
       expect(wrapper.findAll('.notice-message').length).toBe(3)
     })
@@ -372,6 +540,228 @@ describe('ModMessageWorry', () => {
     it('messageid prop is required and used', () => {
       const wrapper = mountWithReasons([])
       expect(wrapper.props('messageid')).toBe(123)
+    })
+  })
+
+  describe('keyword de-duplication and per-group scoping', () => {
+    function mountMessage(message, props = {}) {
+      mockMessageStore.byId.mockImplementation((id) =>
+        id === message.id ? message : null
+      )
+      return mount(ModMessageWorry, {
+        props: { messageid: message.id, ...props },
+        global: { stubs: STUBS },
+      })
+    }
+
+    it('shows one box when a live worry word and a stored reason name the same keyword', () => {
+      const message = {
+        id: 1,
+        worry: [
+          {
+            word: 'cot mattress',
+            worryword: { keyword: 'cot mattress', type: 'Review' },
+          },
+        ],
+        groups: [
+          {
+            groupid: 10,
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'review',
+                keyword: 'cot mattress',
+                detail: "Matched concern keyword 'cot mattress'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 10 })
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
+    })
+
+    it('collapses ConcernKeyword and PerGroupWorryWord reasons for the same keyword', () => {
+      const message = {
+        id: 2,
+        worry: [],
+        groups: [
+          {
+            groupid: 10,
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'review',
+                keyword: 'cot mattress',
+                detail: "Matched concern keyword 'cot mattress'",
+              },
+              {
+                check: 'PerGroupWorryWord',
+                category: null,
+                keyword: 'cot mattress',
+                detail: "Matched per-group worry word 'cot mattress'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 10 })
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
+      expect(wrapper.text()).toContain('Flagged for review')
+    })
+
+    it("does not show another group's worry word when moderating a clean group", () => {
+      const message = {
+        id: 3,
+        worry: [
+          {
+            word: 'cot mattress',
+            worryword: { keyword: 'cot mattress', type: 'Review' },
+          },
+        ],
+        groups: [
+          { groupid: 10, contentcheck_reasons: null },
+          {
+            groupid: 20,
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'review',
+                keyword: 'cot mattress',
+                detail: "Matched concern keyword 'cot mattress'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 10 })
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
+    })
+
+    it('shows the flag for the group that configured it', () => {
+      const message = {
+        id: 4,
+        worry: [
+          {
+            word: 'cot mattress',
+            worryword: { keyword: 'cot mattress', type: 'Review' },
+          },
+        ],
+        groups: [
+          { groupid: 10, contentcheck_reasons: null },
+          {
+            groupid: 20,
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'review',
+                keyword: 'cot mattress',
+                detail: "Matched concern keyword 'cot mattress'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 20 })
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
+      expect(wrapper.text()).toContain("Matched concern keyword 'cot mattress'")
+    })
+
+    it('keeps distinct keywords as separate boxes (no false de-dup)', () => {
+      const message = {
+        id: 5,
+        worry: [{ word: 'gun', worryword: { keyword: 'gun', type: 'Review' } }],
+        groups: [
+          {
+            groupid: 10,
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'scam',
+                keyword: 'lottery',
+                detail: "Matched concern keyword 'lottery'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 10 })
+      expect(wrapper.findAll('.notice-message').length).toBe(2)
+    })
+
+    it('never de-duplicates non-keyword checks', () => {
+      const message = {
+        id: 6,
+        worry: [],
+        groups: [
+          {
+            groupid: 10,
+            contentcheck_reasons: [
+              {
+                check: 'Vague',
+                category: null,
+                detail: "Item name 'stuff' is too generic",
+              },
+              {
+                check: 'PhoneNumber',
+                category: null,
+                detail: 'Post contains a phone number',
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 10 })
+      expect(wrapper.findAll('.notice-message').length).toBe(2)
+    })
+
+    it('matches the group row when groupid is a string in the API data', () => {
+      const message = {
+        id: 8,
+        worry: [],
+        groups: [
+          { groupid: '10', contentcheck_reasons: null },
+          {
+            groupid: '20',
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'review',
+                keyword: 'cot mattress',
+                detail: "Matched concern keyword 'cot mattress'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 20 })
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
+    })
+
+    it('de-dupes against legacy stored reasons that have no keyword field', () => {
+      const message = {
+        id: 7,
+        worry: [
+          {
+            word: 'cot mattress',
+            worryword: { keyword: 'cot mattress', type: 'Review' },
+          },
+        ],
+        groups: [
+          {
+            groupid: 10,
+            contentcheck_reasons: [
+              {
+                check: 'ConcernKeyword',
+                category: 'review',
+                detail: "Matched concern keyword 'cot mattress'",
+              },
+            ],
+          },
+        ],
+      }
+      const wrapper = mountMessage(message, { groupid: 10 })
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
     })
   })
 })

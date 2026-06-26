@@ -136,31 +136,24 @@
                     </span>
                   </div>
                   <div class="group-row">
-                    <template
-                      v-for="(mg, idx) in messageGroups"
-                      :key="mg.id"
-                    >
-                      <nuxt-link
-                        :to="'/explore/' + mg.nameshort"
-                        class="group-link"
-                        @click.stop
+                    <ShowMore :items="messageGroups" :limit="3" inline>
+                      <template #item="{ item }"
+                        ><nuxt-link
+                          :to="'/explore/' + item.nameshort"
+                          class="group-link"
+                          @click.stop
+                          >{{ item.namedisplay }}</nuxt-link
+                        ></template
                       >
-                        {{ mg.namedisplay }}
-                      </nuxt-link>
-                      <span
-                        v-if="idx < messageGroups.length - 1"
-                        class="group-time-separator"
-                        >,</span
-                      >
-                    </template>
+                    </ShowMore>
                     <span
                       v-if="messageGroups.length && timeAgoExpandedDisplay"
                       class="group-time-separator"
                       >·</span
                     >
-                    <span v-if="timeAgoExpandedDisplay" class="group-time"
-                      >{{ timeAgoExpandedDisplay }}</span
-                    >
+                    <span v-if="timeAgoExpandedDisplay" class="group-time">{{
+                      timeAgoExpandedDisplay
+                    }}</span>
                     <span class="group-time-separator">·</span>
                     <nuxt-link
                       :to="'/message/' + message.id"
@@ -204,22 +197,16 @@
                     </template>
                     <template v-if="messageGroups.length">
                       <span v-if="message.area" class="desktop-sep">·</span>
-                      <template
-                        v-for="(mg, idx) in messageGroups"
-                        :key="mg.id"
-                      >
-                        <nuxt-link
-                          :to="'/explore/' + mg.nameshort"
-                          class="desktop-group-link"
-                          @click.stop
+                      <ShowMore :items="messageGroups" :limit="3" inline>
+                        <template #item="{ item }"
+                          ><nuxt-link
+                            :to="'/explore/' + item.nameshort"
+                            class="desktop-group-link"
+                            @click.stop
+                            >{{ item.namedisplay }}</nuxt-link
+                          ></template
                         >
-                          {{ mg.namedisplay }}
-                        </nuxt-link>
-                        <span
-                          v-if="idx < messageGroups.length - 1"
-                          >,
-                        </span>
-                      </template>
+                      </ShowMore>
                     </template>
                     <template v-if="timeAgoExpandedDisplay">
                       <span class="desktop-sep">·</span>
@@ -500,7 +487,7 @@
         @hidden="showShareModal = false"
       />
       <MessageEditModal v-if="showEditModal" :id="id" @hidden="hidden" />
-      <PromiseModal
+      <LazyPromiseModal
         v-if="showPromiseModal"
         :messages="[message]"
         :selected-message="message.id"
@@ -545,9 +532,6 @@ const MessageShareModal = defineAsyncComponent(() =>
 )
 const NoticeMessage = defineAsyncComponent(() =>
   import('~/components/NoticeMessage')
-)
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
 )
 const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
 const MessageEditModal = defineAsyncComponent(() =>
@@ -595,7 +579,6 @@ const {
   message,
   strippedSubject,
   gotAttachments: hasPhoto,
-  timeAgoExpanded,
   timeAgoExpandedDisplay,
   placeholderClass,
   categoryIcon,
@@ -819,10 +802,6 @@ const messageGroups = computed(() => {
   return []
 })
 
-const messageGroup = computed(() => {
-  return messageGroups.value.length ? messageGroups.value[0] : null
-})
-
 // Methods
 function getUserProfile(userid) {
   return userStore?.byId(userid)?.profile
@@ -941,8 +920,13 @@ const repost = async (e) => {
 
   // Set the group from the original message so the dropdown shows the correct
   // group rather than falling back to groupsnear[0] or a stale localStorage value.
+  // For multi-group originals, default to the most-recent arrival — the user
+  // can still change it in the compose dropdown.
   if (msg.groups?.length > 0) {
-    composeStore.group = msg.groups[0].groupid
+    const mostRecent = [...msg.groups].sort(
+      (a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0)
+    )[0]
+    composeStore.group = mostRecent.groupid
   }
 
   await composeStore.setAttachmentsForMessage(0, msg.attachments)

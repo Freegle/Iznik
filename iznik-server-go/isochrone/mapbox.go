@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // mapboxTransport maps our transport types to Mapbox profile names.
@@ -54,8 +52,7 @@ func FetchIsochroneWKT(transport string, lng, lat float64, minutes int) string {
 		profile, lng, lat, minutes, token,
 	)
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := isochroneHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("Mapbox isochrone fetch failed: %v", err)
 		return ""

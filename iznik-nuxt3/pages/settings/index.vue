@@ -14,6 +14,7 @@
         />
         <AddressBookSection @show-address-modal="showAddressModal = true" />
         <EmailSettingsSection @update="updateMe" />
+        <AppNotificationsSection @update="updateMe" />
         <OtherSettingsSection @update="updateMe" />
       </div>
 
@@ -50,6 +51,7 @@ import ProfileSection from '~/components/settings/ProfileSection.vue'
 import AccountSection from '~/components/settings/AccountSection.vue'
 import AddressBookSection from '~/components/settings/AddressBookSection.vue'
 import EmailSettingsSection from '~/components/settings/EmailSettingsSection.vue'
+import AppNotificationsSection from '~/components/settings/AppNotificationsSection.vue'
 import OtherSettingsSection from '~/components/settings/OtherSettingsSection.vue'
 
 definePageMeta({
@@ -124,10 +126,12 @@ const ProfileModal = defineAsyncComponent(() =>
 
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
 
 .settings-page {
   min-height: 100vh;
   background: $color-gray--lighter;
+  padding-bottom: $page-bottom-padding;
 }
 
 .settings-content {

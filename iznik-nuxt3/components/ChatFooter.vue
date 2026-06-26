@@ -304,7 +304,7 @@
         />
       </div>
     </div>
-    <PromiseModal
+    <LazyPromiseModal
       v-if="showPromise"
       :messages="ouroffers"
       :selected-message="likelymsg ? likelymsg : 0"
@@ -314,7 +314,7 @@
       @hide="fetchMessages"
       @hidden="showPromise = false"
     />
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal && otheruser"
       :id="otheruser ? otheruser.id : null"
       @hidden="showProfileModal = false"
@@ -388,12 +388,6 @@ const OurUploader = defineAsyncComponent(() =>
 )
 const UserRatings = defineAsyncComponent(() =>
   import('~/components/UserRatings')
-)
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
-)
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
 )
 const AddressModal = defineAsyncComponent(() =>
   import('~/components/AddressModal')

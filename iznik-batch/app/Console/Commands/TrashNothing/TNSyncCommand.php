@@ -7,7 +7,6 @@ use App\Models\Location;
 use App\Models\Rating;
 use App\Models\User;
 use App\Models\UserAboutMe;
-use App\Models\UserEmail;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\PostSyncer;
@@ -36,6 +35,8 @@ class TNSyncCommand extends Command
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
     private const PAGE_SIZE = 100;
+
+    private const STALENESS_THRESHOLD_HOURS = 12;
 
     private bool $dryRun;
 
@@ -119,10 +120,7 @@ class TNSyncCommand extends Command
                 }
 
                 if ($ratingsProcessed === 0 && $changesProcessed === 0 && $duplicatesMerged === 0 && $postsProcessed === 0) {
-                    Log::warning('TN sync did nothing');
-                    if (function_exists('\Sentry\captureMessage')) {
-                        \Sentry\captureMessage('TN sync did nothing');
-                    }
+                    $this->alertIfSyncStale();
                 }
 
                 $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesMerged} duplicates merged, {$postsProcessed} posts.");
@@ -270,6 +268,75 @@ class TNSyncCommand extends Command
             if (function_exists('\Sentry\captureMessage')) {
                 \Sentry\captureMessage("Failed to store TN sync date to {$this->dateFile}");
             }
+        }
+    }
+
+    /**
+     * Determine the timestamp (unix epoch, UTC) of the last successful
+     * TrashNothing operation, or null if there is no baseline to compare.
+     */
+    private function getLastSuccessfulSyncTime(): ?int
+    {
+        // The sync date file holds the max change date of the most recently
+        // processed TN data. It only advances when real work is done.
+        if ($this->dateFile && file_exists($this->dateFile)) {
+            $stored = trim((string) @file_get_contents($this->dateFile));
+            if ($stored !== '') {
+                $ts = strtotime($stored);
+                if ($ts !== false) {
+                    return $ts;
+                }
+            }
+        }
+
+        // Fall back to the most recent TN rating timestamp in the DB.
+        $max = Rating::whereNotNull('tn_rating_id')->max('timestamp');
+        if ($max) {
+            $ts = strtotime((string) $max);
+            if ($ts !== false) {
+                return $ts;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * When a sync cycle did no work, alert to Sentry only if the last
+     * successful TrashNothing operation is older than the staleness
+     * threshold. Quiet periods (no new data) are normal and must not alert.
+     */
+    private function alertIfSyncStale(): void
+    {
+        $lastSuccess = $this->getLastSuccessfulSyncTime();
+
+        if ($lastSuccess === null) {
+            Log::info('TN sync did nothing; no prior successful TN operation on record, skipping staleness alert.');
+            return;
+        }
+
+        $ageSeconds = time() - $lastSuccess;
+        $ageHours = round($ageSeconds / 3600, 1);
+        $thresholdSeconds = self::STALENESS_THRESHOLD_HOURS * 3600;
+
+        if ($ageSeconds > $thresholdSeconds) {
+            $message = sprintf(
+                'TN sync stale: no successful TrashNothing operation for %s hours (threshold %d)',
+                $ageHours,
+                self::STALENESS_THRESHOLD_HOURS
+            );
+            Log::warning($message, [
+                'last_success' => gmdate('Y-m-d\TH:i:s\Z', $lastSuccess),
+                'age_hours' => $ageHours,
+            ]);
+            if (function_exists('\Sentry\captureMessage')) {
+                \Sentry\captureMessage($message);
+            }
+        } else {
+            Log::info('TN sync did nothing (last successful TN operation within threshold)', [
+                'last_success' => gmdate('Y-m-d\TH:i:s\Z', $lastSuccess),
+                'age_hours' => $ageHours,
+            ]);
         }
     }
 
@@ -558,19 +625,24 @@ class TNSyncCommand extends Command
         // but the reversed suffix is a prefix match — O(log n) range scan instead of O(n).
         $reversedSuffix = strrev('@user.trashnothing.com');
 
-        $rows = UserEmail::select('userid', 'email')
-            ->where('backwards', 'LIKE', $reversedSuffix . '%')
-            ->get();
-
-        if ($rows->isEmpty()) {
-            return 0;
-        }
-
+        // Stream rows with a query-builder cursor and group as we go. Hydrating the
+        // full ~400k-row result set as Eloquent models exhausts the 512M memory_limit;
+        // raw rows are an order of magnitude lighter and we only need userid + email.
         // Group by TN username in PHP — avoids slow REGEXP_REPLACE GROUP BY in MySQL.
         $groups = [];
-        foreach ($rows as $row) {
+        foreach (
+            DB::table('users_emails')
+                ->select('userid', 'email')
+                ->where('backwards', 'LIKE', $reversedSuffix . '%')
+                ->orderBy('id')
+                ->cursor() as $row
+        ) {
             $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
             $groups[$username][] = (int) $row->userid;
+        }
+
+        if (empty($groups)) {
+            return 0;
         }
 
         $duplicateGroups = array_filter($groups, fn($ids) => count(array_unique($ids)) > 1);

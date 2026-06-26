@@ -535,7 +535,7 @@ describe('ModSettingsGroup', () => {
         // With valid groupid
         wrapper.vm.groupid = 123
         await wrapper.vm.fetchGroup()
-        expect(mockModGroupStore.fetchIfNeedBeMT).toHaveBeenCalledWith(123)
+        expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalledWith(123)
         expect(mockShortlinkStore.fetch).toHaveBeenCalledWith(0, 123)
 
         // Reset mocks
@@ -544,7 +544,7 @@ describe('ModSettingsGroup', () => {
         // With null groupid
         wrapper.vm.groupid = null
         await wrapper.vm.fetchGroup()
-        expect(mockModGroupStore.fetchIfNeedBeMT).not.toHaveBeenCalled()
+        expect(mockModGroupStore.fetchGroupMT).not.toHaveBeenCalled()
       })
     })
 
@@ -717,7 +717,7 @@ describe('ModSettingsGroup', () => {
       const wrapper = mountComponent()
       wrapper.vm.groupid = 456
       await flushPromises()
-      expect(mockModGroupStore.fetchIfNeedBeMT).toHaveBeenCalled()
+      expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalled()
     })
   })
 
@@ -769,6 +769,38 @@ describe('ModSettingsGroup', () => {
       // Not confirmed
       wrapper = mountComponent({}, { affiliationconfirmed: null })
       expect(wrapper.text()).toContain('Affiliation not confirmed')
+    })
+  })
+
+  describe('bug #9767: TN settings link missing on first load', () => {
+    const tnUrl =
+      'https://trashnothing.com/modtools/group-settings/TestGroup?key=abc'
+
+    it('shows TN settings link when group has tnkey data', async () => {
+      // This is the state after the fix: fetchGroupMT populates tnkey in the store.
+      const wrapper = mountComponent({}, { tnkey: { url: tnUrl } })
+      await flushPromises()
+      expect(wrapper.text()).toContain('TrashNothing settings')
+      const link = wrapper.find(`.external-link[href="${tnUrl}"]`)
+      expect(link.exists()).toBe(true)
+    })
+
+    it('hides TN settings link when group has no tnkey data (bug state before fix)', async () => {
+      // Simulates what batch fetch (getModGroups → fetchGroupsMTBatch) returns:
+      // groups without tnkey, because the batch endpoint never fetches it.
+      // fetchIfNeedBeMT returned early for these cached groups → link was never shown.
+      const wrapper = mountComponent({}, { tnkey: null })
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('TrashNothing settings')
+    })
+
+    it('calls fetchGroupMT on first mount to ensure tnkey is always fetched (regression guard)', async () => {
+      // fetchIfNeedBeMT skips groups already in the store (from batch fetch),
+      // so tnkey was never fetched on first load. The fix uses fetchGroupMT,
+      // which always fetches including tnkey, so the link renders on first load.
+      const wrapper = mountComponent({ initialGroup: 123 })
+      await flushPromises()
+      expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalledWith(123)
     })
   })
 })

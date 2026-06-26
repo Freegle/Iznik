@@ -11,7 +11,7 @@
     <div class="container-fluid" style="padding: 1rem;">
       <div class="row g-3">
         <!-- Left column: Bugs (primary work items) -->
-        <div class="col-lg-5">
+        <div class="col-lg-7">
           <BugPanel
             :bugs="bugsData.state.bugs"
             :loading="bugsData.state.loading"
@@ -19,8 +19,8 @@
           />
         </div>
 
-        <!-- Middle column: PRs -->
-        <div class="col-lg-4">
+        <!-- Right column: PRs -->
+        <div class="col-lg-5">
           <PrPanel
             :prs="prsData.state.prs"
             :loading="prsData.state.loading"
@@ -32,14 +32,25 @@
           />
         </div>
 
-        <!-- Right column: Reply Queue -->
-        <div class="col-lg-3">
-          <ReplyQueue
-            :drafts="draftsData.state.drafts"
-            :loading="draftsData.state.loading"
-            @refresh="draftsData.refresh()"
-          />
-        </div>
+        <!-- Reply Queue column removed: deployed-fix replies are the fixed
+             verbatim text and no longer need a per-draft review column here. -->
+      </div>
+
+      <!-- Feature Requests (collapsible, only shown when non-empty) -->
+      <div v-if="featureRequestsData.state.requests.length > 0" class="mt-3">
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Feature Requests</span>
+            <span class="badge bg-info text-dark ms-2">{{ featureRequestsData.state.requests.length }}</span>
+          </summary>
+          <div class="card-body p-0">
+            <FeatureRequestPanel
+              :requests="featureRequestsData.state.requests"
+              :loading="featureRequestsData.state.loading"
+              @refresh="featureRequestsData.refresh()"
+            />
+          </div>
+        </details>
       </div>
 
       <!-- Recently Fixed (collapsible) -->
@@ -119,14 +130,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useBugs, useCIRunner, useDrafts, useIterations, usePrsLive } from './composables/useApi'
+import { useBugs, useCIRunner, useFeatureRequests, useIterations, usePrsLive } from './composables/useApi'
 import PrPanel from './components/PrPanel.vue'
 import BugPanel from './components/BugPanel.vue'
-import ReplyQueue from './components/ReplyQueue.vue'
+import FeatureRequestPanel from './components/FeatureRequestPanel.vue'
 import IterTable from './components/IterTable.vue'
 
 const bugsData = useBugs()
-const draftsData = useDrafts()
+const featureRequestsData = useFeatureRequests()
 const itersData = useIterations()
 const prsData = usePrsLive()
 const ciRunner = useCIRunner()
@@ -134,9 +145,10 @@ const ciRunner = useCIRunner()
 const recentlyFixed = computed(() => {
   const sevenDaysAgo = new Date()
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  return bugsData.state.bugs.filter(bug =>
-    bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo
-  )
+  return bugsData.state.bugs
+    .filter(bug => bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo)
+    // Most recently fixed first.
+    .sort((a, b) => new Date(b.fixed_at).getTime() - new Date(a.fixed_at).getTime())
 })
 
 function formatFixedAge(date: string | null): string {
@@ -164,10 +176,17 @@ nav {
 
 details > summary {
   outline: none;
+  /* Hide the browser's native disclosure triangle so only our custom ▶/▼
+     (the ::before below) shows — otherwise two chevrons appear side by side. */
+  list-style: none;
 }
 
 details > summary::-webkit-details-marker {
   display: none;
+}
+
+details > summary::marker {
+  content: '';
 }
 
 details > summary::before {

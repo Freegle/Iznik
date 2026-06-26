@@ -132,6 +132,10 @@ export function useModMe() {
     miscStore.workTimer = setTimeout(checkWork, 30000)
   }
 
+  function resetCheckWork() {
+    isFirstCheckWork = true
+  }
+
   return {
     hasPermissionNewsletter,
     hasPermissionSpamAdmin,
@@ -141,5 +145,6 @@ export function useModMe() {
     amAModOn,
     checkWorkDeferGetMessages,
     checkWork,
+    resetCheckWork,
   }
 }

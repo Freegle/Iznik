@@ -4,6 +4,7 @@ namespace App\Console\Commands\Queue;
 
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Charity\CharitySignupMail;
+use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
@@ -216,8 +217,10 @@ class ProcessBackgroundTasksCommand extends Command
         bool $shouldSpool
     ): void {
         match ($taskType) {
+            BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE => $this->handlePushNotifyChatMessage($data, $pushService),
             BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS  => $this->handlePushNotifyGroupMods($data, $pushService),
             BackgroundTask::TASK_EMAIL_CHITCHAT_REPORT   => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_CHAT_SPAM_REPORT  => $this->handleEmailChatSpamReport($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_CHARITY_SIGNUP    => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_DONATE_EXTERNAL   => $this->handleEmailDonateExternal($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_FORGOT_PASSWORD   => $this->handleEmailForgotPassword($data, $spooler, $shouldSpool),
@@ -256,6 +259,24 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Send chat-message push notifications to chat participants (and group
+     * mods for User2Mod chats). Enqueued by ChatProcessService after a
+     * message passes spam/review/ban checks — V1 parity for the push side
+     * of ChatMessage::process() lost in commit 5cbb607b7.
+     */
+    protected function handlePushNotifyChatMessage(array $data, PushNotificationService $pushService): void
+    {
+        $messageId = (int) ($data['message_id'] ?? 0);
+
+        if (! $messageId) {
+            throw new \RuntimeException('push_notify_chat_message requires message_id');
+        }
+
+        $count = $pushService->notifyChatMessage($messageId);
+        Log::info('Notified chat message', ['message_id' => $messageId, 'notified' => $count]);
+    }
+
+    /**
      * Send a ChitChat report email to support.
      */
     protected function handleEmailChitchatReport(
@@ -263,30 +284,26 @@ class ProcessBackgroundTasksCommand extends Command
         EmailSpoolerService $spooler,
         bool $shouldSpool
     ): void {
-        $required = ['user_id', 'user_email', 'newsfeed_id', 'reason'];
+        $required = ['user_id', 'newsfeed_id', 'reason'];
         foreach ($required as $field) {
             if (empty($data[$field])) {
                 throw new \RuntimeException("email_chitchat_report requires {$field}");
             }
         }
 
-        // user_name is cosmetic — reporters identified by id+email; fall back if blank.
+        // user_name and user_email are cosmetic — reporters are identified by user_id.
         $reporterName = !empty($data['user_name']) ? $data['user_name'] : 'A Freegle user';
 
         $mail = new ChitchatReportMail(
             reporterName: $reporterName,
             reporterId: (int) $data['user_id'],
-            reporterEmail: $data['user_email'],
+            reporterEmail: $data['user_email'] ?? '',
             newsfeedId: (int) $data['newsfeed_id'],
             reason: $data['reason'],
         );
 
-        if ($shouldSpool) {
-            $recipients = array_map('trim', explode(',', config('freegle.mail.chitchat_support_addr')));
-            $spooler->spool($mail, $recipients);
-        } else {
-            Mail::send($mail);
-        }
+        $recipients = array_map('trim', explode(',', config('freegle.mail.chitchat_support_addr')));
+        $spooler->spool($mail, $recipients);
 
         Log::info('Sent ChitChat report email', [
             'reporter_id' => $data['user_id'],
@@ -317,11 +334,7 @@ class ProcessBackgroundTasksCommand extends Command
             source: $data['source'] ?? DonateExternalMail::SOURCE_EXTERNAL,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, config('freegle.mail.info_addr'));
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, config('freegle.mail.info_addr'));
 
         Log::info('Sent external donation email', [
             'user_id' => $data['user_id'],
@@ -352,11 +365,7 @@ class ProcessBackgroundTasksCommand extends Command
             description: $data['description'] ?? null,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, config('freegle.mail.partnerships_addr'));
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, config('freegle.mail.partnerships_addr'));
 
         Log::info('Sent charity signup notification', [
             'charity_id' => $data['charity_id'],
@@ -385,11 +394,7 @@ class ProcessBackgroundTasksCommand extends Command
             resetUrl: $data['reset_url'],
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $data['email']);
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, $data['email']);
 
         Log::info('Sent forgot password email', [
             'user_id' => $data['user_id'],
@@ -417,15 +422,27 @@ class ProcessBackgroundTasksCommand extends Command
             unsubUrl: $data['unsub_url'],
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $data['email']);
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, $data['email']);
 
         Log::info('Sent unsubscribe confirmation email', [
             'user_id' => $data['user_id'],
         ]);
+    }
+
+    /**
+     * Reopen any 'Closed' chat rosters for a chat so it reappears in the
+     * recipient's chat list after a new message. The ModTools chat list filters
+     * out rooms whose roster status is 'Closed' (iznik-server-go
+     * chat/chatroom.go), so a mod who had previously closed a User2Mod chat would
+     * not see it again even after sending a modmail to it (Discourse #9481/541).
+     * Mirrors the reopen in V2 CreateChatMessage; 'Blocked' rosters are left as-is.
+     */
+    protected function reopenClosedRosters(int $chatId): void
+    {
+        DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('status', 'Closed')
+            ->update(['status' => 'Offline']);
     }
 
     /**
@@ -546,11 +563,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $posterEmail);
-        } else {
-            Mail::to($posterEmail)->send($mail);
-        }
+        $spooler->spool($mail, $posterEmail);
 
         // V1 parity: send BCC copy if configured in mod's ModConfig.
         $this->sendBccIfConfigured(
@@ -587,6 +600,13 @@ class ProcessBackgroundTasksCommand extends Command
                     'processingrequired' => 0,
                     'processingsuccessful' => 1,
                 ]);
+
+                // Reopen any closed rosters so the chat reappears in the acting
+                // mod's (and the member's) chat list, mirroring V2 CreateChatMessage
+                // (iznik-server-go chat/chatmessage.go). Without this, a chat the mod
+                // had previously closed stays hidden from their ModTools chats list
+                // even after they send this modmail (Discourse #9481/541).
+                $this->reopenClosedRosters((int) $chatRoom->id);
             }
         }
 
@@ -668,11 +688,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $memberEmail);
-        } else {
-            Mail::to($memberEmail)->send($mail);
-        }
+        $spooler->spool($mail, $memberEmail);
 
         // V1 parity: send BCC copy if configured in mod's ModConfig.
         $this->sendBccIfConfigured(
@@ -723,6 +739,10 @@ class ProcessBackgroundTasksCommand extends Command
                     ['chatid', 'userid'],
                     ['lastmsgemailed', 'lastemailed']
                 );
+
+                // Reopen any closed rosters so the chat reappears in the acting
+                // mod's (and the member's) chat list — see reopenClosedRosters().
+                $this->reopenClosedRosters((int) $chatRoom->id);
             }
 
             // Only create the User/Mailed log for email_mod_stdmsg (direct mod message to member).
@@ -896,11 +916,7 @@ class ProcessBackgroundTasksCommand extends Command
                 mergeUrl: $mergeUrl,
             );
 
-            if ($shouldSpool) {
-                $spooler->spool($mail, $recipientEmail);
-            } else {
-                Mail::to($recipientEmail)->send($mail);
-            }
+            $spooler->spool($mail, $recipientEmail);
         }
 
         Log::info('Sent merge offer emails', [
@@ -988,11 +1004,7 @@ class ProcessBackgroundTasksCommand extends Command
             confirmUrl: $confirmUrl,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $email);
-        } else {
-            Mail::to($email)->send($mail);
-        }
+        $spooler->spool($mail, $email);
 
         Log::info('Sent email verification', [
             'user_id' => $userId,
@@ -1064,15 +1076,62 @@ class ProcessBackgroundTasksCommand extends Command
         $supportAddr = config('freegle.mail.support_addr', 'support@ilovefreegle.org');
         $recipients = array_map('trim', explode(',', $supportAddr));
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $recipients);
-        } else {
-            Mail::to($recipients)->send($mail);
-        }
+        $spooler->spool($mail, $recipients);
 
         Log::info('Sent refer to support email', [
             'chat_id' => $chatId,
             'user_id' => $userId,
+        ]);
+    }
+
+    /**
+     * Email the central spam team when a user reports a chat with someone they
+     * share no Freegle group with (so it can't be routed to a community's mods).
+     */
+    protected function handleEmailChatSpamReport(
+        array $data,
+        EmailSpoolerService $spooler,
+        bool $shouldSpool
+    ): void {
+        $chatId = (int) ($data['chatid'] ?? 0);
+        $userId = (int) ($data['userid'] ?? 0);
+
+        if ($chatId === 0 || $userId === 0) {
+            throw new \RuntimeException('email_chat_spam_report requires chatid and userid');
+        }
+
+        $chat = DB::table('chat_rooms')->where('id', $chatId)->first();
+        if (! $chat) {
+            Log::warning("Chat not found for email_chat_spam_report: {$chatId}");
+            return;
+        }
+
+        $user = User::find($userId);
+        if (! $user) {
+            Log::warning("User not found for email_chat_spam_report: {$userId}");
+            return;
+        }
+
+        $otherUserId = $chat->user1 == $userId ? $chat->user2 : $chat->user1;
+        $otherUser = $otherUserId ? User::find($otherUserId) : null;
+        $otherUserName = $otherUser ? ($otherUser->fullname ?: 'Unknown') : 'Unknown';
+
+        $mail = new ChatSpamReportMail(
+            reporterName: $user->fullname ?: 'Unknown',
+            reporterId: $userId,
+            otherUserName: $otherUserName,
+            otherUserId: (int) ($otherUserId ?? 0),
+            chatId: $chatId,
+            reason: (string) ($data['reason'] ?? ''),
+            comment: (string) ($data['comment'] ?? ''),
+        );
+
+        $recipients = array_map('trim', explode(',', config('freegle.mail.spam_addr')));
+        $spooler->spool($mail, $recipients);
+
+        Log::info('Sent chat spam report email', [
+            'reporter_id' => $userId,
+            'chat_id' => $chatId,
         ]);
     }
 
@@ -1224,11 +1283,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($bccMail, $bccAddress);
-        } else {
-            Mail::to($bccAddress)->send($bccMail);
-        }
+        $spooler->spool($bccMail, $bccAddress);
 
         Log::info('Sent BCC copy of mod stdmsg', [
             'action' => $action,

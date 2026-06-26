@@ -87,25 +87,78 @@ describe('PostItem', () => {
     })
   })
 
-  describe('vague item detection', () => {
+  describe('vague item detection (warning only)', () => {
     it.each([
       ['furniture', true],
-      ['anything', true],
-      ['stuff', true],
-      ['things', true],
+      ['household', true],
       ['sofa', false],
       ['table', false],
+      // Content-free terms are now a hard block (invalidVague), shown in place
+      // of the warning, so vague is false for them.
+      ['anything', false],
+      ['stuff', false],
     ])('item "%s" is vague=%s', (item, isVague) => {
       mockMessage.mockReturnValue({ item })
       const wrapper = createWrapper()
       expect(wrapper.vm.vague).toBe(isVague)
     })
 
-    it('shows warning when item is vague', () => {
-      mockMessage.mockReturnValue({ item: 'stuff' })
+    it('shows a warning for a broad-but-postable category', () => {
+      mockMessage.mockReturnValue({ item: 'furniture' })
       const wrapper = createWrapper()
       expect(wrapper.find('.notice-message.warning').exists()).toBe(true)
       expect(wrapper.text()).toContain('Please avoid very general terms')
+    })
+  })
+
+  describe('unpostable vague item rejection', () => {
+    it.each([
+      ['anything', true],
+      ['everything', true],
+      ['stuff', true],
+      ['all', true],
+      ['furniture', false],
+      ['sofa', false],
+      ['', false],
+    ])('item "%s" is invalidVague=%s', (item, expected) => {
+      mockMessage.mockReturnValue({ item })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.invalidVague).toBe(expected)
+    })
+
+    it('shows a danger message for a content-free item', () => {
+      mockMessage.mockReturnValue({ item: 'everything' })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notice-message.danger').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Please be specific')
+    })
+  })
+
+  describe('numeric-only item rejection', () => {
+    it.each([
+      ['123', true],
+      ['  42 ', true],
+      ['0', true],
+      ['3 chairs', false],
+      ['Sofa', false],
+      ['', false],
+    ])('item "%s" is invalidNumeric=%s', (item, expected) => {
+      mockMessage.mockReturnValue({ item })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.invalidNumeric).toBe(expected)
+    })
+
+    it('shows a danger message for a purely-numeric item', () => {
+      mockMessage.mockReturnValue({ item: '123' })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notice-message.danger').exists()).toBe(true)
+      expect(wrapper.text()).toContain('not a valid item')
+    })
+
+    it('shows no danger message for a normal item', () => {
+      mockMessage.mockReturnValue({ item: 'Sofa' })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notice-message.danger').exists()).toBe(false)
     })
   })
 

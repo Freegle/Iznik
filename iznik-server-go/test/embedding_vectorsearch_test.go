@@ -56,6 +56,9 @@ func mockSidecarReturning(t *testing.T, vec []float32) *httptest.Server {
 }
 
 func TestVectorSearchBasic(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	sofaVec := makeTestVec(0.5)
 	chairVec := makeTestVec(0.51)
 	bikeVec := makeTestVec(5.0)
@@ -81,6 +84,9 @@ func TestVectorSearchBasic(t *testing.T) {
 }
 
 func TestVectorSearchKeywordBoost(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 	vecSimilar := makeTestVec(1.001)
 
@@ -103,6 +109,9 @@ func TestVectorSearchKeywordBoost(t *testing.T) {
 }
 
 func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 
 	embedding.Global.SetEntries([]embedding.Entry{
@@ -123,6 +132,9 @@ func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
 }
 
 func TestVectorSearchWithGroupFilter(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 
 	embedding.Global.SetEntries([]embedding.Entry{
@@ -143,6 +155,9 @@ func TestVectorSearchWithGroupFilter(t *testing.T) {
 }
 
 func TestVectorSearchLimit(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 	entries := make([]embedding.Entry, 10)
 	for i := range entries {
@@ -170,6 +185,9 @@ func TestVectorSearchLimit(t *testing.T) {
 // the logs which stage drifted — sidecar embedding, store size, or top
 // candidate cosines. Keep this test honest if you edit VectorStats.
 func TestVectorSearchStatsDiagnostics(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	queryVec := makeTestVec(1.0)
 	strongMatch := makeTestVec(1.001)   // cosine ≈ 1 with queryVec → above threshold
 	antiparallel := makeAntiparallelVec(1.0) // cosine ≈ -1 → below threshold
@@ -204,6 +222,9 @@ func TestVectorSearchStatsDiagnostics(t *testing.T) {
 // fingerprint is stable for identical inputs against a deterministic sidecar —
 // the property we rely on to detect sidecar-induced non-determinism in Loki.
 func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	queryVec := makeTestVec(1.0)
 	embedding.Global.SetEntries([]embedding.Entry{
 		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.001)},
@@ -230,6 +251,9 @@ func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
 // stats carry the error text and the handler can emit a diagnostic log
 // regardless of the failure path.
 func TestVectorSearchStatsOnEmbedError(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	embedding.Global.SetEntries([]embedding.Entry{
 		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.0)},
 	})
@@ -248,6 +272,9 @@ func TestVectorSearchStatsOnEmbedError(t *testing.T) {
 }
 
 func TestVectorSearchSidecarError(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	embedding.Global.SetEntries([]embedding.Entry{
 		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "test", SubjectVec: makeTestVec(1.0)},
 	})
@@ -303,29 +330,28 @@ func TestStoreSetEntriesAndCount(t *testing.T) {
 	assert.Equal(t, 0, embedding.Global.Count())
 }
 
-// TestSearchHandlerVectorModeDoesNotFallBackToKeyword reproduces the
-// non-determinism Dee reported on Discourse 9594: the same query returning
-// wildly different result sets on repeat attempts (flat screens → wood/floor
-// paint → flat screens again). Root cause: when searchmode=vector returned
-// zero matches above MinVectorScore, the handler silently fell back to the
-// keyword index, which has a completely different match model. Flaky network
-// conditions flipping vector between success and timeout produced the
-// observed mode-switching.
-//
-// After the fix, an explicit searchmode=vector request respects the vector
-// result set (even if empty) instead of secretly switching to keyword.
-func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
-	prefix := uniquePrefix("vectornofallback")
+// TestSearchHandlerVectorModeHybridIncludesKeyword verifies the hybrid search
+// contract for searchmode=vector: vector and keyword run in parallel and results
+// are merged. Keyword guarantees exact lexical matches appear even when the
+// embedding model returns nothing above MinVectorScore (e.g. short titles, UK
+// retail terms). This is deterministic — unlike the old flaky network-triggered
+// fallback that produced different result sets on repeat attempts (Discourse 9594),
+// the hybrid always runs both paths, so the output is stable for identical inputs.
+func TestSearchHandlerVectorModeHybridIncludesKeyword(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
+	prefix := uniquePrefix("vectorhybrid")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 
-	// Create a message whose indexed words WOULD match a keyword search for
-	// "television" (via exact + prefix word matches on the search index).
+	// Create a message whose indexed words match a keyword search for
+	// "television" (via exact word match on the search index).
 	CreateTestMessage(t, userID, groupID, "television stand oak", 55.9533, -3.1883)
 
 	// Confirm the keyword path actually finds this message — otherwise the
-	// test below would pass trivially and wouldn't prove we avoided fallback.
+	// assertions below would pass trivially.
 	keywordResp, _ := getApp().Test(httptest.NewRequest(
 		"GET",
 		"/api/message/search/television?searchmode=keyword&groupids="+strconv.FormatUint(groupID, 10),
@@ -337,9 +363,10 @@ func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
 	require.NotEmpty(t, keywordResults, "sanity check: keyword search must find the seeded message")
 
 	// Set up the embedding store with ONE entry whose vector points in the
-	// opposite direction to the query — cosine ≈ -1, far below MinVectorScore
-	// of 0.65. Count() > 0 so the handler enters the vector branch; the
-	// filtered vector result is legitimately empty.
+	// opposite direction to the query — cosine ≈ -1, far below MinVectorScore.
+	// Count() > 0 so the handler enters the hybrid branch; vector returns nothing
+	// above threshold, but the keyword leg of the hybrid must still surface the
+	// exact match.
 	queryVec := makeTestVec(1.0)
 	antiparallel := makeAntiparallelVec(1.0)
 	embedding.Global.SetEntries([]embedding.Entry{
@@ -357,28 +384,51 @@ func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	// Now the same query with searchmode=vector. Vector legitimately returns
-	// nothing above threshold. The handler must NOT silently fall back to the
-	// keyword index (which would surface "television stand oak").
-	vectorResp, _ := getApp().Test(httptest.NewRequest(
+	// searchmode=vector with empty vector results: the hybrid keyword leg must
+	// surface "television stand oak" so exact matches are never silently dropped.
+	hybridResp, _ := getApp().Test(httptest.NewRequest(
 		"GET",
 		"/api/message/search/television?searchmode=vector&groupids="+strconv.FormatUint(groupID, 10),
 		nil,
 	), 60000)
-	require.Equal(t, 200, vectorResp.StatusCode)
+	require.Equal(t, 200, hybridResp.StatusCode)
 
-	var vectorResults []message.SearchResult
-	json.NewDecoder(vectorResp.Body).Decode(&vectorResults)
+	var hybridResults []message.SearchResult
+	json.NewDecoder(hybridResp.Body).Decode(&hybridResults)
 
-	assert.Empty(t, vectorResults,
-		"searchmode=vector with no matches above threshold must return empty, not fall back to keyword")
+	// Hybrid must include the keyword match — this is the exact-match guarantee.
+	assert.NotEmpty(t, hybridResults,
+		"hybrid must surface keyword match even when vector returns nothing above threshold")
 
-	// No result should carry a keyword matchedon.Type — fail clearly if the
-	// fallback leaks through.
-	for _, r := range vectorResults {
-		assert.Equal(t, "Vector", r.Matchedon.Type,
-			"non-Vector matchedon.Type (%q) for msgid=%d indicates keyword fallback", r.Matchedon.Type, r.Msgid)
+	// The antiparallel noise entry (msgid 999999) must never appear — it is
+	// below MinVectorScore and does not match the keyword either.
+	for _, r := range hybridResults {
+		assert.NotEqual(t, uint64(999999), r.Msgid,
+			"below-threshold vector entry must not appear in hybrid results")
 	}
+
+	// The behaviour must be deterministic: repeated calls with identical inputs
+	// return identical result sets (no network-flap mode switching).
+	runAgain := func() []uint64 {
+		resp, _ := getApp().Test(httptest.NewRequest(
+			"GET",
+			"/api/message/search/television?searchmode=vector&groupids="+strconv.FormatUint(groupID, 10),
+			nil,
+		), 60000)
+		require.Equal(t, 200, resp.StatusCode)
+		var results []message.SearchResult
+		json.NewDecoder(resp.Body).Decode(&results)
+		ids := make([]uint64, len(results))
+		for i, r := range results {
+			ids[i] = r.Msgid
+		}
+		return ids
+	}
+	first := make([]uint64, len(hybridResults))
+	for i, r := range hybridResults {
+		first[i] = r.Msgid
+	}
+	assert.Equal(t, first, runAgain(), "hybrid search must be deterministic for identical inputs")
 }
 
 // TestSearchHandlerVectorModeIsDeterministic confirms the same vector query
@@ -386,6 +436,9 @@ func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
 // "very puzzling" report that identical queries produced different results
 // (Discourse 9594).
 func TestSearchHandlerVectorModeIsDeterministic(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	prefix := uniquePrefix("vectordeterministic")
 	groupID := CreateTestGroup(t, prefix)
 

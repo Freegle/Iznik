@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	geo "github.com/kellydunn/golang-geo"
@@ -41,54 +42,32 @@ type Location struct {
 	Dist       float32        `json:"dist" gorm:"-"`
 }
 
+// ClosestPostcode returns the nearest full postcode to a point via the spatial
+// server's "postcodes" KNN dataset. Returns a zero Location if the spatial
+// server has nothing nearby or is unreachable.
 func ClosestPostcode(lat float32, lng float32) Location {
-	// We use our spatial index to narrow down the locations to search through; we start off very close to the
-	// point and work outwards. That way in densely postcoded areas we have a fast query, and in less dense
-	// areas we have some queries which are quick but don't return anything.
-	var scan = float32(0.00001953125)
-	var loc Location
-
-	db := database.DBConn
-
-	for {
-		swlat := lat - scan
-		swlng := lng - scan
-		nelat := lat + scan
-		nelng := lng + scan
-
-		var locs []Location
-
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, "+
-			"ST_distance(locations_spatial.geometry, ST_SRID(POINT(?, ?), ?)) AS dist "+
-			"FROM locations_spatial INNER JOIN locations l1 ON l1.id = locations_spatial.locationid "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE MBRContains(ST_Envelope(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)), locations_spatial.geometry) AND "+
-			"l1.type = ? "+
-			"ORDER BY dist ASC, CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0 ELSE ST_AREA(locations_spatial.geometry) END ASC LIMIT 1;",
-			lng,
-			lat,
-			utils.SRID,
-			swlng, swlat,
-			swlng, nelat,
-			nelng, nelat,
-			nelng, swlat,
-			swlng, swlat,
-			utils.SRID,
-			utils.LOCATION_TYPE_POSTCODE,
-		).Scan(&locs)
-
-		if len(locs) > 0 {
-			loc = locs[0]
-			break
-		} else {
-			scan = scan * 2
-
-			if scan > 0.2 {
-				break
-			}
-		}
+	// (0,0) is the codebase-wide "location unknown" sentinel (e.g. GetLatLng
+	// returns it for a user with no derivable location). It sits in the Atlantic
+	// off Africa, so a UK KNN would still return *some* postcode (the nearest,
+	// however far) — the old expanding-bbox lookup returned empty here. Preserve
+	// that: no location in, no postcode out. (lng=0 alone is valid — the Greenwich
+	// meridian crosses the UK — so only the both-zero sentinel is excluded.)
+	if lat == 0 && lng == 0 {
+		return Location{}
 	}
 
+	results, err := spatial.KNN("postcodes", float64(lng), float64(lat), 1, "")
+	if err != nil || len(results) == 0 {
+		return Location{}
+	}
+
+	id := results[0].ID
+	var loc Location
+	database.DBConn.Raw(
+		"SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname "+
+			"FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
+		id,
+	).Scan(&loc)
 	return loc
 }
 
@@ -133,6 +112,35 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	// Because this is Go we can fire off these requests in parallel and just stop when we get enough results.
 	// This reduces latency significantly, even though it's a bit mean to the database server.
 	db := database.DBConn
+
+	// If this point lies inside one or more group polygons, those are the correct groups —
+	// polygon containment is authoritative and beats any centre-distance heuristic.  This
+	// matches the V1 PHP groupsNear() behaviour and fixes bug #9518, where a group with a
+	// close centre but non-containing polygon was returned instead of the large group whose
+	// polygon actually contains the point.  The radius-stepping search below filters on the
+	// group centre distance (HAVING hav < currradius), so a containing group whose centre is
+	// far away would otherwise be dropped entirely.
+	containing := []ClosestGroup{}
+	db.Raw("SELECT id, nameshort, namefull, ontn, settings, 0 AS dist, "+
+		"haversine(lat, lng, ?, ?) AS hav, "+
+		"CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 "+
+		"FROM `groups` WHERE ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) "+
+		"AND publish = 1 AND listable = 1 ORDER BY hav ASC, external ASC LIMIT ?;",
+		lat, lng,
+		lat, lng,
+		lng, lat, utils.SRID,
+		limit).Scan(&containing)
+
+	if len(containing) > 0 {
+		for i, r := range containing {
+			if len(r.Namefull) > 0 {
+				containing[i].Namedisplay = r.Namefull
+			} else {
+				containing[i].Namedisplay = r.Nameshort
+			}
+		}
+		return containing
+	}
 
 	var currradius = math.Round(float64(radius)/16.0 + 0.5)
 	results := []ClosestGroup{}
@@ -315,7 +323,9 @@ func LatLng(c *fiber.Ctx) error {
 	lng, _ := strconv.ParseFloat(c.Query("lng"), 32)
 
 	loc := ClosestPostcode(float32(lat), float32(lng))
-	loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
+	if loc.ID > 0 {
+		loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
+	}
 
 	return c.JSON(loc)
 }
@@ -766,13 +776,13 @@ func UpdateLocation(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid geometry")
 		}
 
-		// Simplify the polygon to reduce complexity, matching V1 behaviour.
-		var simplified string
-		db.Raw(fmt.Sprintf("SELECT ST_AsText(ST_Simplify(ST_GeomFromText(?, %d), 0.001)) AS simplified", utils.SRID), *req.Polygon).Scan(&simplified)
-
-		if simplified != "" {
-			req.Polygon = &simplified
-		}
+		// Note: V1 PHP called ST_Simplify(polygon, 0.001) here before saving. That 0.001-degree
+		// (~111 m) Douglas-Peucker pass silently dropped any new vertex placed within ~111 m of the
+		// line between its neighbours — exactly what happens when a user drags a geoman midpoint
+		// marker (the new point starts on the original edge and may be moved only a short distance).
+		// Result: the vertex the user just placed was discarded on every Save (Discourse #9770).
+		// We deliberately skip write-time simplification here to preserve user intent.
+		// The SELECT queries above still use ST_Simplify for display-only rendering, which is fine.
 
 		// Capture old geometry and compute union with new for remap scope (matching V1).
 		// If old and new intersect, remap the union (covers both). If separate, remap both.

@@ -5,7 +5,8 @@ namespace App\Console\Commands\Mail;
 use App\Console\Commands\Mail\SendAdminCommand;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Chat\ChatNotification;
-use App\Mail\Digest\SingleDigest;
+use App\Mail\Digest\UnifiedDigest;
+use App\Services\UnifiedDigestService;
 use App\Mail\Donation\AskForDonation;
 use App\Mail\Donation\DonationThankYou;
 use App\Mail\Message\AutoRepostWarning;
@@ -16,7 +17,6 @@ use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Welcome\WelcomeMail;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
@@ -37,8 +37,6 @@ class TestMailCommand extends Command
                             {--send-to= : Deliver email to this address instead (for testing with real user data)}
                             {--from= : Override From header address (for AMP testing - must be registered with Google)}
                             {--chat= : Chat room ID (for chat types)}
-                            {--group= : Group ID (for digest)}
-                            {--message= : Message ID (for digest)}
                             {--message-type= : Specific chat message type (Default, Interested, Promised, Reneged, Completed, Image, Address, Nudge, Schedule)}
                             {--all-types : Send test emails for all chat message types}
                             {--amp= : Override AMP email setting (on/off, default uses config)}
@@ -59,7 +57,7 @@ class TestMailCommand extends Command
         'admin:marketing' => 'Marketing admin email (Little Free Shop template)',
         'chat:user2user' => 'User-to-user chat notification',
         'chat:user2mod' => 'User-to-moderator chat notification',
-        'digest' => 'Digest email (single message)',
+        'digest' => 'Unified digest email (posts from all communities)',
         'donations:ask' => 'Donation request email',
         'donations:thank' => 'Donation thank you email',
         'welcome' => 'Welcome email for new users',
@@ -68,6 +66,7 @@ class TestMailCommand extends Command
         'chaseup-promised' => 'Chase-up promised email (promised variant)',
         'deadline-reached' => 'Deadline reached notification',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
+        'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
     ];
 
     /**
@@ -334,7 +333,7 @@ class TestMailCommand extends Command
         $this->line('  php artisan mail:test chat:user2user --to=test@example.com --amp=on');
         $this->line('  php artisan mail:test chat:user2user --to=test@example.com --amp=off');
         $this->line('  php artisan mail:test chat:user2user --to=realuser@example.com --send-to=mytest@example.com');
-        $this->line('  php artisan mail:test digest --user=12345 --group=67890 --to=test@example.com');
+        $this->line('  php artisan mail:test digest --to=test@example.com');
         $this->line('  php artisan mail:test donations:ask --user=12345 --dry-run');
     }
 
@@ -357,8 +356,49 @@ class TestMailCommand extends Command
             'chaseup-promised' => $this->buildChaseUp(true),
             'deadline-reached' => $this->buildDeadlineReached(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
+            'ripple-intro' => $this->buildRippleIntro(),
             default => null,
         };
+    }
+
+    /**
+     * Build the Rippling Out intro email (one-off "your post is reaching more people" notice).
+     * Use to preview/review the copy in Mailpit: mail:test ripple-intro --user=ID --send-to=you@...
+     */
+    protected function buildRippleIntro(): ?\App\Mail\Ripple\RippleIntroMail
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            return null;
+        }
+
+        $this->info("Generating Rippling Out intro email for user: {$user->displayname} (ID: {$user->id})");
+
+        // Optionally attach one of the user's posts for light context (subject/body only).
+        $message = \App\Models\Message::where('fromuser', $user->id)->latest('id')->first();
+
+        // For preview: show the per-community welcome section using a couple of real groups'
+        // welcome text where available, else sample text, so the layout can be reviewed.
+        $welcomeGroups = DB::table('groups')
+            ->where('onhere', 1)
+            ->whereNotNull('welcomemail')
+            ->where('welcomemail', '<>', '')
+            ->orderByDesc('id')
+            ->limit(2)
+            ->get(['namefull', 'nameshort', 'welcomemail'])
+            ->map(fn ($g) => [
+                'name' => $g->namefull ?: $g->nameshort,
+                'welcome' => $g->welcomemail,
+            ])->all();
+
+        if (empty($welcomeGroups)) {
+            $welcomeGroups = [
+                ['name' => 'Freegle Sampleton', 'welcome' => "Welcome to Freegle Sampleton!\nPlease keep posts local and be kind. Our volunteers are here to help."],
+                ['name' => 'Freegle Exampleford', 'welcome' => "Hi and welcome!\nOffers and Wanteds both welcome - thanks for helping us reuse rather than bin."],
+            ];
+        }
+
+        return new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups);
     }
 
     /**
@@ -661,74 +701,76 @@ class TestMailCommand extends Command
     }
 
     /**
-     * Build a digest email.
+     * Build a unified digest email.
      */
-    protected function buildDigest(): ?SingleDigest
+    protected function buildDigest(): ?UnifiedDigest
     {
         $userId = $this->option('user');
-        $groupId = $this->option('group');
-        $messageId = $this->option('message');
+        $toEmail = $this->option('to');
 
-        // Get a message first — this guarantees we have a group with content.
-        if ($messageId) {
-            $message = Message::find($messageId);
-        } else {
-            // Find a message on the specified group, or any group with messages.
-            $messageQuery = Message::query();
-            if ($groupId) {
-                $messageQuery->whereHas('groups', function ($q) use ($groupId) {
-                    $q->where('groups.id', $groupId);
-                });
-            } else {
-                $messageQuery->whereHas('groups');
-            }
-            $message = $messageQuery->orderBy('id', 'desc')->first();
-        }
-
-        if (! $message) {
-            $this->error('No messages found'.($groupId ? " for group {$groupId}" : ' in any group'));
-
-            return null;
-        }
-
-        // Get the group from the message.
-        if ($groupId) {
-            $group = Group::find($groupId);
-        } else {
-            $group = $message->groups->first();
-        }
-
-        if (! $group) {
-            $this->error('No group found for message');
-
-            return null;
-        }
-
-        $this->info("Using group: {$group->nameshort} (ID: {$group->id})");
-        $this->info("Using message: {$message->subject} (ID: {$message->id})");
-
-        // Get or find a user.
-        if ($userId) {
+        // Get user.
+        if ($toEmail) {
+            $user = User::whereHas('emails', function ($q) use ($toEmail) {
+                $q->where('email', $toEmail);
+            })->first();
+        } elseif ($userId) {
             $user = User::find($userId);
         } else {
-            // Prefer a member of this group who has an email address.
-            $membership = Membership::where('groupid', $group->id)
-                ->whereHas('user', function ($q) {
-                    $q->whereHas('emails');
-                })
-                ->first();
-            $user = $membership ? User::find($membership->userid) : User::whereHas('emails')->first();
+            $user = User::whereHas('emails')
+                ->whereHas('memberships', fn ($q) => $q->where('collection', Membership::COLLECTION_APPROVED))
+                ->inRandomOrder()->first();
         }
 
         if (! $user) {
-            $this->error('No user found');
+            $this->error('User not found');
 
             return null;
         }
 
-        $this->info("Generating digest for user: {$user->displayname} (ID: {$user->id})");
+        $this->info("Generating unified digest for user: {$user->displayname} (ID: {$user->id})");
 
-        return new SingleDigest($user, $group, $message, 24);
+        // Get the user's group IDs.
+        $groupIds = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->pluck('groupid');
+
+        if ($groupIds->isEmpty()) {
+            $this->error("User {$user->id} has no approved group memberships");
+
+            return null;
+        }
+
+        $this->info('User is a member of ' . $groupIds->count() . ' groups');
+
+        // Get recent messages from those groups.
+        $posts = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->whereIn('messages_groups.groupid', $groupIds)
+            ->where('messages_groups.collection', 'Approved')
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->where('messages.fromuser', '!=', $user->id)
+            ->orderBy('messages_groups.arrival', 'desc')
+            ->limit(20)
+            ->with(['attachments', 'fromUser', 'groups'])
+            ->get();
+
+        if ($posts->isEmpty()) {
+            $this->error('No recent messages found in user\'s groups');
+
+            return null;
+        }
+
+        $this->info("Found {$posts->count()} recent messages");
+
+        // Deduplicate using the service.
+        $service = app(UnifiedDigestService::class);
+        $deduplicatedPosts = $service->deduplicatePosts($posts);
+
+        $this->info("After deduplication: {$deduplicatedPosts->count()} unique posts");
+
+        return new UnifiedDigest($user, $deduplicatedPosts, UnifiedDigestService::MODE_DAILY);
     }
 
     /**

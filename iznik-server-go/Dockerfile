@@ -1,5 +1,17 @@
 FROM ghcr.io/freegle/freegle-base:latest
 
+# ONNX Runtime C library — required for native Go embedding pool.
+# SetIntraOpNumThreads/SetInterOpNumThreads parallelise GEMM tiles and
+# independent graph nodes (Q/K/V projections) across all CPU cores.
+ARG ONNXRUNTIME_VERSION=1.20.1
+RUN curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+    | tar xz -C /tmp && \
+    cp "/tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /usr/local/lib/ && \
+    ln -sf "/usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /usr/local/lib/libonnxruntime.so && \
+    cp -r "/tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/include" /usr/local/include/onnxruntime && \
+    rm -rf "/tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}" && \
+    ldconfig
+
 WORKDIR /app
 
 ENV MYSQL_USER=root \
@@ -17,15 +29,8 @@ ENV MYSQL_USER=root \
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Pre-fetch knn-server dependencies as a separate layer for cache efficiency.
-COPY knn-server/go.mod knn-server/go.sum knn-server/
-RUN cd knn-server && go mod download
-
 COPY . .
 RUN go mod tidy
-
-# Build knn-server as a standalone binary.
-RUN cd knn-server && go build -o /usr/local/bin/knn-server .
 
 # Write build info for /api/version endpoint
 RUN echo "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > /app/BUILD_INFO
@@ -33,12 +38,7 @@ RUN echo "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') $(date -u 
 # Generate swagger documentation during build
 RUN chmod +x generate-swagger.sh && ./generate-swagger.sh
 
-ENV KNN_PORT=8194 \
-    KNN_ADMIN_PORT=8195 \
-    KNN_INDEX_PATH=/data/knn-locations.db
-
-EXPOSE 8192 8194 8195
+EXPOSE 8192
 
 CMD echo "Start against DB $MYSQL_HOST:$MYSQL_PORT/$MYSQL_DBNAME with user $MYSQL_USER password $MYSQL_PASSWORD" \
-  && (while true; do knn-server >> /tmp/knn_server.out 2>&1; sleep 1; done &) \
   && while true; do go run main.go >> /tmp/iznik_api.out 2>&1; sleep 1; done

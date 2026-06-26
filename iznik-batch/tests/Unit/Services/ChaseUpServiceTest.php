@@ -254,6 +254,142 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $stats['chased']);
     }
 
+    public function test_crosspost_chased_up_once_not_per_group(): void
+    {
+        // A message cross-posted to two groups, both eligible for chase-up. The
+        // chase-up is about the item's global outcome, so the poster must get ONE
+        // email, not one per group.
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupA, ['added' => now()->subDays(60)]);
+        $this->createMembership($user, $groupB, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $groupA, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Group A row eligible (max reposts reached, old arrival).
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupA->id)
+            ->update(['arrival' => now()->subHours(500), 'autoreposts' => 5]);
+
+        // Cross-post to group B, also eligible.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(500),
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)
+            ->update(['autoreposts' => 5]);
+
+        // One chat reply about the item, old enough to trigger a chase-up.
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $message->id,
+            'date' => now()->subHours(200),
+        ]);
+
+        $stats = $this->service->process();
+
+        // Exactly one chase-up for the single physical item, despite two groups.
+        $this->assertEquals(1, $stats['chased'], 'cross-posted item must be chased up once, not once per group');
+
+        // lastchaseup stamped on BOTH groups so neither re-fires on the next run.
+        $rows = DB::table('messages_groups')->where('msgid', $message->id)->get();
+        $this->assertCount(2, $rows);
+        foreach ($rows as $r) {
+            $this->assertNotNull($r->lastchaseup, 'lastchaseup must be set on every group of the item');
+        }
+    }
+
+    /**
+     * Rippling-out: a post eligible for chase-up on its home group that has also rippled
+     * into another group is chased up ONCE (anchored to the home posting), and the stamp
+     * lands on every group so neither re-fires.
+     */
+    public function test_rippled_item_chased_up_once_from_home(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        $this->createMembership($user, $home, ['added' => now()->subDays(60)]);
+        $this->createMembership($user, $rippled, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $home, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Home posting: max reposts reached, old arrival, native (rippled_in=0).
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)
+            ->update(['arrival' => now()->subHours(500), 'autoreposts' => 5, 'rippled_in' => 0]);
+
+        // Rippled-in posting: also "max reposts", but must NOT initiate a chase-up itself.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $rippled->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(500),
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippled->id)
+            ->update(['autoreposts' => 5, 'rippled_in' => 1]);
+
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $message->id,
+            'date' => now()->subHours(200),
+        ]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased'], 'chase-up anchored to home posting: exactly one');
+        $rows = DB::table('messages_groups')->where('msgid', $message->id)->get();
+        foreach ($rows as $r) {
+            $this->assertNotNull($r->lastchaseup, 'lastchaseup must be set on every group of the item');
+        }
+    }
+
+    /**
+     * Rippling-out (defensive): a posting that exists ONLY as a rippled-in row (its home
+     * posting has gone) must not initiate a chase-up — that is the home posting's job.
+     */
+    public function test_rippled_only_item_is_not_chased_up(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $rippled = $this->createTestGroup();
+        $this->createMembership($user, $rippled, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $rippled, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippled->id)
+            ->update(['arrival' => now()->subHours(500), 'autoreposts' => 5, 'rippled_in' => 1]);
+
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $replier);
+        $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $message->id,
+            'date' => now()->subHours(200),
+        ]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'a rippled-only posting must not be chased up');
+    }
+
     public function test_constants(): void
     {
         $this->assertEquals(90, ChaseUpService::LOOKBACK_DAYS);

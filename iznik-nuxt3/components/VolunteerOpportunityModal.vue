@@ -148,10 +148,12 @@
           <p v-if="user" class="posted-by">
             Posted
             <span v-if="user.displayname">by {{ user.displayname }}</span>
-            <span v-for="(group, index) in groups" :key="index">
-              <span v-if="index > 0">, </span><span v-else>&nbsp;on</span>
-              {{ group.namedisplay }}
-            </span>
+            <template v-if="groups.length">
+              &nbsp;on
+              <ShowMore :items="groups" :limit="3" inline>
+                <template #item="{ item }">{{ item.namedisplay }}</template>
+              </ShowMore>
+            </template>
           </p>
         </div>
         <VeeForm v-else-if="volunteering" ref="form">
@@ -394,7 +396,7 @@
               v-if="canmodify"
               variant="danger"
               :disabled="uploadingPhoto"
-              @click="deleteIt"
+              @click="confirmDelete"
             >
               <v-icon icon="trash-alt" /> Delete
             </b-button>
@@ -417,6 +419,13 @@
       </div>
     </template>
   </b-modal>
+  <ConfirmModal
+    v-if="showDeleteConfirm"
+    title="Delete Volunteer Opportunity"
+    message="Are you sure you want to delete this volunteer opportunity?"
+    @confirm="doDelete"
+    @hidden="showDeleteConfirm = false"
+  />
 </template>
 <script setup>
 import { ref, computed, defineAsyncComponent, watch } from 'vue'
@@ -502,6 +511,7 @@ const form = ref(null)
 // Data properties
 const groupid = ref(null)
 const cacheBust = ref(Date.now())
+const showDeleteConfirm = ref(false)
 const showGroupError = ref(false)
 const description = ref(null)
 const currentAtts = ref([])
@@ -544,7 +554,7 @@ const volunteering = computed(() => {
 })
 
 const canmodify = computed(() => {
-  return volunteering.value?.userid === myid.value || supportOrAdmin
+  return volunteering.value?.userid === myid.value || supportOrAdmin.value
 })
 
 const groups = computed(() => {
@@ -644,6 +654,10 @@ watch(
   { deep: true }
 )
 
+function confirmDelete() {
+  showDeleteConfirm.value = true
+}
+
 // Methods
 function validateTitle(value) {
   if (!value) {
@@ -685,7 +699,7 @@ function validateContactName(value) {
   return true
 }
 
-async function deleteIt() {
+async function doDelete() {
   await volunteeringStore.delete(props.id)
   hide()
 }

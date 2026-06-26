@@ -276,6 +276,21 @@ describe('ModMemberReview', () => {
       expect(wrapper.text()).not.toContain('miles apart')
     })
 
+    it('shows location-change warning when locationchanges >= 3', () => {
+      const wrapper = mountComponent({
+        user: createUser({ locationchanges: 4 }),
+      })
+      expect(wrapper.text()).toContain('changed location')
+      expect(wrapper.text()).toContain('4 times in the last 90 days')
+    })
+
+    it('hides location-change warning when locationchanges < 3', () => {
+      const wrapper = mountComponent({
+        user: createUser({ locationchanges: 2 }),
+      })
+      expect(wrapper.text()).not.toContain('changed location')
+    })
+
     it('shows bouncing component when member is bouncing', () => {
       const wrapper = mountComponent({
         user: createUser({ bouncing: true }),

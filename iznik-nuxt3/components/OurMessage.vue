@@ -58,12 +58,20 @@
 </template>
 
 <script setup>
-import { ref, computed, defineAsyncComponent, nextTick, onMounted } from 'vue'
+import {
+  ref,
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
+import { useDwellView } from '~/composables/useDwellView'
 
 const MessageExpanded = defineAsyncComponent(() =>
   import('~/components/MessageExpanded')
@@ -134,6 +142,15 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Where this card is rendered, recorded with the view so browse-feed views are
+  // distinguishable from detail views. The feed leaves the default ('browse');
+  // the message page passes 'message_page' (or a notification ?src= tag). Both
+  // the passive dwell and the tap-to-expand are still "in the feed" → 'browse'.
+  viewSource: {
+    type: String,
+    required: false,
+    default: 'browse',
+  },
 })
 
 const emit = defineEmits(['notFound', 'view', 'visible'])
@@ -195,21 +212,22 @@ function closeMobileExpanded() {
   showMobileExpanded.value = false
 }
 
-async function view() {
+async function view(source = props.viewSource) {
   if (props.recordView) {
     if (me.value && message.value?.unseen) {
-      await messageStore.view(props.id)
+      await messageStore.view(props.id, source)
     }
 
     emit('view')
   }
 }
 
-function visibilityChanged(isVisible) {
-  if (isVisible) {
-    view()
-  }
-}
+// Only count a passive in-list view once the post has actually dwelled on
+// screen — a fast scroll-past shouldn't register as a view. Genuine opens go
+// through expand() -> view() directly and aren't gated by the dwell.
+const { onVisibilityChange: visibilityChanged, cancel: cancelDwellView } =
+  useDwellView(view)
+onBeforeUnmount(cancelDwellView)
 
 // Initial fetch
 try {

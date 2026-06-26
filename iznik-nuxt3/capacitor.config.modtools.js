@@ -33,6 +33,7 @@ const config = {
       '@capacitor/device',
       '@capacitor/browser',
       '@capacitor/app-launcher',
+      '@capacitor/camera',
     ],
     buildOptions: {
       releaseType: 'APK',
@@ -53,6 +54,7 @@ const config = {
       '@capacitor/device',
       '@capacitor/browser',
       '@capacitor/app-launcher',
+      '@capacitor/camera',
     ],
   },
 
@@ -62,7 +64,7 @@ const config = {
       backgroundColor: '#00000000',
     },
     PushNotifications: {
-      presentationOptions: ['badge', 'sound', 'alert'],
+      presentationOptions: ['badge'],
     },
     Badge: {
       persist: true,

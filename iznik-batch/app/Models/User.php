@@ -841,7 +841,10 @@ class User extends Model implements Auditable
     {
         [$lat, $lng] = $this->getLatLng();
 
-        if (!$lat || !$lng) {
+        // Suppress job ads for recent donors, matching the website (recentDonor
+        // in useMe.js / ADFREE_PERIOD in iznik-server-go): ad-free for 31 days
+        // after a donation, 41 for External (bank-transfer) ones that arrive late.
+        if (!$lat || !$lng || $this->isAdFree()) {
             return [
                 'jobs' => collect(),
                 'location' => NULL,
@@ -854,6 +857,27 @@ class User extends Model implements Auditable
             'jobs' => $jobs,
             'location' => NULL,  // Not currently used.
         ];
+    }
+
+    /**
+     * True when the user is within their ad-free period after a donation,
+     * mirroring iznik-server-go ADFREE_PERIOD (31 days) + ADFREE_GRACE_PERIOD
+     * (10 extra days for External / bank-transfer donations).
+     */
+    public function isAdFree(): bool
+    {
+        $latest = DB::table('users_donations')
+            ->where('userid', $this->id)
+            ->orderByDesc('timestamp')
+            ->first(['timestamp', 'type']);
+
+        if (!$latest || !$latest->timestamp) {
+            return false;
+        }
+
+        $days = ($latest->type === 'External') ? 41 : 31;
+
+        return strtotime($latest->timestamp) > (time() - $days * 86400);
     }
 
     /**
@@ -921,6 +945,32 @@ class User extends Model implements Auditable
         ]);
 
         return $key;
+    }
+
+    /**
+     * Build an auto-login link, mirroring iznik-server User::loginLink($auto=TRUE).
+     *
+     * Produces `https://{userSite}{url}?u={id}&k={key}&src={src}` using the same
+     * users_logins (type='Link') 32-char key the Go API validates for ?u=&k= links.
+     *
+     * @param  string  $url   Path on the user site (may already contain a query string).
+     * @param  string|null  $src  Optional source tag (V1 src= param).
+     * @param  bool  $auto  When true (default) include the login key for passwordless login.
+     */
+    public function loginLink(string $url = '/', ?string $src = NULL, bool $auto = TRUE): string
+    {
+        $userSite = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $sep = str_contains($url, '?') ? '&' : '?';
+
+        $query = 'u=' . $this->id;
+        if ($auto) {
+            $query .= '&k=' . $this->getUserKey();
+        }
+        if ($src) {
+            $query .= '&src=' . $src;
+        }
+
+        return $userSite . $url . $sep . $query;
     }
 
     /**
@@ -1071,6 +1121,14 @@ class User extends Model implements Auditable
             // --- Merge memberships ---
             $id2Memberships = Membership::where('userid', $id2)->get();
 
+            // Conflict memberships (id1 was already a member, so id2's row is merged
+            // into id1's and then removed) are collected here and deleted AFTER commit.
+            // We keep the in-memory models rather than re-querying by userid post-commit:
+            // under the read/write split that re-query hits a possibly-lagging replica,
+            // where a just-reparented membership can still show userid=$id2 and would be
+            // wrongly deleted, silently dropping a membership that should survive on id1.
+            $membershipsToDelete = [];
+
             # Merge the top-level memberships
             foreach ($id2Memberships as $id2Memb) {
                 $id1Memb = Membership::where('userid', $id1)
@@ -1109,6 +1167,9 @@ class User extends Model implements Auditable
                     if (!$dryRun) {
                         $id1Memb->save();
                     }
+
+                    // id2's row for this group is now redundant — delete it after commit.
+                    $membershipsToDelete[] = $id2Memb;
                 }
             }
 
@@ -1472,12 +1533,16 @@ class User extends Model implements Auditable
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
             Logger::info("Merged {$id1} < {$id2}, {$reason}");
-            Membership::where('userid', $id2)->get()->each(function ($m) use ($dryRun) {
+            // Delete the conflict memberships collected during the merge loop above.
+            // These are in-memory models, so $m->delete() removes them by primary key
+            // (firing model events for auditing) WITHOUT a fresh SELECT — avoiding the
+            // read-split replica-lag hazard described where $membershipsToDelete is built.
+            foreach ($membershipsToDelete as $m) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
                 if (!$dryRun) {
                     $m->delete();
                 }
-            });
+            }
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
             if (!$dryRun) {
                 User::find($id2)?->delete();

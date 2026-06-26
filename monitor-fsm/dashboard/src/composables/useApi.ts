@@ -23,6 +23,28 @@ export function useBugs() {
   return { state, refresh, stop }
 }
 
+export function useFeatureRequests() {
+  const state = reactive({ requests: [] as BugRow[], loading: false })
+
+  const refresh = async () => {
+    state.loading = true
+    try {
+      const data = await fetch('/api/feature-requests').then(r => r.json())
+      state.requests = Array.isArray(data) ? data : []
+    } catch (error) {
+      console.error('Failed to fetch feature requests:', error)
+    } finally {
+      state.loading = false
+    }
+  }
+
+  refresh()
+  const interval = setInterval(refresh, 60000)
+  const stop = () => clearInterval(interval)
+
+  return { state, refresh, stop }
+}
+
 export function useDrafts() {
   const state = reactive({ drafts: [] as DraftRow[], loading: false })
 

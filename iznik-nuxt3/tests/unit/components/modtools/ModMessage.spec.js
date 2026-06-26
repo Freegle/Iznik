@@ -141,6 +141,7 @@ vi.mock('~/composables/useModMe', () => ({
   useModMe: () => ({
     myModGroups: { value: mockMyModGroups },
     myModGroup: (id) => mockMyModGroups.find((g) => g.id === id),
+    amAModOn: (id) => mockMyModGroups.some((g) => g.id === id),
   }),
 }))
 
@@ -346,6 +347,12 @@ describe('ModMessage', () => {
             template: '<div class="mod-spammer-report"><slot /></div>',
             props: ['userid', 'safelist'],
           },
+          RipplingExplanationModal: {
+            template: '<div class="rippling-explanation-modal" />',
+          },
+          ModMessageReachMap: {
+            template: '<div class="mod-message-reach-map" />',
+          },
           SpinButton: {
             template:
               '<button class="spin-button" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',
@@ -402,6 +409,67 @@ describe('ModMessage', () => {
     it('returns groupid from message groups, 0 when no groups', () => {
       const wrapper = mountComponent()
       expect(wrapper.vm.groupid).toBe(789)
+    })
+  })
+
+  describe('Computed: alreadyOnHomeGroup', () => {
+    // Regression: a post must not be told it "Possibly should be on" a group it is ALREADY
+    // on (its origin, or a group it has rippled onto). The hint previously fired whenever the
+    // post was viewed under a different group's context than its nearest home group, so a
+    // multi-group/rippled post on its home group wrongly showed "Possibly should be on <home>".
+    it('is true and suppresses the hint when the post is already on its nearest home group', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Home Group',
+              collection: 'Approved',
+              arrival: '2024-01-01T00:00:00Z',
+            },
+            {
+              groupid: 790,
+              namedisplay: 'Other Group',
+              collection: 'Approved',
+              arrival: '2024-01-02T00:00:00Z',
+            },
+          ],
+          location: {
+            name: 'SW1A 1AA',
+            lat: 51.5,
+            lng: -0.1,
+            groupsnear: [{ id: 789, namedisplay: 'Home Group', ontn: true }],
+          },
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.alreadyOnHomeGroup).toBe(true)
+      expect(wrapper.text()).not.toContain('Possibly should be on')
+    })
+
+    it('is false when the post is NOT on its nearest home group', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 790,
+              namedisplay: 'Other Group',
+              collection: 'Approved',
+              arrival: '2024-01-02T00:00:00Z',
+            },
+          ],
+          location: {
+            name: 'SW1A 1AA',
+            lat: 51.5,
+            lng: -0.1,
+            groupsnear: [{ id: 789, namedisplay: 'Home Group', ontn: true }],
+          },
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.alreadyOnHomeGroup).toBe(false)
     })
   })
 
@@ -484,6 +552,30 @@ describe('ModMessage', () => {
       const wrapper = mountComponent({}, { subject: 'OFFER: Test Item' })
       expect(wrapper.vm.subjectClass).toBe('text-success')
     })
+
+    // Discourse 9481/594: with subject-colouring ON and the default subjreg
+    // (/^(OFFER|WANTED):/i, which does NOT match "REQUESTED"), a Wanted post shown
+    // with the custom/variant keyword "REQUESTED" must still be GREEN — it's a
+    // recognised Wanted keyword. Previously it was wrongly red.
+    it('keeps a REQUESTED (Wanted variant) subject green even when subjreg only knows OFFER/WANTED', async () => {
+      const wrapper = mountComponent(
+        {},
+        { subject: 'REQUESTED: Green House', type: 'Wanted' }
+      )
+      wrapper.vm.modconfig = { coloursubj: true, subjreg: /^(OFFER|WANTED):/i }
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.subjectClass).toBe('text-success')
+    })
+
+    it('still flags a subject with no recognised keyword (red) when colouring is on', async () => {
+      const wrapper = mountComponent(
+        {},
+        { subject: 'random junk with no keyword' }
+      )
+      wrapper.vm.modconfig = { coloursubj: true, subjreg: /^(OFFER|WANTED):/i }
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.subjectClass).toBe('text-danger')
+    })
   })
 
   describe('Expand/collapse', () => {
@@ -536,6 +628,7 @@ describe('ModMessage', () => {
 
       expect(mockMessageStore.patch).toHaveBeenCalledWith({
         id: 123,
+        groupid: 789,
         msgtype: 'Offer',
         item: 'Test Item',
         location: 'SW1A 1AA',
@@ -572,7 +665,8 @@ describe('ModMessage', () => {
       const wrapper = mountComponent()
       const callback = vi.fn()
       await wrapper.vm.backToPending(callback)
-      expect(mockMessageStore.backToPending).toHaveBeenCalledWith(123)
+      // Passes the contextual groupid (789) so back-to-pending is per-group.
+      expect(mockMessageStore.backToPending).toHaveBeenCalledWith(123, 789)
       expect(callback).toHaveBeenCalled()
     })
   })
@@ -1216,6 +1310,64 @@ describe('ModMessage', () => {
         }
       )
       expect(wrapper.vm.groupid).toBe(789)
+    })
+
+    // Rippling-out: a post can ripple into a neighbouring group's pending queue
+    // from elsewhere, so mods are warned not to reject it just for being "out of
+    // area". The warning shows only on a rippled-in PENDING post.
+    const rippleEarlier = '2026-06-18T10:00:00Z'
+    const rippleLater = '2026-06-18T10:20:00Z' // 20 min later, beyond the 10-min origin window
+
+    it('warns mods not to reject a rippled-in pending post for being out of area', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            { groupid: 789, namedisplay: 'Context', collection: 'Pending', arrival: rippleLater },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(wrapper.vm.pending).toBe(true)
+      const warning = wrapper.find(
+        '[data-test="ripple-out-of-area-reject-warning"]'
+      )
+      expect(warning.exists()).toBe(true)
+      expect(warning.text()).toContain('out of area')
+    })
+
+    it('does not warn when the post has not rippled in', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            { groupid: 789, namedisplay: 'Context', collection: 'Pending', arrival: rippleEarlier },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(false)
+      expect(
+        wrapper.find('[data-test="ripple-out-of-area-reject-warning"]').exists()
+      ).toBe(false)
+    })
+
+    it('does not warn once a rippled-in post is approved (not pending)', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            { groupid: 789, namedisplay: 'Context', collection: 'Approved', arrival: rippleLater },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(wrapper.vm.pending).toBe(false)
+      expect(
+        wrapper.find('[data-test="ripple-out-of-area-reject-warning"]').exists()
+      ).toBe(false)
     })
 
     it('falls back to first group when no contextGroupid', () => {

@@ -35,13 +35,16 @@ class EngageUpdateService
      */
     private function bulkUpdate(callable $applyWhere, array $update): int
     {
-        $query = DB::table('users');
+        $query = DB::table('users')->select('id');
         $applyWhere($query);
-        $ids = $query->orderBy('id')->pluck('id');
 
         $total = 0;
-        foreach ($ids as $id) {
-            DB::table('users')->where('id', $id)->update($update);
+        // Stream ids in keyset-paginated chunks rather than pluck()-ing the entire
+        // matching set — these WHEREs can match most of the userbase, so a single
+        // pluck() exhausts memory. lazyById only moves forward by id, so updating
+        // the WHERE column (engagement) mid-iteration neither skips nor repeats rows.
+        foreach ($query->orderBy('id')->lazyById(1000) as $row) {
+            DB::table('users')->where('id', $row->id)->update($update);
             $total++;
         }
 

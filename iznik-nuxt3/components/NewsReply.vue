@@ -282,7 +282,7 @@
       imgflag="Newsfeed"
       @hidden="showNewsPhotoModal = false"
     />
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal"
       :id="userid"
       @hidden="showProfileModal = false"
@@ -333,9 +333,6 @@ const NewsPhotoModal = defineAsyncComponent(() =>
 )
 const NewsLovesModal = defineAsyncComponent(() => import('./NewsLovesModal'))
 const NewsEditModal = defineAsyncComponent(() => import('./NewsEditModal'))
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
 const ConfirmModal = defineAsyncComponent(() =>
   import('~/components/ConfirmModal.vue')
 )
@@ -708,6 +705,10 @@ function showReplyPhotoModal() {
 .reply-content {
   flex: 1;
   min-width: 0;
+  /* Reserve a right-hand column so the inline name+text never runs under the
+     absolutely-positioned "..." menu (.reply-menu, right: -1rem). Without this
+     a long first line butts right against the dots (Discourse #9749). */
+  padding-right: 1.5rem;
 }
 
 /* Three dots menu - positioned at top right of the reply */

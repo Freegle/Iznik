@@ -1,7 +1,6 @@
 package newsfeed
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	stdlog "log"
@@ -17,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -103,147 +103,85 @@ type Newsfeed struct {
 }
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
-	// We want to calculate a distance which includes at least some other people who have posted a message.
-	// Start at fairly close and keep doubling until we reach that, or get too far away.
-	//
-	// Because this is Go we can fire off these requests in parallel and just stop when we get enough results.
-	// This reduces latency significantly, even though it's a bit mean to the database server.  To cancel the queries
-	// properly we need to use the Pool.
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	done := false
-
-	dist := float64(1)
-	ret := float64(0)
-	var retnelat, retnelng, retswlat, retswlng float64
-
-	max := float64(248)
-	count := 0
-
-	for {
-		if dist >= max {
-			break
-		}
-
-		dist *= 2
-		count++
-	}
-
-	dist = 1
-	limit := 10
-	now := time.Now()
-	then := now.AddDate(0, 0, -31)
+	const nearbyLimit = 10
+	// Over-fetch from the spatial index so that, after dropping alerts and posts
+	// older than the feed window, we still have at least nearbyLimit candidates.
+	const overFetch = 10
 
 	latlng := user.GetLatLng(uid)
-
-	var cancels []context.CancelFunc
-
-	if latlng.Lat > 0 || latlng.Lng > 0 {
-		type Nearby struct {
-			Userid uint64 `json:"userid"`
-		}
-
-		wg.Add(1)
-
-		for {
-			// Use a timeout context - partly so that we don't wait for too long, and partly so that we can
-			// cancel queries if we get enough results.
-			timeoutContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			cancels = append(cancels, cancel)
-
-			go func(dist float64) {
-				var nelat, nelng, swlat, swlng float64
-				var nearbys []Nearby
-
-				// Get an exclusive connection.
-				db, err := database.Pool.Conn(timeoutContext)
-
-				if err != nil {
-					return
-				}
-
-				p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
-				ne := p.PointAtDistanceAndBearing(dist, 45)
-				nelat = ne.Lat()
-				nelng = ne.Lng()
-				sw := p.PointAtDistanceAndBearing(dist, 225)
-				swlat = sw.Lat()
-				swlng = sw.Lng()
-
-				nelats := fmt.Sprint(nelat)
-				nelngs := fmt.Sprint(nelng)
-				swlats := fmt.Sprint(swlat)
-				swlngs := fmt.Sprint(swlng)
-
-				sql := "SELECT DISTINCT userid FROM newsfeed FORCE INDEX (position) WHERE " +
-					"MBRContains(ST_SRID(POLYGON(LINESTRING(" +
-					"POINT(" + swlngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + swlats + "))), " + fmt.Sprint(utils.SRID) + "), position) AND " +
-					"replyto IS NULL AND type != '" + utils.NEWSFEED_TYPE_ALERT + "' AND timestamp >= '" + then.Format("2006-01-02") +
-					"' LIMIT " + fmt.Sprint(limit+1)
-
-				rows, err := db.QueryContext(timeoutContext, sql)
-
-				// Return the connection to the pool.
-				defer db.Close()
-
-				// We might be cancelled/timed out, in which case we have no rows to process.
-				if err == nil {
-					defer rows.Close()
-
-					for rows.Next() {
-						var nearby Nearby
-						err = rows.Scan(&nearby.Userid)
-
-						if err != nil {
-							break
-						}
-
-						nearbys = append(nearbys, nearby)
-					}
-				}
-
-				mu.Lock()
-				defer mu.Unlock()
-
-				if !done {
-					count--
-
-					if len(nearbys) >= limit || count == 0 {
-						// Either we found enough or we have finished looking.  Either way, stop and take the best we
-						// have found.
-						ret = dist
-						retnelat = nelat
-						retnelng = nelng
-						retswlat = swlat
-						retswlng = swlng
-						done = true
-						defer wg.Done()
-					}
-				}
-			}(dist)
-
-			dist *= 2
-
-			if dist >= max {
-				break
-			}
-		}
+	if latlng.Lat == 0 && latlng.Lng == 0 {
+		return 0, latlng, 0, 0, 0, 0
 	}
 
-	wg.Wait()
-
-	// Cancel any outstanding ops.
-	for _, cancel := range cancels {
-		defer func() {
-			go cancel()
-		}()
+	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
+	if err != nil || len(results) < nearbyLimit {
+		return 0, latlng, 0, 0, 0, 0
 	}
 
-	return ret, latlng, retnelat, retnelng, retswlat, retswlng
+	// The spatial "newsfeed" index has no type/timestamp columns, so it can't
+	// exclude alerts or stale posts — applying that here restores the
+	// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
+	// computed radius).
+	ids := make([]int64, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	allowed := RecentNonAlertNewsfeedIDs(ids)
+
+	// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
+	// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
+	count := 0
+	distDeg := 0.0
+	for _, r := range results {
+		if _, ok := allowed[r.ID]; !ok {
+			continue
+		}
+		count++
+		if count == nearbyLimit {
+			distDeg = r.Distance
+			break
+		}
+	}
+	if count < nearbyLimit {
+		return 0, latlng, 0, 0, 0, 0
+	}
+
+	distKm := distDeg * 111.0
+	p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
+	ne := p.PointAtDistanceAndBearing(distKm, 45)
+	sw := p.PointAtDistanceAndBearing(distKm, 225)
+
+	return distKm, latlng, ne.Lat(), ne.Lng(), sw.Lat(), sw.Lng()
+}
+
+// RecentNonAlertNewsfeedIDs returns the subset of the given newsfeed ids that
+// are not ALERT-type and were posted within the feed window (31 days). The
+// spatial "newsfeed" index omits the type and timestamp columns, so the
+// nearby-distance calculation applies these filters here (matching the old
+// MySQL query) rather than in the shared index.
+func RecentNonAlertNewsfeedIDs(ids []int64) map[int64]struct{} {
+	allowed := make(map[int64]struct{}, len(ids))
+	if len(ids) == 0 {
+		return allowed
+	}
+
+	// ids come from the spatial server (not user input) — safe to inline.
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = strconv.FormatInt(id, 10)
+	}
+	since := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+
+	var found []int64
+	database.DBConn.Raw(fmt.Sprintf(
+		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ?",
+		strings.Join(idStrs, ","),
+	), utils.NEWSFEED_TYPE_ALERT, since).Scan(&found)
+
+	for _, id := range found {
+		allowed[id] = struct{}{}
+	}
+	return allowed
 }
 
 func Feed(c *fiber.Ctx) error {
@@ -1041,7 +979,7 @@ func Post(c *fiber.Ctx) error {
 				Email    string
 			}
 			var reporter ReporterInfo
-			db.Raw("SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id AND ue.preferred = 1 WHERE u.id = ?", myid).Scan(&reporter)
+			db.Raw("SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ue.preferred DESC, ue.id ASC LIMIT 1", myid).Scan(&reporter)
 
 			if err := queue.QueueTask(queue.TaskEmailChitchatReport, map[string]interface{}{
 				"user_id":     myid,
@@ -1115,14 +1053,13 @@ func Post(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusNotFound, "Newsfeed entry not found")
 			}
 
-			// Create a story from this newsfeed entry
-			result := db.Exec("INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)", nf.Userid, nf.Message)
-			if result.Error != nil {
+			// Create a story from this newsfeed entry. Read the new id from the write result,
+			// not a read-split-routable SELECT (9832 class).
+			storyID, err := database.ExecInsertGetID(db,
+				"INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)", nf.Userid, nf.Message)
+			if err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create story")
 			}
-
-			var storyID uint64
-			db.Raw("SELECT id FROM users_stories WHERE userid = ? AND story = ? ORDER BY id DESC LIMIT 1", nf.Userid, nf.Message).Scan(&storyID)
 
 			return c.JSON(fiber.Map{"id": storyID})
 		}

@@ -2,6 +2,7 @@
 
 namespace App\Mail\Welcome;
 
+use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Models\Group;
@@ -16,8 +17,15 @@ use Illuminate\Mail\Mailables\Envelope;
  *
  * Sends the group's custom welcome text (groups.welcomemail) to the
  * new member, from the group's auto-email address.
+ *
+ * Implements {@see RetryableMailable}: MembershipsProcessingService marks the
+ * memberships_history row processed unconditionally after attempting the send,
+ * so a render/build failure on the cron hot path (e.g. the 2026-06-06 MJML
+ * worker-pool outage) would otherwise drop the welcome permanently with no
+ * retry. Opting into durable retry turns that drop into a SpoolMail queue job
+ * that re-renders from current DB state once the transient failure clears.
  */
-class GroupWelcomeMail extends MjmlMailable
+class GroupWelcomeMail extends MjmlMailable implements RetryableMailable
 {
     use LoggableEmail;
 
@@ -35,6 +43,47 @@ class GroupWelcomeMail extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id;
+    }
+
+    /**
+     * IDs needed to rebuild this welcome for a durable retry — the recipient
+     * and the group. Never the built models; the welcome text is re-read from
+     * the group on rebuild so a retry reflects current group settings.
+     *
+     * {@see RetryableMailable}
+     */
+    public function mailDescriptor(): array
+    {
+        return [
+            'userid' => $this->user->id,
+            'groupid' => $this->group->id,
+        ];
+    }
+
+    /**
+     * Rebuild a fresh welcome from a descriptor, re-fetching from the DB.
+     *
+     * Returns null (cancel the retry — nothing to send) when the recipient or
+     * group has since been deleted, the recipient no longer has a usable
+     * address, or the group no longer has welcomes enabled. This mirrors the
+     * $wouldSendWelcome guard in MembershipsProcessingService so a retry never
+     * sends a welcome the hot path would now skip.
+     *
+     * {@see RetryableMailable}
+     */
+    public static function rebuildFromDescriptor(array $descriptor): ?self
+    {
+        $user = User::find($descriptor['userid'] ?? null);
+        if (!$user || !$user->email_preferred) {
+            return null;
+        }
+
+        $group = Group::find($descriptor['groupid'] ?? null);
+        if (!$group || !$group->onhere || empty($group->welcomemail)) {
+            return null;
+        }
+
+        return new self($user, $group);
     }
 
     public function envelope(): Envelope

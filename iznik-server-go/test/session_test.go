@@ -52,6 +52,33 @@ func TestLostPasswordSuccess(t *testing.T) {
 	assert.Equal(t, int64(1), keyCount)
 }
 
+func TestLostPasswordSendsToEmailUsedNotPreferred(t *testing.T) {
+	// A user with two emails who triggers a reset using their NON-preferred
+	// address must get the login link at the address they actually used - not
+	// at their preferred address, which may differ and may be the one bouncing.
+	prefix := uniquePrefix("lostpw-used")
+	userID := CreateTestUser(t, prefix, "User")
+	primaryEmail := fmt.Sprintf("%s@test.com", prefix)
+	secondaryEmail := fmt.Sprintf("%s-secondary@test.com", prefix)
+
+	db := database.DBConn
+	// Make the auto-created address the preferred one, and add a non-preferred
+	// secondary address.
+	db.Exec("UPDATE users_emails SET preferred = 1 WHERE userid = ? AND email = ?", userID, primaryEmail)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", userID, secondaryEmail)
+
+	body := fmt.Sprintf(`{"action":"LostPassword","email":"%s"}`, secondaryEmail)
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var queuedEmail string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.email')) FROM background_tasks "+
+		"WHERE task_type = 'email_forgot_password' AND JSON_EXTRACT(data, '$.user_id') = ? "+
+		"ORDER BY id DESC LIMIT 1", userID).Scan(&queuedEmail)
+	assert.Equal(t, secondaryEmail, queuedEmail,
+		"reset link must be queued to the email the user actually used, not their preferred address")
+}
+
 func TestLostPasswordUnknownEmail(t *testing.T) {
 	body := `{"action":"LostPassword","email":"nonexistent-session-test@example.com"}`
 	resp := postSession(body)
@@ -82,6 +109,7 @@ func TestUnsubscribeSuccess(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
 	assert.Equal(t, true, result["emailsent"])
+	assert.Equal(t, false, result["unknown"])
 
 	// Verify a background task was queued.
 	db := database.DBConn
@@ -91,7 +119,9 @@ func TestUnsubscribeSuccess(t *testing.T) {
 }
 
 func TestUnsubscribeUnknownEmail(t *testing.T) {
-	// Should return success to prevent email enumeration.
+	// Returns unknown:true so the frontend can offer a "Contact support" fallback
+	// instead of misleading the user into thinking an email was sent.
+	// Trade-off: enables limited email enumeration via this endpoint.
 	body := `{"action":"Unsubscribe","email":"nonexistent-unsub-test@example.com"}`
 	resp := postSession(body)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -99,7 +129,8 @@ func TestUnsubscribeUnknownEmail(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
-	assert.Equal(t, true, result["emailsent"])
+	assert.Equal(t, false, result["emailsent"])
+	assert.Equal(t, true, result["unknown"])
 }
 
 func TestUnsubscribeMissingEmail(t *testing.T) {
@@ -353,6 +384,49 @@ func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	assert.NotContains(t, email, "@users.ilovefreegle.org")
 }
 
+func TestGetSessionEmailsExposeBouncedTimestamp(t *testing.T) {
+	// The session payload must expose which specific address is bouncing so the
+	// website banner can name it. A healthy email has bounced=null; a bounced
+	// one carries a timestamp.
+	prefix := uniquePrefix("sess_bounced")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	healthyEmail := fmt.Sprintf("%s@test.com", prefix)
+	bouncingEmail := fmt.Sprintf("%s-bounce@test.com", prefix)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, bounced) VALUES (?, ?, 0, NOW())",
+		userID, bouncingEmail)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	emails, ok := result["emails"].([]interface{})
+	assert.True(t, ok, "emails should be an array")
+
+	var healthyBounced, bouncingBounced interface{}
+	healthyFound, bouncingFound := false, false
+	for _, e := range emails {
+		em := e.(map[string]interface{})
+		switch em["email"] {
+		case healthyEmail:
+			healthyFound = true
+			healthyBounced = em["bounced"]
+		case bouncingEmail:
+			bouncingFound = true
+			bouncingBounced = em["bounced"]
+		}
+	}
+	assert.True(t, healthyFound, "healthy email should be present")
+	assert.True(t, bouncingFound, "bouncing email should be present")
+	assert.Nil(t, healthyBounced, "healthy email should have bounced=null")
+	assert.NotNil(t, bouncingBounced, "bouncing email should expose a bounced timestamp")
+}
+
 func TestGetSessionReturnsMailFlags(t *testing.T) {
 	// /api/session must return relevantallowed and newslettersallowed in me so the
 	// settings UI toggles ("Suggested posts for you", "Newsletters & stories") reflect
@@ -492,6 +566,108 @@ func TestGetSessionNotLoggedIn(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(1), result["ret"])
 	assert.Equal(t, "Not logged in", result["status"])
+}
+
+// TestGetSessionReturnsCurrentSessionCredentials is a regression test for
+// Discourse #9748 post 5. GET /session must return the credentials for the
+// session that made the request, not an arbitrary row returned by LIMIT 1.
+// When two sessions exist for the same user (e.g. ModTools + ilovefreegle.org),
+// the response must carry the JWT and persistent token for the requesting
+// session, not the one with the lowest primary key.
+func TestGetSessionReturnsCurrentSessionCredentials(t *testing.T) {
+	prefix := uniquePrefix("sess_cred")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Insert two sessions. idOther is inserted first so it has the lower PK
+	// and wins the old bare "LIMIT 1" query.
+	seriesOther := userID*1000 + 1
+	seriesCurrent := userID*1000 + 2
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokOther', NOW(), NOW())", userID, seriesOther)
+	var idOther uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesOther).Scan(&idOther)
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokCurrent', NOW(), NOW())", userID, seriesCurrent)
+	var idCurrent uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesCurrent).Scan(&idCurrent)
+
+	assert.NotZero(t, idOther, "other-app session must be created")
+	assert.NotZero(t, idCurrent, "current session must be created")
+	assert.Less(t, idOther, idCurrent, "other session must have lower id for the LIMIT 1 regression to be deterministic")
+
+	// Authenticate as the CURRENT session (the second one created).
+	tokenCurrent := GetToken(userID, idCurrent)
+	req := httptest.NewRequest("GET", "/api/session?jwt="+tokenCurrent, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "response must contain a persistent token map")
+	if ok {
+		gotID := uint64(persistent["id"].(float64))
+		assert.Equal(t, idCurrent, gotID,
+			"persistent.id must match the current session (%d), not the other-app session (%d)",
+			idCurrent, idOther)
+	}
+}
+
+// TestGetSessionReturnsCurrentSessionCredentialsViaAuth2 is a companion to
+// TestGetSessionReturnsCurrentSessionCredentials that exercises the
+// Authorization2 (persistent-token) code path in GetSession.
+//
+// When the JWT has expired the client sends only Authorization2.  This path
+// was broken in two ways: (1) WhoAmI required Series to be non-zero, but
+// old-format tokens sent Series as a JSON string ("12345") which json.Unmarshal
+// coerced to 0; (2) GetSession used LIMIT 1 instead of binding to the session
+// ID from the token.
+func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
+	prefix := uniquePrefix("sess_auth2")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Insert two sessions. idOther is inserted first so it has a lower PK
+	// and wins the old bare "LIMIT 1" query.
+	seriesOther := userID*2000 + 1
+	seriesCurrent := userID*2000 + 2
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokOtherA2', NOW(), NOW())", userID, seriesOther)
+	var idOther uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesOther).Scan(&idOther)
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokCurrentA2', NOW(), NOW())", userID, seriesCurrent)
+	var idCurrent uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesCurrent).Scan(&idCurrent)
+
+	assert.NotZero(t, idOther, "other session must exist")
+	assert.NotZero(t, idCurrent, "current session must exist")
+	assert.Less(t, idOther, idCurrent, "other session must have lower id for LIMIT 1 regression to be deterministic")
+
+	// Build a persistent token that mimics what a browser would send.
+	// Use old wire-format: Series as a JSON string ("12345"), not a number.
+	persistentJSON := fmt.Sprintf(`{"id":%d,"series":"%d","token":"tokCurrentA2"}`, idCurrent, seriesCurrent)
+
+	req := httptest.NewRequest("GET", "/api/session", nil)
+	req.Header.Set("Authorization2", persistentJSON)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "response must contain a persistent token map")
+	if ok {
+		gotID := uint64(persistent["id"].(float64))
+		assert.Equal(t, idCurrent, gotID,
+			"persistent.id must match the current session (%d), not the other-app session (%d)",
+			idCurrent, idOther)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1022,6 +1198,101 @@ func TestDeleteSession(t *testing.T) {
 	assert.Equal(t, int64(0), countAfter)
 }
 
+// TestDeleteSessionScopedToCurrentDevice verifies that DELETE /session only
+// invalidates the caller's session, leaving other active sessions (other devices)
+// intact. Regression test for Discourse #9748: logout was deleting all sessions
+// for the user instead of just the current one.
+// TestDeleteSessionScopedToCurrentSeries verifies V1 parity
+// (Session::destroy with a series): logging out deletes the current login
+// SERIES only, so a separate app's session (a different series - e.g. ModTools
+// while Freegle is logged in) stays active. Regression test for Discourse
+// #9748: logout was deleting ALL of a user's sessions, logging them out of both
+// Freegle and ModTools at once.
+func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
+	prefix := uniquePrefix("del_sess_series")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Production gives each login a distinct random series; the CreateTestSession
+	// helper hardcodes series=userID, so insert explicit series here. series1 is
+	// the current app login (two tabs); series2 is a separate app login.
+	series1 := userID*1000 + 1
+	series2 := userID*1000 + 2
+
+	mk := func(series uint64) uint64 {
+		db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
+		var id uint64
+		db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&id)
+		return id
+	}
+	idA := mk(series1) // current login (series 1)
+	idB := mk(series1) // same login series, another tab
+	idC := mk(series2) // separate app login (series 2)
+
+	token := GetToken(userID, idA)
+
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	count := func(id uint64) int64 {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&n)
+		return n
+	}
+	// The whole current series is logged out...
+	assert.Equal(t, int64(0), count(idA), "current session (series 1) should be deleted")
+	assert.Equal(t, int64(0), count(idB), "same-series session should also be deleted")
+	// ...but the other app's series stays logged in.
+	assert.Equal(t, int64(1), count(idC), "other app session (series 2) must remain logged in")
+}
+
+// TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable is the regression test
+// for Discourse #9748 *still failing* after the first fix. When the current
+// session's series cannot be resolved to a non-zero value (e.g. a legacy/edge
+// session row stored with series 0, or a stale client token), the previous code
+// fell back to DELETE FROM sessions WHERE userid = ? — logging the user out of
+// EVERY app and device ("logging out of either Freegle or ModTools logs me out
+// of both everywhere"). Logout must instead scope to the current session row and
+// never evict the user's other logins.
+func TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable(t *testing.T) {
+	prefix := uniquePrefix("del_sess_zero")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	mk := func(series uint64) uint64 {
+		db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
+		var id uint64
+		db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&id)
+		return id
+	}
+	// Current login's row has series 0 (series unresolvable); a separate app/device
+	// login has a normal series and must survive this logout.
+	idCurrent := mk(0)
+	idOther := mk(userID*1000 + 7)
+
+	token := GetToken(userID, idCurrent)
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	count := func(id uint64) int64 {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&n)
+		return n
+	}
+	// The current session is logged out (by row id when its series is 0)...
+	assert.Equal(t, int64(0), count(idCurrent), "current session must be deleted")
+	// ...but the user's other login must NOT be cleared. The old delete-all
+	// fallback deleted this too — that was #9748 "logged out everywhere".
+	assert.Equal(t, int64(1), count(idOther), "other login must survive when current series is unresolvable")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Forget
 // ---------------------------------------------------------------------------
@@ -1085,7 +1356,17 @@ func TestPostSessionForgetMod(t *testing.T) {
 	assert.Nil(t, deleted, "Moderator should not be deleted")
 }
 
-func TestForgetBlanksMessagePersonalData(t *testing.T) {
+// TestForgetPreservesMessagesDuringGrace asserts that a self-service Forget puts the
+// user into the 14-day recovery window WITHOUT destroying their message content or
+// hiding their posts from groups. The GDPR erasure is the responsibility of the
+// background users:cleanup job (Laravel UserManagementService::forgetInactiveUsers),
+// which only fires after the grace period.
+//
+// Regression for the paddimckone@gmail.com incident (2026-05-27): handleForget used to
+// eagerly blank messages + flip messages_groups.deleted=1 inline, so even when the user
+// recovered their account by signing back in (PATCH /user {"deleted": null} clears
+// users.deleted) the posts were permanently gone.
+func TestForgetPreservesMessagesDuringGrace(t *testing.T) {
 	prefix := uniquePrefix("forget_msgs")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
@@ -1102,7 +1383,7 @@ func TestForgetBlanksMessagePersonalData(t *testing.T) {
 	assert.NotZero(t, result.RowsAffected)
 	assert.NotZero(t, msgID)
 
-	// Create a messages_groups row so we can verify it gets marked deleted.
+	// Create a messages_groups row — must remain deleted=0 after Forget.
 	groupID := CreateTestGroup(t, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupID)
 
@@ -1119,26 +1400,156 @@ func TestForgetBlanksMessagePersonalData(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&apiResult)
 	assert.Equal(t, float64(0), apiResult["ret"])
 
-	// Verify personal data has been blanked on the message.
+	// User is in limbo (users.deleted set) but message content is intact.
+	var userDeleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&userDeleted)
+	assert.NotNil(t, userDeleted, "User should be soft-deleted")
+
 	type MsgFields struct {
 		Envelopefrom *string
 		Fromip       *string
 		Fromname     *string
 		Fromaddr     *string
 		Textbody     *string
+		Message      *string
+		Deleted      *string
 	}
 	var msg MsgFields
-	db.Raw("SELECT envelopefrom, fromip, fromname, fromaddr, textbody FROM messages WHERE id = ?", msgID).Scan(&msg)
-	assert.Nil(t, msg.Envelopefrom, "envelopefrom should be NULL after Forget")
-	assert.Nil(t, msg.Fromip, "fromip should be NULL after Forget")
-	assert.Nil(t, msg.Fromname, "fromname should be NULL after Forget")
-	assert.Nil(t, msg.Fromaddr, "fromaddr should be NULL after Forget")
-	assert.Nil(t, msg.Textbody, "textbody should be NULL after Forget")
+	db.Raw("SELECT envelopefrom, fromip, fromname, fromaddr, textbody, message, deleted FROM messages WHERE id = ?", msgID).Scan(&msg)
+	assert.NotNil(t, msg.Envelopefrom, "envelopefrom must survive Forget (grace period)")
+	assert.NotNil(t, msg.Fromip, "fromip must survive Forget (grace period)")
+	assert.NotNil(t, msg.Fromname, "fromname must survive Forget (grace period)")
+	assert.NotNil(t, msg.Fromaddr, "fromaddr must survive Forget (grace period)")
+	assert.NotNil(t, msg.Textbody, "textbody must survive Forget (grace period)")
+	assert.NotNil(t, msg.Message, "message must survive Forget (grace period)")
+	assert.Nil(t, msg.Deleted, "messages.deleted must remain NULL during grace period")
 
-	// Verify messages_groups.deleted is set to 1 (V1 parity: forget() sets this).
 	var mgDeleted int
 	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgDeleted)
-	assert.Equal(t, 1, mgDeleted, "messages_groups.deleted should be 1 after Forget")
+	assert.Equal(t, 0, mgDeleted, "messages_groups.deleted must remain 0 during grace period")
+}
+
+// TestForgetRemovesApprovedMemberships locks in V1 parity for User::delete: when a
+// user deletes their account they should drop out of group member lists immediately
+// (otherwise mod tools still show them as a current member).
+func TestForgetRemovesApprovedMemberships(t *testing.T) {
+	prefix := uniquePrefix("forget_membs")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	var before int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND collection = ?", userID, "Approved").Scan(&before)
+	assert.Equal(t, int64(1), before, "precondition: user is an Approved member")
+
+	body, _ := json.Marshal(map[string]interface{}{"action": "Forget"})
+	req := httptest.NewRequest("POST", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var after int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND collection = ?", userID, "Approved").Scan(&after)
+	assert.Equal(t, int64(0), after, "Forget should drop approved memberships (V1 parity)")
+}
+
+// TestForgetWritesDeletionLog locks in V1 parity for User::delete($log=TRUE): the
+// deletion must be recorded in logs so mod tools have an audit trail.
+func TestForgetWritesDeletionLog(t *testing.T) {
+	prefix := uniquePrefix("forget_log")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	body, _ := json.Marshal(map[string]interface{}{"action": "Forget"})
+	req := httptest.NewRequest("POST", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ?",
+		userID, "User", "Deleted").Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Forget should write a logs row (type=User, subtype=Deleted)")
+}
+
+// TestForgetPartnerFlow exercises the partner-authenticated Forget path: a partner
+// (e.g. TrashNothing) can immediately erase a user it owns. Unlike the self-service
+// flow there is no recovery window, so message content IS blanked synchronously —
+// but parity with V1 still requires membership removal and an audit log entry.
+func TestForgetPartnerFlow(t *testing.T) {
+	prefix := uniquePrefix("forget_partner")
+	db := database.DBConn
+
+	// Create a user linked to the test partner (ljuserid is the partner-side id).
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	partnerUID := uint64(time.Now().UnixNano())
+	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", partnerUID, userID)
+
+	// Seed a message + messages_groups row so we can confirm partner erasure still
+	// blanks content (unlike the self-service grace path).
+	result := db.Exec(
+		"INSERT INTO messages (fromuser, subject, type, arrival, envelopefrom, fromip, fromname, fromaddr, textbody, message) "+
+			"VALUES (?, 'Partner forget msg', 'Offer', NOW(), 'envelope@example.com', '1.2.3.4', 'Sender', 'addr@example.com', 'body', 'body')",
+		userID,
+	)
+	var msgID uint64
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
+	assert.NotZero(t, result.RowsAffected)
+	assert.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"action":  "Forget",
+		"partner": "testkey123",
+		"id":      userID,
+	})
+	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// User soft-deleted.
+	var userDeleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&userDeleted)
+	assert.NotNil(t, userDeleted, "Partner Forget should soft-delete the user")
+
+	// Approved memberships dropped (V1 parity).
+	var membCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND collection = ?", userID, "Approved").Scan(&membCount)
+	assert.Equal(t, int64(0), membCount, "Partner Forget should drop approved memberships")
+
+	// Audit log row written with byuser = NULL (no acting Freegle user).
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ? AND byuser IS NULL",
+		userID, "User", "Deleted").Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Partner Forget should write a logs row with byuser=NULL")
+
+	// Partner contract: message content IS erased immediately.
+	type MsgFields struct {
+		Envelopefrom *string
+		Fromip       *string
+		Fromname     *string
+		Fromaddr     *string
+		Textbody     *string
+		Deleted      *string
+	}
+	var msg MsgFields
+	db.Raw("SELECT envelopefrom, fromip, fromname, fromaddr, textbody, deleted FROM messages WHERE id = ?", msgID).Scan(&msg)
+	assert.Nil(t, msg.Envelopefrom, "partner forget should NULL envelopefrom")
+	assert.Nil(t, msg.Fromip, "partner forget should NULL fromip")
+	assert.Nil(t, msg.Fromname, "partner forget should NULL fromname")
+	assert.Nil(t, msg.Fromaddr, "partner forget should NULL fromaddr")
+	assert.Nil(t, msg.Textbody, "partner forget should NULL textbody")
+	assert.NotNil(t, msg.Deleted, "partner forget should set messages.deleted")
+
+	var mgDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgDeleted)
+	assert.Equal(t, 1, mgDeleted, "partner forget should flip messages_groups.deleted=1")
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,6 +1628,40 @@ func TestWorkCountStoriesBasic(t *testing.T) {
 	work := getSessionWork(t, token)
 	stories := work["stories"].(float64)
 	assert.GreaterOrEqual(t, stories, float64(1), "Should count unreviewed story from group member")
+}
+
+// TestWorkCountPendingHeldPerGroup verifies the session badge splits held vs
+// unheld pending using the per-group messages_groups.heldby, not the global
+// messages.heldby. A message held on one group but unheld-pending on another must
+// count toward both 'pendingother' (held) and 'pending' (unheld).
+func TestWorkCountPendingHeldPerGroup(t *testing.T) {
+	prefix := uniquePrefix("wc_heldpg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Held per group badge', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	// Held on A, unheld on B. Both content-checked so the badge query counts them.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, ?, NOW())", msgID, groupA, holderID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID, groupB)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	work := getSessionWork(t, token)
+	// Held copy (A) → pendingother (blue); unheld copy (B) → pending (red).
+	// On the old global-heldby logic the A copy would have counted as unheld
+	// (messages.heldby is NULL here), so pendingother would miss it.
+	assert.GreaterOrEqual(t, work["pendingother"].(float64), float64(1), "held-on-A copy must count as pendingother")
+	assert.GreaterOrEqual(t, work["pending"].(float64), float64(1), "unheld-on-B copy must count as pending")
 }
 
 func TestWorkCountStoriesDateFilter(t *testing.T) {
@@ -1532,8 +1977,8 @@ func TestWorkCountPendingMessages(t *testing.T) {
 		"VALUES (?, 'OFFER: Pending item', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupID)
 	defer func() {
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -1541,7 +1986,7 @@ func TestWorkCountPendingMessages(t *testing.T) {
 
 	work := getSessionWork(t, token)
 	pending := work["pending"].(float64)
-	assert.GreaterOrEqual(t, pending, float64(1), "Should count pending message")
+	assert.GreaterOrEqual(t, pending, float64(1), "Should count content-checked pending message")
 }
 
 // ---------------------------------------------------------------------------
@@ -1574,6 +2019,97 @@ func TestWorkCountSpamMessages(t *testing.T) {
 	work := getSessionWork(t, token)
 	spam := work["spam"].(float64)
 	assert.GreaterOrEqual(t, spam, float64(1), "Should count spam message")
+}
+
+// Spam-collection messages older than 30 days are aged out of the Pending
+// review list (message_list.go); the badge work-count must apply the same age
+// filter, or the hamburger total shows a count with no visible, clickable home
+// (an inflated total and no matching red left-menu count).
+func TestWorkCountSpamMessagesAgedOutNotCounted(t *testing.T) {
+	prefix := uniquePrefix("wc_spam_old")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Old spam item', 'Test body', 'Test body', 'Offer', ?, NOW() - INTERVAL 40 DAY)", memberID, locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
+	// Spam row arrived 40 days ago — older than the 30-day window.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW() - INTERVAL 40 DAY, 'Spam', 0)", msgID, groupID)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	work := getSessionWork(t, token)
+	spam := work["spam"].(float64)
+	assert.Equal(t, float64(0), spam, "Spam older than 30 days must not be counted in the badge (it is aged out of the Pending list)")
+}
+
+// Housekeeping is an Admin-only function. A Support user must not get it in the
+// work badge (the SysAdmin housekeeping list isn't shown to Support), or the
+// badge inflates with no visible home.
+func TestWorkCountHousekeepingAdminOnly(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("wc_hk")
+	taskKey := prefix + "_overdue"
+	// An overdue (failed) housekeeper task so the count is non-zero for Admin.
+	db.Exec("INSERT INTO housekeeper_tasks (task_key, name, interval_hours, enabled, placeholder, last_status) VALUES (?, ?, 1, 1, 0, 'failure')", taskKey, "WC test overdue")
+	defer db.Exec("DELETE FROM housekeeper_tasks WHERE task_key = ?", taskKey)
+
+	groupID := CreateTestGroup(t, prefix)
+
+	supportID := CreateTestUser(t, prefix+"_sup", "User")
+	CreateTestMembership(t, supportID, groupID, "Moderator")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supTok := CreateTestSession(t, supportID)
+	assert.Equal(t, float64(0), getSessionWork(t, supTok)["housekeeping"].(float64),
+		"Support must not get the housekeeping count (Admin-only)")
+
+	adminID := CreateTestUser(t, prefix+"_adm", "User")
+	CreateTestMembership(t, adminID, groupID, "Moderator")
+	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", adminID)
+	_, admTok := CreateTestSession(t, adminID)
+	assert.GreaterOrEqual(t, getSessionWork(t, admTok)["housekeeping"].(float64), float64(1),
+		"Admin must get the housekeeping count")
+}
+
+// Spammer pending-add review is gated by the SpamAdmin permission (granted via
+// the teams table), not systemrole. A Support user without that permission must
+// not get the count, matching the Spammers menu visibility (hasPermissionSpamAdmin).
+func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("wc_spa")
+	groupID := CreateTestGroup(t, prefix)
+
+	// A pending-add spam_users row to count (the count is system-wide).
+	flaggedID := CreateTestUser(t, prefix+"_flagged", "User")
+	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'PendingAdd', 'WC test', ?)", flaggedID, flaggedID)
+	defer db.Exec("DELETE FROM spam_users WHERE userid = ?", flaggedID)
+
+	// Support user WITHOUT SpamAdmin permission → 0.
+	supportID := CreateTestUser(t, prefix+"_sup", "User")
+	CreateTestMembership(t, supportID, groupID, "Moderator")
+	db.Exec("UPDATE users SET systemrole = 'Support', permissions = NULL WHERE id = ?", supportID)
+	_, supTok := CreateTestSession(t, supportID)
+	assert.Equal(t, float64(0), getSessionWork(t, supTok)["spammerpendingadd"].(float64),
+		"Support without SpamAdmin permission must not get spammerpendingadd")
+
+	// User WITH SpamAdmin permission → counts.
+	spamAdminID := CreateTestUser(t, prefix+"_spa", "User")
+	CreateTestMembership(t, spamAdminID, groupID, "Moderator")
+	db.Exec("UPDATE users SET permissions = 'SpamAdmin' WHERE id = ?", spamAdminID)
+	_, spaTok := CreateTestSession(t, spamAdminID)
+	assert.GreaterOrEqual(t, getSessionWork(t, spaTok)["spammerpendingadd"].(float64), float64(1),
+		"User with SpamAdmin permission must get spammerpendingadd")
 }
 
 func TestWorkCountSpamMembersReFlaggedAfterRecentReview(t *testing.T) {
@@ -1701,7 +2237,8 @@ func TestWorkCountPendingExcludesDeletedUsers(t *testing.T) {
 
 	// Create a pending message from this member.
 	msgID := CreateTestMessage(t, memberID, groupID, "OFFER: Limbo pending", 55.9533, -3.1883)
-	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)
+	// Set collection = 'Pending' and contentcheck_checked_at so the fix counts it.
+	db.Exec("UPDATE messages_groups SET collection = 'Pending', contentcheck_checked_at = NOW() WHERE msgid = ?", msgID)
 
 	// Baseline: message should be counted.
 	workBefore := getSessionWork(t, token)
@@ -1716,6 +2253,65 @@ func TestWorkCountPendingExcludesDeletedUsers(t *testing.T) {
 	pendingAfter := workAfter["pending"].(float64) + workAfter["pendingother"].(float64)
 
 	assert.Less(t, pendingAfter, pendingBefore, "Pending count must exclude messages from deleted users")
+}
+
+// ---------------------------------------------------------------------------
+// Work Counts: Unchecked pending messages excluded (phantom-notification fix)
+// Discourse #9481 post 563: a pending message with contentcheck_checked_at IS
+// NULL has not yet been processed by the content check and may still be
+// auto-approved. Counting it fires a phantom beep that vanishes when the mod
+// opens Pending. Only messages that content check has processed and left
+// pending (contentcheck_checked_at IS NOT NULL) should be counted.
+// ---------------------------------------------------------------------------
+
+func TestWorkCountPendingExcludesUnchecked(t *testing.T) {
+	prefix := uniquePrefix("wc_unchk")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	workBefore := getSessionWork(t, token)
+	pendingBefore := workBefore["pending"].(float64)
+	pendingotherBefore := workBefore["pendingother"].(float64)
+
+	// Simulate a just-arrived post: contentcheck_checked_at IS NULL (not yet processed).
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Auto-approvable item', 'Test body', 'Test body', 'Offer', ?, NOW())",
+		memberID, locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	workUnchecked := getSessionWork(t, token)
+	pendingUnchecked := workUnchecked["pending"].(float64)
+	pendingotherUnchecked := workUnchecked["pendingother"].(float64)
+
+	// Unchecked message must NOT inflate the count — phantom notification bug.
+	assert.Equal(t, pendingBefore, pendingUnchecked,
+		"Unchecked pending message must not appear in pending count before content check runs")
+	assert.Equal(t, pendingotherBefore, pendingotherUnchecked,
+		"Unchecked pending message must not appear in pendingother before content check runs")
+
+	// Once content check marks the message (contentcheck_checked_at IS NOT NULL),
+	// it must appear in the count — real pending items need mod attention.
+	db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NOW() WHERE msgid = ? AND groupid = ?",
+		msgID, groupID)
+	workChecked := getSessionWork(t, token)
+	pendingChecked := workChecked["pending"].(float64)
+	assert.Greater(t, pendingChecked, pendingBefore,
+		"Content-checked pending message must appear in count once content check has run")
 }
 
 // ---------------------------------------------------------------------------
@@ -2006,8 +2602,8 @@ func TestWorkCountInactiveModPendingGoesToOther(t *testing.T) {
 		"VALUES (?, 'OFFER: Inactive pending', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupID)
 	defer func() {
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -2039,8 +2635,8 @@ func TestWorkCountActiveModPendingGoesToPrimary(t *testing.T) {
 		"VALUES (?, 'OFFER: Active pending', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupID)
 	defer func() {
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
@@ -2412,7 +3008,7 @@ func TestGetSessionRejectsOldAppVersion(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(123), result["ret"])
-	assert.Equal(t, "App is out of date", result["status"])
+	assert.Equal(t, "App is out of date - please upgrade or use the website", result["status"])
 }
 
 func TestGetSessionRecordsWebVersion(t *testing.T) {
@@ -3001,5 +3597,98 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 		assert.Equal(t, "FCMAndroid", typ)
 
 		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
+	})
+
+	t.Run("ON DUPLICATE KEY UPDATE reassigns userid when a device switches accounts", func(t *testing.T) {
+		// A push token (FCM/APNs) identifies a device install, not a user. The
+		// subscription column is UNIQUE, so when a device switches accounts the
+		// same token re-registers and must move to the new user — otherwise the
+		// new user gets no push and pushes for the old user hit this device.
+		prefix := uniquePrefix("push_reassign")
+		token_val := fmt.Sprintf("fcm-token-reassign-%s", prefix)
+		body, _ := json.Marshal(map[string]interface{}{
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMIOS",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		// User A registers the device token first.
+		userA := CreateTestUser(t, prefix+"a", "User")
+		_, tokenA := CreateTestSession(t, userA)
+		reqA := httptest.NewRequest("PATCH", "/api/session?jwt="+tokenA, bytes.NewReader(body))
+		reqA.Header.Set("Content-Type", "application/json")
+		getApp().Test(reqA)
+
+		// User B logs in on the SAME device (same token) and registers.
+		userB := CreateTestUser(t, prefix+"b", "User")
+		_, tokenB := CreateTestSession(t, userB)
+		reqB := httptest.NewRequest("PATCH", "/api/session?jwt="+tokenB, bytes.NewReader(body))
+		reqB.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(reqB)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		// The token row must now belong to B (the current user), not A.
+		var owner uint64
+		db.Raw("SELECT userid FROM users_push_notifications WHERE subscription = ?", token_val).Scan(&owner)
+		assert.Equal(t, userB, owner, "device token must reassign to the current user")
+
+		var countA int64
+		db.Raw("SELECT COUNT(*) FROM users_push_notifications WHERE userid = ? AND subscription = ?", userA, token_val).Scan(&countA)
+		assert.Equal(t, int64(0), countA, "previous owner must lose the reassigned token")
+
+		db.Exec("DELETE FROM users_push_notifications WHERE subscription = ?", token_val)
+	})
+}
+
+// TestTopicActiveWithin exercises the pure predicate used to filter Discourse
+// new/unread topics to the last 30 days.  No HTTP server or database required.
+// This covers the fix for Discourse topic 9654 post 10 (newly-promoted mod flood).
+func TestTopicActiveWithin(t *testing.T) {
+	now := time.Now().UTC()
+	recent := now.AddDate(0, 0, -5).Format(time.RFC3339)   // 5 days ago — within window
+	old := now.AddDate(0, 0, -60).Format(time.RFC3339)     // 60 days ago — outside window
+	boundary := now.AddDate(0, 0, -30).Add(-time.Second).Format(time.RFC3339) // just outside
+
+	t.Run("recent bumped_at → active", func(t *testing.T) {
+		assert.True(t, session.TopicActiveWithin(old, recent, old, now.AddDate(0, 0, -30)),
+			"recent bumpedAt must be active")
+	})
+
+	t.Run("old everything → inactive", func(t *testing.T) {
+		assert.False(t, session.TopicActiveWithin(old, old, old, now.AddDate(0, 0, -30)),
+			"all old timestamps must be inactive")
+	})
+
+	t.Run("bad/missing timestamps → inactive", func(t *testing.T) {
+		assert.False(t, session.TopicActiveWithin("", "", "", now.AddDate(0, 0, -30)),
+			"empty timestamps must return false")
+		assert.False(t, session.TopicActiveWithin("not-a-date", "also-bad", "nope", now.AddDate(0, 0, -30)),
+			"malformed timestamps must return false")
+	})
+
+	t.Run("recent created_at only (bumpedAt and lastPosted empty) → active", func(t *testing.T) {
+		assert.True(t, session.TopicActiveWithin(recent, "", "", now.AddDate(0, 0, -30)),
+			"recent createdAt with empty others must be active")
+	})
+
+	t.Run("bumped_at preferred over last_posted_at", func(t *testing.T) {
+		// bumpedAt is old but lastPosted is recent — bumpedAt takes precedence,
+		// so the topic is treated as inactive (old bumped_at wins).
+		assert.False(t, session.TopicActiveWithin(old, old, recent, now.AddDate(0, 0, -30)),
+			"bumpedAt=old wins over lastPosted=recent — inactive")
+	})
+
+	t.Run("bumpedAt empty, last_posted_at recent → active", func(t *testing.T) {
+		assert.True(t, session.TopicActiveWithin(old, "", recent, now.AddDate(0, 0, -30)),
+			"empty bumpedAt falls through to recent lastPosted — active")
+	})
+
+	t.Run("exactly at boundary → inactive (After is strictly greater)", func(t *testing.T) {
+		// boundary is just outside the 30-day window
+		assert.False(t, session.TopicActiveWithin(boundary, boundary, boundary, now.AddDate(0, 0, -30)),
+			"timestamp exactly at/before since must be inactive")
 	})
 }

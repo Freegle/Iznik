@@ -39,7 +39,8 @@ class GitSummaryServiceTest extends TestCase
             time() - 3600
         );
 
-        $this->assertNull($result);
+        // Clone failure returns false (distinct from null = genuinely no changes).
+        $this->assertFalse($result);
         $this->assertNotNull($loggedContext, 'Log::error should have been called');
 
         // The original URL (without token) should be logged.
@@ -79,8 +80,53 @@ class GitSummaryServiceTest extends TestCase
             time() - 3600
         );
 
-        $this->assertNull($result);
+        // Clone failure returns false (distinct from null = genuinely no changes).
+        $this->assertFalse($result);
         $this->assertNotNull($loggedContext);
         $this->assertStringNotContainsString('ghp_testtoken123', $loggedContext['output']);
+    }
+
+    public function test_generate_report_logs_warning_on_clone_failure(): void
+    {
+        // Regression: clone failure was indistinguishable from "no changes" — both
+        // returned null → both logged "No changes found" → credential lapses went
+        // unnoticed for weeks.
+        Config::set('freegle.git_summary.repositories', [
+            [
+                'name' => 'iznik-batch',
+                'url' => 'file:///tmp/nonexistent-clone-fail-repo',
+                'branch' => 'master',
+                'category' => 'Backend',
+            ],
+        ]);
+
+        $service = app(GitSummaryService::class);
+
+        $warningLogged = false;
+        $noChangesLogged = false;
+
+        Log::shouldReceive('error')->zeroOrMoreTimes();
+        Log::shouldReceive('debug')->zeroOrMoreTimes();
+        Log::shouldReceive('info')
+            ->zeroOrMoreTimes()
+            ->withArgs(function ($message) use (&$noChangesLogged) {
+                if (str_contains($message, 'No changes found')) {
+                    $noChangesLogged = true;
+                }
+                return true;
+            });
+        Log::shouldReceive('warning')
+            ->zeroOrMoreTimes()
+            ->withArgs(function ($message) use (&$warningLogged) {
+                if (str_contains($message, 'Failed to fetch')) {
+                    $warningLogged = true;
+                }
+                return true;
+            });
+
+        $service->generateReport('-7 days');
+
+        $this->assertTrue($warningLogged, 'Expected Log::warning with "Failed to fetch" on clone failure');
+        $this->assertFalse($noChangesLogged, 'Clone failure must not be logged as "No changes found"');
     }
 }

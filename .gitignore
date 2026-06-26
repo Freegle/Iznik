@@ -53,7 +53,7 @@ sentry-issues.db
 /iznik-batch/coverage/
 
 # Ralph working directories (session-specific)
-ralph/
+/ralph/
 
 # Local Netlify folder
 .netlify
@@ -70,6 +70,13 @@ freegle-mobile/
 # Stale lock files
 .claude/scheduled_tasks.lock
 
+# Agent worktrees — spawned by Claude Code subagents, ephemeral
+.claude/worktrees/
+
 # Local Claude session log (not committed — updates here don't make PRs go BEHIND)
 .claude-session.md
 monitor.db
+
+# freegle switch: runtime state for the worktree-escape guard
+# (legacy single file + per-session active-worktree.<session-id> files)
+.claude/active-worktree*

@@ -13,6 +13,16 @@
       />
     </div>
     <div>
+      <NoticeMessage v-if="invalidNumeric" variant="danger" class="mt-1 mb-1">
+        <p class="mb-0">
+          {{ INVALID_ITEM_MESSAGE }}
+        </p>
+      </NoticeMessage>
+      <NoticeMessage v-if="invalidVague" variant="danger" class="mt-1 mb-1">
+        <p class="mb-0">
+          {{ VAGUE_ITEM_MESSAGE }}
+        </p>
+      </NoticeMessage>
       <NoticeMessage v-if="vague" variant="warning" class="mt-1 mb-1">
         <p>
           Please avoid very general terms. Be precise - you'll get a better
@@ -54,6 +64,12 @@ import { useComposeStore } from '~/stores/compose'
 import { useMessageStore } from '~/stores/message'
 import { computed } from '#imports'
 import { useMe } from '~/composables/useMe'
+import {
+  isNumericOnlyItem,
+  isVagueItem,
+  INVALID_ITEM_MESSAGE,
+  VAGUE_ITEM_MESSAGE,
+} from '~/composables/useItemValidation'
 
 const emit = defineEmits(['update:edititem', 'blur'])
 
@@ -240,7 +256,19 @@ const item = computed({
   },
 })
 
+// A purely-numeric item (e.g. "123") is never a valid description; reject it.
+const invalidNumeric = computed(() => isNumericOnlyItem(item.value))
+
+// A content-free catch-all term ("anything", "everything") can't be posted —
+// this is a hard block, shown in place of the softer "too vague" warning below.
+const invalidVague = computed(() => isVagueItem(item.value))
+
 const vague = computed(() => {
+  // The unpostable cases show their own danger message, so don't also warn.
+  if (invalidNumeric.value || invalidVague.value) {
+    return false
+  }
+
   let ret = false
   let currentItem = item.value
 

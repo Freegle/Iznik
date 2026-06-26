@@ -55,10 +55,8 @@ class WelcomeReviewService
             $groupsProcessed++;
 
             foreach ($mods as $modId) {
-                $email = DB::table('users_emails')
-                    ->where('userid', $modId)
-                    ->orderByDesc('preferred')
-                    ->value('email');
+                // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+                $email = \App\Models\User::find($modId)?->email_preferred;
 
                 if (!$email) {
                     continue;
@@ -67,7 +65,7 @@ class WelcomeReviewService
                 $sent++;
 
                 if (!$dryRun) {
-                    Mail::send(new WelcomeReviewMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new WelcomeReviewMail(
                         recipientEmail: $email,
                         groupName: $groupName,
                         welcomeContent: $group->welcomemail,

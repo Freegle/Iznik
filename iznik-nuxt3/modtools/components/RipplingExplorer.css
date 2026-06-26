@@ -1,0 +1,442 @@
+/* Leaflet overrides — unscoped so Leaflet's own DOM nodes are styled */
+#rippling-root * {
+  box-sizing: border-box;
+}
+
+/* Inbound section groupings — make it visually clear that the
+   maximum-reach slider drives "what's in the digest" (pie chart) and
+   that the other sliders drive "sort order" (mock-up). */
+.rpl-sim-group {
+  margin-top: 8px;
+  padding-bottom: 2px;
+}
+.rpl-sim-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #4d8b1d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1.5px solid #61ae24;
+  padding-bottom: 2px;
+  margin-bottom: 3px;
+}
+.rpl-sim-group-sub {
+  font-size: 10px;
+  color: #777;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+/* The maximum-reach slider row (#rippling-time-row) sits inside the
+   "What's in the digest" visual group when inbound mode is active —
+   give it a subtle left rail so it's clearly grouped with the heading
+   above and the pie chart below. */
+#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none'])) #rippling-time-row,
+#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none'])) #rippling-sim-pie-wrap {
+  border-left: 2px solid #d9eccb;
+  padding-left: 8px;
+  margin-left: -2px;
+}
+
+/* "Sort order" group — the inbound-row gets a similar left rail to
+   visually pair with its heading and the digest mock-up button it
+   contains. */
+#rippling-inbound-row {
+  border-left: 2px solid #d9eccb;
+  padding-left: 8px;
+  margin-left: -2px;
+  margin-top: 10px;
+}
+
+/* Intro text under the search box */
+.rpl-intro {
+  font-size: 10.5px;
+  color: #555;
+  background: #f6f9f1;
+  border-left: 3px solid #61ae24;
+  padding: 6px 8px;
+  border-radius: 3px;
+  line-height: 1.4;
+  margin: 8px 0;
+}
+
+/* Show digest mock-up button */
+.rpl-digest-btn {
+  margin-top: 8px;
+  width: 100%;
+  background: #61ae24;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rpl-digest-btn:hover {
+  background: #4d8b1d;
+}
+
+/* Modal CSS now lives inside RipplingDigestModal.vue (component-scoped). */
+
+/* Digest-simulator knobs */
+.rpl-sim-knob {
+  margin: 6px 0;
+  padding: 4px 6px 5px;
+  border: 1px solid #ececec;
+  border-radius: 4px;
+  background: #fafafa;
+}
+.rpl-sim-knob label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #555;
+  margin-bottom: 1px;
+}
+.rpl-sim-knob input[type='range'] {
+  width: 100%;
+  margin: 2px 0;
+}
+.rpl-sim-help {
+  font-size: 9.5px;
+  color: #888;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
+/* Smooth polygon boundary crawl: CSS d-attribute transitions let the browser
+   interpolate SVG path shapes between frames when the vertex count is stable.
+   Leaflet's setLatLngs calls path.setAttribute('d', …) directly, so any CSS
+   transition on `d` takes effect here.  When vertex counts change the browser
+   falls back to a discrete jump — that's acceptable since rapid count changes
+   only occur during fast isochrone growth. */
+#rippling-map .leaflet-overlay-pane path {
+  transition: d 150ms ease-out;
+}
+
+#rippling-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+  width: 290px;
+  z-index: 1000;
+  overflow: hidden;
+}
+#rippling-panel-header {
+  background: #61ae24;
+  color: #fff;
+  padding: 12px 16px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#rippling-panel-body {
+  padding: 14px 16px 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#rippling-search-wrap {
+  position: relative;
+  margin-bottom: 12px;
+}
+#rippling-search-box {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+}
+#rippling-search-box:focus {
+  border-color: #61ae24;
+}
+#rippling-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  z-index: 10;
+  max-height: 180px;
+  overflow-y: auto;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+#rippling-search-results li {
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  line-height: 1.3;
+}
+#rippling-search-results li:hover {
+  background: #f2f9e6;
+}
+#rippling-search-results li:last-child {
+  border-bottom: none;
+}
+
+.rpl-mode-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.rpl-mode-btn {
+  flex: 1;
+  padding: 7px 4px;
+  border: 1.5px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: #555;
+  transition: all 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.rpl-icon {
+  font-size: 18px;
+}
+.rpl-mode-btn:hover {
+  border-color: #61ae24;
+  color: #61ae24;
+  background: #f2f9e6;
+}
+.rpl-mode-btn.rpl-active {
+  border-color: #61ae24;
+  background: #61ae24;
+  color: #fff;
+}
+
+.rpl-slider-row {
+  margin-bottom: 12px;
+}
+.rpl-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.rpl-val {
+  color: #222;
+  font-weight: 700;
+}
+#rippling-panel-body input[type='range'] {
+  width: 100%;
+  height: 4px;
+  accent-color: #61ae24;
+  cursor: pointer;
+}
+
+.rpl-tip {
+  font-size: 11px;
+  color: #888;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.rpl-ripple-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f0f0;
+}
+#rippling-btn {
+  background: #61ae24;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#rippling-btn:hover {
+  background: #4d8b1d;
+}
+#rippling-btn.rpl-stop {
+  background: #c0392b;
+}
+#rippling-btn:disabled {
+  background: #aaa;
+  cursor: default;
+}
+.rpl-ripple-info {
+  font-size: 11px;
+  color: #888;
+}
+
+.rpl-layer-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 6px 0;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+}
+.rpl-layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #555;
+  cursor: pointer;
+  user-select: none;
+}
+.rpl-layer-toggle input[type='checkbox'] {
+  cursor: pointer;
+  accent-color: #61ae24;
+  width: 12px;
+  height: 12px;
+}
+
+#rippling-timeline {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px;
+  padding: 10px 24px 12px;
+  z-index: 1000;
+  min-width: 560px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#rippling-tl-elapsed {
+  font-size: 15px;
+  font-weight: 700;
+  color: #61ae24;
+  text-align: center;
+  margin-bottom: 8px;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+}
+#rippling-tl-hint {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  margin-bottom: 4px;
+  pointer-events: none;
+}
+#rippling-tl-scrub-wrap {
+  position: relative;
+  margin: 26px 4px 34px;
+}
+#rippling-tl-slider {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(
+    to right,
+    #61ae24 var(--tl-pct, 0%),
+    #e0e0e0 var(--tl-pct, 0%)
+  );
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+#rippling-tl-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #61ae24;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+#rippling-tl-tick-layer {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+.rpl-tick {
+  position: absolute;
+  top: 10px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: #888;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.rpl-edge-right {
+  transform: translateX(-100%);
+}
+.rpl-expansion {
+  color: #c44;
+  font-weight: 700;
+}
+.rpl-tick-mark {
+  position: absolute;
+  width: 1px;
+  height: 6px;
+  background: #bbb;
+  top: -8px;
+  transform: translateX(-50%);
+}
+.rpl-tick-mark.rpl-expansion {
+  background: #c44;
+  height: 8px;
+}
+
+#rippling-status {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 1000;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Legend CSS now lives inside RipplingLegend.vue (component-scoped). */
+
+.rpl-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #61ae24;
+  border-radius: 50%;
+  animation: rpl-spin 0.7s linear infinite;
+}
+@keyframes rpl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -55,20 +55,14 @@
                   ><source
                     type="image/webp"
                     sizes="58px"
-                    srcset="
-                      https://delivery.ilovefreegle.org/?filename=icon.png&we&w=58&output=png&fit=inside&url=https://www.ilovefreegle.org/icon.png   58w,
-                      https://delivery.ilovefreegle.org/?filename=icon.png&we&w=116&output=png&fit=inside&url=https://www.ilovefreegle.org/icon.png 116w
-                    " />
+                    :srcset="navbarFallbackImage.srcset" />
                   <img
                     alt="Home"
                     loading="eager"
                     data-nuxt-pic=""
-                    src="https://61ddd294bd3a390019c6.ucr.io//-/format/png/-/resize/116x//https://www.ilovefreegle.org/icon.png"
+                    :src="navbarFallbackImage.src"
                     sizes="58px"
-                    srcset="
-                      https://delivery.ilovefreegle.org/?filename=icon.png&we&w=58&output=png&fit=inside&url=https://www.ilovefreegle.org/icon.png   58w,
-                      https://delivery.ilovefreegle.org/?filename=icon.png&we&w=116&output=png&fit=inside&url=https://www.ilovefreegle.org/icon.png 116w
-                    " /></picture></a
+                    :srcset="navbarFallbackImage.srcset" /></picture></a
               ><!----><!---->
               <div data-v-454188a5="" class="navbar-nav ms-auto">
                 <div data-v-454188a5="" class="nav-item" no-prefetch="">
@@ -151,6 +145,7 @@ import { computed, onMounted, useRoute } from '#imports'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 import { useConfigStore } from '~/stores/config'
+import { badgeTitle } from '~/composables/useTitleBadge'
 
 const route = useRoute()
 const loadingIndicatorThrottle = ref(5000)
@@ -174,6 +169,37 @@ const runtimeConfig = JSON.parse(
     app: useRuntimeConfig().app,
   })
 )
+
+// Navbar SSR-fallback image URLs.
+//
+// Pre-hydration the <client-only fallback> renders a stand-in navbar so the
+// page layout doesn't jump when the real <NavbarDesktop/> mounts. Previously
+// the <img>/<source> srcsets in that fallback hard-coded Freegle's CDN and
+// site URLs verbatim, which meant any consumer that uses this codebase as a
+// Nuxt layer (e.g. a sister site re-skinning Freegle) saw Freegle's icon
+// flash for ~100 ms before hydration.
+//
+// Derive the URLs from runtime config so a layer or env override changes
+// what's shown without forking app.vue.
+const navbarFallbackImage = (() => {
+  const userSite = runtimeConfig.public.USER_SITE || ''
+  const delivery = runtimeConfig.public.IMAGE_DELIVERY || ''
+  const source = `${userSite}/icon.png`
+  const widths = [58, 116]
+  // Same URL shape upstream used; just parameterised. The `output=png` is
+  // intentional even on the <source type="image/webp"> — historically the
+  // delivery proxy was set up to deliver PNG here.
+  const srcset = widths
+    .map(
+      (w) =>
+        `${delivery}/?filename=icon.png&we&w=${w}&output=png&fit=inside&url=${source} ${w}w`
+    )
+    .join(', ')
+  // Fallback <img src> used when the <source> set doesn't match: same
+  // delivery proxy at the largest width.
+  const src = `${delivery}/?filename=icon.png&we&w=116&output=png&fit=inside&url=${source}`
+  return { source, src, srcset }
+})()
 
 const miscStore = useMiscStore()
 const groupStore = useGroupStore()
@@ -343,17 +369,12 @@ if (process.client) {
 
   useHead({
     titleTemplate: (titleChunk) => {
+      // Read the count refs' .value here (inside the reactive titleTemplate) so
+      // the badge updates as chats/notifications arrive. totalCount is a plain
+      // number - the previous code checked totalCount.value (undefined), so the
+      // count was never shown on the Freegle site (Discourse 9806/6).
       const totalCount = notificationCount.value + chatCount.value
-
-      if (titleChunk) {
-        if (titleChunk.charAt(0) !== '(' && totalCount.value > 0) {
-          return '(' + totalCount.value + ') ' + titleChunk
-        } else {
-          return titleChunk
-        }
-      } else {
-        return null
-      }
+      return badgeTitle(titleChunk, totalCount)
     },
   })
 }

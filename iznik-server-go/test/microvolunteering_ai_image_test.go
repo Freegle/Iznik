@@ -81,7 +81,7 @@ func TestAIImageReview_GetChallenge(t *testing.T) {
 	// Create a test AI image with high usage.
 	imgID := createTestAIImage(t, "test-sofa-"+prefix, 100)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -114,7 +114,7 @@ func TestAIImageReview_UsageCountOrder(t *testing.T) {
 	createTestAIImage(t, "low-use-"+prefix, 5)
 	highID := createTestAIImage(t, "high-use-"+prefix, 500)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -261,7 +261,7 @@ func TestAIImageReview_QuorumReached(t *testing.T) {
 	assert.Equal(t, int64(5), voteCount)
 
 	// The checker should NOT get this image since quorum is reached.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+checkerToken, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+checkerToken+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
@@ -296,7 +296,7 @@ func TestAIImageReview_SkipAlreadyReviewed(t *testing.T) {
 		microvolunteering.ChallengeAIImageReview, userID, reviewedID)
 
 	// Should get the unreviewed image.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -357,7 +357,12 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 	aiCount := 0
 
 	for i := 0; i < 40; i++ {
-		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+		// Scope to the two types whose randomization this test asserts.
+		// (My earlier blanket sed scoped to AIImageReview only, which made the
+		// 50/50 distribution collapse to 100% AIImageReview.) EEELabel is
+		// excluded so it doesn't shadow the coin-flip path now that it runs
+		// ahead in the default ordering.
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage,AIImageReview", nil))
 		assert.Equal(t, 200, resp.StatusCode)
 
 		var result microvolunteering.Challenge
@@ -415,4 +420,72 @@ func TestGetChallenge_SkipsRejectedImages(t *testing.T) {
 			"Rejected AI image must not be served as a challenge")
 	}
 	// If no challenge at all that's also correct — no active images to review.
+}
+
+// TestGetChallenge_SkipsSuppressedImages verifies that AI images with
+// status='suppressed' (the item should never have an AI image) are not served.
+func TestGetChallenge_SkipsSuppressedImages(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_aisuppressed")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	blockInviteChallenge(t, userID)
+
+	suppressedUID := "freegletusd-test-suppressed-" + prefix
+	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count, status) VALUES (?, ?, 100, 'suppressed')",
+		"suppressed-"+prefix, suppressedUID)
+	var suppressedID uint64
+	db.Raw("SELECT id FROM ai_images WHERE name = ? ORDER BY id DESC LIMIT 1", "suppressed-"+prefix).Scan(&suppressedID)
+	assert.NotZero(t, suppressedID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM ai_images WHERE id = ?", suppressedID)
+	})
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	if typ, ok := result["type"]; ok && typ == microvolunteering.ChallengeAIImageReview {
+		aiimage, ok := result["aiimage"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.NotEqual(t, float64(suppressedID), aiimage["id"],
+			"Suppressed AI image must not be served as a challenge")
+	}
+}
+
+// TestAIImageReview_SuppressQuorumReached verifies that a quorum of 'Suppress' votes
+// sets the AI image to status='suppressed' (terminal — never generated/shown again),
+// distinct from 'Reject' which leaves status='rejected'.
+func TestAIImageReview_SuppressQuorumReached(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_aisupq")
+
+	var voterTokens []string
+	for i := 0; i < 5; i++ {
+		uid := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
+		_, tok := CreateTestSession(t, uid)
+		voterTokens = append(voterTokens, tok)
+	}
+
+	imgID := createTestAIImage(t, "suppress-quorum-"+prefix, 200)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM microactions WHERE aiimageid = ? AND actiontype = ?", imgID, microvolunteering.ChallengeAIImageReview)
+		db.Exec("DELETE FROM ai_images WHERE id = ?", imgID)
+	})
+
+	for i := 0; i < 5; i++ {
+		body := fmt.Sprintf(`{"aiimageid":%d,"response":"Suppress","containspeople":false}`, imgID)
+		req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+voterTokens[i], strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	var status string
+	db.Raw("SELECT status FROM ai_images WHERE id = ?", imgID).Scan(&status)
+	assert.Equal(t, "suppressed", status, "5 Suppress votes should set the image to suppressed")
 }

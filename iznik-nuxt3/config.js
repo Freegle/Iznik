@@ -31,6 +31,19 @@ const CONFIG = {
   IMAGE_DELIVERY:
     process.env.IMAGE_DELIVERY || 'https://delivery.ilovefreegle.org',
 
+  // Source URL the @nuxt/image weserv provider fetches from (passed to weserv
+  // as `?url=...`). Defaults to TUS_UPLOADER with `:8080` stripped — the same
+  // value the previous hard-coded `.replace(':8080', '')` produced — so when
+  // unset Freegle's behaviour is unchanged. Set explicitly when TUS lives on
+  // a non-:8080 port (e.g. prefix-routed behind a 443 reverse proxy) so
+  // weserv doesn't fetch from a now-wrong URL.
+  IMAGE_SRC_URL:
+    process.env.IMAGE_SRC_URL ||
+    (process.env.TUS_UPLOADER || 'https://uploads.ilovefreegle.org:8080').replace(
+      ':8080',
+      ''
+    ),
+
   // OpenStreetMap Tile Server
   OSM_TILE:
     process.env.OSM_TILE ||
@@ -77,6 +90,13 @@ const CONFIG = {
   // Playwire Ad Config
   PLAYWIRE_PUB_ID: process.env.PLAYWIRE_PUB_ID,
   PLAYWIRE_WEBSITE_ID: process.env.PLAYWIRE_WEBSITE_ID,
+
+  // Inline Prebid + Google Tag init script in app.head.script. Enabled by
+  // default — Freegle relies on this for its ad auction. Set
+  // ADS_SCRIPT_ENABLED=false to omit the ~5 kB inline script (and stop
+  // identifying the page to ad brokers) for builds that don't render ads
+  // (modtools, layered re-skins, embedded views).
+  ADS_SCRIPT_ENABLED: process.env.ADS_SCRIPT_ENABLED !== 'false',
 
   AD_PREBID_CONFIG: [
     {

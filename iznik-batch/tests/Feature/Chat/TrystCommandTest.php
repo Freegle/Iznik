@@ -247,4 +247,63 @@ class TrystCommandTest extends TestCase
 
         $this->assertNotNull(DB::table('trysts')->where('id', $trystId)->value('remindersent'));
     }
+
+    /**
+     * The calendar link's ?data= param must be base64url (url-safe alphabet: no + or /).
+     * Standard base64 can emit '+' (decoded to space in a query string) and '/' which
+     * are both URL-unsafe. The fix switches to rtrim(strtr(base64_encode(...), '+/', '-_'), '=').
+     */
+    public function test_calendar_link_data_param_is_base64url_safe(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+
+        $this->createTryst($user1, $user2, [
+            'arrangedfor' => now()->addDays(2)->setTime(14, 0)->format('Y-m-d H:i:s'),
+            'icssent' => 0,
+        ]);
+
+        (new TrystService())->sendCalendarsDue(false);
+
+        // Capture the calendarLink from one of the two sent mails
+        $capturedLink = null;
+        Mail::assertSent(TrystCalendarInviteMail::class, function (TrystCalendarInviteMail $mail) use (&$capturedLink) {
+            $capturedLink = $mail->calendarLink;
+            return true;
+        });
+
+        $this->assertNotNull($capturedLink, 'calendarLink was not set on the sent mail');
+
+        // Extract the ?data= parameter
+        $parsed = parse_url($capturedLink);
+        parse_str($parsed['query'] ?? '', $queryParams);
+        $dataParam = $queryParams['data'] ?? null;
+
+        $this->assertNotNull($dataParam, 'No ?data= param in calendar link: ' . $capturedLink);
+
+        // Must not contain standard base64 URL-unsafe characters
+        $this->assertStringNotContainsString('+', $dataParam, 'data param contains + (URL-unsafe): ' . $dataParam);
+        $this->assertStringNotContainsString('/', $dataParam, 'data param contains / (URL-unsafe): ' . $dataParam);
+
+        // Must be valid base64url (only A-Z a-z 0-9 - _)
+        $this->assertMatchesRegularExpression('/^[A-Za-z0-9\-_]+$/', $dataParam, 'data param is not valid base64url: ' . $dataParam);
+
+        // Must round-trip to JSON with the expected event fields
+        // base64url → standard base64 → decode → JSON
+        $padded = $dataParam . str_repeat('=', (4 - strlen($dataParam) % 4) % 4);
+        $standard = strtr($padded, '-_', '+/');
+        $decoded  = base64_decode($standard, strict: true);
+
+        $this->assertNotFalse($decoded, 'base64url decode failed for: ' . $dataParam);
+
+        $event = json_decode($decoded, associative: true);
+
+        $this->assertNotNull($event, 'JSON decode failed: ' . $decoded);
+        $this->assertArrayHasKey('name', $event);
+        $this->assertArrayHasKey('startDate', $event);
+        $this->assertArrayHasKey('startTime', $event);
+        $this->assertArrayHasKey('endTime', $event);
+        $this->assertArrayHasKey('timeZone', $event);
+        $this->assertStringStartsWith('Handover:', $event['name']);
+    }
 }

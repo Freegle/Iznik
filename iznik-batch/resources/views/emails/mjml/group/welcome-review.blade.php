@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Please review your welcome mail'])
+  @include('emails.mjml.partials.head', ['preview' => 'Check the welcome mail for ' . $groupName . ' is still up to date'])
 
   <mj-body background-color="#f4f4f4">
 

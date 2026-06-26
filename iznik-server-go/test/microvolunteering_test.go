@@ -41,8 +41,12 @@ func TestGetMicrovolunteering_NoChallenge(t *testing.T) {
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ? AND actiontype = ?", userID, microvolunteering.ChallengeInvite)
 
-	// Make authenticated request
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to PhotoRotate only — EEELabel doesn't require group membership
+	// and can pick up any unlabelled OFFER attachment in the test DB, which
+	// would shadow the "user has no groups → no challenge" path this test is
+	// exercising. PhotoRotate requires group membership, so an empty result
+	// here proves the no-group path.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=PhotoRotate", nil))
 
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -233,8 +237,9 @@ func TestGetMicrovolunteering_CheckMessageApproved(t *testing.T) {
 	// Get JWT token for this user
 	token := getToken(t, userID)
 
-	// Make authenticated request
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to CheckMessage — EEELabel now runs ahead in the default
+	// ordering and would shadow the message challenge this test exercises.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage", nil))
 
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -299,8 +304,12 @@ func TestGetMicrovolunteering_PhotoRotateChallenge(t *testing.T) {
 	// Get JWT token for this user
 	token := getToken(t, userID)
 
-	// Make authenticated request
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to PhotoRotate so EEELabel doesn't preempt — EEELabel runs ahead
+	// of PhotoRotate (microvolunteering.go: "EEELabel runs ahead of
+	// PhotoRotate which is rarely satisfied") and would pick up any
+	// unlabelled OFFER attachment in the test DB before we reach the photo
+	// rotate branch this test exercises.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=PhotoRotate", nil))
 
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -541,9 +550,10 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&startCollection)
 	assert.Equal(t, "Approved", startCollection)
 
-	// First reviewer rejects — not yet at quorum (needs 2).
+	// First reviewer rejects — not yet at quorum (needs 2). The vote carries
+	// the group context the volunteer is acting in (per-group sendForReview).
 	_, token1 := CreateTestSession(t, reviewer1ID)
-	body1 := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"Bad post","msgcategory":"ShouldntBeHere"}`, msgID)
+	body1 := fmt.Sprintf(`{"msgid":%d,"groupid":%d,"response":"Reject","comments":"Bad post","msgcategory":"ShouldntBeHere"}`, msgID, groupID)
 	req1 := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token1, strings.NewReader(body1))
 	req1.Header.Set("Content-Type", "application/json")
 	resp1, _ := getApp().Test(req1)
@@ -556,20 +566,20 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 
 	// Second reviewer rejects — now at quorum (2 >= ApprovalQuorum).
 	_, token2 := CreateTestSession(t, reviewer2ID)
-	body2 := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"Spam post","msgcategory":"ShouldntBeHere"}`, msgID)
+	body2 := fmt.Sprintf(`{"msgid":%d,"groupid":%d,"response":"Reject","comments":"Spam post","msgcategory":"ShouldntBeHere"}`, msgID, groupID)
 	req2 := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token2, strings.NewReader(body2))
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, _ := getApp().Test(req2)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	// After quorum reached, message should be moved to Pending for review.
+	// After quorum reached, the message should be moved to Pending for review
+	// on that group only, with spamreason recorded on the per-group row.
 	var endCollection string
-	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&endCollection)
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&endCollection)
 	assert.Equal(t, "Pending", endCollection)
 
-	// Verify spamreason was set.
 	var spamreason string
-	db.Raw("SELECT COALESCE(spamreason, '') FROM messages WHERE id = ?", msgID).Scan(&spamreason)
+	db.Raw("SELECT COALESCE(spamreason, '') FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&spamreason)
 	assert.Equal(t, "Members think there is something wrong with this message.", spamreason)
 }
 
@@ -640,4 +650,79 @@ func TestListMicroActions(t *testing.T) {
 
 	// Cleanup.
 	db.Exec("DELETE FROM microactions WHERE id = ?", actionID)
+}
+
+// TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems exercises
+// the rule that EEELabel only serves attachments the model classifier has
+// already processed (i.e. present in `eee_classified_attachments`). Without
+// this rule, MV labels accumulate on items the model never saw, so the
+// Condition/Weight/Size accuracy column on the eee-browser dashboard is
+// permanently empty.
+//
+// Set-up: insert one OFFER attachment that IS in eee_classified_attachments
+// and one that isn't. Asserts EEELabel may serve the classified one but
+// never the unclassified one.
+func TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_eee_classified")
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Suppress Invite challenge so EEELabel can win the dispatch.
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, timestamp, score_negative) VALUES (?, ?, 4, NOW(), 0)",
+		microvolunteering.ChallengeInvite, userID)
+	defer db.Exec("DELETE FROM microactions WHERE userid = ?", userID)
+
+	// Two OFFER messages, each with one attachment. The first is in
+	// eee_classified_attachments, the second is not.
+	var msgClassified, msgUnclassified uint64
+	db.Exec(`INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, deleted)
+		VALUES (?, ?, 'test', 'test', 'Offer', NOW(), NULL)`,
+		userID, prefix+" classified item")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgClassified)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgClassified)
+
+	db.Exec(`INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, deleted)
+		VALUES (?, ?, 'test', 'test', 'Offer', NOW(), NULL)`,
+		userID, prefix+" unclassified item")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgUnclassified)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgUnclassified)
+
+	var attClassified, attUnclassified uint64
+	db.Exec("INSERT INTO messages_attachments (msgid, archived, externaluid, `primary`) VALUES (?, 0, ?, 1)",
+		msgClassified, prefix+"-photo-classified")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&attClassified)
+	defer db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgClassified)
+
+	db.Exec("INSERT INTO messages_attachments (msgid, archived, externaluid, `primary`) VALUES (?, 0, ?, 1)",
+		msgUnclassified, prefix+"-photo-unclassified")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&attUnclassified)
+	defer db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgUnclassified)
+
+	// Pointer in MySQL says only the first attachment has been classified.
+	db.Exec("INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES (?, ?)",
+		msgClassified, attClassified)
+	defer db.Exec("DELETE FROM eee_classified_attachments WHERE messageid IN (?, ?)", msgClassified, msgUnclassified)
+
+	// Make many EEELabel requests as this user. None should ever resolve to
+	// the unclassified attachment, even though it's an otherwise-eligible
+	// recent OFFER with a photo.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=EEELabel", nil)
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var result microvolunteering.Challenge
+		json2.Unmarshal(rsp(resp), &result)
+
+		if result.EEELabel != nil {
+			assert.NotEqual(t, attUnclassified, result.EEELabel.Attid,
+				"EEELabel must never serve an attachment that is not in eee_classified_attachments")
+			assert.NotEqual(t, msgUnclassified, result.EEELabel.Messageid,
+				"EEELabel must never serve a message whose attachments are not in eee_classified_attachments")
+		}
+	}
 }

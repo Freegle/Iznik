@@ -3,6 +3,7 @@ package donations
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestGetDonationTarget(t *testing.T) {
@@ -107,5 +108,141 @@ func TestDonationConstants(t *testing.T) {
 		if name == "" {
 			t.Errorf("donation type/source/period constant must not be empty")
 		}
+	}
+}
+
+// TestParsePayPalDate covers all six format branches and the error path.
+func TestParsePayPalDate(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		wantErr bool
+		// expected fields (checked only when !wantErr)
+		wantYear  int
+		wantMonth time.Month
+		wantDay   int
+		wantHour  int
+		wantMin   int
+		wantSec   int
+	}{
+		{
+			name:      "PayPal format with timezone",
+			input:     "12:34:56 Jan 02, 2026 UTC",
+			wantYear:  2026, wantMonth: time.January, wantDay: 2,
+			wantHour: 12, wantMin: 34, wantSec: 56,
+		},
+		{
+			name:      "PayPal format without timezone",
+			input:     "08:00:00 Mar 15, 2025",
+			wantYear:  2025, wantMonth: time.March, wantDay: 15,
+			wantHour: 8, wantMin: 0, wantSec: 0,
+		},
+		{
+			name:      "MySQL datetime format",
+			input:     "2026-05-24 09:30:00",
+			wantYear:  2026, wantMonth: time.May, wantDay: 24,
+			wantHour: 9, wantMin: 30, wantSec: 0,
+		},
+		{
+			name:      "ISO 8601 format",
+			input:     "2026-01-01T00:00:00Z",
+			wantYear:  2026, wantMonth: time.January, wantDay: 1,
+			wantHour: 0, wantMin: 0, wantSec: 0,
+		},
+		{
+			name:      "RFC1123 format",
+			input:     "Mon, 02 Jan 2006 15:04:05 UTC",
+			wantYear:  2006, wantMonth: time.January, wantDay: 2,
+			wantHour: 15, wantMin: 4, wantSec: 5,
+		},
+		{
+			name:      "RFC1123Z format",
+			input:     "Mon, 02 Jan 2006 15:04:05 +0000",
+			wantYear:  2006, wantMonth: time.January, wantDay: 2,
+			wantHour: 15, wantMin: 4, wantSec: 5,
+		},
+		{
+			name:    "invalid gibberish returns error",
+			input:   "not-a-date",
+			wantErr: true,
+		},
+		{
+			name:    "empty string returns error",
+			input:   "",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parsePayPalDate(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("parsePayPalDate(%q) expected error, got nil (time=%v)", tc.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parsePayPalDate(%q) unexpected error: %v", tc.input, err)
+			}
+			if got.Year() != tc.wantYear || got.Month() != tc.wantMonth || got.Day() != tc.wantDay {
+				t.Errorf("parsePayPalDate(%q) date = %d-%d-%d, want %d-%d-%d",
+					tc.input, got.Year(), got.Month(), got.Day(),
+					tc.wantYear, tc.wantMonth, tc.wantDay)
+			}
+			if got.Hour() != tc.wantHour || got.Minute() != tc.wantMin || got.Second() != tc.wantSec {
+				t.Errorf("parsePayPalDate(%q) time = %02d:%02d:%02d, want %02d:%02d:%02d",
+					tc.input, got.Hour(), got.Minute(), got.Second(),
+					tc.wantHour, tc.wantMin, tc.wantSec)
+			}
+		})
+	}
+}
+
+// TestIsExcludedPayer covers default exclusions and custom env overrides.
+func TestIsExcludedPayer(t *testing.T) {
+	orig := os.Getenv("DONATIONS_EXCLUDE")
+	t.Cleanup(func() { os.Setenv("DONATIONS_EXCLUDE", orig) })
+
+	// Use defaults (unset env).
+	os.Unsetenv("DONATIONS_EXCLUDE")
+
+	defaultExcluded := []string{
+		"ppgfukpay@paypalgivingfund.org",
+		"paypal.msb@tipalti.com",
+	}
+	for _, email := range defaultExcluded {
+		if !IsExcludedPayer(email) {
+			t.Errorf("IsExcludedPayer(%q) = false with defaults, want true", email)
+		}
+	}
+
+	// Case-insensitive match.
+	if !IsExcludedPayer("PPGFUKPAY@PAYPALGIVINGFUND.ORG") {
+		t.Error("IsExcludedPayer should be case-insensitive for default exclusion")
+	}
+
+	// Legitimate payer must not be excluded.
+	if IsExcludedPayer("donor@example.com") {
+		t.Error("IsExcludedPayer(\"donor@example.com\") = true, want false")
+	}
+
+	// Empty string is never an excluded payer.
+	if IsExcludedPayer("") {
+		t.Error("IsExcludedPayer(\"\") = true, want false")
+	}
+
+	// Custom env override replaces defaults.
+	os.Setenv("DONATIONS_EXCLUDE", "custom@blocked.com")
+	if !IsExcludedPayer("custom@blocked.com") {
+		t.Error("IsExcludedPayer should respect custom DONATIONS_EXCLUDE")
+	}
+	if IsExcludedPayer("ppgfukpay@paypalgivingfund.org") {
+		t.Error("default exclusion should not apply when DONATIONS_EXCLUDE is set")
+	}
+
+	// Case-insensitive for custom exclusion.
+	if !IsExcludedPayer("CUSTOM@BLOCKED.COM") {
+		t.Error("IsExcludedPayer should be case-insensitive for custom exclusions")
 	}
 }

@@ -73,11 +73,11 @@ class GroupCustomisationService
 
             if (!$dryRun) {
                 foreach ($modEmails as $modEmail) {
-                    Mail::send(new CustomisationReminderMail($modEmail, $group->nameshort, $missing));
+                    app(\App\Services\EmailSpoolerService::class)->spool(new CustomisationReminderMail($modEmail, $group->nameshort, $missing));
                 }
                 $mentorsAddr = config('freegle.mail.mentors_addr', 'mentors@ilovefreegle.org');
                 if ($mentorsAddr) {
-                    Mail::send(new CustomisationReminderMail($mentorsAddr, $group->nameshort, $missing));
+                    app(\App\Services\EmailSpoolerService::class)->spool(new CustomisationReminderMail($mentorsAddr, $group->nameshort, $missing));
                 }
             }
 
@@ -114,16 +114,23 @@ class GroupCustomisationService
             ->value('userid');
 
         $query = DB::table('memberships')
-            ->join('users_emails', 'users_emails.userid', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->where('users_emails.preferred', 1);
+            ->where('memberships.collection', Membership::COLLECTION_APPROVED);
 
         if ($systemUserId) {
             $query->where('memberships.userid', '!=', $systemUserId);
         }
 
-        return $query->pluck('users_emails.email')->all();
+        // V1 parity: pick each mod's preferred external email; skip mods who
+        // only have internal-alias addresses.
+        $emails = [];
+        foreach ($query->pluck('memberships.userid') as $modId) {
+            $email = \App\Models\User::find($modId)?->email_preferred;
+            if ($email) {
+                $emails[] = $email;
+            }
+        }
+        return $emails;
     }
 }

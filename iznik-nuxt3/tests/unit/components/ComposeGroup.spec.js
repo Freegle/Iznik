@@ -14,11 +14,6 @@ const mockComposeStore = {
   setPostcode: vi.fn(),
 }
 
-const mockAuthStore = {
-  groups: [{ groupid: 3, namedisplay: 'My Group', nameshort: 'my-group' }],
-  fetchUser: vi.fn().mockResolvedValue(undefined),
-}
-
 const mockApi = {
   location: {
     typeahead: vi.fn().mockResolvedValue([
@@ -40,10 +35,6 @@ vi.mock('~/stores/compose', () => ({
   useComposeStore: () => mockComposeStore,
 }))
 
-vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => mockAuthStore,
-}))
-
 vi.mock('~/stores/group', () => ({
   useGroupStore: () => mockGroupStore,
 }))
@@ -56,6 +47,8 @@ vi.mock('#app', () => ({
   useRuntimeConfig: () => ({ public: {} }),
 }))
 
+// Rippling-out (#10): the composer no longer lets the user PICK a group. The origin group is
+// derived from their postcode/location (containing-or-closest community) and shown read-only.
 describe('ComposeGroup', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -68,268 +61,88 @@ describe('ComposeGroup', () => {
     }
     mockComposeStore.group = null
     mockComposeStore.setPostcode = vi.fn()
-    mockAuthStore.groups = [
-      { groupid: 3, namedisplay: 'My Group', nameshort: 'my-group' },
-    ]
     mockGroupStore.get.mockReturnValue(null)
   })
 
   function createWrapper(props = {}) {
-    return mount(ComposeGroup, {
-      props,
-      global: {
-        stubs: {
-          'b-form-select': {
-            template:
-              '<select class="form-select" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="opt in options" :key="opt.value" :value="opt.value">{{ opt.text }}</option></select>',
-            props: ['modelValue', 'options'],
-            emits: ['update:modelValue'],
-          },
-        },
-      },
-    })
+    return mount(ComposeGroup, { props })
   }
 
-  describe('rendering', () => {
-    it('renders form select', () => {
-      const wrapper = createWrapper()
-      expect(wrapper.find('.form-select').exists()).toBe(true)
-    })
-
-    it('applies width style when width prop is provided', () => {
-      const wrapper = createWrapper({ width: 250 })
-      expect(wrapper.find('.form-select').attributes('style')).toContain(
-        'width: 250px'
-      )
-    })
+  it('shows the derived origin community read-only, with no picker', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'London Central'
+    )
+    // The user cannot choose a different group: there is no select control.
+    expect(wrapper.find('select').exists()).toBe(false)
   })
 
-  describe('props', () => {
-    it('has optional width prop', () => {
-      const wrapper = createWrapper({ width: 200 })
-      expect(wrapper.props('width')).toBe(200)
-    })
-
-    it('has null default for width', () => {
-      const wrapper = createWrapper()
-      expect(wrapper.props('width')).toBe(null)
-    })
+  it('locks the group to the first (nearest/containing) community when none is set', async () => {
+    createWrapper()
+    await flushPromises()
+    expect(mockComposeStore.group).toBe(1)
   })
 
-  describe('groupOptions computed', () => {
-    it('includes groups from postcode.groupsnear', () => {
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      expect(options.some((o) => o.text().includes('London Central'))).toBe(
-        true
-      )
-      expect(options.some((o) => o.text().includes('Westminster'))).toBe(true)
-    })
-
-    it('includes member groups', () => {
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      expect(options.some((o) => o.text().includes('My Group'))).toBe(true)
-    })
-
-    it('uses namedisplay when available', () => {
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      expect(options.some((o) => o.text() === 'London Central')).toBe(true)
-    })
-
-    it('falls back to nameshort when namedisplay is null', () => {
-      mockComposeStore.postcode.groupsnear = [
-        { id: 1, namedisplay: null, nameshort: 'london-central' },
-      ]
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      expect(options.some((o) => o.text() === 'london-central')).toBe(true)
-    })
-
-    it('deduplicates groups by id', () => {
-      mockAuthStore.groups = [
-        { groupid: 1, namedisplay: 'London Central', nameshort: 'london' },
-      ]
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      const londonOptions = options.filter((o) =>
-        o.text().includes('London Central')
-      )
-      expect(londonOptions).toHaveLength(1)
-    })
-
-    it('returns empty array when no postcode or groups', () => {
-      mockComposeStore.postcode = null
-      mockAuthStore.groups = []
-      const wrapper = createWrapper()
-      expect(wrapper.findAll('option')).toHaveLength(0)
-    })
-
-    it('includes current group as first option when not in groupsnear or myGroups', () => {
-      mockComposeStore.group = 55
-      mockAuthStore.groups = []
-      mockComposeStore.postcode = {
-        name: 'SW1A 1AA',
-        groupsnear: [
-          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
-        ],
-      }
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      // Group 55 should be prepended even though it's not in groupsnear or myGroups
-      expect(options[0].element.value).toBe('55')
-    })
-
-    it('uses cached group name when group store has it', () => {
-      mockComposeStore.group = 55
-      mockAuthStore.groups = []
-      mockComposeStore.postcode = {
-        name: 'SW1A 1AA',
-        groupsnear: [
-          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
-        ],
-      }
-      mockGroupStore.get.mockReturnValue({
-        namedisplay: 'Repost Group',
-        nameshort: 'repost',
-      })
-      const wrapper = createWrapper()
-      const options = wrapper.findAll('option')
-      expect(options[0].element.value).toBe('55')
-      expect(options[0].text()).toBe('Repost Group')
-    })
+  it('preserves a pre-set group (e.g. a repost) instead of overwriting it', async () => {
+    mockComposeStore.group = 2
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(mockComposeStore.group).toBe(2)
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'Westminster'
+    )
   })
 
-  describe('group computed (v-model)', () => {
-    it('returns selected group from store', () => {
-      mockComposeStore.group = 2
-      const wrapper = createWrapper()
-      expect(wrapper.vm.group).toBe(2)
-    })
-
-    it('falls back to first group from postcode when no group selected', () => {
-      mockComposeStore.group = null
-      const wrapper = createWrapper()
-      expect(wrapper.vm.group).toBe(1)
-    })
-
-    it('sets group in store when changed', async () => {
-      const wrapper = createWrapper()
-
-      await wrapper.find('.form-select').setValue('2')
-
-      expect(mockComposeStore.group).toBe('2')
-    })
+  it('falls back to nameshort when namedisplay is null', async () => {
+    mockComposeStore.postcode.groupsnear = [
+      { id: 1, namedisplay: null, nameshort: 'london-central' },
+    ]
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'london-central'
+    )
   })
 
-  describe('lifecycle', () => {
-    it('fetches user on mount', async () => {
-      createWrapper()
-      await flushPromises()
-      expect(mockAuthStore.fetchUser).toHaveBeenCalled()
-    })
-
-    it('fetches fresh postcode data on mount', async () => {
-      createWrapper()
-      await flushPromises()
-      expect(mockApi.location.typeahead).toHaveBeenCalledWith('SW1A 1AA')
-    })
-
-    it('updates postcode store with fresh data after typeahead', async () => {
-      createWrapper()
-      await flushPromises()
-      expect(mockComposeStore.setPostcode).toHaveBeenCalledWith({
-        name: 'SW1A 1AA',
-        groupsnear: [
-          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
-        ],
-      })
-    })
-
-    it('auto-selects first group when postcode has groups but no group selected', async () => {
-      mockComposeStore.group = null
-      createWrapper()
-      await flushPromises()
-      expect(mockComposeStore.group).toBe(1)
-    })
-
-    it('does not fetch when no postcode', async () => {
-      mockComposeStore.postcode = null
-      createWrapper()
-      await flushPromises()
-      expect(mockApi.location.typeahead).not.toHaveBeenCalled()
-    })
+  it('shows a finding message when no community is known yet', async () => {
+    mockComposeStore.postcode = { name: 'SW1A 1AA', groupsnear: [] }
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Finding your local community')
   })
 
-  describe('repost group preservation', () => {
-    it('preserves user-changed group when fetchUser sets group to a different value', async () => {
-      // Simulate repost flow: group 55 is pre-set (savedGroup = 55), then during fetchUser
-      // something sets the group to 1. With the old guard (group !== savedGroup) this would
-      // restore 55 — BUT that same condition also overwrote user intentional changes.
-      // The fix: only restore if group was CLEARED (falsy). Truthy changes (including 1)
-      // are treated as intentional and kept, since groupOptions always ensures the saved
-      // group stays in the options list so b-form-select can't accidentally set to 1.
-      mockComposeStore.group = 55
-      mockAuthStore.groups = [
-        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
-      ]
-      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
-        mockComposeStore.group = 1
-      })
-
-      createWrapper()
-      await flushPromises()
-
-      // Group stays at 1 — we don't restore when the group is a truthy value,
-      // because we can't distinguish accidental b-form-select changes from intentional ones.
-      expect(mockComposeStore.group).toBe(1)
-    })
-
-    it('restores savedGroup when group is cleared to null during fetchUser', async () => {
-      mockComposeStore.group = 55
-      mockAuthStore.groups = [
-        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
-      ]
-      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
-        mockComposeStore.group = null
-      })
-
-      createWrapper()
-      await flushPromises()
-
-      // Group was cleared (falsy) — restore savedGroup since it's still valid
-      expect(mockComposeStore.group).toBe(55)
-    })
-
-    it('does not restore savedGroup if it is not valid (not in groupsnear or myGroups)', async () => {
-      // Group 99 is pre-set but user is no longer a member and it is not nearby
-      mockComposeStore.group = 99
-      mockAuthStore.groups = []
-      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
-        mockComposeStore.group = 1
-      })
-
-      createWrapper()
-      await flushPromises()
-
-      // Group 99 is invalid, so the override (1) should stand
-      expect(mockComposeStore.group).toBe(1)
-    })
+  it('falls back to the cached store name when the nearby entry has none', async () => {
+    mockComposeStore.postcode.groupsnear = [
+      { id: 1, namedisplay: null, nameshort: null },
+    ]
+    mockGroupStore.get.mockReturnValue({ namedisplay: 'Cached Community' })
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'Cached Community'
+    )
   })
 
-  describe('error handling', () => {
-    it('handles postcode fetch error gracefully', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      mockApi.location.typeahead.mockRejectedValueOnce(
-        new Error('Network error')
-      )
+  it('logs and still derives the group when the postcode refetch fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockApi.location.typeahead.mockRejectedValueOnce(new Error('network'))
+    const wrapper = createWrapper()
+    await flushPromises()
+    // Refetch failed, but the component still locks and shows the derived group.
+    expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
+      'London Central'
+    )
+    expect(mockComposeStore.group).toBe(1)
+    expect(consoleSpy).toHaveBeenCalled()
+    consoleSpy.mockRestore()
+  })
 
-      createWrapper()
-      await flushPromises()
-
-      expect(consoleSpy).toHaveBeenCalled()
-      consoleSpy.mockRestore()
-    })
+  it('renders the finding state and skips the refetch when no postcode is set', async () => {
+    mockComposeStore.postcode = null
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Finding your local community')
+    expect(mockApi.location.typeahead).not.toHaveBeenCalled()
   })
 })

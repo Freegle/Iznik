@@ -403,6 +403,36 @@ class Location extends Entity
     public function groupsNear($radius = Location::NEARBY, $expand = FALSE, $limit = 10) {
         $limit = intval($limit);
 
+        # If this point lies inside one or more group polygons, those are the correct groups —
+        # polygon containment is authoritative and beats any centre-distance heuristic.
+        # This fixes bug #9518 where a group with a close centre but non-containing polygon
+        # was returned instead of the large group whose polygon actually contains the point.
+        $point = "ST_GeomFromText('POINT({$this->loc['lng']} {$this->loc['lat']})', {$this->dbhr->SRID()})";
+        $containingSql = "SELECT id, nameshort, 0 AS dist,
+            haversine(lat, lng, {$this->loc['lat']}, {$this->loc['lng']}) AS hav,
+            CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, {$this->loc['lat']}, {$this->loc['lng']}) ELSE NULL END AS hav2
+            FROM `groups`
+            WHERE ST_Contains(polyindex, $point) AND publish = 1 AND listable = 1
+            ORDER BY hav ASC, external ASC LIMIT $limit;";
+        $containingGroups = $this->dbhr->preQuery($containingSql);
+
+        if (!empty($containingGroups)) {
+            $ret = [];
+            foreach ($containingGroups as $group) {
+                if ($expand) {
+                    $g = Group::get($this->dbhr, $this->dbhm, $group['id']);
+                    $thisone = $g->getPublic();
+                    $thisone['distance'] = $group['hav'];
+                    $thisone['polydist'] = $group['dist'];
+                    $ret[] = $thisone;
+                } else {
+                    $ret[] = $group['id'];
+                }
+            }
+            return($ret);
+        }
+
+        # No group polygon contains this point; fall back to the radius-stepping search.
         # To make this efficient we want to use the spatial index on polyindex.  But our groups are not evenly
         # distributed, so if we search immediately upto $radius, which is the maximum we need to cover, then we
         # will often have to scan many more groups than we need in order to determine the closest groups

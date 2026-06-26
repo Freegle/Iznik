@@ -299,6 +299,13 @@ describe('MyMessage', () => {
             props: ['messages', 'selectedMessage', 'users'],
             emits: ['hidden'],
           },
+          // The template uses Nuxt's auto-import lazy form <LazyPromiseModal>.
+          // Vue Test Utils doesn't resolve Lazy* prefixes, so stub it explicitly.
+          LazyPromiseModal: {
+            template: '<div class="promise-modal" />',
+            props: ['messages', 'selectedMessage', 'users'],
+            emits: ['hidden'],
+          },
           RenegeModal: {
             template: '<div class="renege-modal" />',
             props: ['messages', 'selectedMessage', 'users', 'selectedUser'],

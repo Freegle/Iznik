@@ -186,6 +186,24 @@ config.global.stubs = {
   // Stub NuxtLink
   NuxtLink: { template: '<a :href="to"><slot /></a>', props: ['to'] },
 
+  // Stub Lazy-prefixed components — Nuxt's component resolver auto-imports
+  // `LazyXxx` as `defineAsyncComponent(() => import('~/components/Xxx'))`
+  // at build time; in the test runtime the resolver isn't wired, so we stub
+  // the ones used as bare tags in chat / message / news components.
+  // Class names match the non-Lazy stubs existing specs expect, so tests
+  // that assert on `.profile-modal` / `.promise-modal` keep working.
+  LazyProfileModal: {
+    template: '<div class="profile-modal" :data-id="id" />',
+    props: ['id'],
+    methods: { show() {} },
+  },
+  LazyPromiseModal: {
+    template: '<div class="promise-modal" :data-id="id" />',
+    props: ['id', 'group'],
+    emits: ['promised', 'reneged'],
+    methods: { show() {} },
+  },
+
   // Stub Spinner (auto-imported by Nuxt)
   Spinner: {
     template: '<div class="spinner-border" role="status" :style="spinnerStyle" />',
@@ -218,6 +236,17 @@ config.global.stubs = {
       'placeholder',
     ],
     emits: ['error'],
+  },
+
+  // Stub ShowMore (components/ShowMore.vue): render every item via its #item (or
+  // default) slot - a <div> per item in block mode, comma-separated spans in
+  // inline mode - so group-list specs see the names. The real cap / "+N more" /
+  // collapse behaviour is covered by ShowMore.spec.js, which mounts ShowMore
+  // directly (a directly-mounted root is not replaced by a global stub).
+  ShowMore: {
+    props: ['items', 'limit', 'inline', 'keyfield'],
+    template:
+      '<span><component :is="inline ? \'span\' : \'div\'" v-for="(item, i) in (items || [])" :key="i"><span v-if="inline && i > 0">, </span><slot name="item" :item="item" :index="i"><slot :item="item" :index="i" /></slot></component></span>',
   },
 }
 

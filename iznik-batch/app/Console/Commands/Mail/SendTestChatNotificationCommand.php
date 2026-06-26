@@ -131,7 +131,7 @@ class SendTestChatNotificationCommand extends Command
         );
 
         // Override the recipient email.
-        Mail::to($toEmail)->send($mail);
+        app(\App\Services\EmailSpoolerService::class)->spool($mail, $toEmail);
 
         $this->info('Test email sent successfully!');
         $this->info('Check Mailpit at http://mailpit.localhost to view it.');

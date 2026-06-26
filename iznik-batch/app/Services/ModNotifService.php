@@ -85,7 +85,8 @@ class ModNotifService
 
                 if (!isset($modData[$modId])) {
                     $user = User::find($modId);
-                    $email = UserEmail::where('userid', $modId)->where('preferred', 1)->first();
+                    // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+                    $email = $user?->email_preferred;
 
                     if (!$user || !$email) {
                         continue;
@@ -93,7 +94,7 @@ class ModNotifService
 
                     $modData[$modId] = [
                         'user_id' => $modId,
-                        'email' => $email->email,
+                        'email' => $email,
                         'name' => $user->displayname ?? $user->fullname ?? 'Moderator',
                         'groups' => [],
                         'chat_review' => 0,

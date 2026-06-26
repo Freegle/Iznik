@@ -329,9 +329,6 @@
               <div v-if="poster" class="section-header section-header--poster">
                 <span>
                   <span class="section-header-text">POSTED BY</span>
-                  <span class="section-header-name">{{
-                    poster.displayname
-                  }}</span>
                 </span>
                 <span
                   class="section-id-link"
@@ -391,12 +388,26 @@
                 />
                 <v-icon icon="chevron-right" class="poster-chevron" />
               </div>
+              <div v-if="messageGroups.length" class="posted-on-groups">
+                On:
+                <ShowMore :items="messageGroups" :limit="3" inline>
+                  <template #item="{ item }"
+                    ><NuxtLink
+                      no-prefetch
+                      :to="'/explore/' + item.nameshort"
+                      class="posted-on-group-link"
+                      @click.stop
+                      >{{ item.namedisplay }}</NuxtLink
+                    ></template
+                  >
+                </ShowMore>
+              </div>
             </client-only>
           </div>
 
           <!-- Inline reply section for two-column layout -->
           <div v-if="isTwoColumnLayout" class="inline-reply-section">
-            <div v-if="!replyExpanded">
+            <div>
               <!-- Promised notice -->
               <div
                 v-if="
@@ -412,8 +423,15 @@
                   message.promisedtome ? 'Promised to you' : 'Already promised'
                 }}
               </div>
+              <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
+                We're showing this to people closest to it first — you'll be
+                able to reply once it reaches your area.
+                <nuxt-link no-prefetch to="/help?topic=which-posts">
+                  Learn more
+                </nuxt-link>
+              </NoticeMessage>
               <div
-                v-if="replyable && !replied && !message.successful"
+                v-else-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
                 <b-button
@@ -445,24 +463,6 @@
                 <nuxt-link to="/chats">Chats</nuxt-link>.
               </b-alert>
             </div>
-
-            <!-- Expanded reply section -->
-            <div v-else class="reply-expanded-section">
-              <NoticeMessage
-                v-if="message.promised && !message.promisedtome"
-                variant="warning"
-                class="mb-2"
-              >
-                Already promised - you might not get it.
-              </NoticeMessage>
-              <client-only>
-                <MessageReplySection
-                  :id="id"
-                  @close="replyExpanded = false"
-                  @sent="sent"
-                />
-              </client-only>
-            </div>
           </div>
         </div>
       </div>
@@ -472,9 +472,9 @@
     <div
       v-if="!isTwoColumnLayout"
       class="app-footer"
-      :class="{ expanded: replyExpanded, stickyAdRendered }"
+      :class="{ stickyAdRendered }"
     >
-      <div v-if="!replyExpanded" class="w-100">
+      <div class="w-100">
         <!-- Promised notice -->
         <div
           v-if="message.promised && !message.successful && replyable && !fromme"
@@ -483,8 +483,15 @@
           <v-icon icon="handshake" />
           {{ message.promisedtome ? 'Promised to you' : 'Already promised' }}
         </div>
+        <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
+          We're showing this to people closest to it first — you'll be able to
+          reply once it reaches your area.
+          <nuxt-link no-prefetch to="/help?topic=which-posts">
+            Learn more
+          </nuxt-link>
+        </NoticeMessage>
         <div
-          v-if="replyable && !replied && !message.successful"
+          v-else-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
           <b-button
@@ -515,25 +522,21 @@
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
         </b-alert>
       </div>
-
-      <!-- Expanded reply section -->
-      <div v-else class="reply-expanded-section">
-        <NoticeMessage
-          v-if="message.promised && !message.promisedtome"
-          variant="warning"
-          class="mb-2"
-        >
-          Already promised - you might not get it.
-        </NoticeMessage>
-        <client-only>
-          <MessageReplySection
-            :id="id"
-            @close="replyExpanded = false"
-            @sent="sent"
-          />
-        </client-only>
-      </div>
     </div>
+
+    <!-- Chat-style reply pane, shown as a full-screen overlay on every
+         breakpoint. Wrapped in its own Suspense so its async setup doesn't
+         suspend the whole page when it opens. -->
+    <Teleport to="body">
+      <Suspense v-if="showReplyOverlay">
+        <ChatReplyPane
+          :message-id="id"
+          :stay-on-send="inModal || fullscreenOverlay"
+          @close="showReplyOverlay = false"
+          @sent="sent"
+        />
+      </Suspense>
+    </Teleport>
 
     <!-- Map Modal - Full Screen -->
     <Teleport v-if="showMapModal" to="body">
@@ -571,7 +574,7 @@
     />
 
     <!-- Profile Modal -->
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal && poster?.id"
       :id="poster.id"
       @hidden="showProfileModal = false"
@@ -593,16 +596,18 @@ import {
   defineAsyncComponent,
   onMounted,
   onUnmounted,
+  watch,
 } from 'vue'
+import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
+import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
-import NoticeMessage from '~/components/NoticeMessage'
-import MessageReplySection from '~/components/MessageReplySection'
+import ChatReplyPane from '~/components/ChatReplyPane'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -613,9 +618,6 @@ const MessagePhotosModal = defineAsyncComponent(() =>
 )
 const MessageShareModal = defineAsyncComponent(() =>
   import('~/components/MessageShareModal')
-)
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
 )
 const MessageReportModal = defineAsyncComponent(() =>
   import('~/components/MessageReportModal')
@@ -652,6 +654,7 @@ const emit = defineEmits(['zoom', 'close'])
 
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
+const groupStore = useGroupStore()
 const { me, loggedIn } = useMe()
 
 // Use shared composable for common message display logic
@@ -676,11 +679,30 @@ const {
   poster,
 } = useMessageDisplay(props.id)
 
+// All the communities this post is on (it can be on several once it has rippled
+// out or been cross-posted). Resolve each to the group record for its display
+// name + explore link; drop any not yet in the group store.
+const messageGroups = computed(() => {
+  if (!message.value?.groups?.length) return []
+  return message.value.groups
+    .map((g) => groupStore.get(g.groupid))
+    .filter(Boolean)
+})
+
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+
+// Reply-eligibility (#2): the API returns replyeligible === false when the viewer can't
+// reply yet — the post hasn't rippled out to their area, or they're banned from every
+// group it's on. Show a view-only notice instead of the Reply button. Never blocks the
+// poster's own post. The field is omitted (so this stays false) until the reach engine
+// populates rippling_reach, so this is inert until then with no client-side flag.
+const reachBlocked = computed(
+  () => message.value?.replyeligible === false && !fromme.value
+)
 
 // State
 const replied = ref(false)
-const replyExpanded = ref(false)
+const showReplyOverlay = ref(false)
 const mountTime = ref(null)
 const showMapModal = ref(false)
 const showShareModal = ref(false)
@@ -862,24 +884,26 @@ function stopThumbnailAutoScroll() {
 }
 
 function expandReply() {
-  console.log(
-    'DEBUG expandReply called, replyable:',
-    props.replyable,
-    'replied:',
-    replied.value,
-    'fromme:',
-    fromme.value
-  )
-  replyExpanded.value = true
+  // Open the chat-style reply pane as a full-screen overlay on every
+  // breakpoint. It sits on top of wherever you are, so closing it returns you
+  // to exactly where you were, and after sending you land in the real chat.
+  showReplyOverlay.value = true
 }
 
 function sent() {
-  replyExpanded.value = false
+  showReplyOverlay.value = false
   replied.value = true
-  // Close after a brief delay so user sees confirmation
-  setTimeout(() => {
-    emit('close')
-  }, 1500)
+
+  // When we're a message inside a list (browse / explore), the reply was sent
+  // WITHOUT navigating to the chat. Show the "Message sent" confirmation
+  // briefly, then close this message so the user is back on the list and can
+  // reply to more items. On the standalone message page the state machine has
+  // already navigated to the chat, so we leave navigation alone.
+  if (props.inModal || props.fullscreenOverlay) {
+    setTimeout(() => {
+      emit('close')
+    }, 1500)
+  }
 }
 
 // Handle browser back button/swipe
@@ -925,6 +949,24 @@ onMounted(() => {
 
   // Start auto-scroll hint for thumbnail carousel
   startThumbnailAutoScroll()
+
+  // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
+  // chat-style reply pane straight away so they don't need to click Reply
+  // again — but NOT when the post is reach-blocked for them (rippling-out #5),
+  // or the deep link would bypass the reply gate. message may still be loading,
+  // so wait for it before deciding. (ChatReplyPane also gates its own composer.)
+  if (useRoute().query.reply) {
+    if (message.value) {
+      if (!reachBlocked.value) expandReply()
+    } else {
+      const stop = watch(message, (m) => {
+        if (m) {
+          stop()
+          if (!reachBlocked.value) expandReply()
+        }
+      })
+    }
+  }
 })
 
 onUnmounted(() => {
@@ -1940,6 +1982,24 @@ onUnmounted(() => {
   }
 }
 
+/* "On: <communities>" line under the poster box - greyed, with clickable group links. */
+.posted-on-groups {
+  margin-top: 0.5rem;
+  padding: 0 1rem;
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.posted-on-group-link {
+  color: #6c757d;
+  text-decoration: underline;
+
+  &:hover {
+    color: #495057;
+    text-decoration: underline;
+  }
+}
+
 /* Poster aboutme - hidden on mobile, shown on tablet */
 .poster-aboutme {
   display: none;
@@ -2132,6 +2192,19 @@ onUnmounted(() => {
       padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
     }
   }
+
+  /* In the centered desktop modal (xl+, where b-modal is NOT fullscreen) the
+     dialog floats with margin around it and the fixed sticky ad sits on the
+     page below it - they don't overlap, so reserving a full ad-height of
+     clearance just leaves a large empty band inside the modal that reads as a
+     second, blank ad slot. Drop it back to normal padding there. The clearance
+     is still needed for the fullscreen modal (lg-down) and the mobile
+     fullscreen-overlay, where the buttons genuinely sit over the fixed ad. */
+  .in-modal &.stickyAdRendered {
+    @media (min-width: 1200px) {
+      padding-bottom: 1rem;
+    }
+  }
 }
 
 .footer-buttons {
@@ -2165,11 +2238,6 @@ onUnmounted(() => {
 .footer-buttons:has(.cancel-button:only-child) .cancel-button {
   flex: 1;
   width: 100% !important;
-}
-
-.reply-expanded-section {
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .promised-notice {

@@ -553,6 +553,102 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 	return chatID, nil
 }
 
+// GetOrCreateUser2UserChat finds or creates a User2User chat room between
+// two users (either ordering). The unique key (user1, user2, chattype)
+// makes INSERT ... ON DUPLICATE KEY UPDATE safe under concurrent requests:
+// LAST_INSERT_ID(id) returns the existing row's ID on conflict so two
+// callers always collapse to the same chat. Roster rows for both
+// participants are seeded so notifications reach everyone.
+func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) {
+	if userA == 0 || userB == 0 || userA == userB {
+		return 0, fmt.Errorf("invalid user pair: %d, %d", userA, userB)
+	}
+
+	// Check for existing chat first to avoid an INSERT roundtrip in the
+	// hot path where the chat already exists.
+	var chatID uint64
+	db.Raw(`SELECT id FROM chat_rooms
+		WHERE ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))
+		AND chattype = ?
+		LIMIT 1`,
+		userA, userB, userB, userA, utils.CHAT_TYPE_USER2USER).Scan(&chatID)
+
+	if chatID == 0 {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get sql.DB: %w", err)
+		}
+		now := time.Now()
+		sqlResult, err := sqlDB.Exec(
+			`INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)`,
+			userA, userB, utils.CHAT_TYPE_USER2USER, now)
+		if err != nil {
+			return 0, fmt.Errorf("failed to insert chat room: %w", err)
+		}
+		lastID, err := sqlResult.LastInsertId()
+		if err != nil || lastID == 0 {
+			return 0, fmt.Errorf("failed to get last insert id: %w", err)
+		}
+		chatID = uint64(lastID)
+	}
+
+	// Seed roster entries for both participants so notifications fire.
+	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
+		chatID, userA, utils.CHAT_STATUS_ONLINE)
+	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
+		chatID, userB, utils.CHAT_STATUS_ONLINE)
+
+	return chatID, nil
+}
+
+// CommonGroup is a group that both participants of a chat belong to.
+type CommonGroup struct {
+	ID          uint64 `json:"id"`
+	Namedisplay string `json:"namedisplay"`
+}
+
+// GetCommonGroups handles GET /chat/{id}/commongroups - the groups the two
+// participants of a chat have in common. The report flow uses this to decide
+// whether to route a report to a community's moderators (a common group exists)
+// or to the central spam team (none). Caller must be a participant.
+func GetCommonGroups(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || id == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid chat ID")
+	}
+
+	db := database.DBConn
+
+	var room struct {
+		ID    uint64
+		User1 uint64
+		User2 uint64
+	}
+	db.Raw("SELECT id, user1, user2 FROM chat_rooms WHERE id = ?", id).Scan(&room)
+	if room.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
+	}
+	if room.User1 != myid && room.User2 != myid {
+		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
+	}
+
+	groups := []CommonGroup{}
+	db.Raw("SELECT g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay "+
+		"FROM `groups` g "+
+		"INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ? "+
+		"INNER JOIN memberships m2 ON m2.groupid = g.id AND m2.userid = ? "+
+		"ORDER BY namedisplay",
+		room.User1, room.User2).Scan(&groups)
+
+	return c.JSON(groups)
+}
+
 // =============================================================================
 // POST handler (roster updates, nudge, typing, actions)
 // =============================================================================
@@ -563,6 +659,8 @@ type ChatRoomPostRequest struct {
 	Status      string `json:"status"`
 	Lastmsgseen uint64 `json:"lastmsgseen"`
 	Allowback   bool   `json:"allowback"`
+	Reason      string `json:"reason"`
+	Comment     string `json:"comment"`
 }
 
 type RosterEntry struct {
@@ -593,6 +691,8 @@ func PostChatRoom(c *fiber.Ctx) error {
 		return handleTyping(c, db, myid, req.ID)
 	case "ReferToSupport":
 		return handleReferToSupport(c, db, myid, req.ID)
+	case "ReportNoGroup":
+		return handleReportNoGroup(c, db, myid, req)
 	default:
 		if req.ID == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
@@ -673,8 +773,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				// Exclude backup mods (active:0 in membership settings) unless searching.
 				unions = append(unions,
 					"SELECT 0 AS search, user1 AS otheruid, nameshort, namefull, "+
-						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
-						"'' AS lastname, "+
+						"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
+						"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 						"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
@@ -802,8 +902,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// ModTools: search User2Mod chats visible to user — by message content/subject.
 					unions = append(unions,
 						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
-							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
-							"'' AS lastname, "+
+							"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
+							"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
 							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
@@ -820,10 +920,10 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// ModTools: search User2Mod chats by member's name/email.
 					unions = append(unions,
 						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
-							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
-							"'' AS lastname, "+
-							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
-							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
+							"COALESCE(users.firstname, '') AS firstname, "+
+							"COALESCE(users.lastname, '') AS lastname, "+
+							"COALESCE(users.fullname, '') AS fullname, "+
+							"users.deleted AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
 							"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 							"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
@@ -918,6 +1018,17 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					groupName = chat.Namefull
 				}
 				chats[ix].Name = tnre.ReplaceAllString(chat.Fullname, "$1")
+				if groupName != "" {
+					chats[ix].Name += " (" + groupName + ")"
+				}
+			} else if chat.Otheruid != myid && (len(chat.Firstname) > 0 || len(chat.Lastname) > 0) {
+				// Member has no fullname but does have firstname/lastname — use those.
+				groupName := chat.Nameshort
+				if groupName == "" {
+					groupName = chat.Namefull
+				}
+				name := strings.TrimSpace(chat.Firstname + " " + chat.Lastname)
+				chats[ix].Name = tnre.ReplaceAllString(name, "$1")
 				if groupName != "" {
 					chats[ix].Name += " (" + groupName + ")"
 				}
@@ -1414,6 +1525,44 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 	// Queue sending a support referral email.
 	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?))",
 		"refer_to_support", chatid, myid)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// handleReportNoGroup queues a report to the central spam team for a User2User
+// chat whose participants share no Freegle group (so it can't be routed to a
+// community's moderators). The server re-checks "no common group" so a client
+// cannot misuse this to bypass community routing.
+func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
+	}
+	if req.Reason == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Reason required")
+	}
+
+	var room ChatRoom
+	db.Raw("SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?", req.ID).Scan(&room)
+	if room.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
+	}
+	if room.User1 != myid && room.User2 != myid {
+		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
+	}
+
+	// Re-check that there really is no group in common; if there is, the client
+	// should have used the normal group-routed report flow.
+	var common int64
+	db.Raw("SELECT COUNT(*) FROM memberships m1 "+
+		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
+		"WHERE m1.userid = ? AND m2.userid = ?",
+		room.User1, room.User2).Scan(&common)
+	if common > 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Groups in common exist; use the normal report flow")
+	}
+
+	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?))",
+		"email_chat_spam_report", req.ID, myid, req.Reason, req.Comment)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

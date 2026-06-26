@@ -443,6 +443,10 @@ class UserDataExportService
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->join('groups', 'messages_groups.groupid', '=', 'groups.id')
             ->where('messages.fromuser', $userId)
+            // Exclude Rippling Out copies (messages_groups.rippled_in = 1): the post is reported
+            // once via its origin group rather than once per group it rippled into, so the export
+            // does not look like deliberate cross-posting.
+            ->where('messages_groups.rippled_in', 0)
             ->select(
                 'messages.id',
                 'messages.subject',

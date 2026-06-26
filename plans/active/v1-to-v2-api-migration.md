@@ -387,7 +387,7 @@ These v1 endpoints appear unused. Verify before removing.
 | Endpoint | Notes |
 |----------|-------|
 | bulkop.php | No API wrapper or direct calls. Check batch jobs. |
-| changes.php | No API wrapper. May be used by external integrations. |
+| changes.php | ✅ MIGRATED to V2 Go (5902b87). Partner key auth. CI GREEN on master. |
 | error.php | Logging utility. Check if still receives requests. |
 | export.php | May be used via direct browser access. |
 | item.php | Items are accessed via message endpoint. |

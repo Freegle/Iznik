@@ -12,6 +12,9 @@ import (
 )
 
 func TestSidecarEmbedQuerySuccess(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := make([]float32, embedding.EmbeddingDim)
 	for i := range vec {
 		vec[i] = float32(i) * 0.001
@@ -47,6 +50,9 @@ func TestSidecarEmbedQuerySuccess(t *testing.T) {
 }
 
 func TestSidecarEmbedQueryServerError(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		w.Write([]byte(`{"error":"model not loaded"}`))
@@ -62,6 +68,9 @@ func TestSidecarEmbedQueryServerError(t *testing.T) {
 }
 
 func TestSidecarEmbedQueryEmptyEmbeddings(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		type resp struct {
 			Embeddings [][]float32 `json:"embeddings"`
@@ -80,7 +89,9 @@ func TestSidecarEmbedQueryEmptyEmbeddings(t *testing.T) {
 }
 
 func TestSidecarEmbedQueryConnectionError(t *testing.T) {
-	// Start a server and immediately close it to get a guaranteed-refused port
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := server.URL
 	server.Close()
@@ -94,6 +105,9 @@ func TestSidecarEmbedQueryConnectionError(t *testing.T) {
 }
 
 func TestSidecarEmbedQueryBadJSON(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`not json`))

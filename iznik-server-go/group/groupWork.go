@@ -132,7 +132,10 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []heldCountRow
-		db.Raw("SELECT mg.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held "+
+		// Held is per-group: a message held on one group must not show as held on
+		// another it is also pending on, so read mg.heldby (not the global
+		// messages.heldby, which is dual-written for backwards compat only).
+		db.Raw("SELECT mg.groupid, COUNT(*) as count, (mg.heldby IS NOT NULL) as held "+
 			"FROM messages_groups mg "+
 			"INNER JOIN messages m ON m.id = mg.msgid "+
 			"INNER JOIN users u ON u.id = m.fromuser "+
@@ -201,10 +204,11 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []heldCountRow
-		db.Raw("SELECT groupid, COUNT(*) as count, (heldby IS NOT NULL) as held FROM memberships "+
-			"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
-			"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
-			"GROUP BY groupid, held", allGroupIDs).Scan(&rows)
+		db.Raw("SELECT m.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held FROM memberships m "+
+			"INNER JOIN users u ON u.id = m.userid "+
+			"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
+			"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
+			"GROUP BY m.groupid, held", allGroupIDs).Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			w := workMap[r.Groupid]

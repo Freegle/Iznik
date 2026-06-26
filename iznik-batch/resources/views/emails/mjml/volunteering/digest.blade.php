@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Volunteer opportunities in ' . $groupName])
+  @include('emails.mjml.partials.head', ['preview' => ($volunteerings[0]['title'] ?? 'Volunteer opportunities near you') . (count($volunteerings) > 1 ? ' and ' . (count($volunteerings) - 1) . ' more' : '')])
 
   <mj-body background-color="#f4f4f4">
 
@@ -11,7 +11,7 @@
           Volunteer Opportunity Roundup
         </mj-text>
         <mj-text font-size="14px" color="#555555">
-          Charities, community organisations and good causes in {{ $groupName }} are looking for helpers.
+          Charities, community organisations and good causes near your Freegle communities are looking for helpers.
           If you'd like to add one, <a href="{{ $userSite }}/volunteering">click here</a>.
         </mj-text>
       </mj-column>
@@ -45,6 +45,17 @@
           {!! nl2br(e(mb_strlen($vol['description']) > 300 ? mb_substr($vol['description'], 0, 300) . '…' : $vol['description'])) !!}
         </mj-text>
         @endif
+        @if (!empty($vol['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $vol['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
+        </mj-text>
+        @endif
       </mj-column>
       <mj-column width="40%">
         <mj-image src="{{ $vol['photo_thumb'] }}" alt="{{ $vol['title'] }}"
@@ -71,6 +82,17 @@
         @if (!empty($vol['description']))
         <mj-text font-size="13px" color="#333333" padding="0 0 6px" line-height="1.5">
           {!! nl2br(e(mb_strlen($vol['description']) > 300 ? mb_substr($vol['description'], 0, 300) . '…' : $vol['description'])) !!}
+        </mj-text>
+        @endif
+        @if (!empty($vol['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $vol['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
         </mj-text>
         @endif
       </mj-column>
@@ -146,8 +168,12 @@
                 <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
               </a>
             </td>
-            @endif
             <td style="padding: 6px 0; vertical-align: middle;">
+            @else
+            {{-- No image: span both columns so the title fills the row instead of
+                 being squeezed into the right column reserved by sibling rows. --}}
+            <td colspan="2" style="padding: 6px 0; vertical-align: middle;">
+            @endif
               <a href="{{ $job->tracked_url }}" style="color: #2e7d32; font-weight: bold; text-decoration: none; font-size: 14px;">
                 {{ $job->title }}
               </a>

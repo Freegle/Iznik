@@ -223,7 +223,11 @@ function logError(message, err, state, messageId = null) {
   })
 }
 
-export function useReplyStateMachine(messageId) {
+export function useReplyStateMachine(messageId, options = {}) {
+  // When stayOnPage is set, completing the reply creates and sends the chat but
+  // does NOT navigate to it — used when replying from a list page (browse /
+  // explore) so the user stays where they were and can reply to more items.
+  const { stayOnPage = false } = options
   const instance = getCurrentInstance()
   const authStore = useAuthStore()
   const messageStore = useMessageStore()
@@ -594,7 +598,37 @@ export function useReplyStateMachine(messageId) {
 
     transitionTo(ReplyState.VALIDATING, { event: ReplyEvent.SUBMIT })
 
-    // Validate form
+    // Validate form. Under CI load (and occasionally on slow devices) the BForm
+    // template ref can momentarily lag the click that triggers submit(), so
+    // formRef.value is transiently null even though the form is mounted and
+    // filled. Wait for setRefs() to provide it (event-based, not a microtask
+    // busy-wait), mirroring the chatButtonRef handling in handleCreateChat(). A
+    // nextTick loop is unreliable here: the ref is supplied by the component's
+    // render cycle, which under load may not settle within a few flushes, so the
+    // loop can still miss it and log a console error that fails the e2e
+    // reply-flow test. Time out so a genuinely-missing ref still falls through to
+    // the null check below.
+    if (!formRef.value) {
+      await Promise.race([
+        new Promise((resolve) => {
+          const stop = watch(formRef, (val) => {
+            if (val) {
+              stop()
+              resolve()
+            }
+          })
+          // Also resolve immediately if it became available during watch setup.
+          if (formRef.value) {
+            stop()
+            resolve()
+          }
+        }),
+        // Timeout — if the ref still hasn't arrived, fall through to the null
+        // check below and fall back to COMPOSING as before.
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ])
+    }
+
     if (!formRef.value) {
       logError('Form ref not set', null, state.value, messageId)
       // Don't go to ERROR - just go back to COMPOSING so user can retry
@@ -882,7 +916,10 @@ export function useReplyStateMachine(messageId) {
       const { replyToPost: composableReplyToPost } = useReplyToPost()
       log('Calling replyToPost composable')
 
-      const replySent = await composableReplyToPost(chatButtonRef.value)
+      const replySent = await composableReplyToPost(
+        chatButtonRef.value,
+        stayOnPage
+      )
       log('replyToPost result:', replySent)
 
       if (replySent) {

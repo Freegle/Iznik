@@ -24,14 +24,24 @@ type AIImageChallenge struct {
 	UsageCount uint64 `json:"usage_count"`
 }
 
+// EEELabelChallenge represents a Freegle item to be labelled for EEE
+// (Electrical / Electronic Equipment) classification training.
+type EEELabelChallenge struct {
+	Messageid uint64 `json:"messageid"`
+	Attid     uint64 `json:"attid"`
+	ItemName  string `json:"itemName"`
+	ImageURL  string `json:"imageUrl"`
+}
+
 // Challenge represents a micro-volunteering challenge
 type Challenge struct {
-	Type    string            `json:"type"`
-	Msgid   *uint64           `json:"msgid,omitempty"`
-	Terms   []SearchTerm      `json:"terms,omitempty"`
-	Photos  []Photo           `json:"photos,omitempty"`
-	URL     *string           `json:"url,omitempty"`
-	AIImage *AIImageChallenge `json:"aiimage,omitempty"`
+	Type     string             `json:"type"`
+	Msgid    *uint64            `json:"msgid,omitempty"`
+	Terms    []SearchTerm       `json:"terms,omitempty"`
+	Photos   []Photo            `json:"photos,omitempty"`
+	URL      *string            `json:"url,omitempty"`
+	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
+	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
 }
 
 // SearchTerm represents a search term for matching
@@ -48,12 +58,13 @@ type Photo struct {
 
 // Challenge types
 const (
-	ChallengeCheckMessage   = "CheckMessage"
-	ChallengeSearchTerm     = "SearchTerm"
-	ChallengePhotoRotate    = "PhotoRotate"
-	ChallengeSurvey         = "Survey2"
-	ChallengeInvite         = "Invite"
-	ChallengeAIImageReview  = "AIImageReview"
+	ChallengeCheckMessage  = "CheckMessage"
+	ChallengeSearchTerm    = "SearchTerm"
+	ChallengePhotoRotate   = "PhotoRotate"
+	ChallengeSurvey        = "Survey2"
+	ChallengeInvite        = "Invite"
+	ChallengeAIImageReview = "AIImageReview"
+	ChallengeEEELabel      = "EEELabel"
 )
 
 // Trust levels
@@ -67,10 +78,28 @@ const (
 
 // Microvolunteering quorum constants
 const (
-	ApprovalQuorum       = 2
-	DissentingQuorum     = 3
-	AIImageReviewQuorum  = 5
+	ApprovalQuorum      = 2
+	DissentingQuorum    = 3
+	AIImageReviewQuorum = 5
+	EEELabelQuorum      = 3
 )
+
+// EEE label vocabularies — kept here so the server rejects invalid client
+// submissions and the Vue component / sync command have a single source of
+// truth via a comment.
+//
+//	Condition: reusable | damaged | unsure
+//	Weight:    under_1kg | 1_5kg | 5_20kg | 20_100kg | over_100kg | unsure
+//	Size:      tiny | small | medium | large | unsure
+var (
+	validEEEConditions = map[string]bool{"reusable": true, "damaged": true, "unsure": true}
+	validEEEWeights    = map[string]bool{"under_1kg": true, "1_5kg": true, "5_20kg": true, "20_100kg": true, "over_100kg": true, "unsure": true}
+	validEEESizes      = map[string]bool{"tiny": true, "small": true, "medium": true, "large": true, "unsure": true}
+)
+
+func isValidEEECondition(v string) bool { return validEEEConditions[v] }
+func isValidEEEWeight(v string) bool    { return validEEEWeights[v] }
+func isValidEEESize(v string) bool      { return validEEESizes[v] }
 
 // CoinFlip picks between AI image review and approved message review when both
 // are available. Overridable from tests so both branches can be exercised
@@ -127,6 +156,7 @@ func GetChallenge(c *fiber.Ctx) error {
 			ChallengeInvite,
 			ChallengeCheckMessage,
 			ChallengeAIImageReview,
+			ChallengeEEELabel,
 			ChallengePhotoRotate,
 		}
 	}
@@ -171,6 +201,16 @@ func GetChallenge(c *fiber.Ctx) error {
 	// Try pending message review for Moderate trust level users
 	if trustLevel == TrustModerate && len(groupIDs) > 0 {
 		if challenge := getPendingMessageChallenge(db, userID, groupIDs); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Try EEELabel first (ahead of AIImageReview/CheckMessage). The EEE
+	// labelling pipeline relies on volunteer labels reaching quorum quickly,
+	// and AIImageReview / CheckMessage have plentiful backlogs that would
+	// otherwise crowd it out entirely.
+	if contains(challengeTypes, ChallengeEEELabel) {
+		if challenge := getEEELabelChallenge(db, userID); challenge != nil {
 			return c.JSON(challenge)
 		}
 	}
@@ -521,9 +561,91 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 	}
 }
 
+// getEEELabelChallenge returns a Freegle attachment for the user to label
+// for EEE (Electrical / Electronic Equipment) classification. Restricts to
+// attachments the model classifier has already processed (joined via the
+// `eee_classified_attachments` pointer table), so volunteer labels can be
+// scored directly against model output.
+//
+// Previously this picked any recent OFFER with a photo, which produced lots
+// of "wasted" labels on items the classifier never saw (confirmed
+// 2026-05-30: 161 MV-labelled msgids ∩ eee_classifications = 0). Now the
+// candidate set is the intersection of recent OFFER attachments and the
+// classifier's pointer set, so every label can be paired with a model
+// prediction.
+//
+// Performance: drives off `eee_classified_attachments` PRIMARY KEY by
+// joining each pointer to its messages_attachments row. The pointer set
+// is bounded (currently ~5k rows) so the join is cheap, no full scan of
+// messages_attachments. Ordering by classified_at DESC surfaces the most
+// recently classified items first.
+func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
+	type AttachmentResult struct {
+		Attid       uint64 `json:"attid"`
+		Msgid       uint64 `json:"msgid"`
+		Externaluid string `json:"externaluid"`
+		Subject     string `json:"subject"`
+	}
+
+	var att AttachmentResult
+
+	err := db.Raw(`
+		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
+		FROM eee_classified_attachments ec
+		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
+		INNER JOIN messages m ON m.id = ec.messageid
+		WHERE m.deleted IS NULL
+			AND ma_att.externaluid IS NOT NULL
+			AND ma_att.externaluid != ''
+			AND NOT EXISTS (
+				SELECT 1 FROM microactions ma
+				WHERE ma.eee_attachment_id = ma_att.id
+				  AND ma.userid = ?
+				  AND ma.actiontype = ?
+			)
+			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
+		ORDER BY ec.classified_at DESC
+		LIMIT 1
+	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
+
+	if err != nil || att.Attid == 0 {
+		return nil
+	}
+
+	return &Challenge{
+		Type: ChallengeEEELabel,
+		EEELabel: &EEELabelChallenge{
+			Messageid: att.Msgid,
+			Attid:     att.Attid,
+			ItemName:  cleanSubject(att.Subject),
+			ImageURL:  misc.GetImageDeliveryUrl(att.Externaluid, ""),
+		},
+	}
+}
+
+// cleanSubject strips the "OFFER: " prefix and the trailing "(Location PC)"
+// from a Freegle subject line so volunteers see the bare item name.
+func cleanSubject(subject string) string {
+	s := strings.TrimSpace(subject)
+	// Strip leading "OFFER:" / "WANTED:" / etc.
+	lower := strings.ToLower(s)
+	for _, prefix := range []string{"offer:", "offered:", "wanted:", "request:", "requested:", "taken:", "received:"} {
+		if strings.HasPrefix(lower, prefix) {
+			s = strings.TrimSpace(s[len(prefix):])
+			break
+		}
+	}
+	// Strip trailing parenthesised location, e.g. " (Hanwell W7)"
+	if i := strings.LastIndex(s, "("); i > 0 && strings.HasSuffix(strings.TrimSpace(s), ")") {
+		s = strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
 // PostResponseRequest represents the body for POST /microvolunteering
 type PostResponseRequest struct {
 	Msgid          uint64  `json:"msgid"`
+	Groupid        uint64  `json:"groupid"`
 	MsgCategory    *string `json:"msgcategory,omitempty"`
 	Response       *string `json:"response,omitempty"`
 	Comments       *string `json:"comments,omitempty"`
@@ -534,6 +656,11 @@ type PostResponseRequest struct {
 	Deg            int     `json:"deg"`
 	AIImageID      uint64  `json:"aiimageid"`
 	ContainsPeople *bool   `json:"containspeople,omitempty"`
+	// EEELabel response fields
+	EEEAttachmentID uint64  `json:"eee_attachment_id,omitempty"`
+	EEECondition    *string `json:"eee_condition,omitempty"`
+	EEEWeight       *string `json:"eee_weight,omitempty"`
+	EEESize         *string `json:"eee_size,omitempty"`
 }
 
 // PostResponse records a user's response to a micro-volunteering challenge
@@ -596,9 +723,10 @@ func PostResponse(c *fiber.Ctx) error {
 					req.Msgid).Scan(&rejectCount)
 
 				if rejectCount >= int64(ApprovalQuorum) {
-					// Quorum reached - send the message for review by setting spamreason
-					// and moving it back to Pending collection.
-					sendForReview(db, req.Msgid, "Members think there is something wrong with this message.")
+					// Quorum reached — send the message for review on the group
+					// the voter is acting in. Other groups the message is on are
+					// left alone; their members can flag it independently.
+					sendForReview(db, req.Msgid, req.Groupid, "Members think there is something wrong with this message.")
 				}
 			}
 		}
@@ -646,7 +774,7 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to an AIImageReview challenge.
 		response := *req.Response
 
-		if response == "Approve" || response == "Reject" {
+		if response == "Approve" || response == "Reject" || response == "Suppress" {
 			var containsPeople interface{}
 			if req.ContainsPeople != nil {
 				if *req.ContainsPeople {
@@ -662,9 +790,30 @@ func PostResponse(c *fiber.Ctx) error {
 				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
 				response, containsPeople, Version)
 
-			// After recording the vote, check if reject quorum is reached.
+			// After recording the vote, check the quorums. 'Suppress' ("this item
+			// should never have an AI image") is terminal, so check it first; 'Reject'
+			// ("this image is bad") leaves the name open to regeneration.
+			checkAIImageSuppressQuorum(db, req.AIImageID)
 			checkAIImageRejectQuorum(db, req.AIImageID)
 		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.EEEAttachmentID > 0 && req.EEECondition != nil && req.EEEWeight != nil && req.EEESize != nil {
+		// Response to an EEELabel challenge — Condition / Weight / Size labels.
+		// All three are stored on a single microactions row. result is set to
+		// 'Approve' as a placeholder because the column is NOT NULL.
+		if !isValidEEECondition(*req.EEECondition) ||
+			!isValidEEEWeight(*req.EEEWeight) ||
+			!isValidEEESize(*req.EEESize) {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid EEE label values")
+		}
+
+		db.Exec(`INSERT INTO microactions (actiontype, userid, eee_attachment_id, eee_condition, eee_weight, eee_size, result, version, score_negative)
+			VALUES (?, ?, ?, ?, ?, ?, 'Approve', ?, 0)
+			ON DUPLICATE KEY UPDATE eee_condition = ?, eee_weight = ?, eee_size = ?, version = ?`,
+			ChallengeEEELabel, myid, req.EEEAttachmentID, *req.EEECondition, *req.EEEWeight, *req.EEESize, Version,
+			*req.EEECondition, *req.EEEWeight, *req.EEESize, Version)
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -735,11 +884,20 @@ func ModFeedback(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// sendForReview moves a message back to Pending and records the spam reason.
-// This is the Go equivalent of V1's Message::sendForReview().
-func sendForReview(db *gorm.DB, msgid uint64, reason string) {
-	db.Exec("UPDATE messages SET spamreason = ? WHERE id = ?", reason, msgid)
-	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ?", utils.COLLECTION_PENDING, reason, msgid)
+// sendForReview moves a message back to Pending on a single group and records
+// the spam reason on that group's row. Other groups the message is on are
+// left alone — each group's members must reach quorum independently to send
+// it for review on their group.
+//
+// If groupid is 0 (legacy clients that don't yet send a group context), no
+// update is made. The client is expected to pass the group the volunteer is
+// voting in via the request body.
+func sendForReview(db *gorm.DB, msgid uint64, groupid uint64, reason string) {
+	if groupid == 0 {
+		return
+	}
+	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND groupid = ? AND collection = ?",
+		utils.COLLECTION_PENDING, reason, msgid, groupid, utils.COLLECTION_APPROVED)
 }
 
 // listMicroActions returns microvolunteering activity for moderator review.
@@ -760,10 +918,10 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 
 	if len(groupIDs) == 0 {
 		return c.JSON(fiber.Map{
-			"ret":                 0,
-			"status":              "Success",
-			"microvolunteerings":  make([]interface{}, 0),
-			"context":             fiber.Map{},
+			"ret":                0,
+			"status":             "Success",
+			"microvolunteerings": make([]interface{}, 0),
+			"context":            fiber.Map{},
 		})
 	}
 
@@ -781,20 +939,20 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	args = append(args, limitParam)
 
 	type MicroAction struct {
-		ID            uint64     `json:"id"`
-		Actiontype    string     `json:"actiontype"`
-		Userid        uint64     `json:"userid"`
-		Msgid         *uint64    `json:"msgid"`
-		Msgcategory   *string    `json:"msgcategory"`
-		Result        string     `json:"result"`
-		Timestamp     time.Time  `json:"timestamp"`
-		Comments      *string    `json:"comments"`
-		Item1         *uint64    `json:"item1"`
-		Item2         *uint64    `json:"item2"`
-		Rotatedimage  *uint64    `json:"rotatedimage"`
-		ScorePositive float64    `json:"score_positive"`
-		ScoreNegative float64    `json:"score_negative"`
-		Modfeedback   *string    `json:"modfeedback"`
+		ID            uint64    `json:"id"`
+		Actiontype    string    `json:"actiontype"`
+		Userid        uint64    `json:"userid"`
+		Msgid         *uint64   `json:"msgid"`
+		Msgcategory   *string   `json:"msgcategory"`
+		Result        string    `json:"result"`
+		Timestamp     time.Time `json:"timestamp"`
+		Comments      *string   `json:"comments"`
+		Item1         *uint64   `json:"item1"`
+		Item2         *uint64   `json:"item2"`
+		Rotatedimage  *uint64   `json:"rotatedimage"`
+		ScorePositive float64   `json:"score_positive"`
+		ScoreNegative float64   `json:"score_negative"`
+		Modfeedback   *string   `json:"modfeedback"`
 	}
 
 	var items []MicroAction
@@ -856,5 +1014,22 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
 		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	}
+}
+
+// checkAIImageSuppressQuorum checks whether an AI image has reached the suppress
+// quorum (≥ AIImageReviewQuorum votes with a majority being Suppress). If so, sets
+// status='suppressed' — a TERMINAL state meaning this item name should never have an
+// AI image: the Pollinations generator skips the name, the image is never shown, and
+// Regenerate refuses. Suppress overrides a prior 'rejected' state.
+func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
+	var totalVotes, suppressVotes int64
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
+		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Suppress'`,
+		aiImageID, ChallengeAIImageReview).Scan(&suppressVotes)
+
+	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
+		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)
 	}
 }

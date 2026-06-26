@@ -229,13 +229,44 @@ class GroupClosedReminderServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $result['skipped']);
     }
 
-    public function test_non_preferred_email_is_excluded(): void
+    public function test_non_preferred_external_email_used_when_preferred_is_internal_alias(): void
+    {
+        // V1 parity: when a user's preferred=1 email is one of our internal
+        // per-user-alias domains, fall back to a non-preferred external email
+        // rather than silently dropping them.
+        $group = $this->createClosedGroup();
+
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group, ['role' => Membership::ROLE_OWNER]);
+
+        DB::table('users_emails')->where('userid', $user->id)->update(['preferred' => 0]);
+        DB::table('users_emails')->insert([
+            'userid'    => $user->id,
+            'email'     => "user{$user->id}-alias@users.ilovefreegle.org",
+            'preferred' => 1,
+            'added'     => now(),
+        ]);
+
+        $result = $this->service->sendReminders();
+
+        Mail::assertSent(ClosedGroupReminderMail::class);
+        $this->assertGreaterThanOrEqual(1, $result['sent']);
+    }
+
+    public function test_user_with_only_internal_alias_email_is_skipped(): void
     {
         $group = $this->createClosedGroup();
 
         $user = $this->createTestUser();
         $this->createMembership($user, $group, ['role' => Membership::ROLE_OWNER]);
-        DB::table('users_emails')->where('userid', $user->id)->update(['preferred' => 0]);
+
+        DB::table('users_emails')->where('userid', $user->id)->delete();
+        DB::table('users_emails')->insert([
+            'userid'    => $user->id,
+            'email'     => "user{$user->id}-alias@users.ilovefreegle.org",
+            'preferred' => 1,
+            'added'     => now(),
+        ]);
 
         $result = $this->service->sendReminders();
 

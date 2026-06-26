@@ -10,6 +10,11 @@ export default class MessageAPI extends BaseAPI {
     return await this.$getv2('/message/' + id, rest, logError)
   }
 
+  // Actual rippling-out progress of a post, for the moderation reach map (mod-of-group only).
+  reach(id, logError = true) {
+    return this.$getv2('/message/' + id + '/reach', {}, logError)
+  }
+
   fetchByUser(id, active, logError = true) {
     return this.$getv2(
       '/user/' + id + '/message',
@@ -91,11 +96,18 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  view(id) {
-    return this.$postv2('/message', {
+  view(id, source) {
+    const body = {
       action: 'View',
       id,
-    })
+    }
+    // Optional context tag (e.g. 'browse' vs 'message_page', or a notification
+    // ?src= value) so the server can tell a browse-feed view from a detail view.
+    // handleView persists it via COALESCE; omit when absent so we never clear it.
+    if (source) {
+      body.source = source
+    }
+    return this.$postv2('/message', body)
   }
 
   async getIllustration(item) {
@@ -168,17 +180,19 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  hold(id) {
+  hold(id, groupid) {
     return this.$postv2('/message', {
       action: 'Hold',
       id,
+      groupid,
     })
   }
 
-  release(id) {
+  release(id, groupid) {
     return this.$postv2('/message', {
       action: 'Release',
       id,
+      groupid,
     })
   }
 

@@ -278,6 +278,11 @@ describe('ModStdMessageModal', () => {
             props: ['value', 'find'],
             emits: ['selected'],
           },
+          AutoHeightTextarea: {
+            template:
+              '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+            props: ['modelValue', 'rows', 'maxRows', 'placeholder'],
+          },
         },
       },
     })
@@ -601,6 +606,93 @@ describe('ModStdMessageModal', () => {
 
       // Body should remain empty, not revert to original message content
       expect(wrapper.vm.body).toBe('')
+    })
+  })
+
+  describe('segmented editor — editable fixed prose', () => {
+    const directiveStdmsg = () =>
+      createStdmsg({
+        action: 'Approve',
+        body: 'Hello,\n\nThanks for using $groupname.\n\n<editthis>say something specific</editthis>\n\nCheers from the team.',
+        insert: 'Top',
+      })
+
+    it('renders fixed prose as editable textareas, not static spans', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: directiveStdmsg() })
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.useSegmentedEditor).toBe(true)
+      // The whole message is editable now: fixed prose renders as a textarea, so
+      // there is no longer a static (read-only) span for it.
+      expect(wrapper.find('span.seg-text').exists()).toBe(false)
+      expect(wrapper.find('textarea.seg-text').exists()).toBe(true)
+    })
+
+    it('includes edits to the fixed prose in the message that is sent', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: directiveStdmsg() })
+      await wrapper.vm.fillin()
+
+      // Personalise the must-fill box and tweak a bit of the surrounding prose.
+      const editthis = wrapper.vm.segments.find((s) => s.type === 'editthis')
+      editthis.value = 'Hope you find what you are looking for soon'
+      const textSeg = wrapper.vm.segments.find((s) => s.type === 'text')
+      textSeg.content += ' EDITED-PROSE-MARKER and a few more words.'
+
+      await wrapper.vm.process()
+
+      expect(mockMessageStore.approve).toHaveBeenCalled()
+      // approve(messageid, groupid, subject, stdmsgid, body) — body is arg 5.
+      const bodyArg = mockMessageStore.approve.mock.calls[0][4]
+      expect(bodyArg).toContain('EDITED-PROSE-MARKER')
+      expect(bodyArg).toContain('Hope you find what you are looking for soon')
+      // Directive tags never reach the recipient.
+      expect(bodyArg).not.toContain('<editthis>')
+    })
+  })
+
+  describe('editLink — TrashNothing awareness', () => {
+    const tnMessage = () =>
+      createMessage({
+        fromuser: {
+          id: 456,
+          displayname: 'TN User',
+          tnuserid: 5555,
+          emails: [],
+        },
+      })
+
+    it('uses the Freegle myposts link for a normal member', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.isTnUser).toBe(false)
+      expect(wrapper.vm.editLink).toBe('https://www.ilovefreegle.org/myposts')
+    })
+
+    it('uses the TrashNothing posts link when the member has a tnuserid', () => {
+      const wrapper = mountComponent({}, { message: tnMessage() })
+      expect(wrapper.vm.isTnUser).toBe(true)
+      expect(wrapper.vm.editLink).toBe('https://trashnothing.com/user/posts')
+    })
+
+    it('detects TrashNothing from a trashnothing.com from-address', () => {
+      const wrapper = mountComponent(
+        {},
+        { message: createMessage({ fromaddr: 'someone@trashnothing.com' }) }
+      )
+      expect(wrapper.vm.isTnUser).toBe(true)
+      expect(wrapper.vm.editLink).toBe('https://trashnothing.com/user/posts')
+    })
+
+    it('substitutes $editlink with the TrashNothing link for a TN member', async () => {
+      const wrapper = mountComponent({}, { message: tnMessage() })
+      const out = await wrapper.vm.substitutionStrings('Edit here: $editlink')
+      expect(out).toBe('Edit here: https://trashnothing.com/user/posts')
+    })
+
+    it('substitutes $editlink with the Freegle link for a normal member', async () => {
+      const wrapper = mountComponent()
+      const out = await wrapper.vm.substitutionStrings('Edit here: $editlink')
+      expect(out).toBe('Edit here: https://www.ilovefreegle.org/myposts')
     })
   })
 })

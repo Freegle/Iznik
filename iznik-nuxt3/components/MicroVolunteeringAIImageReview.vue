@@ -45,6 +45,15 @@
         </div>
       </div>
 
+      <div class="question-block mb-3">
+        <p class="question-label">
+          Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
+        </p>
+        <p v-if="containsPeople === null" class="help-hint">
+          Please answer the question above first
+        </p>
+      </div>
+
       <div class="d-flex justify-content-between align-items-center mb-3">
         <div class="d-flex gap-2">
           <button class="btn btn-outline-secondary" @click="regenerate">
@@ -65,19 +74,6 @@
             Next
           </button>
         </div>
-        <SpinButton
-          variant="success"
-          icon-name="thumbs-up"
-          label="Accept - looks good"
-          :disabled="containsPeople === null"
-          @handle="approve"
-        />
-      </div>
-
-      <div class="question-block mb-3">
-        <p class="question-label">
-          Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
-        </p>
         <div class="d-flex gap-2">
           <SpinButton
             variant="danger"
@@ -86,9 +82,28 @@
             :disabled="containsPeople === null"
             @handle="reject"
           />
+          <SpinButton
+            variant="success"
+            icon-name="thumbs-up"
+            label="Accept - looks good"
+            :disabled="containsPeople === null"
+            @handle="approve"
+          />
         </div>
-        <p v-if="containsPeople === null" class="help-hint mt-2">
-          Please answer the question above first
+      </div>
+
+      <div class="question-block mb-3">
+        <p class="question-label">Not suitable for a picture at all?</p>
+        <SpinButton
+          variant="outline-danger"
+          icon-name="ban"
+          label="This item shouldn't have an AI image"
+          @handle="suppress"
+        />
+        <p class="help-hint mt-2">
+          Use this for things that shouldn't have a generated picture at all
+          (e.g. cash, a lift, a voucher). We won't create an image for this item
+          again.
         </p>
       </div>
     </div>
@@ -155,6 +170,21 @@ async function reject(callback) {
   await microVolunteeringStore.respond({
     aiimageid: props.aiimage.id,
     response: 'Reject',
+    containspeople: containsPeople.value,
+  })
+
+  submitted.value = true
+  callback()
+  emit('next')
+}
+
+// Suppress: the item itself shouldn't have an AI image at all (terminal — once
+// enough reviewers agree, we never generate or show an image for this item again).
+// Distinct from Reject, which just means "this generated image is poor".
+async function suppress(callback) {
+  await microVolunteeringStore.respond({
+    aiimageid: props.aiimage.id,
+    response: 'Suppress',
     containspeople: containsPeople.value,
   })
 

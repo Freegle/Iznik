@@ -265,6 +265,39 @@ func TestNewsfeedReport(t *testing.T) {
 	assert.Equal(t, int64(1), taskCount, "Expected email_chitchat_report task to be queued")
 }
 
+func TestNewsfeedReportNoPreferredEmail(t *testing.T) {
+	// Regression: reporter with no preferred=1 email caused user_email to be empty,
+	// silently dropping the ChitChat support notification after 3 failed retries.
+	prefix := uniquePrefix("nfwr_npe")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test report no-preferred "+prefix)
+
+	// Demote the user's email so no row has preferred=1 — this is the bug trigger.
+	db := database.DBConn
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", userID)
+
+	body := fmt.Sprintf(`{"id":%d,"action":"Report","reason":"Spam"}`, nfID)
+	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Task must be queued with a non-empty user_email so the consumer can send it.
+	var taskData string
+	db.Raw(
+		"SELECT data FROM background_tasks WHERE task_type = 'email_chitchat_report' AND processed_at IS NULL AND data LIKE ?",
+		fmt.Sprintf("%%\"newsfeed_id\": %d%%", nfID),
+	).Scan(&taskData)
+	assert.NotEmpty(t, taskData, "Expected email_chitchat_report task to be queued")
+
+	var fields map[string]interface{}
+	if err := json.Unmarshal([]byte(taskData), &fields); err == nil {
+		userEmail, _ := fields["user_email"].(string)
+		assert.NotEmpty(t, userEmail, "Expected user_email to be populated when reporter has a non-preferred email")
+	}
+}
+
 func TestNewsfeedHide(t *testing.T) {
 	prefix := uniquePrefix("nfwr_hide")
 	userID := CreateTestUser(t, prefix, "Admin")

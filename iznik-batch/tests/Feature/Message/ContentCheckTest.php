@@ -17,10 +17,10 @@ class ContentCheckTest extends TestCase
     {
         parent::setUp();
         $this->service = new ContentCheckService();
-        // Mark any unprocessed pending messages so processUnprocessed() only
-        // sees rows inserted within this test's transaction.
+        // Mark any unprocessed messages so processUnprocessed() only sees rows
+        // inserted within this test. Covers both Pending candidates and the
+        // recently-arrived Approved candidates the service now also checks.
         DB::table('messages_groups')
-            ->where('collection', 'Pending')
             ->whereNull('contentcheck_checked_at')
             ->update(['contentcheck_checked_at' => now()]);
     }
@@ -148,6 +148,117 @@ class ContentCheckTest extends TestCase
 
         $noMatchGroup2 = $this->service->checkConcernKeywords('OFFER: testgroupkw_cc item', '', $group2->id);
         $this->assertNull($noMatchGroup2);
+    }
+
+    /**
+     * Rippling re-runs the per-group content check on each group a post lands on, so a post that is
+     * clean on its origin group but breaks a rule on a group it RIPPLED INTO is flagged on that
+     * second group only. Guards the rippling x per-group-moderation interaction: a rule violation
+     * that exists on the rippled-into group (but not the origin) must still be caught when the post
+     * rides in. Drives the live processUnprocessed() poll, not just the keyword matcher.
+     */
+    public function test_rippled_post_flagged_on_second_group_whose_rule_it_breaks_not_the_origin(): void
+    {
+        $poster = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippledInto = $this->createTestGroup();
+
+        // A concern keyword scoped to the rippled-into group ONLY - the origin has no such rule.
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testripplekw_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $rippledInto->id,
+        ]);
+
+        // Post made on the origin group, carrying the word that only breaks the rippled-into group's
+        // rule. createTestMessage adds the origin's Approved messages_groups row (still unchecked).
+        $message = $this->createTestMessage($poster, $origin, [
+            'subject' => 'OFFER: testripplekw_cc item (TestLocation)',
+        ]);
+
+        // The post rippling into the second group: an Approved, rippled-in, not-yet-content-checked
+        // row with a fresh arrival - exactly what ExpandService::rippleIntoNewGroups inserts.
+        MessageGroup::create([
+            'msgid'      => $message->id,
+            'groupid'    => $rippledInto->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival'    => now(),
+            'rippled_in' => 1,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $originRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $origin->id)->first();
+        $rippledRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippledInto->id)->first();
+
+        // Both rows were content-checked...
+        $this->assertNotNull($originRow->contentcheck_checked_at, 'origin row was content-checked');
+        $this->assertNotNull($rippledRow->contentcheck_checked_at, 'rippled-into row was content-checked');
+
+        // ...but only the rippled-into group, whose rule the post breaks, is flagged.
+        $this->assertNull($originRow->contentcheck_reasons, 'origin group has no matching rule -> not flagged');
+        $this->assertNotNull($rippledRow->contentcheck_reasons, 'rippled-into group rule is caught -> flagged');
+        $this->assertStringContainsString('testripplekw_cc', $rippledRow->contentcheck_reasons);
+    }
+
+    /**
+     * The reverse: a post a HOME group holds for review (its per-group rule keeps it Pending) is
+     * still auto-approved on a group it ripples INTO that has no such rule. Per-group routing is
+     * independent in both directions - a hold on the origin group does not bleed into the rippled
+     * group, and an approval on the rippled group does not override the origin's hold.
+     */
+    public function test_post_held_pending_on_home_group_rule_is_still_approved_on_rippled_into_group(): void
+    {
+        $poster = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $rippledInto = $this->createTestGroup();
+
+        // A flag rule scoped to the HOME group only - it holds matching posts for review there.
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testpendkw_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $home->id,
+        ]);
+
+        // Post carries the word. createTestMessage adds the home row Approved; make it Pending so the
+        // content check decides its fate (the natural state of a not-yet-approved post on the home group).
+        $message = $this->createTestMessage($poster, $home, [
+            'subject' => 'OFFER: testpendkw_cc item (TestLocation)',
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)
+            ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+
+        // The same post rippling into the second group - Approved, rippled-in, not yet checked.
+        MessageGroup::create([
+            'msgid'      => $message->id,
+            'groupid'    => $rippledInto->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival'    => now(),
+            'rippled_in' => 1,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $homeRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)->first();
+        $rippledRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippledInto->id)->first();
+
+        // The home group's rule holds the post Pending for review there...
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $homeRow->collection, 'home group rule holds the post Pending');
+        $this->assertNotNull($homeRow->contentcheck_reasons, 'held home post carries its reasons');
+        $this->assertStringContainsString('testpendkw_cc', $homeRow->contentcheck_reasons);
+
+        // ...but on the rippled-into group, which has no such rule, it stays Approved and unflagged.
+        $this->assertSame(MessageGroup::COLLECTION_APPROVED, $rippledRow->collection, 'rippled-into group has no such rule -> stays Approved');
+        $this->assertNull($rippledRow->contentcheck_reasons, 'rippled-into group not flagged');
     }
 
     public function test_allowed_category_keywords_are_not_flagged(): void
@@ -422,29 +533,40 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // checkPhoneNumbers — universal UK phone number detection
+    // checkPhoneNumbers — gated by group restrictpersonalinfo rule
     // -------------------------------------------------------------------------
 
-    public function test_phone_number_in_body_returns_reason(): void
+    public function test_phone_number_flagged_when_group_restricts_personalinfo(): void
     {
-        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123');
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
-        $this->assertNotNull($result);
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
+
+        $this->assertNotNull($result, 'Phone number should be flagged when restrictpersonalinfo is set');
         $this->assertEquals('PhoneNumber', $result['check']);
     }
 
-    public function test_phone_number_universal_check_always_flags(): void
+    public function test_phone_number_not_flagged_when_group_has_no_personalinfo_restriction(): void
     {
+        // Discourse #9766: groups without restrictpersonalinfo must not have posts held for phone numbers
         $group = $this->createTestGroup();
 
-        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123');
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
 
-        $this->assertNotNull($result, 'Phone numbers should be flagged universally regardless of group rules');
-        $this->assertEquals('PhoneNumber', $result['check']);
+        $this->assertNull($result, 'Phone number must not be flagged when group has no restrictpersonalinfo rule');
+    }
+
+    public function test_phone_number_not_flagged_when_restrict_rule_is_false(): void
+    {
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => false]]);
+
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
+
+        $this->assertNull($result, 'Phone number must not be flagged when restrictpersonalinfo is false');
     }
 
     // -------------------------------------------------------------------------
-    // checkPII — email addresses (phone numbers now checked universally)
+    // checkPII — email addresses, gated by the same restrictpersonalinfo rule
     // -------------------------------------------------------------------------
 
     public function test_no_personal_info_in_body_returns_null(): void
@@ -588,6 +710,135 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Reason keyword field + de-duplication across concern keywords and the
+    // legacy per-group worry words (which overlap: a per-group worry word that
+    // has also been migrated into concern_keywords would otherwise be flagged
+    // twice — once as ConcernKeyword and once as PerGroupWorryWord).
+    // -------------------------------------------------------------------------
+
+    public function test_concern_keyword_reason_includes_matched_keyword(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testkwfield_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: testkwfield_cc item', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('testkwfield_cc', $result['keyword']);
+    }
+
+    public function test_per_group_worry_reason_includes_matched_keyword(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'pgkwfield_cc']],
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: pgkwfield_cc item', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('pgkwfield_cc', $result['keyword']);
+    }
+
+    public function test_check_message_dedupes_same_keyword_in_concern_and_per_group(): void
+    {
+        // The word lives in BOTH concern_keywords (migrated copy) AND the legacy
+        // per-group settings list — exactly the production "cot mattress" case.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'dupeword_cc']],
+        ]);
+        $user = $this->createTestUser();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'dupeword_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $group->id,
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Wanted',
+            'subject'  => 'WANTED: dupeword_cc please (SW1A)',
+            'textbody' => 'Looking for a dupeword_cc.',
+            'message'  => 'Looking for a dupeword_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $forWord = array_values(array_filter(
+            $reasons,
+            fn ($r) => strtolower($r['keyword'] ?? '') === 'dupeword_cc'
+        ));
+        $this->assertCount(1, $forWord, 'the same keyword must not be flagged twice');
+        $this->assertEquals('ConcernKeyword', $forWord[0]['check'], 'the richer ConcernKeyword reason is kept');
+    }
+
+    public function test_check_message_keeps_per_group_word_not_in_concern_keywords(): void
+    {
+        // A per-group worry word that was never migrated into concern_keywords
+        // (e.g. production group 21486's "venue") must still be flagged.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'venueword_cc']],
+        ]);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: venueword_cc (SW1A)',
+            'textbody' => 'A venueword_cc.',
+            'message'  => 'A venueword_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $checks = array_column($reasons, 'check');
+        $this->assertContains('PerGroupWorryWord', $checks, 'un-migrated per-group word must still flag');
+    }
+
+    public function test_check_message_keeps_distinct_concern_and_per_group_words(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'pgonly_cc']],
+        ]);
+        $user = $this->createTestUser();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'ckonly_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $group->id,
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: ckonly_cc and pgonly_cc (SW1A)',
+            'textbody' => 'Has ckonly_cc and pgonly_cc.',
+            'message'  => 'Has ckonly_cc and pgonly_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $checks = array_column($reasons, 'check');
+        $this->assertContains('ConcernKeyword', $checks);
+        $this->assertContains('PerGroupWorryWord', $checks);
+    }
+
+    // -------------------------------------------------------------------------
     // processUnprocessed — promotion and notification logic
     // -------------------------------------------------------------------------
 
@@ -629,6 +880,88 @@ class ContentCheckTest extends TestCase
 
         $checkedAt = DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at');
         $this->assertNotNull($checkedAt);
+    }
+
+    public function test_promoted_message_with_location_is_added_to_spatial_index(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'lat'      => 51.5,
+            'lng'      => -0.12,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        // Pending → must not be in the spatial index (it backs the public browse).
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+
+        $stats = $this->service->processUnprocessed();
+        $this->assertEquals(1, $stats['approved']);
+        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'));
+
+        // Approved → now in the spatial index.
+        $this->assertEquals(1, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+    }
+
+    public function test_kept_pending_message_is_not_added_to_spatial_index(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        // NULL ourPostingStatus = MODERATED → message is kept Pending even when clean.
+        $this->createMembership($user, $group);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'lat'      => 51.5,
+            'lng'      => -0.12,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+        $this->assertEquals(1, $stats['kept_pending']);
+        $this->assertEquals('Pending', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'));
+
+        // Still Pending → must not be in the spatial index.
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
     }
 
     public function test_moderated_user_message_stays_pending_with_checked_at_set(): void
@@ -1347,6 +1680,81 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result, 'Subject older than 7 days should not be flagged');
     }
 
+    public function test_subject_repeat_not_flagged_for_short_item_name_test_post(): void
+    {
+        // Regression (Discourse 9788/28): "Offer: Test" is 11 chars and was NOT skipped
+        // by the < 10 guard, so common test-post subjects accumulated across many groups
+        // over time and falsely flagged legitimate mod/tester posts.
+        // Root cause: the old code checked strlen(full subject) instead of strlen(item name).
+        // "Offer: Test" = 11 chars passes the guard; "Test" = 4 chars does not.
+        // Fix: checkSubjectRepeat now accepts $itemName and guards on item name length.
+        $subject = 'Offer: Test';
+
+        // Simulate 30 prior "Offer: Test" posts from different groups (as accumulates
+        // naturally when mods routinely post Test messages to verify their groups).
+        $groups = [];
+        for ($i = 0; $i < 30; $i++) {
+            $groups[] = $this->createTestGroup();
+        }
+
+        $priorUser = $this->createTestUser();
+        $priorMsgId = DB::table('messages')->insertGetId([
+            'fromuser' => $priorUser->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Test',
+            'message'  => 'Test',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        foreach ($groups as $group) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $priorMsgId,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        // A new mod posts "Offer: Test" to their own group.
+        $newUser = $this->createTestUser();
+        $newGroup = $this->createTestGroup();
+        $newMsgId = DB::table('messages')->insertGetId([
+            'fromuser' => $newUser->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Test',
+            'message'  => 'Test',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $newMsgId,
+            'groupid'    => $newGroup->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        // BUG (old code path): calling WITHOUT $itemName uses the full subject
+        // "Offer: Test" (11 chars >= 10), so the guard does not fire. With 30+
+        // groups in the window, the repeat check triggers and flags the message.
+        // This proves the DB state is correct and the bug is real.
+        $buggyPathResult = $this->service->checkSubjectRepeat($subject, $newMsgId);
+        $this->assertNotNull($buggyPathResult, 'Without itemName, "Offer: Test" (11 chars) passes the length guard and 30+ groups causes a false flag — this confirms the bug exists');
+        $this->assertEquals('SubjectRepeat', $buggyPathResult['check']);
+
+        // FIX (new code path): calling WITH $itemName='Test' uses the item name
+        // length (4 chars < 10), so the guard fires immediately and returns null.
+        // A real mod "Test" post must not be blocked even with 30+ prior groups.
+        $fixedPathResult = $this->service->checkSubjectRepeat($subject, $newMsgId, 'Test');
+        $this->assertNull($fixedPathResult, 'With itemName="Test" (4 chars < 10), the length guard fires before the group count query — no false flag');
+    }
+
     // -------------------------------------------------------------------------
     // checkKnownSpammer — flag messages containing spammer email (V1 parity)
     // -------------------------------------------------------------------------
@@ -1534,10 +1942,14 @@ class ContentCheckTest extends TestCase
 
     public function test_french_message_returns_reason(): void
     {
-        // Clearly French text, well over 50 chars.
+        // Inject deterministic French scores (en/fr = 0.30 — well below the 0.8 V1 threshold).
+        // At 0.8: en(0.21) >= 0.8*fr(0.70)=0.56 → false → flagged correctly.
+        // Using injection because the real library returns borderline probabilities for
+        // mixed-cognate French text, making the live-library assertion threshold-dependent.
+        $frenchDetector = static fn(string $text) => ['fr' => 0.70, 'en' => 0.21];
         $text = 'Bonjour, je donne une belle table en chêne massif en très bon état. Venez la chercher dans le quartier.';
 
-        $result = $this->service->checkLanguage('OFFER: Table', $text);
+        $result = $this->service->checkLanguage('OFFER: Table', $text, $frenchDetector);
 
         $this->assertNotNull($result);
         $this->assertEquals('Language', $result['check']);
@@ -1670,6 +2082,113 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($result, 'IP used to post to 20 groups (>= 20) should be flagged');
         $this->assertEquals('IpAbuse', $result['check']);
         $this->assertStringContainsString('20', $result['detail']);
+    }
+
+    public function test_ip_abuse_ignores_rippled_in_groups(): void
+    {
+        // A single post rippled out into many groups must NOT be flagged as IP abuse.
+        // Rippling-out inserts messages_groups rows (rippled_in=1) for the SAME message,
+        // so one member's one post can land in 20-30 groups. Only native (rippled_in=0)
+        // postings should count toward the 20-group threshold.
+        // Discourse https://discourse.ilovefreegle.org/t/not-sure-if-this-is-abuse-or-rippling-out/9833
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 1 native origin-group row.
+        $origin = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $origin->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+            'rippled_in' => 0,
+        ]);
+
+        // 25 rippled-in rows (the same message fanned out by the rippling engine).
+        for ($i = 0; $i < 25; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Approved',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull(
+            $result,
+            'A single post rippled into 25 groups must not trigger IP abuse (rippled_in rows are excluded)'
+        );
+    }
+
+    public function test_ip_abuse_counts_only_native_groups_not_rippled(): void
+    {
+        // When a genuinely multi-posted IP also has rippled-in rows, the count must
+        // reflect only the native postings, so the detail reports the true native total.
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 20 native group rows — genuine multi-group posting, should flag.
+        for ($i = 0; $i < 20; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 0,
+            ]);
+        }
+
+        // 15 rippled-in rows — must NOT inflate the count beyond the 20 native groups.
+        for ($i = 0; $i < 15; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Approved',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, '20 native group postings should still be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
+        $this->assertStringContainsString('20', $result['detail']);
+        $this->assertCount(20, $result['groups'], 'group list must contain only the 20 native groups');
     }
 
     public function test_ip_abuse_ignores_messages_older_than_31_days(): void
@@ -1922,6 +2441,143 @@ class ContentCheckTest extends TestCase
             $this->assertIsInt($id, 'group ID must be int, not string');
         }
         $this->assertArrayNotHasKey('users', $result, 'group branch must not include a users array');
+    }
+
+    // -------------------------------------------------------------------------
+    // checkIpAbuse — spam_whitelist_ips exemption (V1 parity: Spam.php lines 105-114)
+    // -------------------------------------------------------------------------
+
+    public function test_ip_abuse_whitelisted_exact_ip_not_flagged(): void
+    {
+        $ip = '162.158.255.1'; // Representative Cloudflare IP in 162.158.0.0/15 range
+
+        DB::table('spam_whitelist_ips')->insertOrIgnore([
+            'ip'      => $ip,
+            'comment' => 'Cloudflare egress (test)',
+            'date'    => now(),
+        ]);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Six more users with the same whitelisted IP
+        for ($i = 0; $i < 6; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP in spam_whitelist_ips should not trigger IP abuse warning (V1 parity)');
+
+        DB::table('spam_whitelist_ips')->where('ip', $ip)->delete();
+    }
+
+    public function test_ip_abuse_whitelisted_cidr_not_flagged(): void
+    {
+        // 162.158.0.0/15 covers 162.158.0.1 through 162.159.255.254 (Cloudflare CDN range)
+        $cidr = '162.158.0.0/15';
+        $ipInRange = '162.158.100.50';
+
+        DB::table('spam_whitelist_ips')->insertOrIgnore([
+            'ip'      => $cidr,
+            'comment' => 'Cloudflare CDN 162.158.0.0/15',
+            'date'    => now(),
+        ]);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ipInRange,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        for ($i = 0; $i < 6; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ipInRange,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP within a whitelisted CIDR range should not trigger IP abuse warning');
+
+        DB::table('spam_whitelist_ips')->where('ip', $cidr)->delete();
+    }
+
+    public function test_ip_abuse_non_whitelisted_ip_still_flagged(): void
+    {
+        // Ensure 192.0.2.x is NOT in the whitelist (RFC 5737 documentation range, never allocated)
+        $ip = '192.0.2.1';
+        DB::table('spam_whitelist_ips')->where('ip', $ip)->delete();
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        for ($i = 0; $i < 6; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, 'Non-whitelisted IP used by many users should still be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
     }
 
     // -------------------------------------------------------------------------
@@ -2488,5 +3144,171 @@ class ContentCheckTest extends TestCase
         $result  = $service->checkConcernKeywords('OFFER: warning — I was asked for a bank transfer, report this scam', '', $group->id);
 
         $this->assertNull($result, 'Embedding service said innocent — should not flag scam warning');
+    }
+
+    // -------------------------------------------------------------------------
+    // Held messages must be left alone (Discourse 9816 / mod-veto), and new
+    // approved-on-arrival posts must be content-checked too.
+    // -------------------------------------------------------------------------
+
+    public function test_held_pending_message_is_not_promoted(): void
+    {
+        // A mod has pulled a post back to Pending and is holding it for review
+        // (heldby set). The content-check job must not fight the mod by promoting
+        // it straight back to Approved.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        $modId = $this->createTestUser()->id;
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+            'heldby'     => $modId,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals('Pending', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
+            'A held message must not be auto-promoted');
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'A held message must not be processed at all');
+    }
+
+    public function test_new_approved_message_is_content_checked(): void
+    {
+        // Unmoderated members post straight to Approved, bypassing the Pending
+        // queue. Those new posts must still be content-checked (just recorded
+        // when clean — never demoted).
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
+            'A clean approved post must stay Approved (never auto-demoted)');
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'A new approved post must be content-checked');
+    }
+
+    public function test_new_approved_message_with_reason_notifies_mods_and_stays_live(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: stuff (SW1A)',
+            'textbody' => 'Some stuff.',
+            'message'  => 'Some stuff.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        // Vague item name -> a content-check reason.
+        DB::table('items')->insertOrIgnore(['name' => 'stuff']);
+        $itemId = DB::table('items')->where('name', 'stuff')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
+            'A flagged approved post stays live (mods are notified, not auto-removed)');
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_reasons'),
+            'Reasons must be stored for a flagged approved post');
+        $this->assertTrue(
+            DB::table('background_tasks')
+                ->where('task_type', \App\Models\BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS)
+                ->whereRaw("JSON_EXTRACT(data, '$.group_id') = ?", [$group->id])
+                ->exists(),
+            'Mods must be notified about a flagged approved post'
+        );
+    }
+
+    public function test_old_approved_message_is_not_content_checked(): void
+    {
+        // Bound: only NEW approved posts are checked. An older approved post
+        // (outside the recent-arrival window) must never be rescanned, so the
+        // historical backlog is untouched.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now()->subHours(72),
+            'date'     => now()->subHours(72),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now()->subHours(72),
+            'deleted'    => 0,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'An old approved post (outside the recent-arrival window) must not be rescanned');
     }
 }

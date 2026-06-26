@@ -84,7 +84,10 @@ const error = ref(null)
 const id = ref(null)
 
 // Computed properties
-const groups = computed(() => groupStore?.list)
+// groupStore.fetch() (called in setup with no id) loads all groups into
+// summaryList, not list (which only holds individually-fetched detail). Use
+// summaryList so the group dropdown is populated — matching GroupSelect.
+const groups = computed(() => groupStore?.summaryList)
 const shortlinks = computed(() => shortlinkStore?.list)
 
 const sortedLinks = computed(() => {

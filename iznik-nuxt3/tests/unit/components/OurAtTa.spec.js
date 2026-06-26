@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { mount } from '@vue/test-utils'
 import OurAtTa from '~/components/OurAtTa.vue'
 
@@ -73,6 +74,28 @@ describe('OurAtTa', () => {
     it('members prop is Array type', () => {
       const props = OurAtTa.props
       expect(props.members.type).toBe(Array)
+    })
+  })
+
+  describe('vue-mention null-ref patch', () => {
+    // Regression test for: TypeError: Cannot read properties of null (reading 'querySelector')
+    // vue-mention's Mentionable calls el.value.querySelector() in onMounted/onUpdated.
+    // When the component is destroyed mid-navigation, el.value can be null. patch-package
+    // adds guards; this test verifies those guards are present in the installed dist file.
+    it('vue-mention.es.js has null guard in getInput()', () => {
+      const src = readFileSync(
+        'node_modules/vue-mention/dist/vue-mention.es.js',
+        'utf8'
+      )
+      expect(src).toContain('if (!el.value) return null;')
+    })
+
+    it('vue-mention.es.js has null guard in onUpdated()', () => {
+      const src = readFileSync(
+        'node_modules/vue-mention/dist/vue-mention.es.js',
+        'utf8'
+      )
+      expect(src).toContain('if (!el.value) return;')
     })
   })
 })

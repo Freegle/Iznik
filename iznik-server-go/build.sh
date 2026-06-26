@@ -83,9 +83,21 @@ fi
 
 echo "✅ Swagger specification validation passed"
 
-# For deploying on Netlify
+# For deploying on Netlify.
+# Bake the git commit + build time into the binary via ldflags. The production
+# Go API runs as a Netlify function: there is no /app/BUILD_INFO and no .git
+# directory at runtime, so the file-based detection in status.go's init() cannot
+# work there. ldflags is the only reliable way to make /api/version report the
+# live Go deploy (consumed by the monitor-fsm verified-live reply gate). The
+# import path here must match how packages are imported (via the
+# `replace github.com/freegle/iznik-server-go => ./` directive in go.mod), not
+# the bare module name.
 echo "Building application..."
-GOBIN=$(pwd)/functions go install main.go
+BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+LDFLAGS="-X 'github.com/freegle/iznik-server-go/status.GitCommit=${BUILD_COMMIT}' -X 'github.com/freegle/iznik-server-go/status.BuildDate=${BUILD_TIME}'"
+echo "Embedding version: commit=${BUILD_COMMIT} build=${BUILD_TIME}"
+GOBIN=$(pwd)/functions go install -ldflags "${LDFLAGS}" main.go
 
 if [ $? -eq 0 ]; then
     echo "✅ Build completed successfully"

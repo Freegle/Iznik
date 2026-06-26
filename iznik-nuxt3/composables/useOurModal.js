@@ -1,12 +1,20 @@
 import { ref, onMounted, onUnmounted, nextTick, useRouter } from '#imports'
 
-export function useOurModal() {
+export function useOurModal(options = {}) {
+  // autoShow (default true): show the modal as soon as it mounts. Most modals
+  // are v-if-gated, so they only mount when they should be shown and rely on
+  // this. Always-mounted modals that should open only on demand (e.g. via a
+  // button calling show()) pass { autoShow: false } so they don't pop up on
+  // page load.
+  const { autoShow = true } = options
   const modal = ref()
   const isShown = ref(false)
 
   onMounted(async () => {
     await nextTick()
-    show()
+    if (autoShow) {
+      show()
+    }
   })
 
   function show() {

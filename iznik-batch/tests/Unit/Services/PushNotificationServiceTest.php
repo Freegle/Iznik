@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\ChatMessage;
+use App\Models\ChatRoom;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
@@ -204,6 +206,49 @@ class PushNotificationServiceTest extends TestCase
         $count = $this->service->getBadgeCount($mod->id);
 
         $this->assertEquals(0, $count, 'Messages with null fromuser must not inflate badge count');
+    }
+
+    /**
+     * Pending messages from DELETED users must NOT count towards the badge.
+     *
+     * Regression for Discourse #9654/12: mods reported the ModTools badge stuck at
+     * +1 after clearing all visible tasks. Root cause: getBadgeCount() counted
+     * pending messages whose author had been deleted (fromuser set, but
+     * users.deleted IS NOT NULL), while the app menu (session.go) filters them via
+     * INNER JOIN users ... u.deleted IS NULL. The phantom message is in the badge
+     * but not the menu, so the mod can never clear it. Live data at diagnosis time:
+     * 32 such messages across 24 groups.
+     */
+    public function test_pending_message_from_deleted_user_does_not_count_towards_badge(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser(['deleted' => now()]);  // author deleted
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,  // not held — would count if author were live
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count, 'Pending messages from deleted users must not inflate badge count (Discourse #9654/12)');
     }
 
     /**
@@ -436,6 +481,213 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * Volunteering-only badge must route to /volunteering (V1 parity), not /messages/pending.
+     *
+     * Regression for Discourse #9692/10: when the badge total is driven by pending volunteering ops
+     * (no pending messages), the notification must route to /volunteering — not /messages/pending
+     * (empty page) and not /modtools (catch-all redirect with 2s delay).
+     */
+    public function test_buildModToolsPayload_volunteering_only_routes_to_volunteering(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Pending volunteering op — no pending messages
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge'], 'Badge must be 1 (the volunteering op)');
+        // Route must go directly to /volunteering — no /modtools/ prefix (would hit redirect page).
+        $this->assertSame('/volunteering', $payload['route'],
+            'Volunteering-only badge must route to /volunteering (V1 parity, Discourse #9692/10)');
+        // Title must mention "volunteer", not "message".
+        $this->assertStringContainsString('volunteer', $payload['title'],
+            'Title must describe the volunteering work, not say "messages pending"');
+        $this->assertStringNotContainsString('message', $payload['title'],
+            'Title must not say "messages" when only volunteering work is queued');
+    }
+
+    /**
+     * Pending-only badge must route to /messages/pending (no /modtools/ prefix).
+     *
+     * V1 parity: pending → route /messages/pending, title "N pending message(s)".
+     * The /modtools/ prefix hits the catch-all redirect page (Discourse #9692/10).
+     */
+    public function test_buildModToolsPayload_pending_only_routes_to_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge']);
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Pending-only badge must route to /messages/pending (no /modtools/ prefix)');
+        $this->assertStringContainsString('pending', $payload['title']);
+    }
+
+    /**
+     * Spam-only badge must route to /messages/pending (no /modtools/ prefix).
+     *
+     * V1 parity: spam → route /messages/pending, title "N message(s) to review".
+     */
+    public function test_buildModToolsPayload_spam_only_routes_to_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Spam (Location)',
+            'textbody' => 'Spam',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_SPAM,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge']);
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Spam-only badge must route to /messages/pending (no /modtools/ prefix)');
+        $this->assertStringContainsString('review', $payload['title']);
+    }
+
+    /**
+     * Mixed pending + volunteering: pending wins (last-wins, V1 parity).
+     *
+     * With both pending messages and volunteering ops, route must be /messages/pending
+     * and the title must mention both categories (multi-line, "\n"-joined).
+     */
+    public function test_buildModToolsPayload_mixed_pending_wins_over_volunteering(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Add a pending message
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        // Add a pending volunteering op
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('2', $payload['badge'], 'Badge must be total of all categories');
+        // Pending wins (last in last-wins order)
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Pending wins over volunteering in last-wins order (V1 parity)');
+        // Title must mention both categories
+        $this->assertStringContainsString('volunteer', $payload['title'],
+            'Multi-line title must mention volunteering');
+        $this->assertStringContainsString('pending', $payload['title'],
+            'Multi-line title must mention pending messages');
+    }
+
+    /**
+     * Zero-work payload must route to "/" not "/modtools" (V1 parity).
+     */
+    public function test_buildModToolsPayload_zero_routes_to_root(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertNotNull($payload, 'Zero-count payload must not be null (clears badge)');
+        $this->assertSame('0', $payload['badge']);
+        $this->assertSame('/', $payload['route'],
+            'Zero-work payload must route to "/" (V1 parity)');
+    }
+
+    /**
      * Visible ModTools push: priority high and notification.tag set so the
      * latest "N pending" entry replaces the previous one in the tray.
      */
@@ -506,5 +758,469 @@ class PushNotificationServiceTest extends TestCase
         $method = new \ReflectionMethod($this->service, 'buildAndroidConfig');
         $method->setAccessible(true);
         return $method->invoke($this->service, $userId, $payload, $forceVisible);
+    }
+
+    // --- Chat message recipient computation (V1 parity tests) ---
+    //
+    // These pin the V1 ChatRoom::notifyMembers() target table from
+    // iznik-server/include/chat/ChatRoom.php:1458-1521. Each test corresponds
+    // to a cell in that table or an invariant ($excludeuser, getMemberships()>0).
+    //
+    // Tests target the new getChatMessageRecipients(messageId) method which
+    // returns ['fd' => int[], 'mt' => int[]] — the FD-app and MT-app push
+    // recipient sets respectively.
+
+    public function test_u2u_returns_both_users_in_fd_recipients(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEqualsCanonicalizing([$recipient->id], $result['fd'],
+            'U2U FD recipients = both users minus sender');
+        $this->assertEquals([], $result['mt'],
+            'U2U MT recipients empty when message not held for review');
+    }
+
+    public function test_u2u_excludes_sender_from_fd_recipients(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertNotContains($sender->id, $result['fd'],
+            'Sender must never push to themselves (V1 $excludeuser)');
+    }
+
+    public function test_u2m_returns_user1_in_fd_and_active_mods_in_mt(): void
+    {
+        $member = $this->createTestUser();
+        $modA = $this->createTestUser();
+        $modB = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($member, $group);
+        $this->createMembership($modA, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($modB, $group, ['role' => Membership::ROLE_OWNER]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $member);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEquals([], $result['fd'],
+            'U2M FD recipients exclude the sender (member here)');
+        $this->assertEqualsCanonicalizing([$modA->id, $modB->id], $result['mt'],
+            'U2M MT recipients = all active group mods minus sender');
+    }
+
+    public function test_u2m_mod_sender_excluded_from_mt_recipients(): void
+    {
+        // Mod sends a message to a member in their own group → mod shouldn't
+        // get a push notification about their own outgoing message.
+        $member = $this->createTestUser();
+        $modSender = $this->createTestUser();
+        $modOther = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($member, $group);
+        $this->createMembership($modSender, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($modOther, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $modSender);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEqualsCanonicalizing([$member->id], $result['fd'],
+            'U2M FD recipient = member (user1) when mod is sender');
+        $this->assertEqualsCanonicalizing([$modOther->id], $result['mt'],
+            'Sender mod must be excluded from MT recipients (V1 $excludeuser)');
+    }
+
+    public function test_u2m_excludes_inactive_mods_from_mt(): void
+    {
+        $member = $this->createTestUser();
+        $activeMod = $this->createTestUser();
+        $inactiveMod = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($member, $group);
+        $this->createMembership($activeMod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'settings' => ['active' => 1],
+        ]);
+        $this->createMembership($inactiveMod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'settings' => ['active' => 0],
+        ]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $member);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEqualsCanonicalizing([$activeMod->id], $result['mt'],
+            'Inactive mods (settings.active=0) must not receive MT push (V1 parity)');
+    }
+
+    public function test_recipient_who_blocked_chat_is_excluded(): void
+    {
+        // V1 notifyIndividualMessages filter: chat_roster.status = 'Blocked'
+        // means the recipient blocked the conversation — no push for them.
+        $sender = $this->createTestUser();
+        $blocker = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($blocker, $group);
+
+        $room = $this->createTestChatRoom($sender, $blocker);
+
+        DB::table('chat_roster')->insert([
+            'chatid' => $room->id,
+            'userid' => $blocker->id,
+            'status' => 'Blocked',
+            'date' => now(),
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $sender);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEquals([], $result['fd'],
+            'Users who blocked this chat must not receive push (V1 parity)');
+    }
+
+    public function test_recipient_with_zero_memberships_is_excluded(): void
+    {
+        // V1: pokeMembers/notify only fires for users with getMemberships() > 0.
+        // Stops ex-members and never-joined users from getting pushes.
+        $sender = $this->createTestUser();
+        $exMember = $this->createTestUser();  // no createMembership
+
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+
+        $room = $this->createTestChatRoom($sender, $exMember);
+        $msg = $this->createTestChatMessage($room, $sender);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEquals([], $result['fd'],
+            'Users with zero memberships must not be pushed (V1 invariant)');
+    }
+
+    public function test_held_for_review_message_returns_empty_recipients(): void
+    {
+        // V1: !$review gate. Even if enqueued by mistake, the handler must
+        // double-check and refuse to push for reviewed content.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, ['reviewrequired' => 1]);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEquals([], $result['fd']);
+        $this->assertEquals([], $result['mt']);
+    }
+
+    public function test_rejected_message_returns_empty_recipients(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, ['reviewrejected' => 1]);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEquals([], $result['fd']);
+        $this->assertEquals([], $result['mt']);
+    }
+
+    public function test_missing_message_returns_empty_recipients(): void
+    {
+        $result = $this->service->getChatMessageRecipients(9999999);
+
+        $this->assertEquals([], $result['fd']);
+        $this->assertEquals([], $result['mt']);
+    }
+
+    public function test_mod2mod_returns_no_fd_or_mt_recipients(): void
+    {
+        // V1 notifyMembers() has no case for Mod2Mod — only pokeMembers does.
+        // Out of scope here; push side returns empty.
+        $mod1 = $this->createTestUser();
+        $mod2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod1, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($mod2, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_MOD2MOD,
+            'user1' => $mod1->id,
+            'user2' => $mod2->id,
+            'groupid' => $group->id,
+            'created' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $mod1);
+
+        $result = $this->service->getChatMessageRecipients($msg->id);
+
+        $this->assertEquals([], $result['fd']);
+        $this->assertEquals([], $result['mt']);
+    }
+
+    // --- Chat message payload structure (V1 parity tests) ---
+    //
+    // Pin the FCM payload shape that the mobile app expects, from V1
+    // PushNotifications::notifyIndividualMessages (chat path) and
+    // useMobileStore.handleNotification (iznik-nuxt3/stores/mobile.js).
+
+    public function test_fd_chat_payload_uses_chat_messages_channel(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hello there']);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertEquals('chat_messages', $payload['channel_id'],
+            'FD chat payload must use the chat_messages Android channel');
+        $this->assertEquals('0', (string) $payload['modtools']);
+    }
+
+    public function test_mt_chat_payload_uses_modtools_channel(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, TRUE);
+
+        $this->assertEquals('modtools', $payload['channel_id']);
+        $this->assertEquals('1', (string) $payload['modtools']);
+    }
+
+    public function test_chat_payload_uses_chatid_as_notid(): void
+    {
+        // V1: notId = chatid so a second message in the same chat REPLACES
+        // the previous notification instead of stacking — prevents flooding.
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertEquals((string) $room->id, (string) $payload['notId']);
+    }
+
+    public function test_chat_payload_route_targets_specific_chat(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertEquals('/chats/' . $room->id, $payload['route']);
+        $this->assertEquals((string) $room->id, (string) $payload['chatid']);
+        $this->assertEquals((string) $room->id, (string) $payload['chatids']);
+    }
+
+    public function test_chat_payload_truncates_long_message(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $long = str_repeat('A', 500);
+        $msg = $this->createTestChatMessage($room, $sender, ['message' => $long]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertLessThanOrEqual(260, strlen($payload['message']),
+            'Payload message should be truncated for push display (~256 chars)');
+    }
+
+    /**
+     * The push body/subtitle must contain the message text — not repeat the
+     * sender's display name.
+     *
+     * Regression: when the chat message has text, 'message' in the payload
+     * must carry that text. The FCM notification body is built as
+     * `$payload['message'] ?: $payload['title']`, so a non-empty 'message'
+     * is the only defence against a double-sender-name push.
+     */
+    public function test_chat_payload_message_contains_text_not_sender_name(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'richard mackay']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Hi, is this still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('richard mackay', $payload['title'],
+            'Title must be the sender name');
+        $this->assertStringContainsString('Hi, is this still available?', $payload['message'],
+            'Payload message must carry the chat text, not the sender name');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Title and body must differ — body must NOT repeat the sender name');
+    }
+
+    /**
+     * Image messages have no text — the push body must fall back to a
+     * descriptive label ("Sent an image"), not repeat the sender name.
+     *
+     * Regression for the bug where title="richard mackay" and body="richard
+     * mackay" both showed the sender name on image-only chat messages.
+     */
+    public function test_chat_payload_image_message_body_is_descriptive_not_sender_name(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'richard mackay']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_IMAGE,
+            'message' => null,  // image-only: no text body
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('richard mackay', $payload['title'],
+            'Title must still be the sender name');
+        $this->assertSame('Sent an image', $payload['message'],
+            'Image message body must be "Sent an image", not the sender name');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Title and body must differ — body must NOT repeat the sender name for image messages');
+    }
+
+    /**
+     * "Interested" type messages have no text body — body must show "Interested".
+     */
+    public function test_chat_payload_interested_message_body_is_interested(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'message' => null,
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('Interested', $payload['message'],
+            '"Interested" type message body must be "Interested"');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Body must not repeat the sender name');
+    }
+
+    /**
+     * "Address" type messages have no text body — body must show "Sent an address".
+     */
+    public function test_chat_payload_address_message_body_is_descriptive(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Bob']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_ADDRESS,
+            'message' => null,
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('Sent an address', $payload['message'],
+            '"Address" type message body must be "Sent an address"');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Body must not repeat the sender name');
+    }
+
+    public function test_u2m_mod_to_member_payload_uses_group_volunteers_title(): void
+    {
+        // V1 hides individual mod identity from members: when a mod replies in
+        // a User2Mod chat, the push title shows "{GroupName} Volunteers", not
+        // the mod's personal display name. Matches the email notification.
+        $member = $this->createTestUser(['fullname' => 'MemberAlice']);
+        $mod = $this->createTestUser(['fullname' => 'ModBob']);
+        $group = $this->createTestGroup();
+        $this->createMembership($member, $group);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $mod, ['message' => 'Hello from the team']);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $member->id, FALSE);
+
+        $this->assertStringContainsString('Volunteers', $payload['title'],
+            'Mod sender to member in U2M must show "{Group} Volunteers" as title');
+        $this->assertStringNotContainsString('ModBob', $payload['title'],
+            'Individual mod name must NOT leak to the member in push title');
     }
 }

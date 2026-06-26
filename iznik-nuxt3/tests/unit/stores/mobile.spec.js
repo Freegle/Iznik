@@ -75,7 +75,7 @@ vi.stubGlobal('useRuntimeConfig', () => ({
 const mockRouterPush = vi.fn()
 vi.stubGlobal('useRouter', () => ({
   push: mockRouterPush,
-  currentRoute: { path: '/' },
+  currentRoute: { value: { path: '/' } },
 }))
 
 describe('mobile store', () => {
@@ -591,6 +591,384 @@ describe('mobile store', () => {
       await store.getDeviceInfo(mockDevice)
 
       expect(store.deviceuserinfo).toBe('android 13')
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('initDeepLinks', () => {
+    let store
+    let capturedListener
+    let mockApp
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'appUrlOpen') capturedListener = fn
+        }),
+      }
+      // initDeepLinks guards with `if (process.client)`; enable it for tests.
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    async function triggerDeepLink(url) {
+      vi.useFakeTimers()
+      store.initDeepLinks(mockApp)
+      expect(capturedListener).not.toBeNull()
+      await capturedListener({ url })
+      vi.runAllTimers()
+    }
+
+    it('navigates to /chats/:id for a current-format chat deep link', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('https://www.ilovefreegle.org/chats/12345')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('rewrites old /chat/:id deep link to /chats/:id', async () => {
+      // AssertFlip: before the fix initDeepLinks has no /chat/ → /chats/ replacement,
+      // so push is called with '/chat/12345' (wrong). After fix it is '/chats/12345'.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('https://www.ilovefreegle.org/chat/12345')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('does not navigate for a URL that does not contain ilovefreegle.org', async () => {
+      // AssertFlip: before the fix `ilfpos !== false` is always true (indexOf never
+      // returns false), so a freegle:// URL navigates to substring(15) = '/12345'.
+      // After fix `ilfpos !== -1` correctly skips non-ilovefreegle.org URLs.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('freegle://chats/12345')
+
+      expect(mockRouterPush).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('reRegisterPush', () => {
+    function makePushPlugin(receive = 'granted') {
+      return {
+        checkPermissions: vi.fn().mockResolvedValue({ receive }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+    }
+
+    beforeEach(() => {
+      // reRegisterPush guards with `if (!process.client ...)`; enable the
+      // client environment so the checkPermissions/register path runs (same
+      // pattern as the initDeepLinks and other native-guarded blocks above).
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    it('calls register() on a native app with a stored plugin and granted permission', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = makePushPlugin('granted')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.checkPermissions).toHaveBeenCalled()
+      expect(plugin.register).toHaveBeenCalled()
+    })
+
+    it('does NOT call register() when not on the app', async () => {
+      const store = useMobileStore()
+      store.isApp = false
+      const plugin = makePushPlugin('granted')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call register() when no plugin reference is stored', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      store.pushPlugin = null
+
+      // Should simply no-op without throwing.
+      await expect(store.reRegisterPush()).resolves.toBeUndefined()
+    })
+
+    it('does NOT call register() when permission is not granted', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = makePushPlugin('denied')
+      store.pushPlugin = plugin
+
+      await store.reRegisterPush()
+
+      expect(plugin.checkPermissions).toHaveBeenCalled()
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+
+    it('swallows errors thrown during re-registration', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockRejectedValue(new Error('boom')),
+      }
+      store.pushPlugin = plugin
+
+      await expect(store.reRegisterPush()).resolves.toBeUndefined()
+    })
+  })
+
+  describe('initWakeUpActions resume handler', () => {
+    let store
+    let capturedListener
+    let mockApp
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'resume') capturedListener = fn
+        }),
+      }
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    it('re-registers push on resume when on a native app', async () => {
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+
+      store.initWakeUpActions(mockApp)
+      expect(capturedListener).not.toBeNull()
+
+      await capturedListener({})
+      // Allow the async reRegisterPush() to settle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      expect(plugin.register).toHaveBeenCalled()
+    })
+
+    it('does not re-register push on resume when not on the app', async () => {
+      store.isApp = false
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+
+      store.initWakeUpActions(mockApp)
+      await capturedListener({})
+      await Promise.resolve()
+      await Promise.resolve()
+
+      // Existing resume behaviour still runs.
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      // But registration is not re-triggered off-app.
+      expect(plugin.register).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('handleNotification — new_posts channel', () => {
+    let store
+
+    beforeEach(() => {
+      store = useMobileStore()
+      store.isApp = true
+      store.config = { public: {} }
+    })
+
+    // The new_posts push arrives with channel_id='new_posts' and route='/browse'.
+    // When the app is in the background (okToMove=true), tapping should navigate
+    // to /browse via router.push — exactly like any other routable push.
+    it('routes to /browse when new_posts push is tapped (background)', async () => {
+      vi.mock('@capacitor/app', () => ({
+        App: { getState: () => Promise.resolve({ isActive: false }) },
+      }))
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          okToMove: true,
+          data: {
+            channel_id: 'new_posts',
+            category: 'NEW_POSTS',
+            badge: '7',
+            modtools: 'false',
+            route: '/browse',
+            notId: '200000001',
+            count: '7',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/browse')
+      logSpy.mockRestore()
+    })
+
+    // When the new_posts push arrives in the FOREGROUND we must NOT trigger
+    // fetchChats — that's only meaningful for chat notifications.
+    it('does NOT refresh chats when a new_posts push arrives in the foreground', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'new_posts',
+            category: 'NEW_POSTS',
+            foreground: true,
+            badge: '7',
+            modtools: 'false',
+            route: '/browse',
+            notId: '200000001',
+            count: '7',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      // fetchChats must NOT be called — new_posts pushes carry no chat data
+      expect(mockFetchChats).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    // A foreground new_posts push should not trigger fetchMessages either.
+    it('does NOT fetch messages when a new_posts push arrives in the foreground', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'new_posts',
+            foreground: true,
+            badge: '3',
+            modtools: 'false',
+            route: '/browse',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockFetchMessages).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    // Badge update must still fire on a new_posts push (the count field
+    // carries the number of new items, used as the app badge value).
+    it('updates badge count from a new_posts push', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const mockBadge = { set: vi.fn() }
+      store.lastBadgeCount = -1
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'new_posts',
+            badge: '5',
+            modtools: 'false',
+            route: '/browse',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        mockBadge
+      )
+
+      // data.count is set from parseInt(data.badge) inside handleNotification
+      expect(mockBadge.set).toHaveBeenCalledWith({ count: 5 })
+      logSpy.mockRestore()
+    })
+
+    // A regular chat push in the foreground should still refresh chats
+    // (regression guard — verifies the channel_id guard is specific to new_posts).
+    it('still refreshes chats for a foreground chat_messages push', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'chat_messages',
+            foreground: true,
+            badge: '2',
+            modtools: '0',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('handleNotification duplicate-navigation guard', () => {
+    it('skips router.push when already on the target chat route', async () => {
+      // AssertFlip: before the fix, router.currentRoute.path is accessed directly
+      // on the Vue Router 4 Ref — which is undefined — so the guard never fires
+      // and push is always called. After fix, router.currentRoute.value.path is
+      // used and the guard correctly prevents redundant navigation.
+      vi.stubGlobal('useRouter', () => ({
+        push: mockRouterPush,
+        currentRoute: { value: { path: '/chats/12345' } },
+      }))
+
+      vi.mock('@capacitor/app', () => ({
+        App: { getState: () => Promise.resolve({ isActive: false }) },
+      }))
+
+      const store = useMobileStore()
+      store.config = { public: {} }
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          okToMove: true,
+          data: {
+            channel_id: 'chat_messages',
+            badge: '0',
+            modtools: '0',
+            route: '/chats/12345',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockRouterPush).not.toHaveBeenCalled()
+
+      // Restore default mock for subsequent tests.
+      vi.stubGlobal('useRouter', () => ({
+        push: mockRouterPush,
+        currentRoute: { value: { path: '/' } },
+      }))
       logSpy.mockRestore()
     })
   })

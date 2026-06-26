@@ -53,19 +53,16 @@ class ArchiveProfileImagesCommand extends Command
         // Delete orphan rows (userid IS NULL) one at a time by primary key.
         // Per-row deletion avoids Galera gap-lock issues on a large WHERE-driven
         // single-statement DELETE — the same pattern used by EngageUpdateService.
-        $orphanIds = DB::table('users_images')
-            ->whereNull('userid')
-            ->orderBy('id')
-            ->pluck('id');
-
+        // Stream ids in keyset-paginated chunks rather than pluck()-ing every orphan
+        // row id into memory at once; deletes only fall behind the cursor, so safe.
         $orphansDeleted = 0;
 
-        foreach ($orphanIds as $id) {
+        foreach (DB::table('users_images')->whereNull('userid')->lazyById(1000) as $row) {
             if ($dryRun) {
                 $orphansDeleted++;
                 continue;
             }
-            DB::table('users_images')->where('id', $id)->delete();
+            DB::table('users_images')->where('id', $row->id)->delete();
             $orphansDeleted++;
         }
 

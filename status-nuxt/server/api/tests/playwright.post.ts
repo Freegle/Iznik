@@ -407,8 +407,27 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
   }
 }
 
+// Once Playwright prints its final summary line ("N passed (12.3m)") the result
+// is known and every test has finished. If the process then doesn't exit within
+// this window we stop waiting for a clean teardown and kill it: a hung teardown
+// (lingering browser context / webServer / coverage write) otherwise leaves the
+// process alive but idle, which idles the whole CI VM until Katapult reaps the
+// job as `infrastructure_fail`. 90s comfortably covers a normal teardown +
+// monocart coverage write, so clean runs are never affected.
+const TEARDOWN_GRACE_MS = 90_000
+
 function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
   return new Promise((resolve) => {
+    let settled = false
+    let graceTimer: NodeJS.Timeout | null = null
+
+    const finish = (code: number) => {
+      if (settled) return
+      settled = true
+      if (graceTimer) clearTimeout(graceTimer)
+      resolve(code ?? 1)
+    }
+
     const proc = spawn('sh', ['-c', `
       docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && ${cmd} 2>&1"
     `], { stdio: 'pipe' })
@@ -417,6 +436,23 @@ function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
       const text = data.toString()
       appendTestLogs('playwright', text)
       parsePlaywrightOutput(text)
+
+      // Tests are done once the summary line appears ("N passed (time)" /
+      // "N failed (time)"). Arm a one-shot timer; if Playwright doesn't exit
+      // cleanly within the grace window, record the parsed result and kill it.
+      if (!graceTimer && /\b\d+\s+(passed|failed|flaky|skipped)\b[^\n]*\(/.test(getTestState('playwright').logs || '')) {
+        graceTimer = setTimeout(() => {
+          appendTestLogs('playwright', `\n[force-exit] Tests finished but Playwright did not exit within ${TEARDOWN_GRACE_MS / 1000}s — recording the result and killing it (avoids idling the CI VM into infrastructure_fail).\n`)
+          // Best-effort kill of the hung process inside the container; the next
+          // run restarts the container anyway, so a lingering pid is harmless.
+          try {
+            execSync(`docker exec ${pfx}-playwright sh -c "pkill -9 -f playwright || true"`, { timeout: 10000 })
+          } catch {}
+          try { proc.kill('SIGKILL') } catch {}
+          const st = getTestState('playwright')
+          finish(st.progress.failed > 0 ? 1 : 0)
+        }, TEARDOWN_GRACE_MS)
+      }
     })
 
     proc.stderr.on('data', (data) => {
@@ -424,12 +460,12 @@ function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
     })
 
     proc.on('close', (code) => {
-      resolve(code ?? 1)
+      finish(code ?? 1)
     })
 
     proc.on('error', (error) => {
       appendTestLogs('playwright', `Spawn error: ${error.message}\n`)
-      resolve(1)
+      finish(1)
     })
   })
 }

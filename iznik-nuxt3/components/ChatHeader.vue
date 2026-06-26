@@ -300,7 +300,7 @@
           @confirm="hide"
           @hidden="showChatReport = false"
         />
-        <ProfileModal
+        <LazyProfileModal
           v-if="showProfileModal"
           :id="otheruser.id"
           close-on-message
@@ -345,10 +345,6 @@ const UserRatings = defineAsyncComponent(() =>
 const ChatReportModal = defineAsyncComponent(() =>
   import('~/components/ChatReportModal')
 )
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
-
 const props = defineProps({
   id: {
     type: Number,

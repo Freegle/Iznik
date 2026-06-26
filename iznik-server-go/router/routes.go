@@ -25,6 +25,7 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/browse"
 	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
@@ -58,6 +59,7 @@ import (
 	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
 	"github.com/freegle/iznik-server-go/session"
@@ -73,6 +75,7 @@ import (
 	"github.com/freegle/iznik-server-go/team"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/userdump"
 	"github.com/freegle/iznik-server-go/visualise"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
@@ -103,6 +106,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Accept json
 		// @Produce json
 		rg.Post("/abtest", abtest.PostABTest)
+
+		// Browse-feed scroll depth: record how far down the feed a session scrolled.
+		// @Router /scrolldepth [post]
+		// @Summary Record browse-feed scroll depth
+		// @Description One row per browse session (furthest feed position reached); no login required
+		// @Tags browse
+		// @Accept json
+		// @Produce json
+		rg.Post("/scrolldepth", browse.RecordScrollDepth)
 
 		// Message Activity
 		// @Router /activity [get]
@@ -208,6 +220,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/admin/ai-images/:id/regenerate", aiimage.Regenerate)
 		rg.Post("/admin/ai-images/:id/accept", aiimage.Accept)
 		rg.Post("/admin/ai-images/:id/keep", aiimage.KeepCurrent)
+		rg.Post("/admin/ai-images/:id/suppress", aiimage.Suppress)
 
 		// Authority Search
 		// @Router /authority [get]
@@ -276,6 +289,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {array} chat.ChatMessage
 		rg.Get("/chat/:id/message", chat.GetChatMessages)
+
+		// @Router /chat/{id}/commongroups [get]
+		// @Summary Groups in common between the two chat participants
+		// @Tags chat
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Security BearerAuth
+		// @Success 200 {array} chat.CommonGroup
+		rg.Get("/chat/:id/commongroups", chat.GetCommonGroups)
 
 		// Create Chat Message
 		// @Router /chat/{id}/message [post]
@@ -508,6 +530,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Param key path string true "Configuration key"
 		// @Success 200 {object} config.ConfigItem
 		rg.Get("/config/:key", config.Get)
+
+		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
+		ripplingAdmin := rg.Group("/rippling")
+		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
+		ripplingAdmin.Get("/metrics", rippling.Metrics)
 
 		// Create a protected route group for admin endpoints
 		adminConfig := rg.Group("/config/admin")
@@ -837,6 +864,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Param ids path string true "Message IDs (comma separated)"
 		// @Success 200 {array} message.Message
 		// @Failure 404 {object} fiber.Error "Message not found"
+		// Actual rippling-out progress of a post, for the moderation reach map to compare
+		// against the expected/projected reach. Mod-of-group only.
+		// @Router /message/{id}/reach [get]
+		// @Summary Actual rippling-out progress of a post (moderation)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Success 200 {object} message.ReachResponse
+		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
+		rg.Get("/message/:id/reach", message.Reach)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen
@@ -1263,6 +1301,29 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/clicks", emailtracking.TopClickedLinks)
 
+		// Digest Click Positions (authenticated, admin only)
+		// @Router /email/stats/digestpositions [get]
+		// @Summary Get digest click-through rate by post position
+		// @Description Returns click-through rate per post position within unified digests, for analysing how position affects engagement
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Param type query string false "Email type filter (default: all UnifiedDigest* types)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
+
+		// Browse-feed scroll-depth curve for the sysadmin "Scrolling" tab (Support/Admin).
+		// @Router /modtools/scroll/depth [get]
+		// @Summary Browse-feed scroll-depth curve
+		// @Description For each feed position N, the fraction of sessions that scrolled at least N deep
+		// @Tags browse
+		// @Produce json
+		rg.Get("/modtools/scroll/depth", browse.ScrollDepthCurve)
+
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
 		// @Summary Get email tracking for a user
@@ -1636,6 +1697,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} systemlogs.CountsResponse
 		systemLogsGroup.Get("/counts", systemlogs.GetLogCounts)
+
+		// User support data dump (Support/Admin only) — streams a per-user SQLite
+		// database of every user-linked table plus their Loki logs and Sentry issues.
+		rg.Get("/modtools/user/:id/dump", userdump.GetUserDump)
 	}
 
 	// Delivery routes (public - no auth required for email client access)
@@ -1675,6 +1740,33 @@ func SetupRoutes(app *fiber.App) {
 	// @Param s query integer false "Scroll percentage"
 	// @Success 302 {string} string "Redirect"
 	delivery.Get("/i/:id", emailtracking.Image)
+
+	// Compact redirect — reconstructs an internal destination from type+id.
+	// MORE path segments than /r/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/r/{ref}/{type}/{idenc}/{pos} [get]
+	// @Summary Compact delivery redirect
+	// @Description Reconstructs an internal destination URL from type+id and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (m, s, g)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect"
+	delivery.Get("/r/:ref/:type/:idenc/:pos", emailtracking.ClickCompact)
+
+	// Compact image — reconstructs a delivery URL from type+id+preset.
+	// MORE path segments than /i/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} [get]
+	// @Summary Compact delivery image
+	// @Description Reconstructs an image delivery URL from type+id+preset and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (t, u)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param preset path int true "Dimension preset (0,1,2)"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect to image"
+	delivery.Get("/i/:ref/:type/:idenc/:preset/:pos", emailtracking.ImageCompact)
 
 	// Note: MDN read receipts come as emails and are processed by the incoming mail handler.
 	// The emailtracking.RecordMDNOpen() function can be called via internal API.
@@ -1756,4 +1848,38 @@ func SetupRoutes(app *fiber.App) {
 	// @Param body body object true "Message body with 'message' field"
 	// @Success 200 {object} amp.ReplyResponse
 	ampGroup.Post("/chat/:id/reply", amp.PostChatReply)
+
+	// Post reply to a digest-email post (immediate-mode UnifiedDigest)
+	// @Router /amp/digest/{id}/reply [post]
+	// @Summary Post reply to digest email post
+	// @Description Submits an inline reply to a post from an immediate-digest email; opens/finds a chat with the poster
+	// @Tags AMP
+	// @Accept json
+	// @Produce json
+	// @Param id path int true "Message ID (the post being replied to)"
+	// @Param rt query string true "Token (HMAC)"
+	// @Param uid query int true "User ID"
+	// @Param exp query int true "Token expiry timestamp"
+	// @Param tid query int false "Email tracking ID for analytics"
+	// @Param body body object true "Message body with 'message' field"
+	// @Success 200 {object} amp.ReplyResponse
+	ampGroup.Post("/digest/:id/reply", amp.PostDigestReply)
+
+	// Shared digest reply — identity (mid/rt/exp/uid) and message come from the
+	// FORM BODY, so one <amp-form> in the digest template replies to any post.
+	// Fewer path segments than /digest/:id/reply, so it's a distinct route.
+	// @Router /amp/digest/reply [post]
+	// @Summary Post reply to digest email post (shared form)
+	// @Description Submits an inline reply to a digest-email post; identity in the body
+	// @Tags AMP
+	// @Accept x-www-form-urlencoded
+	// @Produce json
+	// @Param mid formData int true "Message ID (the post being replied to)"
+	// @Param rt formData string true "Token (HMAC)"
+	// @Param uid formData int true "User ID"
+	// @Param exp formData int true "Token expiry timestamp"
+	// @Param tid formData int false "Email tracking ID for analytics"
+	// @Param message formData string true "Reply text"
+	// @Success 200 {object} amp.ReplyResponse
+	ampGroup.Post("/digest/reply", amp.PostDigestReplyShared)
 }

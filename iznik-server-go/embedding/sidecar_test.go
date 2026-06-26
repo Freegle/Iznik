@@ -11,7 +11,9 @@ import (
 )
 
 func TestEmbedQuerySuccess(t *testing.T) {
-	// Create a mock sidecar that returns a valid embedding
+	ResetQueryCache()
+	t.Cleanup(ResetQueryCache)
+
 	vec := make([]float32, EmbeddingDim)
 	for i := range vec {
 		vec[i] = float32(i) * 0.001
@@ -44,6 +46,9 @@ func TestEmbedQuerySuccess(t *testing.T) {
 }
 
 func TestEmbedQueryServerError(t *testing.T) {
+	ResetQueryCache()
+	t.Cleanup(ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		w.Write([]byte(`{"error":"model not loaded"}`))
@@ -60,6 +65,9 @@ func TestEmbedQueryServerError(t *testing.T) {
 }
 
 func TestEmbedQueryEmptyEmbeddings(t *testing.T) {
+	ResetQueryCache()
+	t.Cleanup(ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := embedResponse{Embeddings: [][]float32{}}
 		w.Header().Set("Content-Type", "application/json")
@@ -77,7 +85,9 @@ func TestEmbedQueryEmptyEmbeddings(t *testing.T) {
 }
 
 func TestEmbedQueryConnectionError(t *testing.T) {
-	// Start and immediately close to get a guaranteed-refused port
+	ResetQueryCache()
+	t.Cleanup(ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := server.URL
 	server.Close()
@@ -92,6 +102,9 @@ func TestEmbedQueryConnectionError(t *testing.T) {
 }
 
 func TestEmbedQueryBadJSON(t *testing.T) {
+	ResetQueryCache()
+	t.Cleanup(ResetQueryCache)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`not json`))

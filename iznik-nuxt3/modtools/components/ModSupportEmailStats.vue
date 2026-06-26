@@ -248,9 +248,10 @@
         <!-- Show note when filtering by a type that doesn't use AMP -->
         <div v-if="!isAmpCapableType" class="alert alert-info">
           AMP comparison is not available for "{{ emailTypeLabel }}" emails
-          because they are not sent using AMP. Only Chat Notification emails
-          currently use AMP. Select "All Types" or "Chat Notification" to see
-          AMP statistics.
+          because they are not sent using AMP. Only Chat Notification and
+          Digest (Immediate / Daily) emails currently use AMP. Select "All
+          Types", "Chat Notification", "Digest (Immediate)", or "Digest
+          (Daily)" to see AMP statistics.
         </div>
 
         <!-- Show note when AMP type selected but no data in period -->
@@ -711,7 +712,9 @@ const emailTypeOptions = [
     value: 'ChatNotificationMod2Mod',
   },
   { text: 'Welcome', value: 'WelcomeMail' },
-  { text: 'Digest', value: 'UnifiedDigest' },
+  // UnifiedDigest emails are tagged per mode: immediate vs daily.
+  { text: 'Digest (Immediate)', value: 'UnifiedDigestImmediate' },
+  { text: 'Digest (Daily)', value: 'UnifiedDigestDaily' },
   { text: 'Donation Thank You', value: 'DonationThank' },
   { text: 'Donation Ask', value: 'DonationAsk' },
 ]
@@ -748,8 +751,14 @@ const formattedStats = computed(() => {
   }
 })
 
-// Email types that are sent using AMP.
-const ampCapableTypes = ['', 'ChatNotification']
+// Email types that are sent using AMP. The unified digest (both immediate and
+// daily) and ChatNotification all go through the AmpEmail trait.
+const ampCapableTypes = [
+  '',
+  'ChatNotification',
+  'UnifiedDigestImmediate',
+  'UnifiedDigestDaily',
+]
 
 const isAmpCapableType = computed(() => {
   return ampCapableTypes.includes(emailType.value)

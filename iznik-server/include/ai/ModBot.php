@@ -75,15 +75,9 @@ class ModBot extends Entity
                 $createMicrovolunteering = FALSE; // Force disable microvolunteering when no mod rights
             }
             
-            // 3) Get the rules JSON object from the group rules property
-            $groupId = $groups[0]['groupid']; // Use first group for rules
-            $g = Group::get($this->dbhr, $this->dbhm, $groupId);
-            $groupData = $g->getPublic();
-            $rules = json_decode($groupData['rules'], TRUE);
-            
-            if (!$rules) {
-                $rules = [];
-            }
+            // 3) Merge rules from ALL groups the post belongs to.
+            // For multi-group posts: if any group has a rule enabled, enforce it.
+            $rules = $this->getMergedRulesForGroups($groups);
             
             // 4) Construct a prompt to detect whether or not the post breaches the rule
             $prompt = $this->constructRulePrompt($subject, $body, $rules);
@@ -426,6 +420,28 @@ class ModBot extends Entity
         }
     }
     
+    /**
+     * Merge rules from an array of group rows (each with 'groupid').
+     * Returns a rules map where any rule enabled on any group is included.
+     */
+    public function getMergedRulesForGroups(array $groups): array
+    {
+        $rules = [];
+        foreach ($groups as $groupRow) {
+            $g = Group::get($this->dbhr, $this->dbhm, $groupRow['groupid']);
+            $groupData = $g->getPublic();
+            $groupRules = json_decode($groupData['rules'], TRUE);
+            if (is_array($groupRules)) {
+                foreach ($groupRules as $rule => $enabled) {
+                    if ($enabled) {
+                        $rules[$rule] = TRUE;
+                    }
+                }
+            }
+        }
+        return $rules;
+    }
+
     public function getRuleDescriptions()
     {
         return [

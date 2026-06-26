@@ -178,6 +178,59 @@ describe('useModMe checkWork beep behavior', () => {
   })
 })
 
+describe('useModMe re-login behavior', () => {
+  it('spurious beep on re-login when isFirstCheckWork not reset (bug confirmation)', async () => {
+    // First checkWork establishes baseline; isFirstCheckWork → false after this
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+    expect(mockAudioPlay).not.toHaveBeenCalled() // baseline, no beep
+
+    // Simulate re-login where all prior work was handled (login returns 0 items).
+    // This mirrors the scenario where a user logs out after clearing their queue,
+    // then new items arrive before the first post-login checkWork fires fetchMe.
+    globalThis.__mockAuthStore.work = { total: 0 }
+
+    // fetchMe returns 3 new arrivals — these appeared since the login moment
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    await checkWork(true)
+
+    // BUG: spurious beep fires because isFirstCheckWork was stale-false.
+    // currentTotal=0 (work at login time), totalCount=3 (new arrivals), 3 > 0 → beep.
+    expect(mockAudioPlay).toHaveBeenCalledOnce()
+  })
+
+  it('no spurious beep on re-login when resetCheckWork is called first', async () => {
+    // First checkWork establishes baseline
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork, resetCheckWork } = useModMe()
+    await checkWork(true)
+    expect(mockAudioPlay).not.toHaveBeenCalled()
+
+    // Re-login with 0 items at login time (all prior work handled)
+    globalThis.__mockAuthStore.work = { total: 0 }
+
+    // FIX: resetCheckWork() so the next checkWork treats this as the first call
+    // (establishes a new baseline, like a fresh page load) — prevents spurious beep
+    resetCheckWork()
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    await checkWork(true)
+
+    // FIXED: no spurious beep — isFirstCheckWork reset means skipBeep=true for this call
+    expect(mockAudioPlay).not.toHaveBeenCalled()
+  })
+})
+
 describe('useModMe document.title refresh after mod action', () => {
   it('clears title count when checkWork is called after mod action while modal is open', async () => {
     const { useModMe } = await import('~/modtools/composables/useModMe')

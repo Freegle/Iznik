@@ -17,8 +17,15 @@ export interface PolicyConfig {
 }
 
 const DEFAULT_HAIKU = 'claude-haiku-4-5-20251001'
-const DEFAULT_SONNET = 'sonnet' // subscription default resolves to current Sonnet
-const DEFAULT_OPUS = 'claude-opus-4-7'
+// Division of labour: the BRAIN (Opus 4.8) does the hard reasoning — triage and
+// DIAGNOSE_BUG produce a detailed brief (rootCause, affected_function, evidence,
+// testStrategy). The DELEGATE (Sonnet) only IMPLEMENTS that brief — writes the
+// failing test, applies the fix — which it does well and far more cheaply.
+// The wrong-diagnosis PRs (#581/#582/#585) were a DIAGNOSIS failure, now guarded
+// by the working-as-designed check in DIAGNOSE_BUG — not a reason to run the
+// implementation delegate on Opus.
+const DEFAULT_SONNET = 'sonnet' // delegate / implementation
+const DEFAULT_OPUS = 'claude-opus-4-8' // brain (diagnosis) + adversarial review
 
 export const DEFAULT_POLICY: PolicyConfig = {
   haikuModel: process.env.MONITOR_HAIKU_MODEL || DEFAULT_HAIKU,

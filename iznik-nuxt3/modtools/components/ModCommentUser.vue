@@ -6,14 +6,17 @@
         <v-icon icon="envelope" /> <ExternalLink :href="'mailto:' + email">{{ email }}</ExternalLink>
       </div>
       <div>
-        <ProfileImage
-          :image="comment.user.profile?.turl || comment.user.profile?.paththumb"
-          :name="comment.user.displayname"
-          class="ms-1 mb-1 inline"
-          is-thumbnail
-          size="sm"
-        />
-        {{ comment.user.displayname }}
+        <!-- eslint-disable-next-line -->
+        <nuxt-link :to="'/members/approved/' + (comment.groupid || 0) + '/' + comment.userid">
+          <ProfileImage
+            :image="comment.user.profile?.turl || comment.user.profile?.paththumb"
+            :name="comment.user.displayname"
+            class="ms-1 mb-1 inline"
+            is-thumbnail
+            size="sm"
+          />
+          {{ comment.user.displayname }}
+        </nuxt-link>
       </div>
       <div v-if="comment.user.lastaccess">
         <v-icon icon="calendar-alt" /> Active

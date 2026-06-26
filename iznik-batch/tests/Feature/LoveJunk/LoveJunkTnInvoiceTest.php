@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\LoveJunk;
 
+use App\Services\EmailSpoolerService;
 use App\Services\LoveJunkInvoiceService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Mockery;
 use Tests\TestCase;
 
 class LoveJunkTnInvoiceTest extends TestCase
@@ -42,6 +44,43 @@ class LoveJunkTnInvoiceTest extends TestCase
     {
         $this->artisan('lovejunk:send-tn-invoice', ['--period' => '2020-01', '--dry-run' => true])
             ->assertExitCode(0);
+    }
+
+    public function test_invoice_email_uses_current_registered_name(): void
+    {
+        // Our registered name is "Freegle" (formerly "Freegle Limited"/"Freegle Ltd").
+        // The invoice template must use the current name.
+        $html = view('emails.mjml.lovejunk.tn-invoice', [
+            'tnAmount'      => '250.00',
+            'start'         => '2020-01-01',
+            'end'           => '2020-02-01',
+            'tnPercent'     => 50,
+            'treasurerAddr' => 'treasurer@example.com',
+            'email'         => 'partner@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('raise an invoice on Freegle for', $html);
+        $this->assertStringNotContainsString('Freegle Ltd', $html);
+        $this->assertStringNotContainsString('Freegle Limited', $html);
+    }
+
+    public function test_preheader_contains_amount_and_period(): void
+    {
+        // The mj-preview should carry the invoice amount and date range so the
+        // inbox preview line is informative rather than generic.
+        $html = view('emails.mjml.lovejunk.tn-invoice', [
+            'tnAmount'      => '375.50',
+            'start'         => '2025-03-01',
+            'end'           => '2025-04-01',
+            'tnPercent'     => 60,
+            'treasurerAddr' => 'treasurer@example.com',
+            'email'         => 'partner@example.com',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Please raise a LoveJunk invoice for £375.50 (2025-03-01 to 2025-04-01)</mj-preview>',
+            $html
+        );
     }
 
     public function test_dry_run_does_not_send_email(): void
@@ -143,6 +182,54 @@ class LoveJunkTnInvoiceTest extends TestCase
         $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
 
         $this->assertSame(0, $result['tn']);
+    }
+
+    public function test_does_not_send_when_recipient_not_configured(): void
+    {
+        // Regression: with no tn_invoice_addr configured the command logged
+        // "Invoice email sent." but actually spooled nothing (the silent gap
+        // that meant the May 2026 invoice never reached TrashNothing).
+        config(['freegle.mail.tn_invoice_addr' => '']);
+
+        $spooler = Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldNotReceive('spool');
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', false);
+
+        $this->assertFalse($result['sent']);
+        $this->assertNull($result['recipient']);
+    }
+
+    public function test_sends_to_configured_recipient(): void
+    {
+        config(['freegle.mail.tn_invoice_addr' => 'partner@example.com']);
+
+        $spooler = Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->once();
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', false);
+
+        $this->assertTrue($result['sent']);
+        $this->assertSame('partner@example.com', $result['recipient']);
+    }
+
+    public function test_command_fails_when_recipient_not_configured(): void
+    {
+        config(['freegle.mail.tn_invoice_addr' => '']);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $this->artisan('lovejunk:send-tn-invoice', ['--period' => '2020-01'])
+            ->assertExitCode(1);
     }
 
     public function test_deduplicates_by_subject(): void

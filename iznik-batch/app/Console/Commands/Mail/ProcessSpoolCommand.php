@@ -75,6 +75,20 @@ class ProcessSpoolCommand extends Command
         $this->registerShutdownHandlers();
         $this->info('Running in daemon mode. Press Ctrl+C to stop.');
 
+        // Reclaim any files orphaned in sending/ by a previous process that
+        // died mid-send (supervisor restart / OOM / container restart). The
+        // spooler is single-process (numprocs=1) so nothing is in flight at
+        // startup — this is race-free and lossless. Only done on the daemon
+        // path, never the one-shot path (which could race a running daemon).
+        $reclaimed = $spooler->reclaimOrphanedSending();
+        if ($reclaimed > 0) {
+            $this->line(sprintf(
+                '[%s] Reclaimed %d orphaned spool file(s) from sending/ on startup',
+                now()->toTimeString(),
+                $reclaimed
+            ));
+        }
+
         while (! $this->shouldStop()) {
             $stats = $spooler->processSpool($limit);
 

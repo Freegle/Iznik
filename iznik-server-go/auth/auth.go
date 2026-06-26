@@ -39,11 +39,17 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 	persistent := c.Get("Authorization2")
 
 	if id == 0 && len(persistent) > 0 {
-		// parse persistent token
-		var persistentToken PersistentToken
-		_ = json2.Unmarshal([]byte(persistent), &persistentToken)
+		// Use a minimal struct so that old-format tokens whose Series field was
+		// serialised as a JSON string ("12345") don't cause json.Unmarshal to
+		// return a type-error that zeroes out the parsed ID.  id+token is a
+		// sufficient authenticator without Series.
+		var minPT struct {
+			ID    uint64 `json:"id"`
+			Token string `json:"token"`
+		}
+		_ = json2.Unmarshal([]byte(persistent), &minPT)
 
-		if (persistentToken.ID > 0) && (persistentToken.Series > 0) && (persistentToken.Token != "") {
+		if minPT.ID > 0 && minPT.Token != "" {
 			// Verify token against sessions table
 			db := database.DBConn
 
@@ -52,7 +58,7 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 			}
 
 			var userids []Userid
-			db.Raw("SELECT userid FROM sessions WHERE id = ? AND series = ? AND token = ? LIMIT 1;", persistentToken.ID, persistentToken.Series, persistentToken.Token).Scan(&userids)
+			db.Raw("SELECT userid FROM sessions WHERE id = ? AND token = ? LIMIT 1;", minPT.ID, minPT.Token).Scan(&userids)
 
 			if len(userids) > 0 {
 				id = userids[0].Userid
@@ -271,15 +277,26 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 
-	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
+	// Read the new session id from the INSERT's LastInsertId on the write
+	// connection. A "SELECT id ... WHERE userid ORDER BY id DESC LIMIT 1" here is
+	// routed to a read replica by the read/write split and, under Galera's
+	// cross-node apply window, can return the user's PREVIOUS session - so the
+	// persistent token/JWT would carry the wrong session id (cf. message create,
+	// Discourse 9832). db.DB() returns the source even with dbresolver registered.
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, "", fmt.Errorf("database error: %w", err)
+	}
+	res, err := sqlDB.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
 		userID, series, token)
-
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&sessionID)
-
-	if sessionID == 0 {
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create session: %w", err)
+	}
+	lastID, err := res.LastInsertId()
+	if err != nil || lastID <= 0 {
 		return nil, "", fmt.Errorf("failed to create session")
 	}
+	sessionID := uint64(lastID)
 
 	persistent := map[string]interface{}{
 		"id":     sessionID,

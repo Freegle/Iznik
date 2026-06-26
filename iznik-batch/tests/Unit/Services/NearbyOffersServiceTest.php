@@ -7,6 +7,7 @@ use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
 use App\Services\NearbyOffersService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class NearbyOffersServiceTest extends TestCase
@@ -135,6 +136,63 @@ class NearbyOffersServiceTest extends TestCase
             $offer = $result->first();
             $this->assertStringNotContainsString('OFFER:', $offer['subject']);
         }
+    }
+
+    /**
+     * Invoke the private nearbyMessageIds() so we can assert the spatial-server
+     * response handling directly (it has no observable effect on the public API
+     * because the caller also falls back when the id list is short).
+     */
+    private function callNearbyMessageIds(float $lat, float $lng, int $limit): ?array
+    {
+        $method = new \ReflectionMethod(NearbyOffersService::class, 'nearbyMessageIds');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->service, $lat, $lng, $limit);
+    }
+
+    public function test_malformed_spatial_response_is_treated_as_unavailable(): void
+    {
+        // 2xx but no "results" array — a protocol violation, not "no results".
+        // Must return null so the caller falls back to the MySQL bounding box
+        // rather than silently proceeding with an empty id list.
+        Http::fake([
+            '*/v1/messages/knn*' => Http::response(['unexpected' => 'shape'], 200),
+        ]);
+
+        $this->assertNull($this->callNearbyMessageIds(51.5074, -0.1278, 30));
+    }
+
+    public function test_valid_empty_spatial_response_returns_empty_array(): void
+    {
+        // A well-formed empty result is a legitimate "nothing nearby" answer,
+        // distinct from an unavailable/malformed server (which returns null).
+        Http::fake([
+            '*/v1/messages/knn*' => Http::response(['results' => []], 200),
+        ]);
+
+        $this->assertSame([], $this->callNearbyMessageIds(51.5074, -0.1278, 30));
+    }
+
+    public function test_valid_spatial_response_returns_ids(): void
+    {
+        Http::fake([
+            '*/v1/messages/knn*' => Http::response(
+                ['results' => [['id' => 11], ['id' => 22], ['id' => 33]]],
+                200
+            ),
+        ]);
+
+        $this->assertSame([11, 22, 33], $this->callNearbyMessageIds(51.5074, -0.1278, 30));
+    }
+
+    public function test_spatial_server_error_status_returns_null(): void
+    {
+        Http::fake([
+            '*/v1/messages/knn*' => Http::response('boom', 500),
+        ]);
+
+        $this->assertNull($this->callNearbyMessageIds(51.5074, -0.1278, 30));
     }
 
     /**

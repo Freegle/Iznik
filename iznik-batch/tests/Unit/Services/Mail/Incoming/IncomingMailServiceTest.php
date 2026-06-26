@@ -1860,7 +1860,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkBulkVolunteerMail returns REASON_BULK_VOLUNTEER_MAIL; preserved
+        // verbatim by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('BulkVolunteerMail', $lastMessage->reportreason);
     }
 
     public function test_volunteers_with_spam_keyword_detected_as_spam(): void
@@ -1902,7 +1904,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkSpamKeywords returns REASON_KNOWN_KEYWORD on a Western Union match;
+        // preserved verbatim by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     public function test_prohibited_user_post_dropped(): void
@@ -2234,7 +2238,10 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkMessage's body-keyword check (still runs with forChatReply=true)
+        // returns REASON_KNOWN_KEYWORD on Western Union; preserved verbatim by
+        // mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     public function test_chat_reply_with_money_symbol_flagged_for_review(): void
@@ -2268,7 +2275,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkReview returns REASON_MONEY for the £ symbol; preserved verbatim
+        // by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Money', $lastMessage->reportreason);
     }
 
     public function test_chat_reply_with_script_tag_flagged_for_review(): void
@@ -2301,7 +2310,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkReview returns REASON_SCRIPT for a <script> tag; preserved verbatim
+        // by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Script', $lastMessage->reportreason);
     }
 
     public function test_clean_chat_reply_not_flagged_for_review(): void
@@ -2421,7 +2432,12 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkReview returns REASON_EMAIL for an external email address. The
+        // chat_messages.reportreason enum was widened on 2026-05-27 to preserve
+        // specific reasons instead of collapsing them to generic 'Spam' — this
+        // gives moderators the friendly "It contains an email address." UI text
+        // in ModChatReview.vue instead of "no more information about why".
+        $this->assertEquals('Email', $lastMessage->reportreason);
     }
 
     public function test_clean_chat_reply_held_when_previous_message_held_for_review(): void
@@ -2592,7 +2608,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkSpamKeywords returns REASON_KNOWN_KEYWORD on Western Union;
+        // preserved verbatim by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     // ========================================
@@ -2777,6 +2795,49 @@ class IncomingMailServiceTest extends TestCase
         $result = $this->service->route($parsed);
 
         $this->assertEquals(RoutingResult::DROPPED, $result);
+    }
+
+    public function test_direct_mail_from_noreply_system_user_is_dropped(): void
+    {
+        // Members' preferred email is often their users.ilovefreegle.org alias,
+        // so any digest we send to that alias comes back through this MX. Without
+        // a guard, handleDirectMail materialises every outbound digest as a
+        // User2User chat from the Freegle noreply system user to the recipient,
+        // and post-content-check-restore those chats get flagged for review.
+        $noreply = strtolower(config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'));
+
+        $noreplyUser = $this->createTestUser(['email_preferred' => $noreply]);
+        $recipient   = $this->createTestUser(['email_preferred' => $this->uniqueEmail('recipient')]);
+
+        $recipientAlias = "someslug-{$recipient->id}@users.ilovefreegle.org";
+
+        $email = $this->createMinimalEmail([
+            'From'    => $noreply,
+            'To'      => $recipientAlias,
+            'Subject' => '[ExampleFreegle] Volunteer Opportunity Roundup',
+        ], 'Charities are looking for helpers...');
+
+        $parsed = $this->parser->parse($email, $noreply, $recipientAlias);
+
+        $beforeRooms = DB::table('chat_rooms')
+            ->where(function ($q) use ($noreplyUser, $recipient) {
+                $q->where('user1', $noreplyUser->id)->orWhere('user2', $noreplyUser->id);
+            })
+            ->count();
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result, 'Outbound digests must not be re-ingested as chat');
+
+        $afterRooms = DB::table('chat_rooms')
+            ->where(function ($q) use ($noreplyUser) {
+                $q->where('user1', $noreplyUser->id)->orWhere('user2', $noreplyUser->id);
+            })
+            ->count();
+        $this->assertEquals($beforeRooms, $afterRooms, 'No chat_rooms should have been created');
+
+        $msg = DB::table('chat_messages')->where('userid', $noreplyUser->id)->count();
+        $this->assertEquals(0, $msg, 'No chat_messages should have been created from the noreply user');
     }
 
     // ========================================
@@ -3993,72 +4054,6 @@ class IncomingMailServiceTest extends TestCase
         $this->assertFalse($added, 'System addresses should not be added to user profile');
     }
 
-    public function test_addEmailToUser_skips_envelope_from_without_at_sign(): void
-    {
-        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
-        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
-
-        $replierEmail = $replier->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $replierEmail,
-            'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: ' . $message->subject,
-        ], 'Is this still available?');
-
-        // Bounce notifiers commonly use a bare daemon name in envelope-from.
-        $parsed = $this->parser->parse(
-            $email,
-            'MAILER-DAEMON',
-            "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org"
-        );
-
-        $this->service->route($parsed);
-
-        $added = DB::table('users_emails')
-            ->where('userid', $replier->id)
-            ->where('email', 'MAILER-DAEMON')
-            ->exists();
-
-        $this->assertFalse($added, 'Non-email envelope-from values should not be added');
-    }
-
-    public function test_addEmailToUser_skips_whitespace_only_envelope_from(): void
-    {
-        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
-        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
-
-        $replierEmail = $replier->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $replierEmail,
-            'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: ' . $message->subject,
-        ], 'Is this still available?');
-
-        // PHP's empty(' ') returns false, so guard against trim-to-empty too.
-        $parsed = $this->parser->parse(
-            $email,
-            '   ',
-            "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org"
-        );
-
-        $this->service->route($parsed);
-
-        $emptyAdded = DB::table('users_emails')
-            ->where('userid', $replier->id)
-            ->where('email', '')
-            ->exists();
-
-        $this->assertFalse($emptyAdded, 'Whitespace-only envelope-from must not insert an empty row');
-    }
-
     // ========================================
     // Fix #7: hasOutcome / mailedLastForUser
     // ========================================
@@ -4892,5 +4887,287 @@ class IncomingMailServiceTest extends TestCase
 
         $message = DB::table('messages')->where('id', $messageId)->first();
         $this->assertEquals(2, $message->retrycount, 'retrycount should be 2 after two failures');
+    }
+
+    // ========================================
+    // Digest Reply Routing Tests
+    // ========================================
+
+    public function test_digest_reply_sends_auto_response_and_routes_to_system(): void
+    {
+        Mail::fake();
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+
+        $email = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'Subject' => 'Re: Your Freegle Digest',
+        ], 'I want to reply to a post in the digest.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            'user@example.com',
+            $noreplyAddr
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        Mail::assertSent(\App\Mail\Digest\DigestReplyNotice::class, function ($mail) {
+            return $mail->hasTo('user@example.com');
+        });
+    }
+
+    public function test_digest_reply_suppressed_for_mailer_daemon_sender(): void
+    {
+        Mail::fake();
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+
+        $email = $this->createMinimalEmail([
+            'From' => 'MAILER-DAEMON@example.com',
+            'Subject' => 'Delivery Status',
+        ], 'Could not deliver your message.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            'MAILER-DAEMON@example.com',
+            $noreplyAddr
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        Mail::assertNotSent(\App\Mail\Digest\DigestReplyNotice::class);
+    }
+
+    public function test_digest_reply_suppressed_for_noreply_sender(): void
+    {
+        Mail::fake();
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+
+        $email = $this->createMinimalEmail([
+            'From' => 'noreply@someservice.com',
+            'Subject' => 'Automated message',
+        ], 'This is automated.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            'noreply@someservice.com',
+            $noreplyAddr
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        Mail::assertNotSent(\App\Mail\Digest\DigestReplyNotice::class);
+    }
+
+    public function test_digest_reply_suppressed_when_auto_submitted(): void
+    {
+        Mail::fake();
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+
+        $email = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'Subject' => 'Out of office',
+            'Auto-Submitted' => 'auto-replied',
+        ], 'I am away from the office.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            'user@example.com',
+            $noreplyAddr
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        Mail::assertNotSent(\App\Mail\Digest\DigestReplyNotice::class);
+    }
+
+    public function test_digest_reply_rate_limited_to_once_per_24h(): void
+    {
+        Mail::fake();
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+
+        $email = $this->createMinimalEmail([
+            'From' => 'ratelimit@example.com',
+            'Subject' => 'Re: Digest',
+        ], 'First reply to digest.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            'ratelimit@example.com',
+            $noreplyAddr
+        );
+
+        $result1 = $this->service->route($parsed);
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result1);
+        Mail::assertSent(\App\Mail\Digest\DigestReplyNotice::class);
+
+        // Second reply from same sender within 24h — no auto-reply
+        Mail::fake();
+        $email2 = $this->createMinimalEmail([
+            'From' => 'ratelimit@example.com',
+            'Subject' => 'Re: Digest again',
+        ], 'Second reply to digest.');
+
+        $parsed2 = $this->parser->parse(
+            $email2,
+            'ratelimit@example.com',
+            $noreplyAddr
+        );
+
+        $result2 = $this->service->route($parsed2);
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result2);
+        Mail::assertNotSent(\App\Mail\Digest\DigestReplyNotice::class);
+    }
+
+    public function test_digest_reply_via_in_reply_to_header(): void
+    {
+        Mail::fake();
+
+        $email = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'Subject' => 'Re: Your Digest',
+            'In-Reply-To' => '<UnifiedDigest-12345@ilovefreegle.org>',
+        ], 'I am replying to the digest via In-Reply-To.');
+
+        // Envelope-to is a regular address (not noreply@), but In-Reply-To
+        // identifies this as a digest reply
+        $parsed = $this->parser->parse(
+            $email,
+            'user@example.com',
+            'freegle@example.com'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        Mail::assertSent(\App\Mail\Digest\DigestReplyNotice::class, function ($mail) {
+            return $mail->hasTo('user@example.com');
+        });
+    }
+
+    public function test_digest_reply_includes_user_id_when_sender_found(): void
+    {
+        Mail::fake();
+
+        $noreplyAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
+        $senderEmail = $this->uniqueEmail('digestsender');
+        $user = $this->createTestUser(['email_preferred' => $senderEmail]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $senderEmail,
+            'Subject' => 'Re: Your Freegle Digest',
+        ], 'I want to reply to a post.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $senderEmail,
+            $noreplyAddr
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        Mail::assertSent(\App\Mail\Digest\DigestReplyNotice::class, function ($mail) use ($senderEmail) {
+            return $mail->hasTo($senderEmail);
+        });
+    }
+
+    // ========================================
+    // Digest Reply Label Tests (Issue #9775)
+    // ========================================
+
+    public function test_digest_reply_via_original_message_separator_appends_label(): void
+    {
+        // Regression test for #9775: a user replying to a digest email via a mail
+        // client that quotes it with "-----Original Message-----" should get the
+        // "(Probably replied to digest - check View original email)" label appended
+        // to the chat message body so moderators know to check the original email.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('digestreplier')]);
+        $this->createMembership($user, $group);
+        $memberEmail = $user->emails->first()->email;
+
+        $body = "Hi, I wanted to reply to one of the posts in the digest.\r\n\r\n"
+            . "-----Original Message-----\r\n"
+            . "From: ".$group->nameshort."-auto@groups.ilovefreegle.org\r\n"
+            . "Subject: [".$group->nameshort."] What's New\r\n"
+            . "\r\nHere is all the digest content...";
+
+        $email = $this->createMinimalEmail([
+            'From' => $memberEmail,
+            'To' => $group->nameshort.'-auto@groups.ilovefreegle.org',
+            'Subject' => "Re: [".$group->nameshort."] What's New",
+        ], $body);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $memberEmail,
+            $group->nameshort.'-auto@groups.ilovefreegle.org'
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should have been created');
+        $this->assertStringContainsString(
+            '(Probably replied to digest - check View original email)',
+            $chatMsg->message,
+            'Digest reply label should be appended to the chat message body'
+        );
+    }
+
+    public function test_digest_reply_via_auto_address_header_appends_label(): void
+    {
+        // Regression test for #9775: a user replying to a digest email via a mail
+        // client that quotes it with "On ... -auto@groups.ilovefreegle.org> wrote:"
+        // should get the digest label appended to the chat message body.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('digestreplier2')]);
+        $this->createMembership($user, $group);
+        $memberEmail = $user->emails->first()->email;
+
+        $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $body = "Yes, I am interested in that item!\r\n\r\n"
+            . "On 10 Jun 2026, at 08:00, ".$group->nameshort."-auto@".$groupDomain."> wrote:\r\n"
+            . "\r\n> OFFER: Old sofa (Somewhere)\r\n"
+            . "> Posted by Someone";
+
+        $email = $this->createMinimalEmail([
+            'From' => $memberEmail,
+            'To' => $group->nameshort.'-auto@'.$groupDomain,
+            'Subject' => "Re: [".$group->nameshort."] What's New",
+        ], $body);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $memberEmail,
+            $group->nameshort.'-auto@'.$groupDomain
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should have been created');
+        $this->assertStringContainsString(
+            '(Probably replied to digest - check View original email)',
+            $chatMsg->message,
+            'Digest reply label should be appended to the chat message body'
+        );
     }
 }

@@ -1,11 +1,14 @@
 #!/bin/bash
 # Freegle worktree management CLI
 # Manages multiple Docker Compose environments for parallel development.
-# Each worktree gets its own unique port range (offset by slot*2000) so
-# all instances can run simultaneously without conflicts.
+# Each worktree gets its own set of genuinely-free host ports (one per PORT_*
+# binding, ~25 in total) so all instances can run simultaneously without
+# conflicts. Ports need not be contiguous; freed worktrees release their ports
+# back into the pool, so there is no fixed cap on the number of worktrees.
 #
 # Usage:
 #   freegle status                Show all worktrees + container counts
+#   freegle switch <n>            Point Claude's escape guard at an existing worktree
 #   freegle worktree create <n>   Create a worktree with isolated compose env
 #   freegle worktree list         List worktrees with compose status
 #   freegle worktree remove <n>   Stop compose, remove volumes and worktree
@@ -20,6 +23,31 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# _next_free_ports COUNT START
+#   Reads reserved ports (one per line; non-numeric lines ignored) from stdin and
+#   prints COUNT free host ports (one per line), searching upward from START and
+#   never exceeding 65500. Returns non-zero if it cannot find that many.
+#   Ports need not be contiguous — a worktree just needs COUNT genuinely free
+#   ports, so a removed worktree's ports are naturally reused by the next one.
+_next_free_ports() {
+    local count="$1" start="$2" max=65500
+    local -A used=()
+    local p
+    while IFS= read -r p; do
+        [[ "$p" =~ ^[0-9]+$ ]] && used["$p"]=1
+    done
+    local port="$start" n=0
+    while (( n < count && port <= max )); do
+        if [[ -z "${used[$port]:-}" ]]; then
+            echo "$port"
+            used["$port"]=1
+            n=$(( n + 1 ))
+        fi
+        port=$(( port + 1 ))
+    done
+    (( n == count ))
+}
 
 # Get the root of the main git repo (not a worktree)
 get_main_repo() {
@@ -60,6 +88,55 @@ resolve_worktree() {
         fi
     done
     return 1
+}
+
+# Switch the active worktree for the running Claude session.
+#
+# Claude's worktree-escape guard (.claude/check-worktree-escape.sh) normally
+# blocks any command that touches a sibling worktree. This records a pre-existing
+# worktree as the "active" one in a state file the guard reads, so the session
+# can cd into it and keep working there. The Bash tool persists cwd across calls,
+# so once switched + cd'd, subsequent commands run in the new worktree.
+cmd_switch() {
+    local name="${1:-}"
+    # The guard reads $CLAUDE_PROJECT_DIR/.claude/active-worktree.<session> (the
+    # launch project's hook runs regardless of cwd), so write the state file there.
+    local base="${CLAUDE_PROJECT_DIR:-$(get_main_repo)}"
+    # Key the state by Claude session id. Several concurrent sessions can share a
+    # single launch project dir (CLAUDE_PROJECT_DIR), so a single shared state
+    # file let one session's switch redirect (and break) every other session's
+    # escape guard. A per-session file isolates them. The guard reads the same
+    # id from its hook input (.session_id), which equals $CLAUDE_CODE_SESSION_ID.
+    local sid="${CLAUDE_CODE_SESSION_ID:-nosession}"
+    local state_file="$base/.claude/active-worktree.$sid"
+    # Retire the old shared file if present — it is the source of the cross-session
+    # clobbering and is no longer read by the guard.
+    local legacy_file="$base/.claude/active-worktree"
+
+    if [[ -z "$name" || "$name" == "--clear" || "$name" == "off" ]]; then
+        rm -f "$state_file" "$legacy_file"
+        echo -e "${GREEN}Cleared active worktree (this session).${NC}"
+        echo "The escape guard now allows only: $base"
+        echo "Move back with:  cd $base"
+        return 0
+    fi
+
+    local dir
+    if ! dir=$(resolve_worktree "$name"); then
+        echo -e "${RED}No worktree matches '$name'.${NC}" >&2
+        echo "Existing worktrees:" >&2
+        get_worktrees | sed 's/^/  /' >&2
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$state_file")"
+    printf '%s\n' "$dir" > "$state_file"
+    rm -f "$legacy_file"
+    echo -e "${GREEN}Switched active worktree to:${NC} $dir"
+    [[ "$sid" == "nosession" ]] && echo -e "${RED}Warning: no CLAUDE_CODE_SESSION_ID; state is not session-isolated.${NC}"
+    echo "The escape guard will now treat that folder as the working root."
+    echo "Move there with (cwd persists across commands):"
+    echo -e "  ${BLUE}cd $dir${NC}"
 }
 
 cmd_status() {
@@ -127,24 +204,8 @@ cmd_worktree_create() {
     echo "  Directory: $worktree_dir"
     echo "  Branch:    $branch"
 
-    # Find the next free slot by checking PORT_STATUS in each existing worktree's .env.
-    # This avoids reusing a slot after a worktree is removed (the old count-based approach
-    # would assign the same slot number to a new worktree if one had been deleted).
-    local max_slot=0
-    for wt in $(git -C "$main_repo" worktree list --porcelain | grep '^worktree ' | sed 's/^worktree //'); do
-        if [[ -f "$wt/.env" ]]; then
-            local wt_status_port
-            wt_status_port=$(grep -E '^PORT_STATUS=' "$wt/.env" 2>/dev/null | cut -d= -f2 || true)
-            if [[ -n "$wt_status_port" && "$wt_status_port" =~ ^[0-9]+$ ]]; then
-                # Base STATUS port is 8081. Slot = (port - 8081) / 5000
-                local wt_slot=$(( (wt_status_port - 8081) / 5000 ))
-                if (( wt_slot > max_slot )); then
-                    max_slot=$wt_slot
-                fi
-            fi
-        fi
-    done
-    local slot=$(( max_slot + 1 ))
+    # Port allocation happens after .env is in place (see below): each worktree is
+    # assigned a set of genuinely-free host ports rather than a fixed slot offset.
 
     # Create the worktree
     git -C "$main_repo" worktree add "$worktree_dir" "$branch"
@@ -165,37 +226,55 @@ cmd_worktree_create() {
     sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=${project_name}|" "$worktree_dir/.env"
     sed -i "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml|" "$worktree_dir/.env"
 
-    # Assign unique PORT_* values to avoid conflicts with other running instances.
+    # Assign a set of genuinely-free host ports — one per PORT_* binding.
     # All port bindings live in docker-compose.yml (for backwards compat with single-file
-    # installs), so changing COMPOSE_FILE alone doesn't prevent conflicts. We offset every
-    # PORT_* value by slot*5000 instead.
+    # installs), so changing COMPOSE_FILE alone doesn't prevent conflicts; each PORT_* must
+    # be a host port that no other worktree (or other process) is already using.
     #
-    # slot was counted before git worktree add, so:
-    #   first worktree (slot=1) → +5000, second (slot=2) → +10000, …
-    # 5000 is the smallest round increment with zero port collisions across
-    # all 25 PORT_* defaults (ranging from 25 to 11334) for up to 11 slots.
-    # Max port at slot 10: 61334 (under 65535).
-    local port_offset=$(( slot * 5000 ))
+    # The old scheme offset every PORT_* by slot*5000. Because the highest default port is
+    # 11334, that overflowed 65535 after only 10 worktrees and wasted an ~11k-wide range per
+    # worktree even though each one needs only ~25 ports. Instead we now collect every port
+    # already reserved (all worktree .envs + compose defaults + ports currently bound on the
+    # host) and hand out the lowest free ports above 12000. Ports need not be contiguous, and
+    # a removed worktree's ports drop out of the reserved set, so they are reused — there is
+    # no fixed worktree cap.
 
-    # Build a map of effective PORT_* defaults: start with docker-compose.yml defaults,
-    # then override with whatever is explicitly set in the main .env
-    declare -A port_defaults
-    while IFS='=' read -r key val; do
-        port_defaults["$key"]="$val"
-    done < <(grep -oE 'PORT_[A-Z0-9_]+:-[0-9]+' "$main_repo/docker-compose.yml" | sed 's/:-/=/' | sort -u)
-    while IFS='=' read -r key val; do
-        if [[ "$key" =~ ^PORT_ && "$val" =~ ^[0-9]+$ ]]; then
-            port_defaults["$key"]="$val"
+    # The full set of PORT_* keys we must assign (compose defaults, sorted for a stable order).
+    local -a port_keys
+    mapfile -t port_keys < <(grep -oE 'PORT_[A-Z0-9_]+:-[0-9]+' "$main_repo/docker-compose.yml" \
+        | sed 's/:-.*//' | sort -u)
+    local num_ports=${#port_keys[@]}
+
+    # Collect reserved ports: every PORT_* in every worktree .env, the compose defaults, and
+    # any port currently bound on the host. Feed them to the free-port allocator.
+    local reserved
+    reserved=$(
+        for wt in $(git -C "$main_repo" worktree list --porcelain | grep '^worktree ' | sed 's/^worktree //'); do
+            [[ -f "$wt/.env" ]] && grep -oE '^PORT_[A-Z0-9_]+=[0-9]+' "$wt/.env" | grep -oE '[0-9]+$'
+        done
+        grep -oE 'PORT_[A-Z0-9_]+:-[0-9]+' "$main_repo/docker-compose.yml" | grep -oE '[0-9]+$'
+        if command -v ss >/dev/null 2>&1; then
+            ss -tlnH 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$'
         fi
-    done < <(grep -E '^PORT_[A-Z0-9_]+=[0-9]+$' "$main_repo/.env")
+    )
+
+    local -a free_ports
+    mapfile -t free_ports < <(printf '%s\n' "$reserved" | _next_free_ports "$num_ports" 12000)
+    if (( ${#free_ports[@]} != num_ports )); then
+        echo -e "${RED}Error: could not find ${num_ports} free host ports below 65500.${NC}" >&2
+        echo "Remove an unused worktree to free its ports:  freegle worktree remove <name>" >&2
+        git -C "$main_repo" worktree remove "$worktree_dir" --force 2>/dev/null || true
+        return 1
+    fi
 
     # Ensure .env ends with a newline before appending (prevents concatenation with last line)
     [[ -f "$worktree_dir/.env" && -s "$worktree_dir/.env" ]] && sed -i -e '$a\' "$worktree_dir/.env"
 
-    # Write all PORT_* with offset into worktree .env
-    for key in "${!port_defaults[@]}"; do
-        local base_val="${port_defaults[$key]}"
-        local new_val=$(( base_val + port_offset ))
+    # Write each PORT_* with its assigned free port into the worktree .env
+    local i
+    for (( i = 0; i < num_ports; i++ )); do
+        local key="${port_keys[$i]}"
+        local new_val="${free_ports[$i]}"
         if grep -q "^${key}=" "$worktree_dir/.env"; then
             sed -i "s|^${key}=.*|${key}=${new_val}|" "$worktree_dir/.env"
         else
@@ -222,7 +301,7 @@ cmd_worktree_create() {
     traefik_port=$(grep -E '^PORT_TRAEFIK_HTTP=' "$worktree_dir/.env" | cut -d= -f2)
     local status_port
     status_port=$(grep -E '^PORT_STATUS=' "$worktree_dir/.env" | cut -d= -f2)
-    echo "Services are running on offset ports (+${port_offset} from primary)."
+    echo "Services are running on ${num_ports} dedicated free host ports."
     echo "  Status:  http://localhost:${status_port}"
     echo "  Traefik: http://freegle-dev-live.localhost:${traefik_port}"
     echo ""
@@ -294,10 +373,136 @@ cmd_worktree_remove() {
     echo -e "${GREEN}Worktree '${name}' removed.${NC}"
 }
 
-# Main command dispatch
+# Prune worktrees whose PR is closed/merged when it is safe to do so, and flag
+# any worktree that has no open PR but still holds uncommitted or unpushed work.
+# Pass --dry-run (-n) to preview without removing anything.
+cmd_worktree_prune() {
+    local dry_run=false
+    if [[ "${1:-}" == "--dry-run" || "${1:-}" == "-n" ]]; then
+        dry_run=true
+    fi
+
+    if ! command -v gh >/dev/null 2>&1; then
+        echo -e "${RED}Error: the gh CLI is required to check PR state.${NC}" >&2
+        return 1
+    fi
+
+    local main_repo
+    main_repo=$(get_main_repo)
+
+    echo -e "${BLUE}Refreshing remote refs (fetch --prune)...${NC}"
+    git -C "$main_repo" fetch --prune origin >/dev/null 2>&1 || true
+
+    local -a to_remove=() flagged=() kept=()
+    local wt name branch dirty unpushed pr_line pr_num pr_state label why
+
+    while IFS= read -r wt; do
+        [[ "$wt" == "$main_repo" ]] && continue
+        name=$(basename "$wt")
+        branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+
+        # Safety signals: uncommitted changes, or commits on no remote.
+        dirty=""; unpushed=""
+        [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]] && dirty=1
+        [[ -n "$(git -C "$wt" rev-list HEAD --not --remotes 2>/dev/null | head -1)" ]] && unpushed=1
+
+        # PR state for the branch (NONE if detached or no PR exists).
+        pr_state="NONE"; pr_num=""
+        if [[ -n "$branch" ]]; then
+            pr_line=$(gh -R Freegle/Iznik pr list --head "$branch" --state all \
+                --json number,state --jq '.[0] | select(.) | "\(.number) \(.state)"' 2>/dev/null)
+            if [[ -n "$pr_line" ]]; then
+                pr_num=${pr_line%% *}
+                pr_state=${pr_line##* }
+            fi
+        fi
+
+        why=""
+        [[ -n "$dirty" ]] && why+="uncommitted "
+        [[ -n "$unpushed" ]] && why+="unpushed "
+
+        label="${name} [${branch:-detached HEAD}]"
+        [[ -n "$pr_num" ]] && label="${label} PR#${pr_num} ${pr_state}"
+
+        case "$pr_state" in
+            # Merged: the work is in master, so only uncommitted local edits are at risk.
+            MERGED)
+                if [[ -n "$dirty" ]]; then
+                    flagged+=("${label} — merged, but ${why}work present")
+                else
+                    to_remove+=("${wt}|${label}")
+                fi
+                ;;
+            # Closed (not merged): safe to drop only if nothing is unsaved.
+            CLOSED)
+                if [[ -n "$dirty" || -n "$unpushed" ]]; then
+                    flagged+=("${label} — closed, but ${why}work present")
+                else
+                    to_remove+=("${wt}|${label}")
+                fi
+                ;;
+            OPEN)
+                kept+=("${label} — open PR")
+                ;;
+            # No PR (or detached): never auto-remove; flag only if work would be lost.
+            *)
+                if [[ -n "$dirty" || -n "$unpushed" ]]; then
+                    flagged+=("${label} — no open PR, ${why}work present")
+                else
+                    kept+=("${label} — no PR, clean")
+                fi
+                ;;
+        esac
+    done < <(get_worktrees)
+
+    echo ""
+    $dry_run && echo -e "${YELLOW}== DRY RUN (nothing will be removed) ==${NC}"
+
+    echo -e "${GREEN}Removable (closed/merged PR, nothing to lose):${NC}"
+    [[ ${#to_remove[@]} -eq 0 ]] && echo "  (none)"
+    local entry path lbl
+    for entry in "${to_remove[@]}"; do
+        path=${entry%%|*}; lbl=${entry#*|}
+        if $dry_run; then
+            echo "  would remove: ${lbl}"
+        else
+            echo -e "  ${YELLOW}removing${NC}: ${lbl}"
+            if cmd_worktree_remove "$path" >/dev/null 2>&1; then
+                echo "    removed."
+            else
+                echo -e "    ${RED}remove failed — check manually${NC}"
+            fi
+        fi
+    done
+
+    echo ""
+    echo -e "${YELLOW}Flagged (has unsaved work — left in place):${NC}"
+    [[ ${#flagged[@]} -eq 0 ]] && echo "  (none)"
+    local m
+    for m in "${flagged[@]}"; do echo "  ⚠ ${m}"; done
+
+    echo ""
+    echo -e "${BLUE}Kept:${NC}"
+    [[ ${#kept[@]} -eq 0 ]] && echo "  (none)"
+    for m in "${kept[@]}"; do echo "  • ${m}"; done
+
+    echo ""
+    local remaining
+    remaining=$(( $(get_worktrees | wc -l) - 1 ))
+    echo -e "${GREEN}Worktrees remaining (excluding main): ${remaining}${NC}"
+}
+
+# Main command dispatch (skipped when sourced as a library, e.g. by tests)
+if [[ -n "${FREEGLE_LIB_ONLY:-}" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 case "${1:-help}" in
     status)
         cmd_status
+        ;;
+    switch)
+        shift
+        cmd_switch "$@"
         ;;
     worktree)
         case "${2:-help}" in
@@ -312,8 +517,12 @@ case "${1:-help}" in
                 shift 2
                 cmd_worktree_remove "$@"
                 ;;
+            prune)
+                shift 2
+                cmd_worktree_prune "$@"
+                ;;
             *)
-                echo "Usage: freegle worktree {create|list|remove} [args]"
+                echo "Usage: freegle worktree {create|list|remove|prune} [args]"
                 ;;
         esac
         ;;
@@ -324,9 +533,13 @@ case "${1:-help}" in
         echo ""
         echo "Commands:"
         echo "  status                  Show all worktrees, containers, and URLs"
+        echo "  switch <name>           Make Claude's escape guard treat <name>'s worktree as the working root"
+        echo "  switch --clear          Revert to the launch worktree"
         echo "  worktree create <name>  Create isolated worktree (unique ports, starts containers)"
         echo "  worktree list           List all worktrees"
         echo "  worktree remove <name>  Stop and remove a worktree"
+        echo "  worktree prune [-n]     Remove worktrees for closed/merged PRs (safe only);"
+        echo "                          flag any with no open PR but unsaved work. -n = dry-run"
         ;;
     *)
         echo "Unknown command: $1. Run 'freegle help' for usage." >&2

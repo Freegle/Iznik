@@ -164,7 +164,7 @@ class StoriesNewsletterService
         //   - group has not disabled newsletters in its settings
         //   - user has newslettersallowed = 1
         //   - user is not deleted
-        $userIds = DB::table('users')
+        $eligibleMembers = DB::table('users')
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->join('groups', function ($join) {
                 $join->on('groups.id', '=', 'memberships.groupid')
@@ -179,18 +179,19 @@ class StoriesNewsletterService
                     ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
             })
             ->distinct()
-            ->pluck('users.id');
+            ->select('users.id');
 
-        foreach ($userIds as $userId) {
+        // Stream eligible members in keyset-paginated chunks; pluck()-ing the entire
+        // eligible newsletter userbase (hundreds of thousands of ids) at once exhausts memory.
+        foreach ($eligibleMembers->lazyById(1000, 'users.id', 'id') as $member) {
+            $userId = $member->id;
             $user = DB::table('users')->where('id', $userId)->first();
             if (!$user || $user->bouncing) {
                 continue;
             }
 
-            $email = DB::table('users_emails')
-                ->where('userid', $userId)
-                ->orderByDesc('preferred')
-                ->value('email');
+            // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+            $email = \App\Models\User::find($userId)?->email_preferred;
 
             if (!$email) {
                 continue;
@@ -200,7 +201,7 @@ class StoriesNewsletterService
                 ?? trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
                 ?: 'Freegle Member';
 
-            Mail::send(new StoriesNewsletterMail(
+            app(\App\Services\EmailSpoolerService::class)->spool(new StoriesNewsletterMail(
                 userId: $userId,
                 recipientName: $name,
                 recipientEmail: $email,

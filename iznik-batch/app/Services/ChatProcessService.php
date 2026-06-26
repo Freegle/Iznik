@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\BackgroundTask;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
+use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -24,6 +26,45 @@ class ChatProcessService
     // V1: ChatMessage::REVIEW_SPAM, REVIEW_FORCE, etc.
     private const REVIEW_SPAM = 'Spam';
     private const REVIEW_LAST = 'Last';
+
+    /**
+     * Map a ContentCheckService check identifier to the specific chat_messages
+     * `reportreason` enum value, so the modtools review UI can tell the moderator
+     * WHY a message was held instead of the unhelpful "failed spam checks, but we
+     * don't have any more information about why". Every value here is a member of
+     * the reportreason enum and is already rendered with friendly text by
+     * ModChatReview.vue. Anything unmapped falls back to the generic 'Spam'.
+     */
+    private const CHECK_TO_REPORTREASON = [
+        ContentCheckService::CHECK_CONCERN_KEYWORD => 'WorryWord',
+        ContentCheckService::CHECK_PER_GROUP_WORRY => 'WorryWord',
+        ContentCheckService::CHECK_MONEY           => 'Money',
+        ContentCheckService::CHECK_URL             => 'Link',
+        ContentCheckService::CHECK_MESSAGING_LINK  => 'Link',
+        ContentCheckService::CHECK_SPAMHAUS_DBL    => 'URL on DBL',
+        ContentCheckService::CHECK_EMAIL_ADDRESS   => 'Email',
+        ContentCheckService::CHECK_LANGUAGE        => 'Language',
+        ContentCheckService::CHECK_KNOWN_SPAMMER   => 'Referenced known spammer',
+        ContentCheckService::CHECK_GREETING_SPAM   => 'Greetings spam',
+    ];
+
+    /**
+     * Resolve the specific reportreason for a checkChatMessage() result.
+     * Returns the generic 'Spam' for a null result or an unmapped check.
+     */
+    private function reportReasonForCheck(?array $result): string
+    {
+        $check = $result['check'] ?? null;
+        return self::CHECK_TO_REPORTREASON[$check] ?? self::REVIEW_SPAM;
+    }
+
+    private ContentCheckService $contentCheck;
+
+    public function __construct(?ContentCheckService $contentCheck = null)
+    {
+        // Resolve from the container when not injected (keeps `new ChatProcessService()` working).
+        $this->contentCheck = $contentCheck ?? app(ContentCheckService::class);
+    }
 
     /**
      * Process all pending chat messages (processingrequired = 1).
@@ -113,15 +154,39 @@ class ChatProcessService
             $chatmodstatus = $user?->chatmodstatus ?? 'Moderated';
 
             if ($chatmodstatus === 'Fully') {
+                // Fully moderated: every message goes to review (shadow ban).
                 $review = 1;
                 $reviewreason = self::REVIEW_SPAM;
+            } elseif ($chatmodstatus === 'Moderated' && $this->isContentCheckable($message->type)) {
+                // V1 parity: ChatMessage::process() ran Spam::checkReview() on
+                // Moderated members' user-text messages and held any that matched
+                // a concern keyword / link / phone number etc. That scan was lost
+                // when chat_process.php was migrated to this service, so restore it.
+                // Map the specific check that fired to its reportreason enum
+                // value, so the review UI tells the moderator WHY (e.g. "It looks
+                // like it refers to money.") rather than "...no more information
+                // about why". Unmapped checks fall back to the generic 'Spam'.
+                $checkResult = $this->contentCheck->checkChatMessage((string) ($message->message ?? ''));
+                if ($checkResult !== null) {
+                    $review = 1;
+                    $reviewreason = $this->reportReasonForCheck($checkResult);
+                }
             }
 
-            // If the previous message in this chat is held for review, hold this one too.
+            // If the PREVIOUS message in this chat is held for review, hold this
+            // one too. Use id < $id, not id != $id: V1's chat_process.php was a
+            // continuous daemon that processed each message as it arrived, so the
+            // newest other row WAS the previous one. This service processes in
+            // batches (processIncoming orders by id asc), so when a burst of
+            // messages is pending, "newest other row" is a LATER, not-yet-processed
+            // message (reviewrequired defaults to 0) and the hold chain silently
+            // breaks — subsequent messages from a member already under review get
+            // delivered (Discourse #9656). Looking strictly backwards at the
+            // immediately preceding (already-processed) message restores the chain.
             if (!$review) {
                 $lastReview = DB::table('chat_messages')
                     ->where('chatid', $chatid)
-                    ->where('id', '!=', $id)
+                    ->where('id', '<', $id)
                     ->orderByDesc('id')
                     ->value('reviewrequired');
 
@@ -152,7 +217,34 @@ class ChatProcessService
             ->where('status', ChatRoster::STATUS_CLOSED)
             ->update(['status' => ChatRoster::STATUS_OFFLINE]);
 
+        // V1 parity: ChatMessage::process() called notifyMembers() here when the
+        // message wasn't held/banned (the spam/ban paths above early-return).
+        // Hand off to a background task so we don't block this cron on FCM round-trips.
+        if (!$review) {
+            BackgroundTask::create([
+                'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE,
+                'data' => ['message_id' => $id],
+                'created_at' => now(),
+                'attempts' => 0,
+            ]);
+        }
+
         return true;
+    }
+
+    /**
+     * Whether a chat message type carries member-entered text that should be
+     * content checked. Mirrors the V1 ChatMessage::process() type filter; system
+     * and templated messages (System, Promised, Nudge, etc.) are excluded.
+     */
+    private function isContentCheckable(?string $type): bool
+    {
+        return in_array($type, [
+            ChatMessage::TYPE_DEFAULT,
+            ChatMessage::TYPE_INTERESTED,
+            ChatMessage::TYPE_REPORTEDUSER,
+            ChatMessage::TYPE_ADDRESS,
+        ], true);
     }
 
     /**

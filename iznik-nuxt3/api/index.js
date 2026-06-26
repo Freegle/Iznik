@@ -14,6 +14,7 @@ import AIImagesAPI from './AIImagesAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
 import BanditAPI from './BanditAPI.js'
+import BrowseAPI from './BrowseAPI.js'
 import CharityAPI from './CharityAPI.js'
 import ChatAPI from './ChatAPI.js'
 import CommentAPI from './CommentAPI.js'
@@ -41,6 +42,7 @@ import ModConfigsAPI from './ModConfigsAPI.js'
 import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
+import RipplingAPI from './RipplingAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
@@ -63,6 +65,7 @@ export default (config) => {
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),
     bandit: new BanditAPI(options),
+    browse: new BrowseAPI(options),
     charity: new CharityAPI(options),
     chat: new ChatAPI(options),
     comment: new CommentAPI(options),
@@ -90,6 +93,7 @@ export default (config) => {
     news: new NewsAPI(options),
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
+    rippling: new RipplingAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),
     spammers: new SpammersAPI(options),

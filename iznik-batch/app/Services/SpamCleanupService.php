@@ -135,7 +135,12 @@ class SpamCleanupService
         if (!empty($msgs)) {
             $msgIds = array_unique(array_column($msgs, 'id'));
             foreach ($msgIds as $msgId) {
+                // useWritePdo: this count gates the parent-message soft-delete below,
+                // and it reads the rows we just UPDATEd to deleted=1 above. Under the
+                // read/write split a plain read could hit a lagging replica that still
+                // shows those rows as deleted=0, leaving the spam message live.
                 $remainingGroups = DB::table('messages_groups')
+                    ->useWritePdo()
                     ->where('msgid', $msgId)
                     ->where('deleted', 0)
                     ->count();
@@ -173,11 +178,14 @@ class SpamCleanupService
         // UPDATEs in the chat notification pipeline (same class of failure
         // we hit at 02:08 UTC 15 May in ChatExpectedService). Updating by
         // single id keeps each statement's lock window to milliseconds.
+        // Stream ids in keyset-paginated chunks rather than pluck()-ing the whole
+        // spammer chat_messages backlog into memory. Setting reviewrejected only
+        // moves rows out of the filter behind the cursor, so lazyById is safe here.
         $updated = 0;
-        foreach ($idsQuery->pluck('id') as $id) {
+        foreach ($idsQuery->lazyById(1000) as $row) {
             $updated += DB::update(
                 'UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?',
-                [$id],
+                [$row->id],
             );
         }
 

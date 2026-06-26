@@ -440,13 +440,15 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	var msgIDs []uint64
 
-	// Hide messages not yet processed by the content-check batch job.
+	// Hide Pending messages not yet processed by the content-check batch job.
 	// The 30-minute fallback ensures mods always see messages if the batch job is down,
 	// and also makes existing rows (contentcheck_checked_at IS NULL) visible without a
 	// backfill — their arrival times are already in the past.
+	// When the Pending view also shows Spam-collection messages, scope the filter to
+	// Pending rows only (Spam messages have already been reviewed and need no content check).
 	contentcheckFilter := ""
 	if collection == utils.COLLECTION_PENDING {
-		contentcheckFilter = " AND (mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
+		contentcheckFilter = " AND (mg.collection != 'Pending' OR mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
 	}
 
 	if collection == "Edit" {
@@ -519,13 +521,27 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
 	} else {
+		// When listing the Pending review queue, also include Spam-collection messages.
+		// The badge work-count (session.workCount.spam) already counts these, so
+		// excluding them from the list creates a spurious "+1 over visible" badge
+		// (Discourse #9654 / V1 parity).
+		collectionFilter := "mg.collection = ?"
+		branchArgs := []interface{}{collection}
+		if collection == utils.COLLECTION_PENDING {
+			// Include Spam-collection messages in the Pending review queue, but
+			// only recent ones. Spam older than 30 days is stale — it should age
+			// out of the queue rather than accumulate indefinitely. Pending rows
+			// are never aged out here.
+			collectionFilter = "(mg.collection = ? OR (mg.collection = ? AND mg.arrival >= (NOW() - INTERVAL 30 DAY)))"
+			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
+		}
+
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
-			"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
 			contentcheckFilter + " "
-		branchArgs := []interface{}{collection}
 
 		if fromuser > 0 {
 			branchSQL += "AND m.fromuser = ? "
@@ -549,9 +565,14 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	// Build pagination context from last ID.
 	var respCtx *PaginationContext
 	if len(msgIDs) == limit {
-		// Get arrival time of last message for pagination.
+		// The list orders msgids by MAX(arrival) across the queried groups (see
+		// buildMTUnionAllMsgIDQuery), so the cursor must be that same MAX — not an
+		// arbitrary group's arrival via LIMIT 1. Otherwise, for a cross-posted
+		// message the next page's arrival boundary lands at the wrong time and can
+		// drop messages that sort between the two values.
 		var lastArrival time.Time
-		db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? AND deleted = 0 LIMIT 1", msgIDs[len(msgIDs)-1]).Scan(&lastArrival)
+		db.Raw("SELECT MAX(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
+			msgIDs[len(msgIDs)-1], groupIDs).Scan(&lastArrival)
 		if !lastArrival.IsZero() {
 			respCtx = &PaginationContext{
 				Date: lastArrival.Unix(),

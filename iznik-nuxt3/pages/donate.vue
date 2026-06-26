@@ -105,7 +105,7 @@
               <p>
                 Sort code: <strong>60-83-01</strong><br />
                 Account: <strong>20339094</strong><br />
-                Name: Freegle Limited (Unity Trust Bank)
+                Name: Freegle (Unity Trust Bank)
               </p>
               <p class="reference-note">
                 Reference:
@@ -118,7 +118,7 @@
             <div class="donate-option">
               <h3><v-icon icon="envelope" /> By Cheque</h3>
               <p>
-                Payable to <strong>Freegle Limited</strong><br />
+                Payable to <strong>Freegle</strong><br />
                 Send to: 64A North Road, Ormesby, Great Yarmouth NR29 3LE
               </p>
               <p class="reference-note">

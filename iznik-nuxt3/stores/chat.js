@@ -385,6 +385,12 @@ export const useChatStore = defineStore({
       })
       this.fetchMessages(chatid)
     },
+    async commonGroups(chatid) {
+      return await api(this.config).chat.commonGroups(chatid)
+    },
+    async reportNoGroup(chatid, reason, comment) {
+      await api(this.config).chat.reportNoGroup(chatid, reason, comment)
+    },
     // Chat review moderation actions (approve/reject/hold/release/redact).
     async _sendChatMT(data) {
       // 404 means the message was already acted on (race condition with another mod).
@@ -492,9 +498,6 @@ export const useChatStore = defineStore({
       if (this.listByChatId[id]) {
         this.listByChatId[id].status = 'Online'
       }
-
-      // Switch back to showing visible chats since this chat is now visible.
-      this.showClosed = false
 
       await this.fetchChat(id)
       await this.fetchChats(null, false, id)

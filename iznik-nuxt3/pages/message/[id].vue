@@ -32,7 +32,9 @@
                   message.deleted ||
                   (message.groups &&
                     message.groups.length &&
-                    message.groups[0]?.collection === 'Rejected'))))
+                    message.groups.every(
+                      (g) => g.collection === 'Rejected'
+                    )))))
           "
           class="error-page"
         >
@@ -101,6 +103,7 @@
             :id="id"
             class="mt-3"
             :start-expanded="true"
+            :view-source="$route.query.src || 'message_page'"
             hide-close
             record-view
             @not-found="error = true"

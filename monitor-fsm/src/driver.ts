@@ -24,6 +24,17 @@
 // behaviour. Must be set BEFORE the adapter import.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
+// Force the brain + delegate `claude` calls onto the Claude Code SUBSCRIPTION
+// session, never a standalone API key. ../.env sets ANTHROPIC_API_KEY (for other
+// tools) and run-loop.sh exports it; if it reaches the claude-agent-sdk brain
+// call or the delegate_to_coder spawns (which pass no custom env, so they
+// inherit this process's), `claude` bills THAT key instead of the session — and
+// once its prepaid balance is exhausted every LLM call returns "Credit balance
+// is too low" and the FSM silently does nothing (iterations complete, 0 PRs).
+// Deleting it here (before the adapter import / any spawn) makes claude fall
+// back to the logged-in Max subscription. Belt-and-suspenders with run-loop.sh.
+if (process.env.ANTHROPIC_API_KEY) delete process.env.ANTHROPIC_API_KEY
+
 import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -44,6 +55,7 @@ import {
 import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
+import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
 import { putStatusPost } from './db/discourse-status.js'
@@ -215,7 +227,13 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
           failed.push({ context: name, state, url })
         }
       }
-      if (failed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+      if (failed.length > 0) {
+        // A PR red ONLY on Coveralls coverage-delta checks (tests pass) is not a
+        // hard CI failure — the coverage booster handles it. Don't force the
+        // instance back to CHECK_CI for coverage jitter.
+        const { realFailed } = partitionFailedChecks(failed)
+        if (realFailed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+      }
     }
     return { redPRs }
   } catch (err: any) {
@@ -434,6 +452,15 @@ async function main() {
   const openPRFixEntries = new Map<number, number>()
   let consecutiveCoverageFailures = 0
 
+  // Track consecutive visits to DIAGNOSE_BUG within one iteration. The state
+  // can legitimately take 2-3 LLM turns (gather → diagnose), but the LLM
+  // sometimes keeps re-running search_code without ever producing a
+  // diagnosisBrief (seen burning 10+ turns on the same bug, e.g. a V1-only
+  // code path). Prompt-level guards proved unreliable. After this many
+  // consecutive turns, force-defer the current bug and move on.
+  const MAX_CONSECUTIVE_DIAGNOSE = 4
+  let consecutiveDiagnose = 0
+
   let step = 0
   while (step < MAX_STEPS) {
     const current = await engine.getInstance(instance.id)
@@ -444,6 +471,60 @@ async function main() {
     if (current.status !== 'active') {
       out(`instance status=${current.status} — stopping`)
       break
+    }
+
+    // ─── LOOP-BREAKER: DIAGNOSE_BUG that never converges ───
+    // Count consecutive turns in DIAGNOSE_BUG. If it exceeds the cap the LLM
+    // is stuck re-searching without producing a diagnosis — force-defer the
+    // current bug and route on, so one undiagnosable bug can't consume the
+    // whole iteration.
+    if (current.currentState === 'DIAGNOSE_BUG') {
+      consecutiveDiagnose++
+      if (consecutiveDiagnose > MAX_CONSECUTIVE_DIAGNOSE) {
+        const ctx: any = current.context ?? {}
+        // The bug under diagnosis is the work-router's singleBug; DIAGNOSE_BUG
+        // only copies it into pendingBugBatch in its PHASE 2, which a looping
+        // run never reaches — so fall back through all three sources.
+        const cb = ctx.currentBug
+          ?? ctx.pendingBugBatch?.[0]
+          ?? ctx._action_work_router_decide?.singleBug
+          ?? null
+        const key = cb && typeof cb.topic !== 'undefined' ? `${cb.topic}.${cb.post}` : 'unknown'
+        outWarn(`loop-breaker: DIAGNOSE_BUG ran ${consecutiveDiagnose} consecutive turns on ${key} without converging — force-deferring`)
+        const existingFixed = Array.isArray(ctx.bugsFixed) ? ctx.bugsFixed : []
+        const deferReason = `loop-breaker: diagnosis did not converge after ${MAX_CONSECUTIVE_DIAGNOSE} turns (likely V1-only or unreproducible)`
+        const deferred = cb
+          ? { ...cb, outcome: 'deferred', reason: deferReason }
+          : null
+        // Mark the bug 'deferred' in the DB too. work_router_decide re-queries
+        // discourse_bug (WHERE state='open') every time it routes, so a
+        // context-only bugsFixed entry is not enough — without this the router
+        // re-serves the same open bug and the loop-breaker fires on it again
+        // (seen: 9685.7 deferred twice in one iteration). The DB write is the
+        // authoritative skip.
+        if (cb && typeof cb.topic !== 'undefined' && typeof cb.post !== 'undefined') {
+          try {
+            db.prepare(
+              "UPDATE discourse_bug SET state='deferred', reason=? WHERE topic=? AND post=? AND state='open'"
+            ).run(deferReason, Number(cb.topic), Number(cb.post))
+          } catch (e: any) {
+            outWarn(`loop-breaker: failed to mark ${key} deferred in DB: ${e?.message ?? e}`)
+          }
+        }
+        await engine.updateContext(instance.id, {
+          ...(deferred ? { bugsFixed: [...existingFixed, deferred] } : {}),
+          currentBug: null,
+        })
+        await engine.forceTransition(
+          instance.id,
+          'WORK_ROUTER',
+          `Loop-breaker: DIAGNOSE_BUG exceeded ${MAX_CONSECUTIVE_DIAGNOSE} consecutive turns on ${key}; deferred and routing on.`,
+        )
+        consecutiveDiagnose = 0
+        continue
+      }
+    } else {
+      consecutiveDiagnose = 0
     }
 
     step++

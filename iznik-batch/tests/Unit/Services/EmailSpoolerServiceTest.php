@@ -103,12 +103,19 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(0, $stats['retried']);
         $this->assertEquals(0, $stats['stuck_alerts']);
 
-        // File should be moved to sent.
+        // File should be moved out of pending and stored gzipped in sent/
+        // (sent records are write-only + pruned after 7 days, so they are
+        // compressed to keep the archive small).
         $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertFileExists($this->testSpoolDir . '/sent/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/sent/' . $id . '.json');
 
-        // Mail::html sends a closure, not a Mailable class.
-        // We verify the file was moved to sent directory as proof of success.
+        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json.gz';
+        $this->assertFileExists($sentFile);
+
+        // The gzipped record must decode back to the original spooled JSON.
+        $decoded = json_decode(gzdecode(file_get_contents($sentFile)), true);
+        $this->assertIsArray($decoded);
+        $this->assertSame($id, $decoded['id']);
     }
 
     public function test_process_spool_respects_limit(): void
@@ -145,14 +152,34 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool($mailable, $email);
         $this->spooler->processSpool();
 
-        // Backdate the sent file.
-        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json';
+        // Backdate the sent file (stored gzipped).
+        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json.gz';
         touch($sentFile, strtotime('-10 days'));
 
         $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
 
         $this->assertEquals(1, $deleted);
         $this->assertFileDoesNotExist($sentFile);
+    }
+
+    public function test_cleanup_sent_prunes_old_gz_files_and_keeps_recent(): void
+    {
+        // Explicitly lock the .gz extension handling in cleanupSent: an old
+        // gzipped record is pruned, a recent one is kept. Without .gz in the
+        // accepted-extension filter these would never be deleted and the sent
+        // archive would grow unbounded.
+        $oldFile = $this->testSpoolDir . '/sent/old_mail.json.gz';
+        file_put_contents($oldFile, gzencode(json_encode(['id' => 'old'])));
+        touch($oldFile, strtotime('-10 days'));
+
+        $newFile = $this->testSpoolDir . '/sent/new_mail.json.gz';
+        file_put_contents($newFile, gzencode(json_encode(['id' => 'new'])));
+
+        $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
+
+        $this->assertEquals(1, $deleted);
+        $this->assertFileDoesNotExist($oldFile);
+        $this->assertFileExists($newFile);
     }
 
     public function test_cleanup_sent_skips_non_json_files(): void
@@ -376,7 +403,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['sent']);
 
         // Read the sent file to confirm it was processed.
-        $sentData = json_decode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json'), true);
+        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json.gz')), true);
         $this->assertEquals($id, $sentData['id']);
 
         // The headers should still be in the data.
@@ -560,7 +587,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['sent']);
 
         // Read the sent file to confirm BCC data is preserved.
-        $sentData = json_decode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json'), true);
+        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json.gz')), true);
         $this->assertEquals($id, $sentData['id']);
         $this->assertCount(2, $sentData['bcc']);
     }
@@ -799,5 +826,147 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertFileDoesNotExist($this->testSpoolDir . '/failed/' . $id . '.json');
         $this->assertEquals(1, $stats['retried']);
         $this->assertEquals(0, $stats['bounced'] ?? 0);
+    }
+
+    /**
+     * Test that a malformed recipient address — which throws while the message
+     * is built, before it is ever written to the spool — records a permanent
+     * bounce and is skipped, rather than escaping uncaught and killing the
+     * queue task (Sentry BATCH-17 / BATCH-6).
+     */
+    public function test_spool_records_bounce_when_recipient_address_is_malformed(): void
+    {
+        // No "@" → Symfony throws RfcComplianceException ("... does not comply
+        // with addr-spec of RFC 2822"), which the classifier treats as permanent.
+        $malformed = 'kojopoku6_' . uniqid() . '.com';
+        $user = $this->createTestUser(['email_preferred' => $malformed]);
+        $userEmail = UserEmail::where('email', $malformed)->first();
+
+        $mailable = new WelcomeMail($malformed);
+
+        // Must not throw, and must not spool anything.
+        $id = $this->spooler->spool($mailable, $malformed, 'welcome');
+
+        $this->assertSame('', $id);
+        $this->assertCount(0, glob($this->testSpoolDir . '/pending/*.json'));
+
+        // Permanent bounce recorded against the offending address.
+        $bounceCount = DB::table('bounces_emails')
+            ->where('emailid', $userEmail->id)
+            ->where('permanent', 1)
+            ->count();
+        $this->assertGreaterThanOrEqual(1, $bounceCount);
+
+        // User flagged as bouncing (1 permanent bounce = suspension).
+        $user->refresh();
+        $this->assertEquals(1, $user->bouncing);
+    }
+
+    /**
+     * Test that a non-permanent build failure (e.g. infra/MJML) still
+     * propagates from spool() instead of being silently swallowed.
+     */
+    public function test_spool_rethrows_non_permanent_build_failure(): void
+    {
+        $email = $this->uniqueEmail('recipient');
+
+        // A mailable whose build throws a transient/unknown error — not an
+        // address problem — must bubble up so it gets noticed, exactly as
+        // before this change.
+        $mailable = new class($email) extends Mailable {
+            public function __construct(private string $recipient) {}
+
+            public function build(): static
+            {
+                throw new \RuntimeException('MJML compilation failed: Could not resolve host: mjml');
+            }
+        };
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->spooler->spool($mailable, $email);
+    }
+
+    /**
+     * Test that a file orphaned in sending/ (left by a process that died
+     * mid-send) is reclaimed back to pending/ on startup.
+     *
+     * The spooler runs single-process (numprocs=1), so at daemon startup
+     * nothing is in flight — reclaiming is race-free and lossless.
+     */
+    public function test_reclaim_orphaned_sending_moves_file_back_to_pending(): void
+    {
+        // Simulate a process that died after moving the file to sending/.
+        $id = 'test_orphan_' . uniqid();
+        $data = [
+            'id' => $id,
+            'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
+            'from' => [['address' => $this->uniqueEmail('noreply'), 'name' => 'Freegle']],
+            'subject' => 'Orphaned Subject',
+            'html' => '<p>Test</p>',
+            'attempts' => 0,
+            'created_at' => now()->toIso8601String(),
+        ];
+
+        file_put_contents(
+            $this->testSpoolDir . '/sending/' . $id . '.json',
+            json_encode($data)
+        );
+
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(1, $reclaimed);
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/sending/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
+    }
+
+    /**
+     * Test that reclaim is a no-op (returns 0) when sending/ is empty.
+     */
+    public function test_reclaim_orphaned_sending_noop_when_empty(): void
+    {
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(0, $reclaimed);
+    }
+
+    /**
+     * Test that reclaim handles multiple orphaned files in one pass.
+     */
+    public function test_reclaim_orphaned_sending_handles_multiple_files(): void
+    {
+        for ($i = 0; $i < 3; $i++) {
+            $id = 'test_orphan_' . $i . '_' . uniqid();
+            file_put_contents(
+                $this->testSpoolDir . '/sending/' . $id . '.json',
+                json_encode(['id' => $id])
+            );
+        }
+
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(3, $reclaimed);
+        $this->assertCount(0, glob($this->testSpoolDir . '/sending/*.json'));
+        $this->assertCount(3, glob($this->testSpoolDir . '/pending/*.json'));
+    }
+
+    /**
+     * A genuinely unparseable spool file is moved to failed/ and counted as
+     * invalid, rather than being silently discarded with no recorded reason.
+     */
+    public function test_process_spool_moves_unparseable_file_to_failed(): void
+    {
+        $id = 'test_corrupt_' . uniqid();
+        file_put_contents(
+            $this->testSpoolDir . '/pending/' . $id . '.json',
+            '{not valid json'
+        );
+
+        $stats = $this->spooler->processSpool();
+
+        $this->assertEquals(1, $stats['invalid']);
+        $this->assertEquals(0, $stats['sent']);
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
     }
 }

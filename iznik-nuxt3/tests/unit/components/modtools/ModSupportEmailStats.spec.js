@@ -224,7 +224,20 @@ describe('ModSupportEmailStats', () => {
         value: 'ChatNotification',
       })
       expect(options).toContainEqual({ text: 'Welcome', value: 'WelcomeMail' })
-      expect(options).toContainEqual({ text: 'Digest', value: 'UnifiedDigest' })
+      // UnifiedDigest split into per-mode entries (immediate + daily). The
+      // pre-split 'UnifiedDigest' legacy bucket has been retired.
+      expect(options).toContainEqual({
+        text: 'Digest (Immediate)',
+        value: 'UnifiedDigestImmediate',
+      })
+      expect(options).toContainEqual({
+        text: 'Digest (Daily)',
+        value: 'UnifiedDigestDaily',
+      })
+      expect(options).not.toContainEqual({
+        text: 'Digest (legacy)',
+        value: 'UnifiedDigest',
+      })
     })
   })
 

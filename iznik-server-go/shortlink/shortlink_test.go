@@ -128,6 +128,24 @@ func TestPostShortlink_JSONBodyOverridesQuery_StillMissingGroupid(t *testing.T) 
 	assert.Equal(t, float64(2), m["ret"])
 }
 
+func TestPostShortlink_ZeroGroupid_Invalid(t *testing.T) {
+	// Explicitly set groupid=0 with a valid name → 400.
+	app := newShortlinkApp()
+	resp, m := doRequest(t, app, "POST", "/shortlink?name=testname&groupid=0", nil, "")
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, float64(2), m["ret"])
+}
+
+func TestPostShortlink_InvalidGroupidNumber_DefaultsToZero(t *testing.T) {
+	// Invalid groupid parameter (non-numeric) → strconv.ParseUint returns 0.
+	// With 0 groupid and valid name → 400.
+	app := newShortlinkApp()
+	resp, m := doRequest(t, app, "POST", "/shortlink?name=valid&groupid=notanumber", nil, "")
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, float64(2), m["ret"])
+}
+
+
 // ---------------------------------------------------------------------------
 // RedirectShortlink — empty-name redirect paths (no DB needed)
 // ---------------------------------------------------------------------------
@@ -176,6 +194,17 @@ func TestRedirectShortlink_DefaultURL_ContainsHTTPS(t *testing.T) {
 	assert.NoError(t, err)
 	loc := resp.Header.Get("Location")
 	assert.True(t, strings.HasPrefix(loc, "https://"), "redirect location must use https, got %q", loc)
+}
+
+
+func TestRedirectShortlink_StatusCodeIsFound302(t *testing.T) {
+	// Verify the redirect status code is 302 (StatusFound), not 301 or 303.
+	os.Unsetenv("USER_SITE")
+	app := newRedirectApp()
+	req := httptest.NewRequest("GET", "/shortlink", nil)
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 302, resp.StatusCode)
 }
 
 // ---------------------------------------------------------------------------
@@ -235,3 +264,74 @@ func TestResolveShortlinkURL_TypeCaseSensitive(t *testing.T) {
 	assert.Equal(t, "", s.Nameshort)
 }
 
+func TestResolveShortlinkURL_PreservesNamshortWhenTypeNotGroup(t *testing.T) {
+	// When Type != "Group", Nameshort is not modified by resolveShortlinkURL.
+	nameshort := "preserved_value"
+	s := &Shortlink{
+		ID:        5,
+		Type:      "Custom",
+		Nameshort: nameshort,
+	}
+	resolveShortlinkURL(s, "example.org")
+	assert.Equal(t, nameshort, s.Nameshort)
+}
+
+// ---------------------------------------------------------------------------
+// Parameter parsing table-driven tests
+// ---------------------------------------------------------------------------
+
+func TestPostShortlink_VariousInvalidGroupids(t *testing.T) {
+	tests := []struct {
+		name       string
+		groupidVal string
+		expectRet  float64
+	}{
+		{"notanumber", "notanumber", 2.0},
+		{"empty", "", 2.0},
+		{"negative", "-5", 2.0}, // ParseUint error, defaults to 0
+		{"zero", "0", 2.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newShortlinkApp()
+			url := "/shortlink?name=testname"
+			if tt.groupidVal != "" {
+				url += "&groupid=" + tt.groupidVal
+			}
+			resp, m := doRequest(t, app, "POST", url, nil, "")
+			assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, tt.expectRet, m["ret"])
+		})
+	}
+}
+
+func TestRedirectShortlink_UserSiteVariations_BuildsCorrectDefaultURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		userSiteEnv  string
+		expectedBase string
+	}{
+		{"unset", "", "https://www.ilovefreegle.org"},
+		{"custom", "test.org", "https://test.org"},
+		{"localhost", "localhost:8080", "https://localhost:8080"},
+		{"ip", "10.0.0.1", "https://10.0.0.1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.userSiteEnv != "" {
+				os.Setenv("USER_SITE", tt.userSiteEnv)
+			} else {
+				os.Unsetenv("USER_SITE")
+			}
+			defer os.Unsetenv("USER_SITE")
+
+			app := newRedirectApp()
+			req := httptest.NewRequest("GET", "/shortlink", nil)
+			resp, err := app.Test(req)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedBase, resp.Header.Get("Location"))
+		})
+	}
+}

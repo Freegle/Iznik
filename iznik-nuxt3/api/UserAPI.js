@@ -103,6 +103,12 @@ export default class UserAPI extends BaseAPI {
     return this.$postv2('/user', { id, action: 'Unbounce' })
   }
 
+  unsubscribe(id) {
+    // Puts the user into limbo — account hidden immediately, all data
+    // permanently deleted after a 14-day grace period (User::limbo()).
+    return this.$postv2('/user', { id, action: 'Unsubscribe' })
+  }
+
   addEmail(id, email, primary) {
     return this.$postv2('/user', { id, action: 'AddEmail', email, primary })
   }

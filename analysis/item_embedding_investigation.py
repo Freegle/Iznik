@@ -9,6 +9,7 @@ Questions:
   4. What's the coverage improvement in validation from deduplication?
 """
 
+import os
 import re
 import pymysql
 import pandas as pd
@@ -18,7 +19,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
 DB = dict(host='127.0.0.1', port=11234, user='root',
-          password='F5432f12azfvds', db='iznik', charset='utf8mb4',
+          password=os.environ.get('LIVE_DB_PASSWORD', ''), db='iznik', charset='utf8mb4',
           autocommit=True)
 
 TRAIN_START = '2023-01-01'

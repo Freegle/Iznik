@@ -7,6 +7,7 @@ const mockChatStore = {
   clear: vi.fn().mockResolvedValue({}),
   fetchReviewChatsMT: vi.fn().mockResolvedValue({}),
   messagesById: vi.fn().mockReturnValue([]),
+  rejectChat: vi.fn().mockResolvedValue({}),
 }
 
 const mockAuthStore = {
@@ -168,9 +169,24 @@ describe('chats/review.vue page', () => {
       await wrapper.vm.clearAndLoad()
 
       expect(mockChatStore.clear).toHaveBeenCalled()
-      expect(mockChatStore.fetchReviewChatsMT).toHaveBeenCalledWith(null, {
-        limit: 5,
-      })
+      expect(mockChatStore.fetchReviewChatsMT).toHaveBeenCalledWith(null, {})
+    })
+
+    it('clearAndLoad fetches without a hard 5-item limit so all pending items are reachable', async () => {
+      // Regression: clearAndLoad was passing limit: 5 to fetchReviewChatsMT,
+      // so the server returned at most 5 messages even when the badge showed more.
+      // loadMore would call $state.complete() after the 5, making further items
+      // unreachable. Fix: remove the hard limit so the server default (100) applies.
+      const wrapper = mountComponent()
+      await flushPromises()
+      vi.clearAllMocks()
+
+      await wrapper.vm.clearAndLoad()
+
+      // Must NOT pass limit: 5 — that was capping the review list
+      const calls = mockChatStore.fetchReviewChatsMT.mock.calls
+      expect(calls.length).toBe(1)
+      expect(calls[0][1]?.limit).not.toBe(5)
     })
 
     it('clearAndLoad increments bump', async () => {
@@ -193,6 +209,45 @@ describe('chats/review.vue page', () => {
 
       expect(wrapper.vm.showDeleteModal).toBe(true)
       expect(callback).toHaveBeenCalled()
+    })
+
+    it('deleteConfirmed rejects each visible message via the chat store', async () => {
+      // Regression: chatStore has no reject({id, chatid}) method — only
+      // rejectChat(id). Calling reject() threw TypeError in production.
+      mockChatStore.messagesById.mockReturnValue([
+        { id: 1, chatid: 100, widerchatreview: false },
+        { id: 2, chatid: 200, widerchatreview: false },
+      ])
+      const wrapper = mountComponent()
+      await flushPromises()
+      wrapper.vm.show = 10
+      await wrapper.vm.$nextTick()
+      vi.clearAllMocks()
+
+      wrapper.vm.deleteConfirmed()
+      await flushPromises()
+
+      expect(mockChatStore.rejectChat).toHaveBeenCalledTimes(2)
+      expect(mockChatStore.rejectChat).toHaveBeenCalledWith(1)
+      expect(mockChatStore.rejectChat).toHaveBeenCalledWith(2)
+    })
+
+    it('deleteConfirmed skips wider-chat-review messages (mod-only entries)', async () => {
+      mockChatStore.messagesById.mockReturnValue([
+        { id: 1, chatid: 100, widerchatreview: true },
+        { id: 2, chatid: 200, widerchatreview: false },
+      ])
+      const wrapper = mountComponent()
+      await flushPromises()
+      wrapper.vm.show = 10
+      await wrapper.vm.$nextTick()
+      vi.clearAllMocks()
+
+      wrapper.vm.deleteConfirmed()
+      await flushPromises()
+
+      expect(mockChatStore.rejectChat).toHaveBeenCalledTimes(1)
+      expect(mockChatStore.rejectChat).toHaveBeenCalledWith(2)
     })
   })
 

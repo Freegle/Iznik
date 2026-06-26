@@ -20,7 +20,7 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->unsignedBigInteger('userid');
             $table->timestamp('added')->useCurrent();
-            $table->enum('type', ['Google', 'Firefox', 'Test', 'Android', 'IOS', 'FCMAndroid', 'FCMIOS', 'BrowserPush'])->default('Google')->index('type');
+            $table->enum('type', ['Google', 'Firefox', 'Test', 'Android', 'IOS', 'FCMAndroid', 'FCMIOS'])->default('Google')->index('type');
             $table->timestamp('lastsent')->nullable()->useCurrent();
             $table->string('subscription')->unique('subscription');
             $table->enum('apptype', ['User', 'ModTools'])->default('User');

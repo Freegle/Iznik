@@ -45,6 +45,17 @@ jobs:
               exit 0
             fi
 
+            # Don't cancel older pipelines when THIS is a manual API trigger.
+            # Manual workflows (modtools, testflight, promote) must co-exist with
+            # automatic deploy-apps builds — they serve different purposes and
+            # cancelling deploy-apps would kill production build-android/build-ios jobs.
+            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+              echo "Manual workflow trigger — skipping pipeline cancellation"
+              exit 0
+            fi
+
             BRANCH="<< pipeline.git.branch >>"
             THIS_PIPELINE="<< pipeline.id >>"
             THIS_NUMBER="<< pipeline.number >>"
@@ -222,6 +233,16 @@ jobs:
             # proceeds to run tests.
             if [ -z "$CIRCLE_TOKEN" ]; then
               echo "CIRCLE_TOKEN not set — skipping"
+              exit 0
+            fi
+
+            # Don't cancel older pipelines when THIS is a manual API trigger (same
+            # guard as the first cancel step — manual workflows must not disrupt
+            # already-running automatic deploy-apps builds).
+            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+              echo "Manual workflow trigger — skipping pipeline cancellation"
               exit 0
             fi
 

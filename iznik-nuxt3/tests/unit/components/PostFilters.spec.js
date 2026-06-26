@@ -282,14 +282,15 @@ describe('PostFilters', () => {
   })
 
   describe('sort options', () => {
-    it('has Unseen sort option', () => {
+    it('has the rippling-out sort options: New to you / Newest posted / Nearby (#1)', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.text()).toContain('Unseen posts first')
-    })
-
-    it('has Newest sort option', () => {
-      const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.text()).toContain('Newest posts first')
+      const text = wrapper.text()
+      expect(text).toContain('New to you')
+      expect(text).toContain('Newest posted')
+      expect(text).toContain('Nearby')
+      // The legacy labels and the manual travel-time slider are gone.
+      expect(text).not.toContain('Unseen posts first')
+      expect(text).not.toContain('Adjust the slider to show posts from nearer')
     })
   })
 
@@ -306,17 +307,18 @@ describe('PostFilters', () => {
     })
   })
 
-  describe('isochrones', () => {
-    it('shows isochrones section when browseView is nearby', () => {
-      mockIsochroneStore.list = [{ id: 1 }]
+  describe('nearby reach text (#1)', () => {
+    it('shows the automatic-reach help text in Nearby (no manual slider)', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.find('.isochrone').exists()).toBe(true)
+      const text = wrapper.text()
+      expect(text).toContain('We show posts near you first')
+      expect(wrapper.find('.isochrone').exists()).toBe(false)
     })
 
-    it('renders help text for isochrones', () => {
-      mockIsochroneStore.list = [{ id: 1 }]
+    it('links to change postcode and the FAQ', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       expect(wrapper.text()).toContain('Change postcode')
+      expect(wrapper.text()).toContain('How does this work?')
     })
   })
 

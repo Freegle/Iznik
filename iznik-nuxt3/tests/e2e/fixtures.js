@@ -298,7 +298,6 @@ const test = base.test.extend({
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
       /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
-      /Failed to load resource: net::ERR_ADDRESS_UNREACHABLE.*dns\.google/, // dns.google DoH used by EmailValidator for best-effort domain validation; unreachable in some CI Docker environments (JS catch block already suppresses the error)
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
       /Failed to save credentials NotSupportedError: The user agent does not support public key credentials./, // Can happen in test environments
       /Refused to frame/, // Can happen in test.
@@ -336,6 +335,7 @@ const test = base.test.extend({
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
+      /Failed to load resource.*adtrafficquality\.google.*sodar/, // Google CSE script internally calls sodar (ad traffic quality) — external service, not our code
     ]
 
     // Initialize the working copy of allowed error patterns
@@ -2109,7 +2109,6 @@ const testWithFixtures = test.extend({
         const text = msg.text()
         if (
           text.includes('ReplyStateMachine') ||
-          text.includes('MessageReplySection') ||
           text.includes('openChat') ||
           text.includes('fallback') ||
           text.includes('timeout') ||
@@ -2177,7 +2176,7 @@ const testWithFixtures = test.extend({
 
       // Click the Reply button with retry — Vue SSR hydration can swallow
       // the first click if event handlers aren't fully attached yet.
-      const replySection = freshPage.locator('.reply-expanded-section')
+      const replyOverlay = freshPage.locator('.reply-overlay')
       const maxReplyRetries = 3
 
       for (let attempt = 1; attempt <= maxReplyRetries; attempt++) {
@@ -2187,20 +2186,20 @@ const testWithFixtures = test.extend({
         )
 
         try {
-          await replySection.waitFor({
+          await replyOverlay.waitFor({
             state: 'visible',
             timeout: attempt < maxReplyRetries ? 5000 : timeouts.ui.appearance,
           })
-          console.log('Reply section expanded')
+          console.log('Reply overlay opened')
           break
         } catch (e) {
           if (attempt === maxReplyRetries) {
             throw new Error(
-              `Reply section did not expand after ${maxReplyRetries} attempts`
+              `Reply overlay did not open after ${maxReplyRetries} attempts`
             )
           }
           console.log(
-            `Reply section not visible after attempt ${attempt}, retrying...`
+            `Reply overlay not visible after attempt ${attempt}, retrying...`
           )
         }
       }
@@ -2245,16 +2244,16 @@ const testWithFixtures = test.extend({
       await collectTextarea.fill(collectDetails)
       console.log('Filled collection details')
 
-      // Click the "Send your reply" button
+      // Click the Send button in the reply composer
       const sendReplyButton = freshPage
-        .locator('.btn:has-text("Send your reply")')
+        .locator('.composer-send-btn')
         .filter({ visible: true })
       await sendReplyButton.waitFor({
         state: 'visible',
         timeout: timeouts.ui.appearance,
       })
       await sendReplyButton.click()
-      console.log('Clicked Send your reply button')
+      console.log('Clicked Send reply button')
 
       // The reply state machine handles authentication for new users automatically:
       // 1. Calls user.add(email) to register the user

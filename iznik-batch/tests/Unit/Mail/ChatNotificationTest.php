@@ -559,6 +559,39 @@ class ChatNotificationTest extends TestCase
         $this->assertStringContainsString('Previous message', $html);
     }
 
+    public function test_chat_notification_formats_dates_in_uk_local_time(): void
+    {
+        // Regression: chat notification timestamps were rendered in UTC, so a message
+        // sent at 10:32 BST showed as 9:32. Dates are stored in UTC and must be
+        // converted to Europe/London (which honours BST) before formatting.
+        ['user1' => $user1, 'user2' => $user2, 'room' => $room] = $this->createUser2UserChatSetup();
+
+        // 09:32 UTC on a summer date is 10:32 BST (UTC+1).
+        $prevMessage = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Summer time message',
+            'date' => \Carbon\Carbon::create(2026, 6, 15, 9, 32, 0, 'UTC'),
+        ]);
+
+        $message = $this->createTestChatMessage($room, $user2, [
+            'message' => 'Latest message',
+        ]);
+
+        $mail = new ChatNotification(
+            $user1,
+            $user2,
+            $room,
+            $message,
+            ChatRoom::TYPE_USER2USER,
+            collect([$prevMessage])
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // Must show UK local time (10:32), not the stored UTC time (9:32).
+        $this->assertStringContainsString('10:32 am', $html, 'Chat notification dates should be shown in UK local time (BST), not UTC');
+    }
+
     public function test_chat_notification_uses_regarding_instead_of_re(): void
     {
         $user1 = $this->createTestUser();
@@ -1954,5 +1987,130 @@ class ChatNotificationTest extends TestCase
         // The address was sent by Kate (not the recipient), so for John it should say
         // "Kate Offerer sent you an address."
         $this->assertStringContainsString('Kate Offerer sent you an address', $html);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Preheader (mj-preview) tests for chat/notification.blade.php
+    // ---------------------------------------------------------------------------
+
+    /**
+     * User2User: preheader carries sender name and message snippet.
+     */
+    public function test_chat_notification_preheader_user2user_shows_sender_and_snippet(): void
+    {
+        ['mail' => $mail] = $this->createUser2UserChatSetup([
+            'user1_attrs'  => ['fullname' => 'Alice Sender'],
+            'message_text' => 'I am still interested in the sofa, is it available?',
+        ]);
+
+        $mail->build();
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Alice Sender: I am still interested in the sofa', $html);
+    }
+
+    /**
+     * User2Mod (moderator recipient): preheader shows member name and message text.
+     */
+    public function test_chat_notification_preheader_user2mod_moderator_shows_member_name(): void
+    {
+        $member    = $this->createTestUser(['fullname' => 'Bob Member']);
+        $moderator = $this->createTestUser();
+        $group     = $this->createTestGroup();
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1'    => $member->id,
+            'groupid'  => $group->id,
+            'created'  => now(),
+        ]);
+
+        $message = $this->createTestChatMessage($room, $member, [
+            'message' => 'Please can you help me with my account?',
+        ]);
+
+        $mail = new ChatNotification(
+            $moderator,
+            $member,
+            $room,
+            $message,
+            ChatRoom::TYPE_USER2MOD
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // Moderator branch: memberName + ': ' + snippet
+        $this->assertStringContainsString('Bob Member: Please can you help me', $html);
+    }
+
+    /**
+     * Copy-to-self (isOwnMessage): preheader says "Your message to <otherUser>".
+     */
+    public function test_chat_notification_preheader_own_message_copy_shows_other_user_name(): void
+    {
+        $user1 = $this->createTestUser(['fullname' => 'Carol Owner']);
+        $user2 = $this->createTestUser(['fullname' => 'Dave Recipient']);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1'    => $user1->id,
+            'user2'    => $user2->id,
+            'created'  => now(),
+        ]);
+
+        // Message sent BY user1 and notification sent TO user1 (copy to self)
+        $message = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Here is my address for collection.',
+        ]);
+
+        $mail = new ChatNotification(
+            $user1,   // recipient = sender themselves (copy to self)
+            $user2,
+            $room,
+            $message,
+            ChatRoom::TYPE_USER2USER
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // isOwnMessage branch: "Your message to <otherUser>: <snippet>"
+        $this->assertStringContainsString('Your message to Dave Recipient:', $html);
+    }
+
+    /**
+     * Mod2Mod: preheader shows the sender name and message snippet.
+     */
+    public function test_chat_notification_preheader_mod2mod_shows_sender_and_snippet(): void
+    {
+        $mod1  = $this->createTestUser(['fullname' => 'Eve Moderator']);
+        $mod2  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_MOD2MOD,
+            'user1'    => $mod1->id,
+            'groupid'  => $group->id,
+            'created'  => now(),
+        ]);
+
+        $message = $this->createTestChatMessage($room, $mod1, [
+            'message' => 'Can you cover moderation this weekend?',
+        ]);
+
+        $mail = new ChatNotification(
+            $mod2,
+            $mod1,
+            $room,
+            $message,
+            ChatRoom::TYPE_MOD2MOD
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // Mod2Mod branch: senderName + ': ' + snippet
+        $this->assertStringContainsString('Eve Moderator: Can you cover moderation', $html);
     }
 }

@@ -33,6 +33,9 @@
             </span>
             <span v-if="log.text">
               <span v-if="log.text === 'Manual'"> Clicked on Join button </span>
+              <span v-else-if="log.text === 'Rippled'">
+                Joined automatically when their post rippled into this group
+              </span>
               <span v-else> Joined automatically when posting/replying </span>
             </span>
           </span>
@@ -77,9 +80,7 @@
               <span
                 v-if="
                   logMessage.groups &&
-                  logMessage.groups.some(
-                    (g) => g.collection === 'Pending'
-                  )
+                  logMessage.groups.some((g) => g.collection === 'Pending')
                 "
                 class="text-warning"
               >
@@ -239,7 +240,9 @@
             <ModLogStdMsg :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'Deleted'">
-            <span v-if="logByuser">Rejected member</span>
+            <span v-if="logUser && logByuser && logByuser.id !== logUser.id"
+              >Rejected member</span
+            >
             <span v-else>User left platform ({{ log.text }})</span>
             <ModLogUser :userid="logUser.id" />
             <ModLogGroup :logid="logid" tag="on" />

@@ -40,15 +40,20 @@ class AutoRepostService
      *
      * Matches V1 autorepost.php → Message::autoRepostGroup().
      *
-     * Multi-group fix: V1 autoRepost() updates ALL messages_groups rows
-     * (WHERE msgid = ?). We update only the specific group's row
-     * (WHERE msgid = ? AND groupid = ?).
+     * Multi-group fix: the REPOST itself stays per-group — V1 autoRepost() updates ALL
+     * messages_groups rows (WHERE msgid = ?), we update only the specific group's row
+     * (WHERE msgid = ? AND groupid = ?), so a rippled item is kept fresh in each
+     * community independently.
+     *
+     * Rippling-out fix: the WARNING email is anchored to the home posting
+     * (rippled_in = 0) and stamped across every group of the message, so a widely-rippled
+     * post reminds the poster once per cycle, not once per group. See processGroup().
      *
      * V1 side effects included:
      *   - UPDATE messages_groups SET arrival=NOW(), autoreposts=autoreposts+1 (per-group)
      *   - Log AUTOREPOSTED entry per group
      *   - INSERT messages_postings per group
-     *   - UPDATE lastautopostwarning for warning emails
+     *   - UPDATE lastautopostwarning for warning emails (home posting only; stamped on all groups)
      *   - Warning email: "Will Repost: {subject}" with completed/withdraw/promise buttons
      *
      * V1 side effects NOT included:
@@ -190,21 +195,32 @@ class AutoRepostService
                 && $msg->hoursago > ($interval - 1) * 24
                 && (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
             ) {
-                if (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
+                // Rippling-out fix: the repost reminder is anchored to the message's HOME
+                // posting (rippled_in = 0). A post that rippled INTO this group must never
+                // generate its own "Will Repost" reminder — otherwise a widely-rippled item
+                // would email the poster once per group, which is burdensome. The reminder's
+                // buttons (mark taken / withdraw / promise) act on the whole item, so one
+                // email from the home group governs the post on every group. Rippled rows are
+                // still reposted (the elseif below) to keep the item fresh in each community;
+                // they just stay silent.
+                if ($msg->rippled_in) {
+                    $stats['skipped']++;
+                } elseif (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
                     if ($dryRun) {
                         Log::info("Dry run: would send repost warning for message #{$msg->msgid} on group #{$group->id}");
                     } elseif ($warningEmailEnabled) {
-                        // Multi-group fix: update per-group, not global.
-                        // V1: UPDATE messages_groups SET lastautopostwarning = NOW() WHERE msgid = ?
+                        // Stamp lastautopostwarning on EVERY group of the message (V1's
+                        // WHERE msgid = ?), so a message cross-posted to several home groups
+                        // (and all its rippled-in rows) is reminded once per cycle, not once
+                        // per group. Mirrors ChaseUpService's cross-group lastchaseup stamp.
                         DB::table('messages_groups')
                             ->where('msgid', $msg->msgid)
-                            ->where('groupid', $group->id)
                             ->update(['lastautopostwarning' => now()]);
 
                         // V1: "Will Repost: {subject}" with links to mark completed/withdraw/promise.
                         $user = User::find($msg->fromuser);
                         if ($user && $user->email_preferred) {
-                            Mail::send(new AutoRepostWarning(
+                            app(\App\Services\EmailSpoolerService::class)->spool(new AutoRepostWarning(
                                 messageId: $msg->msgid,
                                 messageSubject: $msg->subject ?? '',
                                 messageType: $msg->type,
@@ -254,6 +270,7 @@ class AutoRepostService
                 'messages_groups.groupid',
                 'messages_groups.autoreposts',
                 'messages_groups.lastautopostwarning',
+                'messages_groups.rippled_in',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',

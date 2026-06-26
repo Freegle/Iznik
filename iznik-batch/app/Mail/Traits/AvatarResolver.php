@@ -26,6 +26,12 @@ trait AvatarResolver
 
         $name    = $user?->fullname ?: 'user';
         $baseUrl = rtrim(config('freegle.avatar_server_url', ''), '/');
+        if ($baseUrl === '') {
+            // Fall back to the user site so emails always have absolute avatar URLs.
+            // Without this fallback the URL becomes "/name.png" which doesn't resolve
+            // in email clients.
+            $baseUrl = rtrim(config('freegle.sites.user', ''), '/');
+        }
 
         return $baseUrl . '/' . rawurlencode($name) . '.png' . ($size !== 48 ? "?size={$size}" : '');
     }

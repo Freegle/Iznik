@@ -130,7 +130,7 @@ class SpamCheckServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        for ($i = 0; $i < 3; $i++) {
+        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD - 1; $i++) {
             $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
                 'fromip' => '11.22.33.44',
@@ -148,7 +148,7 @@ class SpamCheckServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        for ($i = 0; $i < SpamCheckService::GROUP_THRESHOLD + 1; $i++) {
+        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD + 1; $i++) {
             $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
                 'fromip' => '55.66.77.88',
@@ -164,6 +164,64 @@ class SpamCheckServiceTest extends TestCase
         $this->assertNotNull($result);
         $this->assertTrue($result[0]);
         $this->assertEquals(SpamCheckService::REASON_IP_USED_FOR_DIFFERENT_GROUPS, $result[1]);
+    }
+
+    public function test_ip_groups_many_posters_one_group_each_not_flagged(): void
+    {
+        // The shared-NAT case: many distinct posters from one IP, each posting to ONLY their own
+        // group. The old all-posters group count would flag this (lots of distinct groups); the
+        // per-poster check must not, because no single account is reaching many groups.
+        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD * 2; $i++) {
+            $user = $this->createTestUser();
+            $group = $this->createTestGroup();
+            DB::table('messages_history')->insert([
+                'fromip' => '66.66.66.66',
+                'fromuser' => $user->id,
+                'fromname' => "NAT user {$i}",
+                'groupid' => $group->id,
+                'arrival' => now(),
+            ]);
+        }
+
+        $this->assertNull($this->service->checkIPGroups('66.66.66.66'));
+    }
+
+    public function test_ip_groups_ignores_history_outside_window(): void
+    {
+        // A single poster reaching many groups, but all of it older than the history window, must
+        // not be flagged - the unbounded check used to accumulate this forever.
+        $user = $this->createTestUser();
+
+        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD + 1; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_history')->insert([
+                'fromip' => '77.77.77.77',
+                'fromuser' => $user->id,
+                'fromname' => 'Old hopper',
+                'groupid' => $group->id,
+                'arrival' => now()->subDays(SpamCheckService::HISTORY_WINDOW_DAYS + 1),
+            ]);
+        }
+
+        $this->assertNull($this->service->checkIPGroups('77.77.77.77'));
+    }
+
+    public function test_ip_users_ignores_history_outside_window(): void
+    {
+        $group = $this->createTestGroup();
+
+        for ($i = 0; $i <= SpamCheckService::USER_THRESHOLD; $i++) {
+            $user = $this->createTestUser();
+            DB::table('messages_history')->insert([
+                'fromip' => '88.88.88.88',
+                'fromuser' => $user->id,
+                'fromname' => "Old user {$i}",
+                'groupid' => $group->id,
+                'arrival' => now()->subDays(SpamCheckService::HISTORY_WINDOW_DAYS + 1),
+            ]);
+        }
+
+        $this->assertNull($this->service->checkIPUsers('88.88.88.88'));
     }
 
     // ========================================
@@ -211,6 +269,22 @@ class SpamCheckServiceTest extends TestCase
         ]);
 
         $this->assertNull($this->service->checkSubjectReuse('Whitelisted subject'));
+    }
+
+    public function test_subject_ignores_history_outside_window(): void
+    {
+        // A subject reused across many groups, but all older than the history window, must not be
+        // flagged - the check used to accumulate subject history indefinitely.
+        for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_history')->insert([
+                'prunedsubject' => 'Old reused subject',
+                'groupid' => $group->id,
+                'arrival' => now()->subDays(SpamCheckService::HISTORY_WINDOW_DAYS + 1),
+            ]);
+        }
+
+        $this->assertNull($this->service->checkSubjectReuse('Old reused subject'));
     }
 
     // ========================================
@@ -665,6 +739,41 @@ class SpamCheckServiceTest extends TestCase
         ]);
 
         $this->assertNull($service->checkMessage($email));
+    }
+
+    public function test_check_message_for_chat_reply_skips_subject_reuse(): void
+    {
+        // A common post subject like "Washing Machine" legitimately appears on many
+        // groups in messages_history. An email reply to a chat notification echoes
+        // that subject as "Re: Washing Machine", so subject-reuse must NOT fire on
+        // the reply when the chat-reply flag is set.
+        //
+        // pruneSubject() (matching V1 Message::getPrunedSubject) strips the
+        // location suffix but not the "Re:" prefix, so the reply prunes to
+        // "Re: Washing Machine". Seed messages_history with that exact pruned
+        // form so the LIKE prefix match actually hits and the without-flag
+        // assertion below has something to flag.
+        for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_history')->insert([
+                'prunedsubject' => 'Re: Washing Machine',
+                'groupid' => $group->id,
+                'arrival' => now(),
+            ]);
+        }
+
+        $email = $this->createParsedEmailForSpamTest([
+            'subject' => 'Re: Washing Machine (BD4)',
+            'textBody' => 'Okey that\'s fine i can only collect after 7pm',
+        ]);
+
+        // Without the chat-reply flag, subject reuse trips.
+        $postResult = $this->service->checkMessage($email);
+        $this->assertNotNull($postResult);
+        $this->assertEquals(SpamCheckService::REASON_SUBJECT_USED_FOR_DIFFERENT_GROUPS, $postResult[1]);
+
+        // With forChatReply=true, the same email is clean.
+        $this->assertNull($this->service->checkMessage($email, forChatReply: true));
     }
 
     // ========================================

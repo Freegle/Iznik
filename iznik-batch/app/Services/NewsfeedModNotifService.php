@@ -3,13 +3,17 @@
 namespace App\Services;
 
 use App\Mail\Newsfeed\NewsfeedModNotifMail;
+use App\Mail\Traits\AvatarResolver;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 class NewsfeedModNotifService
 {
+    use AvatarResolver;
+
     // System address that must be excluded from mod notifications (not a real human).
     public const SYSTEM_MOD_EMAIL = 'modtools@modtools.org';
 
@@ -55,23 +59,19 @@ class NewsfeedModNotifService
         foreach ($modIds as $modId) {
             $modsChecked++;
 
-            $mod = DB::table('users')
-                ->join('users_emails', function ($join) {
-                    $join->on('users_emails.userid', '=', 'users.id')
-                        ->where('users_emails.preferred', '=', 1);
-                })
-                ->where('users.id', $modId)
-                ->select([
-                    'users.id',
-                    'users.fullname',
-                    'users.settings',
-                    'users_emails.email',
-                ])
-                ->first();
-
-            if (!$mod || !$mod->email) {
+            // V1 parity: pick the mod's preferred external email; skip mods
+            // who only have internal-alias addresses.
+            $modModel = \App\Models\User::find($modId);
+            $email = $modModel?->email_preferred;
+            if (!$modModel || !$email) {
                 continue;
             }
+            $mod = (object) [
+                'id' => $modModel->id,
+                'fullname' => $modModel->fullname,
+                'settings' => $modModel->settings,
+                'email' => $email,
+            ];
 
             // Skip the system modtools address.
             if (strtolower($mod->email) === self::SYSTEM_MOD_EMAIL) {
@@ -136,31 +136,44 @@ class NewsfeedModNotifService
             $maxId = 0;
             $postsData = [];
 
+            // Resolve the poster's display name + avatar once per author so the
+            // email can show who posted (not just an anonymous "POST").
+            $authorIds = array_values(array_unique(array_map(fn ($p) => (int) $p->userid, $posts)));
+            $authors = User::whereIn('id', $authorIds)->get()->keyBy('id');
+
             foreach ($posts as $post) {
                 $maxId = max($maxId, $post->id);
 
-                $label = match($post->type) {
-                    'Story'   => 'Freegle story',
-                    'AboutMe' => 'About me',
-                    default   => 'Post',
+                $author = $authors->get((int) $post->userid);
+
+                // What the member did, phrased so the mod sees this is ChitChat
+                // community activity rather than an OFFER/WANTED post on the group.
+                $action = match($post->type) {
+                    'Story'   => 'shared their Freegle story',
+                    'AboutMe' => 'updated their About Me',
+                    default   => 'posted on ChitChat',
                 };
 
-                if ($post->type === 'Story') {
-                    $preview = 'shared their Freegle story';
-                } else {
+                // Story/AboutMe are described by the action line; only Message
+                // posts carry a text preview.
+                $preview = '';
+                if ($post->type !== 'Story') {
                     $msg = $post->message ?? '';
                     $preview = mb_strlen($msg) > 200 ? mb_substr($msg, 0, 200) . '...' : $msg;
                 }
 
                 $postsData[] = [
-                    'label'   => $label,
-                    'preview' => $preview,
-                    'added'   => $post->added,
+                    'id'         => $post->id,
+                    'action'     => $action,
+                    'preview'    => $preview,
+                    'added'      => $post->added,
+                    'userName'   => $author?->displayname ?: 'A freegler',
+                    'userAvatar' => $this->resolveAvatarUrl($author),
                 ];
             }
 
             if (!$dryRun) {
-                Mail::send(new NewsfeedModNotifMail($mod->email, $postsData));
+                app(\App\Services\EmailSpoolerService::class)->spool(new NewsfeedModNotifMail($mod->email, $postsData));
 
                 // Update the last seen marker for this mod.
                 DB::table('newsfeed_users')->updateOrInsert(

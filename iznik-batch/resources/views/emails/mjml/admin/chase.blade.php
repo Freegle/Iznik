@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Action needed: Pending suggested admin for ' . $groupName])
+  @include('emails.mjml.partials.head', ['preview' => $groupName . ': \'' . \Illuminate\Support\Str::limit(strip_tags($adminSubject), 50) . '\' pending for ' . $pendingTimeText])
   <mj-body background-color="#ffffff">
     {{-- Header - ModTools blue --}}
     <mj-section mj-class="bg-modtools" padding="20px">

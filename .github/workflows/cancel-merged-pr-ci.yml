@@ -1,0 +1,55 @@
+name: Cancel CI for merged/closed PRs
+
+# When a PR is merged (or closed without merging) while its branch's
+# build-test-katapult workflow is still running, that workflow keeps holding a
+# self-hosted Katapult runner for no reason. CircleCI's built-in auto-cancel only
+# covers same-branch supersession, not "the PR is now merged", so cancel those
+# stray workflows here as soon as the PR closes. Scoped to the PR's own head
+# branch, so it can never touch master/production.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel running CircleCI workflows for this PR's branch
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          # Defensive: never act on the integration branches (a PR head should
+          # never be one of these, but make it impossible to cancel their CI).
+          if [ -z "$BRANCH" ] || [ "$BRANCH" = "master" ] || [ "$BRANCH" = "production" ]; then
+            echo "No cancellable head branch ('$BRANCH') - skipping"
+            exit 0
+          fi
+          echo "PR #${{ github.event.pull_request.number }} closed (merged=${{ github.event.pull_request.merged }}); cancelling stray CI on branch: $BRANCH"
+
+          # Use -s (not -sf) so a transient API error doesn't fail the job; a
+          # missed cancel just leaves one workflow running, same as before.
+          PIPELINES=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline?branch=${BRANCH}" 2>/dev/null || echo "")
+
+          # Most-recent few pipelines for the branch (covers superseded pushes).
+          IDS=$(echo "$PIPELINES" | jq -r '.items[0:5][].id // empty' 2>/dev/null || echo "")
+          if [ -z "$IDS" ]; then
+            echo "No pipelines found for $BRANCH - nothing to cancel"
+            exit 0
+          fi
+
+          CANCELLED=0
+          for PID in $IDS; do
+            WFS=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://circleci.com/api/v2/pipeline/${PID}/workflow" 2>/dev/null || echo "")
+            for WID in $(echo "$WFS" | jq -r '.items[] | select(.status=="running" or .status=="on_hold") | .id' 2>/dev/null); do
+              echo "Cancelling workflow $WID (pipeline $PID)"
+              if curl -s -X POST -H "Circle-Token: $CIRCLE_TOKEN" \
+                "https://circleci.com/api/v2/workflow/${WID}/cancel" >/dev/null 2>&1; then
+                CANCELLED=$((CANCELLED + 1))
+              fi
+            done
+          done
+          echo "Cancelled $CANCELLED workflow(s) for $BRANCH"

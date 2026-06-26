@@ -116,6 +116,7 @@ func TestIsValidRedirectURL(t *testing.T) {
 		"https://maps.google.com/?q=x",
 		"https://delivery.ilovefreegle.org/img/x",
 		"https://modtools.org/chat/1",
+		"https://freegle.in/paypal1510",
 	}
 	for _, u := range valid {
 		if !isValidRedirectURL(u) {
@@ -149,6 +150,9 @@ func TestIsValidRedirectURLEmptyEnv(t *testing.T) {
 	}
 	if !isValidRedirectURL("https://modtools.org/x") {
 		t.Errorf("modtools.org should always be allowed")
+	}
+	if !isValidRedirectURL("https://freegle.in/paypal1510") {
+		t.Errorf("freegle.in should always be allowed (Freegle PayPal short links)")
 	}
 	if isValidRedirectURL("https://unknown.example.net/") {
 		t.Errorf("unknown domain must be invalid when env unset")

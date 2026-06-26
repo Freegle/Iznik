@@ -12,6 +12,9 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Services\ItemService;
+use App\Services\Ripple\RippleReplyService;
+use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -45,6 +48,8 @@ class IncomingMailService
 
     private BounceService $bounceService;
 
+    private ItemService $itemService;
+
     /**
      * Context from the last routing decision (group name, user id, etc.).
      * Set during route() and read by controllers for logging.
@@ -54,11 +59,13 @@ class IncomingMailService
     public function __construct(
         ?SpamCheckService $spamCheck = null,
         ?StripQuotedService $stripQuoted = null,
-        ?BounceService $bounceService = null
+        ?BounceService $bounceService = null,
+        ?ItemService $itemService = null
     ) {
         $this->spamCheck = $spamCheck ?? app(SpamCheckService::class);
         $this->stripQuoted = $stripQuoted ?? new StripQuotedService;
         $this->bounceService = $bounceService ?? new BounceService;
+        $this->itemService = $itemService ?? new ItemService;
     }
 
     /**
@@ -126,6 +133,12 @@ class IncomingMailService
         $localPart = explode('@', $email->envelopeTo)[0] ?? '';
         if (str_starts_with($localPart, 'bounce-')) {
             return $this->handleHumanReplyToBounceAddress($email);
+        }
+
+        // Phase 3c: Reply to digest email (sent from noreply@).
+        // Send helpful auto-response explaining how to reply to specific posts.
+        if ($email->isDigestReply()) {
+            return $this->handleDigestReply($email);
         }
 
         // Check for known dropped senders (Twitter, etc.)
@@ -1418,6 +1431,76 @@ class IncomingMailService
     }
 
     /**
+     * Handle reply to a digest email.
+     *
+     * Digest emails are sent from noreply@ and contain multiple posts.
+     * When someone replies, we send a friendly auto-response explaining
+     * how to reply to specific posts via the buttons/links in the email.
+     */
+    private function handleDigestReply(ParsedEmail $email): RoutingResult
+    {
+        $senderAddress = strtolower($email->fromAddress ?? $email->envelopeFrom ?? '');
+
+        Log::info('Reply to digest email', [
+            'from' => $senderAddress,
+            'envelope_to' => $email->envelopeTo,
+            'subject' => $email->subject,
+        ]);
+
+        // Loop prevention: never auto-reply to system addresses
+        $suppressPatterns = ['mailer-daemon', 'postmaster', 'noreply', 'no-reply', 'bounce-'];
+        foreach ($suppressPatterns as $pattern) {
+            if (str_contains($senderAddress, $pattern)) {
+                Log::debug('Suppressing digest reply auto-response to system address', ['from' => $senderAddress]);
+
+                return RoutingResult::TO_SYSTEM;
+            }
+        }
+
+        // Loop prevention: never auto-reply to auto-submitted messages
+        if ($email->isAutoReply()) {
+            Log::debug('Suppressing digest reply auto-response to auto-submitted message');
+
+            return RoutingResult::TO_SYSTEM;
+        }
+
+        // Rate limit: max 1 auto-reply per 24h per sender
+        $cacheKey = 'digest_reply_autoreply:' . md5($senderAddress);
+        if (Cache::has($cacheKey)) {
+            Log::debug('Rate limiting digest reply auto-response', ['from' => $senderAddress]);
+
+            return RoutingResult::TO_SYSTEM;
+        }
+
+        // Look up the sender to get their name and user ID
+        $senderName = $email->fromName;
+        $senderUserId = null;
+
+        $userEmail = \App\Models\UserEmail::where('email', $senderAddress)->first();
+        if ($userEmail) {
+            $senderUserId = $userEmail->userid;
+        }
+
+        // Send auto-response
+        try {
+            MailFacade::send(new \App\Mail\Digest\DigestReplyNotice(
+                $senderAddress,
+                $senderName,
+                $senderUserId
+            ));
+            Cache::put($cacheKey, true, now()->addHours(24));
+            Log::info('Sent digest reply auto-response', ['to' => $senderAddress]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to send digest reply auto-response', [
+                'to' => $senderAddress,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return RoutingResult::TO_SYSTEM;
+    }
+
+    /**
      * Handle reply-to addresses (replyto-{msgid}-{fromid}).
      */
     private function handleReplyToAddress(ParsedEmail $email): ?RoutingResult
@@ -1543,13 +1626,22 @@ class IncomingMailService
         // Create the chat message as TYPE_INTERESTED with refmsgid.
         // Reply-to addresses are first replies to posts, so use TYPE_INTERESTED
         // (not TYPE_DEFAULT which is for ongoing chat notification replies).
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $fromUser->id,
             $email,
             refMsgId: $messageId,
             type: ChatMessage::TYPE_INTERESTED
         );
+
+        // Rippling-out held replies (#3): email/TN replies bypass the in-app reply-
+        // eligibility gate (#2), so re-apply the same reach test here. If the post is still
+        // rippling out and this replier's area isn't covered yet, hold the reply (record a
+        // rippling_held_replies row) so the poster isn't notified until it reaches them.
+        // hasReach fails open, so before the reach engine is live nothing is held.
+        if ($chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser);
+        }
 
         // #7: Check if message has outcome (TAKEN/RECEIVED) - don't email if so
         $hasOutcome = DB::table('messages_outcomes')
@@ -1596,6 +1688,64 @@ class IncomingMailService
         ]);
 
         return RoutingResult::TO_USER;
+    }
+
+    /**
+     * Rippling-out (#3): hold an external reply when the post is still rippling out and
+     * the replier's area isn't covered yet. The replier's location is resolved as
+     * settings.mylocation else lastlocation — the SAME order the immediate mail and the
+     * digest reach-gate use, so the hold/read/notify paths agree on where the replier is.
+     * Records a rippling_held_replies row (status='held'); the delivery gate then withholds
+     * the poster notification until the post ripples to them (status→'released'). Inert until
+     * the reach engine populates rippling_reach (hasReach fails open before then).
+     */
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
+    {
+        $latlng = $this->resolveReplierLatLng($replier);
+        if ($latlng === null) {
+            return;
+        }
+
+        [$lat, $lng] = $latlng;
+        $service = app(RippleReplyService::class);
+
+        if ($service->shouldHold($msgid, $lat, $lng)) {
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng);
+            Log::info('ripple:held-external-reply', [
+                'msgid' => $msgid,
+                'chatid' => $chatId,
+                'chatmsgid' => $chatMsgId,
+                'replieruserid' => $replier->id,
+            ]);
+        }
+    }
+
+    /**
+     * Resolve a replier's point as settings.mylocation (both coords) else their lastlocation —
+     * the same order the immediate-mail recipient query and the digest reach-gate use, so the
+     * held point (and releaseCovered, which tests it) agree with the read/notify paths.
+     *
+     * @return array{0:float,1:float}|null [lat, lng]
+     */
+    private function resolveReplierLatLng(User $replier): ?array
+    {
+        $settings = $replier->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
+            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        }
+
+        if ($replier->lastlocation) {
+            $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
+            if ($loc && $loc->lat !== null && $loc->lng !== null) {
+                return [(float) $loc->lat, (float) $loc->lng];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1785,7 +1935,7 @@ class IncomingMailService
         ?float $spamScore = null,
         ?string $prependSubject = null,
         bool $skipStripQuoted = false
-    ): void {
+    ): ?int {
         // Get body text, converting HTML to plain text if no text part exists.
         // This handles email clients like Apple Mail that may send HTML-only emails.
         $body = $email->textBody;
@@ -1800,6 +1950,19 @@ class IncomingMailService
             $body = $prependSubject . "\r\n\r\n" . $body;
         }
 
+        // Detect digest-reply patterns before stripping so we can append the label after.
+        // V1 parity: MailRouter.php detected "On ... -auto@GROUP_DOMAIN> wrote:" and
+        // "-----Original Message-----" to identify replies that include the full digest,
+        // then stripped the quoted content and appended the label text.
+        $isDigestReply = false;
+        if (! $skipStripQuoted) {
+            $groupDomain = preg_quote(config('freegle.mail.group_domain', 'groups.ilovefreegle.org'), '/');
+            if (preg_match('/^\s*On.*?-auto@' . $groupDomain . '>\s*wrote\s*:/ms', $body) ||
+                preg_match('/-----Original Message-----/', $body)) {
+                $isDigestReply = true;
+            }
+        }
+
         // Strip quoted reply text and signatures before storing.
         // For volunteer messages, the quoted text (conversation transcript, reported post)
         // is the useful content - don't strip it. Matches legacy iznik-server behavior:
@@ -1808,15 +1971,23 @@ class IncomingMailService
             $body = $this->stripQuoted->strip($body);
         }
 
+        // Append digest-reply label so moderators know to check the original email.
+        if ($isDigestReply) {
+            $body = rtrim($body) . "\r\n\r\n(Probably replied to digest - check View original email)";
+        }
+
         // Determine if this chat message needs review.
         // If spam is detected for a chat-destined email, we don't reject it - instead
         // we flag reviewrequired=1 so moderators can review it.
         $reviewRequired = $forceReview;
         $reportReason = $forceReviewReason;
 
-        // Check for spam-level issues (unless already flagged by caller)
+        // Check for spam-level issues (unless already flagged by caller).
+        // Pass forChatReply=true so subject-based heuristics (subject reuse, bulk-volunteer,
+        // greeting, subject-keyword) are skipped: an email reply's subject is just the
+        // original post's subject and would produce guaranteed false positives.
         if (! $reviewRequired) {
-            $spamResult = $this->spamCheck->checkMessage($email);
+            $spamResult = $this->spamCheck->checkMessage($email, forChatReply: true);
             if ($spamResult !== null) {
                 [, $reason, $detail] = $spamResult;
                 $reviewRequired = true;
@@ -1875,7 +2046,7 @@ class IncomingMailService
             'platform' => 0, // Email source
             'reviewrequired' => $reviewRequired ? 1 : 0,
             'reportreason' => $dbReportReason,
-            'processingrequired' => 1, // Background chat_process.php cron handles visibility, roster, push notifications
+            'processingrequired' => 1, // ChatProcessService (chats:process-incoming) handles visibility, roster, and queues push
             'replyreceived' => 0,
         ];
 
@@ -1899,6 +2070,8 @@ class IncomingMailService
             'user_id' => $userId,
             'review_required' => $reviewRequired,
         ]);
+
+        return $chatMsg->id;
     }
 
     /**
@@ -1955,7 +2128,12 @@ class IncomingMailService
                 // visible link. Without the lookup the chat message exists
                 // but ModTools wouldn't be able to show the original SMTP
                 // source.
+                // useWritePdo: a concurrent sibling process inserted this row on the
+                // write host. Under the read/write split a plain read could hit a
+                // lagging replica that hasn't applied that insert yet, returning null
+                // and dropping the chat-message-to-SMTP-source link.
                 $existingId = DB::table('messages')
+                    ->useWritePdo()
                     ->where('messageid', $messageId)
                     ->value('id');
                 if ($existingId) {
@@ -2033,7 +2211,7 @@ class IncomingMailService
                     'type' => ChatMessage::TYPE_IMAGE,
                     'date' => now(),
                     'platform' => 0,
-                    'processingrequired' => 1, // Background chat_process.php cron handles visibility, roster, push notifications
+                    'processingrequired' => 1, // ChatProcessService (chats:process-incoming) handles visibility, roster, and queues push
                     'replyreceived' => 0,
                 ]);
 
@@ -2111,13 +2289,37 @@ class IncomingMailService
             return null;
         }
 
-        // These are already valid enum values
-        $validEnumValues = ['Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User', 'UnknownMessage', 'SameImage', 'DodgyImage'];
+        // Enum values accepted by chat_messages.reportreason. The first 10 are the
+        // legacy values; the rest were appended by the 2026-05-27 migration so the
+        // specific spam/review reason flows through to ModChatReview.vue instead of
+        // being collapsed to generic 'Spam' (which produces "failed spam checks, no
+        // more info" in MT chat review).
+        $validEnumValues = [
+            'Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User',
+            'UnknownMessage', 'SameImage', 'DodgyImage',
+            'CountryBlocked',
+            'IPUsedForDifferentUsers',
+            'IPUsedForDifferentGroups',
+            'SubjectUsedForDifferentGroups',
+            'SpamAssassin',
+            'Greetings spam',
+            'Referenced known spammer',
+            'Known spam keyword',
+            'URL on DBL',
+            'BulkVolunteerMail',
+            'UsedOurDomain',
+            'WorryWord',
+            'Script',
+            'Link',
+            'Money',
+            'Email',
+            'Language',
+        ];
         if (in_array($reason, $validEnumValues, true)) {
             return $reason;
         }
 
-        // Map detailed reasons to generic 'Spam' enum value
+        // Unknown reason — fall back to generic 'Spam' so the column still accepts it.
         return 'Spam';
     }
 
@@ -2617,6 +2819,12 @@ class IncomingMailService
                 'arrival' => now(),
             ]);
 
+            // Record the item from a well-formed "TYPE: item (location)" subject,
+            // exactly as V1 Message::save() did. The messages_items link is what
+            // the Weight stat's INNER JOIN relies on — without it, items given
+            // away via email (e.g. TrashNothing posts) contribute zero weight.
+            $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
+
             // Add to message history for spam checking
             DB::table('messages_history')->insert([
                 'groupid' => $group->id,
@@ -2891,6 +3099,23 @@ class IncomingMailService
             ]);
 
             return $this->dropped("Direct mail from unknown user");
+        }
+
+        // Don't loop our own outbound mail back in as a chat. Members' preferred
+        // email is their users.ilovefreegle.org alias, so digests/notifications
+        // we send to them (Volunteer Roundup, Community Event Roundup, etc.)
+        // arrive here with From: noreply@ilovefreegle.org. handleDirectMail
+        // would otherwise materialise every outbound digest as a User2User chat
+        // between the Freegle noreply system user and the recipient.
+        $noreplyAddr = strtolower(config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'));
+        if (strtolower(trim((string) $email->fromAddress)) === $noreplyAddr) {
+            Log::info('Direct mail from system noreply - dropping (outbound loopback)', [
+                'from' => $email->fromAddress,
+                'to' => $email->envelopeTo,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Direct mail from system noreply address");
         }
 
         // Don't create a chat between the same user
@@ -3314,41 +3539,9 @@ class IncomingMailService
      */
     private function findClosestPostcodeId(float $lat, float $lng): ?int
     {
-        $srid = config('freegle.srid', 3857);
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
 
-        // Start with a small search radius and expand if needed
-        $scan = 0.00001953125;
-
-        while ($scan <= 0.2) {
-            $swlat = $lat - $scan;
-            $nelat = $lat + $scan;
-            $swlng = $lng - $scan;
-            $nelng = $lng + $scan;
-
-            $poly = "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
-
-            $sql = "SELECT locations.id,
-                           ST_distance(locations_spatial.geometry, ST_GeomFromText('POINT($lng $lat)', $srid)) AS dist
-                    FROM locations_spatial
-                    INNER JOIN locations ON locations.id = locations_spatial.locationid
-                    WHERE MBRContains(ST_Envelope(ST_GeomFromText('$poly', $srid)), locations_spatial.geometry)
-                      AND locations.type = 'Postcode'
-                      AND LOCATE(' ', locations.name) > 0
-                    ORDER BY dist ASC,
-                             CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0
-                                  ELSE ST_AREA(locations_spatial.geometry) END ASC
-                    LIMIT 1";
-
-            $result = DB::selectOne($sql);
-
-            if ($result) {
-                return (int) $result->id;
-            }
-
-            $scan *= 2;
-        }
-
-        return null;
+        return $ids[0] ?? null;
     }
 
     /**
@@ -3417,7 +3610,41 @@ class IncomingMailService
      */
     private function parseSubject(string $subj): array
     {
-        return \App\Support\SubjectParser::parse($subj);
+        $type = null;
+        $item = null;
+        $location = null;
+
+        $p = strpos($subj, ':');
+
+        if ($p !== false) {
+            $startp = $p;
+            $rest = trim(substr($subj, $p + 1));
+            $p = strlen($rest) - 1;
+
+            if (substr($rest, -1) == ')') {
+                $count = 0;
+
+                do {
+                    $curr = substr($rest, $p, 1);
+
+                    if ($curr == '(') {
+                        $count--;
+                    } elseif ($curr == ')') {
+                        $count++;
+                    }
+
+                    $p--;
+                } while ($count > 0 && $p > 0);
+
+                if ($count == 0) {
+                    $type = trim(substr($subj, 0, $startp));
+                    $location = trim(substr($rest, $p + 2, strlen($rest) - $p - 3));
+                    $item = trim(substr($rest, 0, $p));
+                }
+            }
+        }
+
+        return [$type, $item, $location];
     }
 
     /**
@@ -3649,17 +3876,11 @@ class IncomingMailService
      */
     private function addEmailToUser(int $userId, ?string $email): void
     {
-        $email = trim((string) $email);
-
-        if ($email === '') {
+        if (empty($email)) {
             return;
         }
 
-        // Reject anything that isn't a syntactically valid address — bounce
-        // envelope-froms like `MAILER-DAEMON` or `<>` reach this code path.
-        if (!preg_match(Message::EMAIL_REGEXP, $email)) {
-            return;
-        }
+        $email = trim($email);
 
         // Don't add system addresses
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
@@ -3766,15 +3987,20 @@ class IncomingMailService
      */
     private function addToSpatialIndex(int $messageId, int $groupId): void
     {
-        $message = Message::find($messageId);
+        // useWritePdo: this runs immediately after the message is created and its
+        // messages_groups row set to Approved (see routeToGroup). Under the read/write
+        // split a plain read could hit a lagging replica and return null, silently
+        // skipping the spatial-index entry until the reconciler cron catches up.
+        $message = Message::query()->useWritePdo()->find($messageId);
         if (! $message || (! $message->lat && ! $message->lng)) {
             return;
         }
 
         $srid = config('freegle.srid', 3857);
 
-        // Get arrival from messages_groups
+        // Get arrival from messages_groups (same read-your-write reasoning as above).
         $mg = DB::table('messages_groups')
+            ->useWritePdo()
             ->where('msgid', $messageId)
             ->where('groupid', $groupId)
             ->first();

@@ -23,7 +23,7 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1.1.317
+  freegle: freegle/tests@1.1.352
 
 jobs:
   mark-ci-passed:
@@ -40,6 +40,8 @@ jobs:
             REPO="Freegle/Iznik"
             curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Failed" 2>/dev/null || true
             curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"labels":["CI: Passed"]}' \
@@ -74,6 +76,8 @@ workflows:
                   REPO="Freegle/Iznik"
                   curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+                  curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
                   curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{"labels":["CI: Failed"]}' \
@@ -83,6 +87,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
@@ -90,6 +95,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - freegle/build-android-dev:
           requires:
             - freegle/build-and-test
@@ -135,6 +141,8 @@ workflows:
                   REPO="Freegle/Iznik"
                   curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+                  curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
                   curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{"labels":["CI: Failed"]}' \
@@ -144,6 +152,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
@@ -151,6 +160,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - freegle/build-android-dev:
           requires:
             - freegle/build-and-test
@@ -256,7 +266,9 @@ workflows:
               only:
                 - production
 
-  # Katapult cloud runner test — triggered manually with use_katapult: true
+  # Katapult cloud runner test — the default CI path (check-runner sets use_katapult=true
+  # for all normal pushes). Branch filters here must match build-test-local/build-test-cloud
+  # so production and modtools are skipped (they use deploy-apps and have no tests to run).
   build-test-katapult:
     when: << pipeline.parameters.use_katapult >>
     jobs:
@@ -274,14 +286,25 @@ workflows:
                   REPO="Freegle/Iznik"
                   curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+                  curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
                   curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{"labels":["CI: Failed"]}' \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
                   echo "Labelled PR #$PR_NUMBER as CI: Failed"
+          filters:
+            branches:
+              ignore:
+                - modtools
+                - production
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - modtools
       - freegle/build-android-modtools-debug:
           requires:
             - freegle/build-and-test

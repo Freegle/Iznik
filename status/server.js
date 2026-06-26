@@ -22,6 +22,22 @@ function getDockerComposeCommand() {
 const DOCKER_COMPOSE = getDockerComposeCommand();
 console.log(`Using docker compose command: ${DOCKER_COMPOSE}`);
 
+// Container names are prefixed by the compose project name, which differs per instance:
+// "freegle" for the main checkout, "freegle-<name>" for each worktree.  Test runners MUST
+// address this project's own containers (and therefore its own database), not hardcoded
+// "freegle-*" names — otherwise a worktree's test run escapes into the main instance's
+// containers and database.  These resolve to the existing "freegle-*" names on the main
+// checkout, so behaviour there is unchanged.
+const PROJECT = process.env.COMPOSE_PROJECT_NAME || "freegle";
+const APIV1 = `${PROJECT}-apiv1`;
+const APIV2 = `${PROJECT}-apiv2`;
+const APIV1_PHPUNIT = `${PROJECT}-apiv1-phpunit`;
+const BATCH = `${PROJECT}-batch`;
+const PLAYWRIGHT = `${PROJECT}-playwright`;
+const PROD_LOCAL = `${PROJECT}-prod-local`;
+const PERCONA = `${PROJECT}-percona`;
+console.log(`Using container prefix: ${PROJECT}`);
+
 // Status cache for all services
 const statusCache = new Map();
 let lastFullCheck = 0;
@@ -845,7 +861,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
     try {
       const { execSync } = require("child_process");
       execSync(
-        'docker exec freegle-playwright sh -c "rm -f /app/test-results/test-progress.json /app/playwright-results.json"',
+        `docker exec ${PLAYWRIGHT} sh -c "rm -f /app/test-results/test-progress.json /app/playwright-results.json"`,
         { timeout: 5000 }
       );
       console.log("Cleared stale progress files");
@@ -858,7 +874,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
 
     // Check that the required containers are running
     const freegleProdCheck = execSync(
-      'docker ps --filter "name=freegle-prod-local" --format "{{.Status}}"',
+      `docker ps --filter "name=${PROD_LOCAL}" --format "{{.Status}}"`,
       {
         encoding: "utf8",
         timeout: 5000,
@@ -878,7 +894,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
       "Restarting Playwright container to kill existing processes\n";
 
     try {
-      execSync("docker restart freegle-playwright", {
+      execSync(`docker restart ${PLAYWRIGHT}`, {
         encoding: "utf8",
         timeout: 30000,
       });
@@ -896,9 +912,9 @@ async function runPlaywrightTests(testFile = null, testName = null) {
     testStatus.logs += "Setting up test environment (FreeglePlayground group, test users)...\n";
 
     try {
-      // Use freegle-apiv1 (not phpunit container) since Playwright tests run against the main iznik database
+      // Use apiv1 (not phpunit container) since Playwright tests run against the main iznik database
       execSync(
-        'docker exec freegle-apiv1 sh -c "cd /var/www/iznik && php install/testenv.php"',
+        `docker exec ${APIV1} sh -c "cd /var/www/iznik && php install/testenv.php"`,
         {
           encoding: "utf8",
           timeout: 60000,
@@ -937,7 +953,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
         try {
           // Run curl from Playwright container which has host network access
           const curlResult = execSync(
-            `docker exec freegle-playwright curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${route.url}"`,
+            `docker exec ${PLAYWRIGHT} curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${route.url}"`,
             { encoding: 'utf8', timeout: 15000 }
           ).trim();
 
@@ -996,7 +1012,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
     }
     // Enable coverage reporter for CI builds
     // Set NODE_PATH to find globally installed @playwright/test module
-    const testCommand = `docker exec freegle-playwright sh -c "
+    const testCommand = `docker exec ${PLAYWRIGHT} sh -c "
       cd /app &&
       export ENABLE_MONOCART_REPORTER=true &&
       export NODE_PATH=/usr/lib/node_modules &&
@@ -1248,7 +1264,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
         try {
           const { execSync } = require("child_process");
           const progressOutput = execSync(
-            'docker exec freegle-playwright cat /app/test-results/test-progress.json 2>/dev/null || echo "{}"',
+            `docker exec ${PLAYWRIGHT} cat /app/test-results/test-progress.json 2>/dev/null || echo "{}"`,
             { encoding: "utf8", timeout: 5000 }
           );
           const progress = JSON.parse(progressOutput.trim() || "{}");
@@ -1355,9 +1371,9 @@ async function runPlaywrightTests(testFile = null, testName = null) {
         try {
           const copyCommands = [
             // Copy coverage directory if it exists in mounted location
-            'docker exec freegle-playwright sh -c "if [ -d /host-playwright-config/coverage ] && [ "$(ls -A /host-playwright-config/coverage 2>/dev/null)" ]; then cp -r /host-playwright-config/coverage/* /app/coverage/; fi"',
+            `docker exec ${PLAYWRIGHT} sh -c "if [ -d /host-playwright-config/coverage ] && [ "$(ls -A /host-playwright-config/coverage 2>/dev/null)" ]; then cp -r /host-playwright-config/coverage/* /app/coverage/; fi"`,
             // Copy monocart-report if it exists in mounted location
-            'docker exec freegle-playwright sh -c "if [ -d /host-playwright-config/monocart-report ] && [ "$(ls -A /host-playwright-config/monocart-report 2>/dev/null)" ]; then cp -r /host-playwright-config/monocart-report/* /app/monocart-report/; fi"',
+            `docker exec ${PLAYWRIGHT} sh -c "if [ -d /host-playwright-config/monocart-report ] && [ "$(ls -A /host-playwright-config/monocart-report 2>/dev/null)" ]; then cp -r /host-playwright-config/monocart-report/* /app/monocart-report/; fi"`,
           ];
 
           for (const command of copyCommands) {
@@ -1374,7 +1390,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
         let coverageGenerated = false;
         try {
           const coverageCheckCommand =
-            'docker exec freegle-playwright sh -c "test -f /app/monocart-report/coverage/lcov.info && echo exists"';
+            `docker exec ${PLAYWRIGHT} sh -c "test -f /app/monocart-report/coverage/lcov.info && echo exists"`;
           const coverageResult = execSync(coverageCheckCommand, {
             encoding: "utf8",
             timeout: 5000,
@@ -1422,7 +1438,7 @@ async function runPlaywrightTests(testFile = null, testName = null) {
       try {
         console.log("Starting Playwright report server...");
         const reportServerCommand =
-          'docker exec -d freegle-playwright sh -c "cd /app && nohup npx playwright show-report --host=0.0.0.0 --port=9323 > /tmp/report-server.log 2>&1 &"';
+          `docker exec -d ${PLAYWRIGHT} sh -c "cd /app && nohup npx playwright show-report --host=0.0.0.0 --port=9323 > /tmp/report-server.log 2>&1 &"`;
         execSync(reportServerCommand);
         console.log(
           "Playwright report server started successfully on port 9323"
@@ -1643,7 +1659,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Delete existing test users first to ensure clean recreate
       try {
         execSync(
-          "docker exec freegle-percona mysql -u root -piznik iznik -e \"DELETE FROM users WHERE id IN (SELECT userid FROM (SELECT userid FROM users_emails WHERE email IN ('test@test.com', 'testmod@test.com')) AS subquery)\"",
+          `docker exec ${PERCONA} mysql -u root -piznik iznik -e "DELETE FROM users WHERE id IN (SELECT userid FROM (SELECT userid FROM users_emails WHERE email IN ('test@test.com', 'testmod@test.com')) AS subquery)"`,
           { encoding: "utf8", timeout: 10000 }
         );
         results.push("Deleted existing test users");
@@ -1656,7 +1672,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Recreate test@test.com
       try {
         const testUserResult = execSync(
-          'docker exec freegle-apiv1 php /var/www/iznik/scripts/cli/user_create.php -e test@test.com -n "Test User" -p freegle',
+          `docker exec ${APIV1} php /var/www/iznik/scripts/cli/user_create.php -e test@test.com -n "Test User" -p freegle`,
           { encoding: "utf8", timeout: 30000 }
         );
         results.push(`test@test.com: ${testUserResult.trim()}`);
@@ -1667,7 +1683,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Recreate testmod@test.com
       try {
         const modUserResult = execSync(
-          'docker exec freegle-apiv1 php /var/www/iznik/scripts/cli/user_create.php -e testmod@test.com -n "Test Mod" -p freegle',
+          `docker exec ${APIV1} php /var/www/iznik/scripts/cli/user_create.php -e testmod@test.com -n "Test Mod" -p freegle`,
           { encoding: "utf8", timeout: 30000 }
         );
         results.push(`testmod@test.com: ${modUserResult.trim()}`);
@@ -1848,14 +1864,14 @@ const httpServer = http.createServer(async (req, res) => {
 
         # Copy schema from main iznik database (which batch container has already migrated)
         # This ensures Go tests have the exact same schema as production
-        docker exec freegle-apiv1 sh -c "\\
+        docker exec ${APIV1} sh -c "\\
           mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \\
           mysqldump -h percona -u root -piznik --no-data --routines --triggers iznik | mysql -h percona -u root -piznik iznik_go_test && \\
           mysql -h percona -u root -piznik -e \\"SET GLOBAL sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'\\" && \\
           mysql -h percona -u root -piznik -e \\"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\\"" || echo "Warning: Database setup had issues, continuing..."
 
         echo "Running Go tests against iznik_go_test database..."
-        docker exec -w /app freegle-apiv2 sh -c "${testCmd} 2>&1"
+        docker exec -w /app ${APIV2} sh -c "${testCmd} 2>&1"
       `,
       ],
       { stdio: "pipe" }
@@ -1972,7 +1988,7 @@ const httpServer = http.createServer(async (req, res) => {
 
       // Build the phpunit command - skip coverage when filtering for speed
       const coverageFlag = filter ? "" : " --coverage-clover=/tmp/laravel-coverage.xml";
-      const phpunitCmd = `docker exec -e VIA_STATUS_CONTAINER=1 freegle-batch vendor/bin/phpunit --testsuite=Unit,Feature${filter}${coverageFlag} 2>&1`;
+      const phpunitCmd = `docker exec -e VIA_STATUS_CONTAINER=1 ${BATCH} vendor/bin/phpunit --testsuite=Unit,Feature${filter}${coverageFlag} 2>&1`;
 
       // Run tests asynchronously
       const { spawn } = require("child_process");
@@ -1988,12 +2004,12 @@ const httpServer = http.createServer(async (req, res) => {
           # In CI, supervisor isn't running (CI=true skips it in entrypoint.sh).
           # In local dev, this stops background workers to prevent interference.
           echo "Stopping supervisor workers..."
-          docker exec freegle-batch supervisorctl stop all 2>&1 || true
+          docker exec ${BATCH} supervisorctl stop all 2>&1 || true
 
           # Set up fresh test database
           echo "Setting up fresh test database..."
-          docker exec freegle-batch mysql -h percona -u root -piznik --skip-ssl -e "CREATE DATABASE IF NOT EXISTS iznik_batch_test" 2>&1
-          docker exec -e DB_DATABASE=iznik_batch_test freegle-batch php artisan migrate:fresh --database=mysql --force 2>&1
+          docker exec ${BATCH} mysql -h percona -u root -piznik --skip-ssl -e "CREATE DATABASE IF NOT EXISTS iznik_batch_test" 2>&1
+          docker exec -e DB_DATABASE=iznik_batch_test ${BATCH} php artisan migrate:fresh --database=mysql --force 2>&1
 
           echo "Running Laravel tests${filter ? ' (filtered)' : ' with coverage'}..."
           ${phpunitCmd}
@@ -2084,7 +2100,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Collect the inotify monitoring log for artifacts
       try {
         const inotifyLog = execSync(
-          "docker exec freegle-batch cat /tmp/bootstrap-cache-monitor.log 2>/dev/null || echo 'No inotify events recorded'",
+          `docker exec ${BATCH} cat /tmp/bootstrap-cache-monitor.log 2>/dev/null || echo 'No inotify events recorded'`,
           { encoding: "utf8", timeout: 10000 }
         );
         const inotifyArtifactPath = "/tmp/laravel-bootstrap-cache-monitor.log";
@@ -2106,7 +2122,7 @@ const httpServer = http.createServer(async (req, res) => {
 
       // Restart supervisor workers that were stopped before tests
       try {
-        execSync("docker exec freegle-batch supervisorctl start all 2>&1 || true", {
+        execSync(`docker exec ${BATCH} supervisorctl start all 2>&1 || true`, {
           encoding: "utf8",
           timeout: 30000,
         });
@@ -2182,12 +2198,12 @@ const httpServer = http.createServer(async (req, res) => {
 
         // Start and wait for the apiv1-phpunit container to be healthy
         testStatus.message = "Starting PHPUnit test container...";
-        testStatus.logs += "Starting freegle-apiv1-phpunit container...\n";
+        testStatus.logs += `Starting ${APIV1_PHPUNIT} container...\n`;
 
         try {
           // Start the container if it's stopped (container must be created by docker-compose first)
           // We use 'docker start' because docker-compose from inside the container has path issues
-          execSync("docker start freegle-apiv1-phpunit", {
+          execSync(`docker start ${APIV1_PHPUNIT}`, {
             encoding: "utf8",
             timeout: 60000,
           });
@@ -2202,7 +2218,7 @@ const httpServer = http.createServer(async (req, res) => {
           while (Date.now() - containerStartTime < maxWait) {
             try {
               const health = execSync(
-                'docker inspect --format="{{.State.Health.Status}}" freegle-apiv1-phpunit 2>/dev/null || echo "unknown"',
+                `docker inspect --format="{{.State.Health.Status}}" ${APIV1_PHPUNIT} 2>/dev/null || echo "unknown"`,
                 { encoding: "utf8" }
               ).trim();
 
@@ -2242,7 +2258,7 @@ const httpServer = http.createServer(async (req, res) => {
 
         try {
           execSync(
-            'docker exec freegle-apiv1-phpunit sh -c "cd /var/www/iznik && php install/testenv.php"',
+            `docker exec ${APIV1_PHPUNIT} sh -c "cd /var/www/iznik && php install/testenv.php"`,
             {
               encoding: "utf8",
               timeout: 60000,
@@ -2261,7 +2277,7 @@ const httpServer = http.createServer(async (req, res) => {
 
         // First, clear the output file
         execSync(
-          `docker exec freegle-apiv1-phpunit sh -c "rm -f ${outputFile} && touch ${outputFile}"`
+          `docker exec ${APIV1_PHPUNIT} sh -c "rm -f ${outputFile} && touch ${outputFile}"`
         );
 
         // Don't try to pre-count tests - TeamCity output will give us the correct count
@@ -2282,7 +2298,7 @@ const httpServer = http.createServer(async (req, res) => {
           [
             "-c",
             `
-          docker exec -w /var/www/iznik freegle-apiv1-phpunit sh -c "
+          docker exec -w /var/www/iznik ${APIV1_PHPUNIT} sh -c "
             echo 'Setting up test environment...' | tee ${outputFile} && \\
             php install/testenv.php 2>&1 | tee -a ${outputFile} || echo 'Warning: testenv.php failed but continuing...' | tee -a ${outputFile}; \\
             echo 'Running PHPUnit tests via wrapper script...' | tee -a ${outputFile} && \\
@@ -2307,7 +2323,7 @@ const httpServer = http.createServer(async (req, res) => {
             // This ensures we don't miss tests that run faster than our polling interval
             try {
               const markerCount = execSync(
-                `docker exec freegle-apiv1-phpunit sh -c "grep -c '##PHPUNIT_TEST_STARTED##' ${outputFile} 2>/dev/null || echo '0'"`,
+                `docker exec ${APIV1_PHPUNIT} sh -c "grep -c '##PHPUNIT_TEST_STARTED##' ${outputFile} 2>/dev/null || echo '0'"`,
                 { encoding: "utf8" }
               ).trim();
               const count = parseInt(markerCount) || 0;
@@ -2320,7 +2336,7 @@ const httpServer = http.createServer(async (req, res) => {
 
             // Get the last few lines for status message and other info
             const lastLines = execSync(
-              `docker exec freegle-apiv1-phpunit sh -c "tail -n 10 ${outputFile} 2>/dev/null || echo ''"`,
+              `docker exec ${APIV1_PHPUNIT} sh -c "tail -n 10 ${outputFile} 2>/dev/null || echo ''"`,
               { encoding: "utf8" }
             ).trim();
             if (lastLines) {
@@ -2456,7 +2472,7 @@ const httpServer = http.createServer(async (req, res) => {
           // Get final output
           try {
             const finalOutput = execSync(
-              `docker exec freegle-apiv1-phpunit sh -c "cat ${outputFile} 2>/dev/null || echo ''"`,
+              `docker exec ${APIV1_PHPUNIT} sh -c "cat ${outputFile} 2>/dev/null || echo ''"`,
               { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 }
             ); // 50MB buffer
             testStatus.logs = finalOutput;
@@ -3039,7 +3055,7 @@ const httpServer = http.createServer(async (req, res) => {
     if (!devServerHost) {
       try {
         const ips = execSync(
-          'docker exec freegle-playwright hostname -I 2>/dev/null',
+          `docker exec ${PLAYWRIGHT} hostname -I 2>/dev/null`,
           { encoding: 'utf8', timeout: 3000 }
         ).trim().split(' ');
 

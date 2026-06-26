@@ -161,160 +161,6 @@ class UserManagementService
     }
 
     /**
-     * Update user kudos based on their activity.
-     *
-     * Selects users with lastaccess > 2 days ago, calculates kudos per user,
-     * and writes to users_kudos table via REPLACE INTO.
-     */
-    public function updateKudos(bool $dryRun = FALSE): int
-    {
-        $updated = 0;
-
-        $mysqltime = now()->subDays(2)->startOfDay()->toDateString();
-
-        $users = DB::table('users')
-            ->select('id')
-            ->where('lastaccess', '>', $mysqltime)
-            ->get();
-
-        $total = $users->count();
-
-        foreach ($users as $userData) {
-            $this->updateKudosForUser($userData->id, $dryRun);
-            $updated++;
-
-            if ($updated % 10 === 0) {
-                Log::info("Kudos update progress: {$updated} / {$total}");
-            }
-        }
-
-        return $updated;
-    }
-
-    /**
-     * Update kudos for a single user.
-     *
-     * - No existing kudos record, OR
-     * - Existing record is more than 24 hours old.
-     *
-     * Writes to users_kudos table with columns: userid, kudos, posts, chats,
-     * newsfeed, events, vols, facebook, platform.
-     */
-    public function updateKudosForUser(int $userId, bool $dryRun = FALSE): void
-    {
-        // Check throttle: only update if no existing record or record is older than 24h.
-        $current = DB::table('users_kudos')->where('userid', $userId)->first();
-
-        if ($current && $current->timestamp) {
-            $age = now()->diffInSeconds(\Carbon\Carbon::parse($current->timestamp));
-            if ($age <= 24 * 60 * 60) {
-                return;
-            }
-        }
-
-        $kudosData = $this->calculateKudos($userId);
-
-        $kudos = $kudosData['posts'] + $kudosData['chats'] + $kudosData['newsfeed']
-            + $kudosData['events'] + $kudosData['vols'];
-
-        if ($kudos > 0) {
-            // No sense in creating entries which are blank or the same.
-            $currentKudos = $current ? $current->kudos : 0;
-
-            if ($currentKudos != $kudos) {
-                if (!$dryRun) {
-                    DB::statement(
-                        'REPLACE INTO users_kudos (userid, kudos, posts, chats, newsfeed, events, vols, facebook, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        [
-                            $userId,
-                            $kudos,
-                            $kudosData['posts'],
-                            $kudosData['chats'],
-                            $kudosData['newsfeed'],
-                            $kudosData['events'],
-                            $kudosData['vols'],
-                            $kudosData['facebook'] ? 1 : 0,
-                            $kudosData['platform'] ? 1 : 0,
-                        ]
-                    );
-                }
-            }
-        }
-    }
-
-    /**
-     * Calculate kudos components for a user.
-     *
-     * - Distinct months with posts (messages table, last 365 days)
-     * - Distinct months with chats (chat_messages table, last 365 days)
-     * - Distinct months with newsfeed posts (newsfeed table, last 365 days)
-     * - Community events count (last 365 days)
-     * - Volunteering count (last 365 days)
-     * - Facebook login (boolean)
-     * - Platform posting (boolean, sourceheader = 'Platform', last 365 days)
-     */
-    protected function calculateKudos(int $userId): array
-    {
-        $start = now()->subDays(365)->toDateString();
-
-        // Distinct months with posts.
-        $posts = (int) DB::table('messages')
-            ->where('fromuser', $userId)
-            ->where('date', '>=', $start)
-            ->selectRaw("COUNT(DISTINCT CONCAT(YEAR(date), '-', MONTH(date))) AS count")
-            ->value('count');
-
-        // Distinct months with chat messages.
-        $chats = (int) DB::table('chat_messages')
-            ->where('userid', $userId)
-            ->where('date', '>=', $start)
-            ->selectRaw("COUNT(DISTINCT CONCAT(YEAR(date), '-', MONTH(date))) AS count")
-            ->value('count');
-
-        // Distinct months with newsfeed posts.
-        $newsfeed = (int) DB::table('newsfeed')
-            ->where('userid', $userId)
-            ->where('added', '>=', $start)
-            ->selectRaw("COUNT(DISTINCT CONCAT(YEAR(timestamp), '-', MONTH(timestamp))) AS count")
-            ->value('count');
-
-        // Community events count.
-        $events = (int) DB::table('communityevents')
-            ->where('userid', $userId)
-            ->where('added', '>=', $start)
-            ->count();
-
-        // Volunteering count.
-        $vols = (int) DB::table('volunteering')
-            ->where('userid', $userId)
-            ->where('added', '>=', $start)
-            ->count();
-
-        // Facebook login.
-        $facebook = DB::table('users_logins')
-            ->where('userid', $userId)
-            ->where('type', 'Facebook')
-            ->count() > 0;
-
-        // Posted from the platform (vs email/TN).
-        $platform = DB::table('messages')
-            ->where('fromuser', $userId)
-            ->where('arrival', '>=', $start)
-            ->where('sourceheader', 'Platform')
-            ->count() > 0;
-
-        return [
-            'posts' => $posts,
-            'chats' => $chats,
-            'newsfeed' => $newsfeed,
-            'events' => $events,
-            'vols' => $vols,
-            'facebook' => $facebook,
-            'platform' => $platform,
-        ];
-    }
-
-    /**
      * Clean up inactive and deleted users.
      *
      * Steps:
@@ -405,6 +251,7 @@ class UserManagementService
               AND users.systemrole = ?
               AND users.deleted IS NULL
               AND users.forgotten IS NULL
+            LIMIT 50000
         ", [$sixMonthsAgo, 'User']);
 
         $count = 0;
@@ -446,6 +293,7 @@ class UserManagementService
             WHERE deleted IS NOT NULL
               AND DATEDIFF(NOW(), deleted) > 14
               AND forgotten IS NULL
+            LIMIT 50000
         ");
 
         $count = count($users);
@@ -641,6 +489,7 @@ class UserManagementService
                 INNER JOIN users ON users.id = memberships.userid
                 WHERE TIMESTAMPDIFF(SECOND, users.lastaccess, memberships.added) > 600
             ) t
+            LIMIT 50000
         ");
 
         $stats['candidates'] = count($users);

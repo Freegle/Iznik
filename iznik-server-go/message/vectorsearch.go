@@ -13,10 +13,16 @@ import (
 
 const keywordBoostWeight = 0.3
 
-// MinVectorScore is the minimum per-field cosine (subject OR body) to include
-// a result. nomic-embed-text-v1.5 normalized dot products: random noise ~0.50,
+// MinVectorScore is the minimum subject-field cosine to include a result.
+// nomic-embed-text-v1.5 normalized dot products: random noise ~0.50,
 // tangential ~0.60, genuine semantic matches 0.70+, exact 0.75+.
 const MinVectorScore = 0.65
+
+// MinBodyVectorScore is the stricter threshold applied to body-only hits.
+// Items that mention a word incidentally in body text (e.g. "I have a couch
+// not a cage") score ~0.68–0.72 on body cosine, which the lower subject
+// threshold would pass. Raising body-only hits to 0.75 suppresses this noise.
+const MinBodyVectorScore = 0.75
 
 // VectorStats captures diagnostic signal about one VectorSearch call, for the
 // handler to emit to Loki. It exists because repeat identical queries for Dee
@@ -32,7 +38,7 @@ type VectorStats struct {
 	StoreSize     int     // embedding.Global.Count() at call time
 	Candidates    int     // raw count returned by Store.Search (pre-threshold)
 	SubjectTier   int     // candidates passing MinVectorScore on SubjectCos
-	BodyTier      int     // candidates passing MinVectorScore on BodyCos (and not in subject tier)
+	BodyTier      int     // candidates passing MinBodyVectorScore on BodyCos (and not in subject tier)
 	Dropped       int     // candidates below MinVectorScore on both fields
 	TopSubjectCos float32 // max SubjectCos across the candidates (diagnoses "why empty")
 	TopBodyCos    float32 // max BodyCos across the candidates
@@ -48,7 +54,7 @@ type scoredResult struct {
 
 // VectorSearch performs semantic search with subject-first tiering and keyword
 // re-ranking. Subject-tier hits (subjectCos ≥ MinVectorScore) come first;
-// body-tier hits (only bodyCos ≥ MinVectorScore) follow. Within each tier,
+// body-tier hits (only bodyCos ≥ MinBodyVectorScore) follow. Within each tier,
 // results are ordered by their tier cosine + a keyword boost (literal query
 // word matches in the subject). This matches what users expect: an item whose
 // subject literally says "table" should surface before one that only mentions
@@ -130,7 +136,7 @@ func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 				result: sr,
 				score:  vr.SubjectCos + keywordScore*keywordBoostWeight,
 			})
-		} else if vr.HasBody && vr.BodyCos >= MinVectorScore {
+		} else if vr.HasBody && vr.BodyCos >= MinBodyVectorScore {
 			bodyTier = append(bodyTier, scoredResult{
 				result: sr,
 				score:  vr.BodyCos + keywordScore*keywordBoostWeight,
@@ -231,6 +237,7 @@ func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint
 		"top_body_cos":    stats.TopBodyCos,
 		"query_vec_fp":    stats.QueryVecFP,
 		"min_score":       MinVectorScore,
+		"min_body_score":  MinBodyVectorScore,
 		"top_k":           stats.TopK,
 	}
 	if stats.Error != "" {

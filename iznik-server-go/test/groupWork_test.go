@@ -134,12 +134,13 @@ func TestGetGroupWork_HeldPending(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Insert a held pending message.
+	// Insert a held pending message — held is tracked per-group on
+	// messages_groups.heldby (not the global messages.heldby).
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, heldby) VALUES (?, 'Offer', 'Test held', 'Test body', 'Test body', ?)", senderID, holderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test held', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby) VALUES (?, ?, 'Pending', 0, ?)", msgID, groupID, holderID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -158,6 +159,62 @@ func TestGetGroupWork_HeldPending(t *testing.T) {
 	// Held message on active group → pendingother.
 	assert.Equal(t, int64(0), found.Pending, "Held pending should not be in 'pending'")
 	assert.GreaterOrEqual(t, found.Pendingother, int64(1), "Held pending should be in 'pendingother'")
+
+	// Clean up.
+	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+}
+
+// TestGetGroupWork_HeldPerGroup verifies that holding a cross-posted message on
+// one group does not make it count as held on another group it is also pending on.
+// Held status lives on messages_groups.heldby (per-group), not messages.heldby.
+func TestGetGroupWork_HeldPerGroup(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gwheldpg")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+
+	// Active mod on both groups.
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// One message pending on both groups, held on group A only.
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test held per group', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby) VALUES (?, ?, 'Pending', 0, ?)", msgID, groupA, holderID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupB)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var gA, gB *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == groupA {
+			gA = &result[i]
+		}
+		if result[i].Groupid == groupB {
+			gB = &result[i]
+		}
+	}
+	assert.NotNil(t, gA, "Expected group A in results")
+	assert.NotNil(t, gB, "Expected group B in results")
+
+	// Held on A → counted as held (pendingother), not unheld (pending).
+	assert.Equal(t, int64(0), gA.Pending, "Held-on-A copy must not be in group A 'pending'")
+	assert.GreaterOrEqual(t, gA.Pendingother, int64(1), "Held-on-A copy must be in group A 'pendingother'")
+
+	// Not held on B → counted as unheld (pending), not held (pendingother).
+	assert.GreaterOrEqual(t, gB.Pending, int64(1), "Unheld-on-B copy must be in group B 'pending'")
+	assert.Equal(t, int64(0), gB.Pendingother, "Unheld-on-B copy must not be in group B 'pendingother'")
 
 	// Clean up.
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)

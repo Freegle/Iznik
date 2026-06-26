@@ -6,6 +6,7 @@ use App\Services\WhatJobsService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class SyncWhatJobsCommandTest extends TestCase
@@ -53,7 +54,6 @@ class SyncWhatJobsCommandTest extends TestCase
                 }
                 $this->prepareTempTable();
                 $inserted = $this->insertJobs($stream(), $srid);
-                $this->deleteSpammyJobs();
                 $this->swapTables();
                 return ['total' => $inserted, 'inserted' => $inserted, 'dry_run' => false];
             }
@@ -166,42 +166,6 @@ class SyncWhatJobsCommandTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // deleteSpammyJobs
-    // -----------------------------------------------------------------
-
-    /** @test */
-    public function test_deletes_spammy_jobs(): void
-    {
-        $srid = config('freegle.srid', 3857);
-        DB::statement('DROP TABLE IF EXISTS jobs_new');
-        DB::statement('CREATE TABLE jobs_new LIKE jobs');
-
-        $geom = WhatJobsService::boxPoly(53.8, -1.5, 53.9, -1.4);
-        // Insert 51 jobs with the same bodyhash (spam threshold is 50)
-        for ($i = 0; $i < 51; $i++) {
-            DB::statement(
-                'INSERT INTO jobs_new (job_reference,title,bodyhash,geometry,visible,clickability)
-                 VALUES (?,?,?,ST_GeomFromText(?,?),1,0)',
-                ["spam-$i", 'Spam Job', 'spamhash', $geom, $srid]
-            );
-        }
-        // Insert one legitimate job
-        DB::statement(
-            'INSERT INTO jobs_new (job_reference,title,bodyhash,geometry,visible,clickability)
-             VALUES (?,?,?,ST_GeomFromText(?,?),1,0)',
-            ['legit-1', 'Legit Job', 'legithash', $geom, $srid]
-        );
-
-        $svc = new WhatJobsService();
-        $svc->deleteSpammyJobs('jobs_new');
-
-        $this->assertEquals(0, DB::table('jobs_new')->where('bodyhash', 'spamhash')->count());
-        $this->assertEquals(1, DB::table('jobs_new')->where('bodyhash', 'legithash')->count());
-
-        DB::statement('DROP TABLE IF EXISTS jobs_new');
-    }
-
-    // -----------------------------------------------------------------
     // boxPoly helper
     // -----------------------------------------------------------------
 
@@ -278,7 +242,6 @@ class SyncWhatJobsCommandTest extends TestCase
                 }
                 $this->prepareTempTable();
                 $inserted = $this->insertJobs($jobs);
-                $this->deleteSpammyJobs();
                 $this->swapTables();
                 return ['total' => count($jobs), 'inserted' => $inserted, 'dry_run' => false];
             }
@@ -438,6 +401,10 @@ class SyncWhatJobsCommandTest extends TestCase
     {
         DB::statement('DROP TABLE IF EXISTS jobs_new');
 
+        // A real swap must trigger a KNN "jobs" index rebuild so the spatial
+        // index doesn't keep serving stale ids after the table swap.
+        Http::fake(['*/v1/jobs/rebuild' => Http::response(['status' => 'rebuilding'], 200)]);
+
         $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
         $xml  = $this->makeFeedXml([
             ['job_reference' => 'sync-e2e-1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
@@ -470,6 +437,9 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertEquals(1, $result['total']);
         $this->assertEquals(1, $result['inserted']);
         $this->assertEquals(1, DB::table('jobs_new')->where('job_reference', 'sync-e2e-1')->count());
+
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/v1/jobs/rebuild')
+            && $request->method() === 'POST');
 
         DB::statement('DROP TABLE IF EXISTS jobs_new');
     }

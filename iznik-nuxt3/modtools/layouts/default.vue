@@ -87,7 +87,7 @@
         <ModMenuItemLeft
           link="/messages/pending"
           name="Pending"
-          :count="['pending']"
+          :count="['pending', 'spam']"
           :othercount="['pendingother']"
           indent
           @mobilehidemenu="mobilehidemenu"
@@ -237,6 +237,11 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
+          link="/rippling"
+          name="Rippling"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
           link="/settings"
           name="Settings"
           @mobilehidemenu="mobilehidemenu"
@@ -318,6 +323,7 @@ const {
   hasPermissionSpamAdmin,
   hasPermissionGiftAid,
   checkWork,
+  resetCheckWork,
 } = useModMe()
 
 const { count: aiImagesCount, fetchCount: fetchAIImagesCount } = useAIImages()
@@ -380,8 +386,8 @@ const discourseCount = computed(() => {
 
 const menuCount = computed(() => {
   const work = authStore?.work
-  if (!work || !work.total) return 0
-  return work.total
+  const workTotal = work?.total || 0
+  return workTotal + (chatStore.unreadCount || 0)
 })
 
 const mobileStore = useMobileStore()
@@ -429,6 +435,21 @@ watch(
   },
   { immediate: true }
 )
+
+// Re-login detection: when the user logs out then logs back in without a page
+// reload, modGroupStore is empty and isFirstCheckWork is stale-false.  Watch for
+// the logged-out → logged-in transition and immediately refresh groups + reset
+// the beep baseline so the first post-login checkWork doesn't beep spuriously.
+const hadLoggedOut = ref(false)
+watch(loggedIn, async (newVal, oldVal) => {
+  if (!newVal && oldVal) {
+    hadLoggedOut.value = true
+  } else if (newVal && !oldVal && hadLoggedOut.value) {
+    hadLoggedOut.value = false
+    resetCheckWork()
+    await checkWork(true)
+  }
+})
 
 // Lifecycle hooks and watches
 onMounted(async () => {

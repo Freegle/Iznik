@@ -79,6 +79,7 @@ const imageStyle = computed(() => {
 function clicked() {
   jobStore.log({
     id: job.value.id,
+    link: job.value.url,
   })
 
   if (router?.currentRoute?.value?.path !== '/jobs') {

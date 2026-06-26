@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -212,21 +213,14 @@ func TestPayPalIPN_RecurringVsOneOff(t *testing.T) {
 	db.Raw("SELECT TransactionType FROM users_donations WHERE TransactionID = ?", txnID).Scan(&txnType)
 	assert.Equal(t, "subscr_payment", txnType)
 
-	// First recurring donation should queue a thank-you.
+	// No per-donation thank-you email is queued any more: the daily
+	// mail:donations:thank-prep digest coordinates all thanking.
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
 		userID).Scan(&taskCount)
-	assert.Equal(t, int64(1), taskCount, "Thank-you should be queued for first recurring donation")
-
-	// Source field must be 'paypal' so the email is worded correctly.
-	var source string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
-		userID).Scan(&source)
-	assert.Equal(t, "paypal", source, "PayPal IPN must tag thank-you task with source=paypal")
+	assert.Equal(t, int64(0), taskCount, "first recurring donation must not queue a per-donation thank-you email")
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
-	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
-		fmt.Sprintf("%%\"user_id\":%d%%", userID))
 }
 
 func TestPayPalIPN_OneOffBelowThresholdNoThankYou(t *testing.T) {
@@ -260,6 +254,135 @@ func TestPayPalIPN_OneOffBelowThresholdNoThankYou(t *testing.T) {
 	assert.Equal(t, int64(0), taskCount, "One-off donation below £20 must not queue thank-you")
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
+}
+
+// TestPayPalIPN_MatchByPriorDonation covers the case where a recurring donor's
+// PayPal payer email is no longer (or never was) on their Freegle account — but
+// a PRIOR donation from the same Payer is already linked to a still-valid user.
+// V1 matched these; the Go port must too. (e.g. donor changed their Freegle
+// email but PayPal keeps billing the old address.)
+func TestPayPalIPN_MatchByPriorDonation(t *testing.T) {
+	prefix := uniquePrefix("paypalprior")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	// PayPal email that is NOT registered on the account.
+	payerEmail := prefix + "_paypal@external.com"
+	priorTxn := "PRIOR_" + prefix
+	newTxn := "PAY_" + prefix
+
+	// A historical donation from this Payer, already linked to the valid user.
+	db.Exec("INSERT INTO users_donations (userid, Payer, GrossAmount, TransactionID, TransactionType, source, type, timestamp) "+
+		"VALUES (?, ?, 5.00, ?, 'subscr_payment', 'DonateWithPayPal', 'PayPal', NOW() - INTERVAL 1 MONTH)",
+		userID, payerEmail, priorTxn)
+
+	body := makePayPalForm(map[string]string{
+		"mc_gross":     "5.00",
+		"payer_email":  payerEmail,
+		"first_name":   "Recurring",
+		"last_name":    "Donor",
+		"txn_id":       newTxn,
+		"txn_type":     "subscr_payment",
+		"payment_date": "2026-01-15 10:30:00",
+	})
+
+	req := httptest.NewRequest("POST", "/donateipn", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", newTxn).Scan(&donorID)
+	assert.NotNil(t, donorID, "new donation should be matched via prior donation from same Payer")
+	if donorID != nil {
+		assert.Equal(t, userID, *donorID)
+	}
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", priorTxn, newTxn)
+}
+
+// TestPayPalIPN_PriorDonationDeletedUserNotMatched guards the merge/deletion
+// case: if the only prior-donation link points to a deleted (or merged-away)
+// user, we must NOT reuse it — the donation stays unmatched.
+func TestPayPalIPN_PriorDonationDeletedUserNotMatched(t *testing.T) {
+	prefix := uniquePrefix("paypalpriordel")
+	db := database.DBConn
+
+	deletedID := CreateDeletedTestUser(t, prefix+"_gone")
+	payerEmail := prefix + "_paypal@external.com"
+	priorTxn := "PRIOR_" + prefix
+	newTxn := "PAY_" + prefix
+
+	db.Exec("INSERT INTO users_donations (userid, Payer, GrossAmount, TransactionID, TransactionType, source, type, timestamp) "+
+		"VALUES (?, ?, 5.00, ?, 'subscr_payment', 'DonateWithPayPal', 'PayPal', NOW() - INTERVAL 1 MONTH)",
+		deletedID, payerEmail, priorTxn)
+
+	body := makePayPalForm(map[string]string{
+		"mc_gross":     "5.00",
+		"payer_email":  payerEmail,
+		"first_name":   "Recurring",
+		"last_name":    "Donor",
+		"txn_id":       newTxn,
+		"txn_type":     "subscr_payment",
+		"payment_date": "2026-01-15 10:30:00",
+	})
+
+	req := httptest.NewRequest("POST", "/donateipn", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", newTxn).Scan(&donorID)
+	assert.Nil(t, donorID, "must not match a prior donation linked to a deleted/merged-away user")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", priorTxn, newTxn)
+}
+
+// TestPayPalIPN_MatchByCanon covers V1's `email = ? OR canon = ?` matching: a
+// payer email that differs from the registered address only by canonicalisation
+// (gmail dots, +tag, etc.) must still match. The Go port dropped this.
+func TestPayPalIPN_MatchByCanon(t *testing.T) {
+	prefix := uniquePrefix("paypalcanon")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+
+	// Register a canonicalised email; the incoming payer is a dotted variant
+	// that is NOT an exact match but shares the same canon.
+	payerEmail := prefix + ".donor@test.com"
+	canon := user.CanonicalizeEmail(payerEmail)
+	storedEmail := canon // exact-different from payerEmail (no dot), same canon
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)", userID, storedEmail, canon)
+
+	newTxn := "PAY_" + prefix
+	body := makePayPalForm(map[string]string{
+		"mc_gross":     "5.00",
+		"payer_email":  payerEmail,
+		"first_name":   "Canon",
+		"last_name":    "Donor",
+		"txn_id":       newTxn,
+		"txn_type":     "subscr_payment",
+		"payment_date": "2026-01-15 10:30:00",
+	})
+
+	req := httptest.NewRequest("POST", "/donateipn", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var donorID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", newTxn).Scan(&donorID)
+	assert.NotNil(t, donorID, "payer email should match registered account via canon")
+	if donorID != nil {
+		assert.Equal(t, userID, *donorID)
+	}
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", newTxn)
+	db.Exec("DELETE FROM users_emails WHERE userid = ? AND email = ?", userID, storedEmail)
 }
 
 func TestPayPalIPN_NoMcGross(t *testing.T) {

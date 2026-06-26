@@ -27,7 +27,11 @@ class SyncWhatJobsCommand extends Command
         // straight into insertJobs (TODO tracked in the service).
         ini_set('memory_limit', '1536M');
 
-        $lock = Cache::lock('sync-whatjobs', 3600);
+        // TTL matches the every-3-hours schedule (routes/console.php) plus
+        // a comfortable margin: a cold-cache run that hits Photon for every
+        // distinct city tuple can run for hours, far longer than the prior
+        // 1h TTL.
+        $lock = Cache::lock('sync-whatjobs', 4 * 3600);
         if (!$lock->get()) {
             $this->warn('Another integrations:sync-whatjobs is already running, skipping.');
             return self::SUCCESS;

@@ -414,6 +414,26 @@ platform :ios do
       is_key_content_base64: false
     )
 
+    # --- Notification Service Extension: ensure the Xcode target exists (idempotent) ---
+    # Copies the NSE source from the plugin package and adds/refreshes the target in
+    # App.xcodeproj so it builds + signs in CI (no manual Xcode step). Runs BEFORE the
+    # version bumps below so increment_version_number / increment_build_number cover it too.
+    # Non-fatal: if anything goes wrong the app still builds without the extension and iOS
+    # notifications fall back to plain text - so this can never break the live release.
+    # Invoke by ABSOLUTE path from this Fastfile's location. The previous cwd-relative
+    # forms (fastlane/add_nse_target.rb, add_nse_target.rb) did not resolve from
+    # fastlane's sh working directory, so this step LoadError'd and silently no-op'd on
+    # every build - the NSE target was never wired and iOS rich push always degraded to
+    # plain text. The script itself is cwd-independent (it derives all paths from its own
+    # __dir__), so locating it by absolute path is the whole fix.
+    nse_script = File.expand_path('add_nse_target.rb', __dir__)
+    sh("bundle exec ruby \"#{nse_script}\" || echo '⚠️  NSE wiring step did not run'")
+    # Confirmed wired only when BOTH the source is present AND the target is in the project.
+    nse_present = File.exist?('../ios/App/NotificationServiceExtension/NotificationService.swift') &&
+                  File.exist?('../ios/App/App.xcodeproj/project.pbxproj') &&
+                  File.read('../ios/App/App.xcodeproj/project.pbxproj').include?('NotificationServiceExtension')
+    UI.message(nse_present ? "✅ NSE target wired into App.xcodeproj" : "ℹ️  NSE not wired — building app without the extension")
+
     # Read pre-calculated version from workspace file (same as Android)
     # Version was already incremented by the increment-version job
     version_file = '../.new_version'
@@ -438,25 +458,29 @@ platform :ios do
       xcodeproj: "ios/App/App.xcodeproj"
     )
 
-    # Get latest TestFlight build number
+    # Get the latest TestFlight build number ACROSS ALL versions (no `version:`).
+    # A version-scoped query returns 0 for a brand-new marketing version, which
+    # then falls to the floor below — producing the SAME build number as the
+    # previous version (a collision that breaks auto-submit, which then can't
+    # tell the two builds apart). The global latest + 1 is always unique and
+    # monotonic, so each new build gets a distinct number.
     begin
       latest_build = latest_testflight_build_number(
-        version: version,
         initial_build_number: 0,
         app_identifier: "org.ilovefreegle.iphone"
       )
-      UI.message("📊 Latest TestFlight build for v#{version}: #{latest_build}")
+      UI.message("📊 Latest TestFlight build across all versions: #{latest_build}")
     rescue => e
-      UI.message("ℹ️  No existing builds for v#{version}, starting at 0")
+      UI.message("ℹ️  Could not fetch latest build number, starting at 0")
       latest_build = 0
     end
 
     new_build = latest_build + 1
 
-    # Ensure build number is at least 1272
+    # Safety floor only — with the global query above this should never trigger.
     min_build_number = 1272
     if new_build < min_build_number
-      UI.message("📊 Jumping from build number #{new_build} to minimum #{min_build_number}")
+      UI.message("📊 Flooring build number #{new_build} to minimum #{min_build_number}")
       new_build = min_build_number
     end
 
@@ -500,15 +524,81 @@ platform :ios do
       bundle_identifier: "org.ilovefreegle.iphone"
     )
 
-    # Build the app
-    gym(
+    # --- Notification Service Extension signing (only when the target is wired) ---
+    # Creates the App ID + an App Store distribution profile for the NSE via the App Store
+    # Connect API key already configured above, then pins the NSE target to manual signing.
+    nse_profile_name = nil
+    if nse_present
+      nse_bundle = "org.ilovefreegle.iphone.NotificationServiceExtension"
+      # The NSE App ID and its App Store distribution profile are registered ONCE
+      # by hand in the Apple Developer portal (Identifiers + Profiles). We do NOT
+      # call produce() here: App-ID creation needs interactive Apple-ID + 2FA that
+      # the App Store Connect API key can't satisfy in CI, so produce() hangs with
+      # no output until CircleCI kills the job at the 30-minute no-output timeout.
+      #
+      # Download-only: readonly so get_provisioning_profile just fetches the
+      # pre-created profile via the API key and never attempts (interactive)
+      # creation. If the profile is somehow missing it fails fast instead of
+      # hanging.
+      get_provisioning_profile(app_identifier: nse_bundle, adhoc: false, readonly: true)
+      nse_profile_name = lane_context[SharedValues::SIGH_NAME]
+      nse_profile_path = lane_context[SharedValues::SIGH_PROFILE_PATH] ||
+                         (lane_context[SharedValues::SIGH_PROFILE_PATHS] || []).first
+
+      update_project_provisioning(
+        xcodeproj: "ios/App/App.xcodeproj",
+        target_filter: "NotificationServiceExtension",
+        profile: nse_profile_path,
+        code_signing_identity: "iPhone Distribution"
+      )
+      update_code_signing_settings(
+        use_automatic_signing: false,
+        path: "ios/App/App.xcodeproj",
+        targets: ["NotificationServiceExtension"],
+        code_sign_identity: "iPhone Distribution",
+        bundle_identifier: nse_bundle
+      )
+      UI.success("✅ NSE signing configured (profile: #{nse_profile_name})")
+    end
+
+    # The Freegle profile is installed from a file; read its Name for the export map.
+    freegle_profile_file = ENV['IOS_PROVISIONING_PROFILE_PATH'] || 'ios_appstore.mobileprovision'
+    freegle_profile_file = "../#{freegle_profile_file}" unless freegle_profile_file.start_with?('/')
+    freegle_profile_name = nil
+    if File.exist?(freegle_profile_file)
+      decoded = `security cms -D -i "#{freegle_profile_file}" 2>/dev/null`
+      m = decoded.match(%r{<key>Name</key>\s*<string>([^<]+)</string>})
+      freegle_profile_name = m && m[1]
+    end
+
+    # Two-target manual export needs an explicit provisioningProfiles map; only enable it
+    # when everything resolved, otherwise fall back to today's exact single-target build.
+    do_nse_export = nse_present && nse_profile_name && freegle_profile_name
+
+    gym_opts = {
       scheme: "Freegle",
       workspace: "ios/App/App.xcworkspace",
       export_method: "app-store",
       clean: true,
       output_directory: "./build",
       skip_package_dependencies_resolution: true
-    )
+    }
+    if do_nse_export
+      gym_opts[:export_options] = {
+        method: "app-store",
+        signingStyle: "manual",
+        provisioningProfiles: {
+          "org.ilovefreegle.iphone" => freegle_profile_name,
+          "org.ilovefreegle.iphone.NotificationServiceExtension" => nse_profile_name
+        }
+      }
+      UI.success("📦 Exporting app + NSE (profiles: #{freegle_profile_name} / #{nse_profile_name})")
+    else
+      UI.message("📦 Exporting app only (NSE export not enabled this build)")
+    end
+
+    # Build the app
+    gym(gym_opts)
 
     # Upload to TestFlight
     # Note: Do NOT set changelog here - it forces pilot to wait for the build to appear
@@ -552,14 +642,16 @@ platform :ios do
       xcodeproj: "ios/App/App.xcodeproj"
     )
 
+    # Global latest build (no `version:`) so a new marketing version doesn't
+    # collide with the previous version's build number — see the Freegle beta
+    # lane above for the full explanation.
     begin
       latest_build = latest_testflight_build_number(
-        version: version,
         initial_build_number: 0,
         app_identifier: "org.ilovefreegle.modtools"
       )
     rescue => e
-      UI.message("ℹ️  No existing builds for v#{version}, starting at 0")
+      UI.message("ℹ️  Could not fetch latest build number, starting at 0")
       latest_build = 0
     end
 

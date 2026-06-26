@@ -105,7 +105,7 @@
             @outcome="fetchMessage"
             @hidden="showOutcome = false"
           />
-          <PromiseModal
+          <LazyPromiseModal
             v-if="showPromise"
             :messages="[refmsg]"
             :selected-message="refmsg.id"
@@ -243,10 +243,6 @@ import { useMiscStore } from '~/stores/misc'
 const OutcomeModal = defineAsyncComponent(() =>
   import('~/components/OutcomeModal')
 )
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
-)
-
 const props = defineProps({
   chatid: {
     type: Number,

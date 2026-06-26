@@ -20,11 +20,16 @@ function makeLocator(visible = false) {
     filter: function () {
       return this
     },
+    first: function () {
+      return this
+    },
   }
 }
 
 function makePage(url = 'http://example.com/', overrides = {}) {
   const gotoMock = vi.fn().mockResolvedValue(undefined)
+  const waitForLoadStateMock = vi.fn().mockResolvedValue(undefined)
+  const waitForURLMock = vi.fn().mockResolvedValue(undefined)
   return {
     _url: url,
     isClosed: () => false,
@@ -32,6 +37,8 @@ function makePage(url = 'http://example.com/', overrides = {}) {
       return this._url
     },
     goto: gotoMock,
+    waitForLoadState: waitForLoadStateMock,
+    waitForURL: waitForURLMock,
     evaluate: vi.fn().mockResolvedValue(undefined),
     context: () => ({ clearCookies: vi.fn().mockResolvedValue(undefined) }),
     locator: vi.fn().mockImplementation((selector) => {
@@ -58,6 +65,27 @@ describe('logoutIfLoggedIn (e2e util)', () => {
     expect(page.goto).not.toHaveBeenCalled()
   })
 
+  it('waits for sign-in button when logout redirect already landed at home page', async () => {
+    // After skipping goto('/'), Nuxt's post-navigation JavaScript is still running.
+    // If the caller immediately navigates to another URL (e.g. /give via postMessage),
+    // two concurrent navigations race and the V8 renderer can hang for 35+ seconds.
+    // Fix: wait for .test-signinbutton visible, confirming Nuxt has fully hydrated.
+    const signinLocator = makeLocator(false)
+    const page = makePage('http://freegle-prod-local.localhost:9080/', {
+      locator: vi.fn().mockImplementation((selector) => {
+        if (selector === '.test-signinbutton') {
+          return signinLocator
+        }
+        return makeLocator(false)
+      }),
+    })
+    await logoutIfLoggedIn(page)
+    expect(page.locator).toHaveBeenCalledWith('.test-signinbutton')
+    expect(signinLocator.waitFor).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'visible', timeout: 15000 })
+    )
+  })
+
   it('calls page.goto("/") when logout did not redirect to home page', async () => {
     // When logout leaves the user on a non-home page, we still need to navigate.
     const page = makePage('http://freegle-prod-local.localhost:9080/explore')
@@ -80,6 +108,36 @@ describe('logoutIfLoggedIn (e2e util)', () => {
     expect(page.goto).toHaveBeenCalledWith(
       '/',
       expect.objectContaining({ waitUntil: 'domcontentloaded' })
+    )
+  })
+
+  it('waits for domcontentloaded before clicking logout to settle any in-flight redirect', async () => {
+    // After signUpViaHomepage the page may be at /browse which immediately redirects
+    // to /explore for new users. If the logout button is clicked while /browse→/explore
+    // is still committing, two simultaneous hard navigations freeze the V8 renderer.
+    // Fix: waitForLoadState('domcontentloaded') at the start of logoutIfLoggedIn ensures
+    // the page is stable before we look for and click the logout button.
+    const page = makePage('http://freegle-prod-local.localhost:9080/browse')
+    await logoutIfLoggedIn(page)
+    expect(page.waitForLoadState).toHaveBeenCalledWith(
+      'domcontentloaded',
+      expect.objectContaining({ timeout: 5000 })
+    )
+  })
+
+  it('waits for /browse→/explore redirect via waitForURL when at /browse', async () => {
+    // The production CI failure: /browse auto-redirects new users to /explore via
+    // JS AFTER DOMContentLoaded fires. waitForLoadState('domcontentloaded') resolves
+    // immediately because /browse's DOMContentLoaded has already fired, leaving the
+    // JS-initiated redirect in flight. Clicking logout while /browse→/explore is
+    // committing causes two simultaneous hard navigations that freeze the V8 renderer
+    // for 35+ seconds (observed in production CI job 16194 at sha 83d85abb9).
+    // Fix: explicitly call waitForURL(/explore|myposts/) when the entry URL is /browse.
+    const page = makePage('http://freegle-prod-local.localhost:9080/browse')
+    await logoutIfLoggedIn(page)
+    expect(page.waitForURL).toHaveBeenCalledWith(
+      expect.any(RegExp),
+      expect.objectContaining({ timeout: 3000 })
     )
   })
 })

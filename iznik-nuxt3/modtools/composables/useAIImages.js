@@ -34,11 +34,21 @@ export function useAIImages() {
   }
 
   async function accept(id, pendingExternaluid) {
-    return $api.aiimages.accept(id, pendingExternaluid)
+    const result = await $api.aiimages.accept(id, pendingExternaluid)
+    count.value = Math.max(0, count.value - 1)
+    return result
   }
 
   async function keep(id) {
-    return $api.aiimages.keep(id)
+    const result = await $api.aiimages.keep(id)
+    count.value = Math.max(0, count.value - 1)
+    return result
+  }
+
+  async function suppress(id) {
+    const result = await $api.aiimages.suppress(id)
+    count.value = Math.max(0, count.value - 1)
+    return result
   }
 
   return {
@@ -50,5 +60,6 @@ export function useAIImages() {
     regenerate,
     accept,
     keep,
+    suppress,
   }
 }

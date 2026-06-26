@@ -1,0 +1,329 @@
+<?php
+
+namespace App\Services;
+
+use App\Mail\Alert\AlertMail;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+
+class AlertService
+{
+    private const GROUP_BATCH_SIZE = 50;
+
+    private static array $fromMap = [
+        'support' => ['config' => 'freegle.mail.support_addr', 'name' => 'Freegle Support'],
+        'info' => ['config' => 'freegle.mail.info_addr', 'name' => 'Freegle Info'],
+        'geeks' => ['config' => 'freegle.mail.geeks_addr', 'name' => 'Freegle Geeks'],
+        'mentors' => ['config' => 'freegle.mail.mentors_addr', 'name' => 'Freegle Mentors'],
+        'board' => ['addr' => 'board@ilovefreegle.org', 'name' => 'Freegle Board'],
+        'chair' => ['addr' => 'chair@ilovefreegle.org', 'name' => 'Freegle Chair'],
+        'newgroups' => ['addr' => 'newgroups@ilovefreegle.org', 'name' => 'Freegle New Groups'],
+        'ro' => ['addr' => 'ro@ilovefreegle.org', 'name' => 'Freegle Returning Officer'],
+        'volunteers' => ['addr' => 'volunteers@ilovefreegle.org', 'name' => 'Freegle Volunteers'],
+        'centralmods' => ['addr' => 'centralmods@ilovefreegle.org', 'name' => 'Freegle Volunteer Support'],
+        'councils' => ['addr' => 'councils@ilovefreegle.org', 'name' => 'Freegle Partnerships'],
+    ];
+
+    /**
+     * Process all incomplete alerts, sending emails to mods of each group in batches.
+     *
+     * Mirrors V1 cron/alerts.php (Alert::process() + mailMods()):
+     * - Picks up incomplete alerts and processes the next batch of 50 groups.
+     * - Each mod gets one email per alert regardless of how many groups they moderate.
+     * - Tracking in alerts_tracking prevents duplicate sends.
+     * - Alert is marked complete once all groups are processed.
+     *
+     * @return int Total emails sent.
+     */
+    public function processAlerts(bool $dryRun = false): int
+    {
+        $alerts = DB::table('alerts')
+            ->whereNull('complete')
+            ->get();
+
+        $totalSent = 0;
+
+        foreach ($alerts as $alert) {
+            $totalSent += $this->processAlert($alert, $dryRun);
+        }
+
+        return $totalSent;
+    }
+
+    private function processAlert(object $alert, bool $dryRun): int
+    {
+        [$fromAddr, $fromName] = $this->resolveFrom($alert->from);
+        $htmlBody = $alert->html ?: nl2br(e($alert->text));
+
+        // V1 parity: an alert with a specific groupid targets just that group
+        // (Alert::process() WHERE id = $groupid) and completes in one pass,
+        // rather than fanning out across all published Freegle groups.
+        if ($alert->groupid) {
+            $group = DB::table('groups')
+                ->where('id', $alert->groupid)
+                ->first(['id', 'nameshort', 'contactmail']);
+
+            // Single-group alert is not "global" (it is not sent to all groups).
+            $sent = $group
+                ? $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, false)
+                : 0;
+
+            // V1 parity (Alert::mailMods $cc, Alert.php:355-372): a single-group
+            // alert also copies the alert sender (self-CC). Not counted in the
+            // returned total, matching V1 ($done is not incremented for the cc).
+            if ($group && !$dryRun) {
+                $this->mailAlertSenderCopy($alert, $group, $fromAddr, $fromName, $htmlBody);
+            }
+
+            if (!$dryRun) {
+                DB::table('alerts')->where('id', $alert->id)->update(['complete' => now()]);
+                Log::info('AlertService: completed single-group alert', [
+                    'alert_id' => $alert->id,
+                    'group_id' => $alert->groupid,
+                ]);
+            }
+
+            return $sent;
+        }
+
+        $groups = DB::table('groups')
+            ->where('type', 'Freegle')
+            ->where('id', '>', $alert->groupprogress)
+            ->where('publish', 1)
+            ->orderBy('id')
+            ->limit(self::GROUP_BATCH_SIZE)
+            ->get(['id', 'nameshort', 'contactmail']);
+
+        // Fewer than batch size means this is the last batch — mark complete after processing.
+        $complete = count($groups) < self::GROUP_BATCH_SIZE;
+        $sent = 0;
+
+        foreach ($groups as $group) {
+            // Multi-group (no groupid) alerts are sent to all groups → global note.
+            $sent += $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, true);
+
+            if (!$dryRun) {
+                DB::table('alerts')->where('id', $alert->id)->update(['groupprogress' => $group->id]);
+            }
+        }
+
+        if ($complete && !$dryRun) {
+            DB::table('alerts')->where('id', $alert->id)->update(['complete' => now()]);
+            Log::info('AlertService: completed alert', ['alert_id' => $alert->id]);
+        }
+
+        return $sent;
+    }
+
+    private function mailGroupMods(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun, bool $global): int
+    {
+        $modSite = config('freegle.sites.mod', 'https://modtools.org');
+        $askClick = (bool) ($alert->askclick ?? false);
+
+        $mods = DB::table('memberships')
+            ->where('groupid', $group->id)
+            ->whereIn('role', ['Owner', 'Moderator'])
+            ->pluck('userid');
+
+        $sent = 0;
+
+        foreach ($mods as $userId) {
+            $user = DB::table('users')
+                ->where('id', $userId)
+                ->whereNull('deleted')
+                ->first();
+
+            if (!$user) {
+                continue;
+            }
+
+            // V1 parity: pick the user's preferred external email (skipping
+            // our own per-user-alias domains so the mail can't loop back as
+            // chat), then find its row id for alerts_tracking.
+            $preferredEmail = \App\Models\User::find($userId)?->email_preferred;
+            $emails = collect();
+            if ($preferredEmail) {
+                $row = DB::table('users_emails')
+                    ->where('userid', $userId)
+                    ->where('email', $preferredEmail)
+                    ->whereNull('bounced')
+                    ->first(['id', 'email']);
+                if ($row) {
+                    $emails = collect([$row]);
+                }
+            }
+
+            foreach ($emails as $emailRow) {
+                $email = $emailRow->email;
+
+                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    continue;
+                }
+
+                $alreadySent = DB::table('alerts_tracking')
+                    ->where('alertid', $alert->id)
+                    ->where('userid', $userId)
+                    ->where('emailid', $emailRow->id)
+                    ->exists();
+
+                $trackId = null;
+                if (!$dryRun) {
+                    $trackId = DB::table('alerts_tracking')->insertGetId([
+                        'alertid' => $alert->id,
+                        'groupid' => $group->id,
+                        'userid' => $userId,
+                        'emailid' => $emailRow->id,
+                        'type' => 'ModEmail',
+                    ]);
+                }
+
+                if ($alreadySent) {
+                    continue;
+                }
+
+                if (!$dryRun) {
+                    $name = $user->fullname
+                        ?: trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
+                        ?: 'Freegle Volunteer';
+
+                    try {
+                        app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
+                            recipientEmail: $email,
+                            recipientName: $name,
+                            fromAddress: $fromAddr,
+                            fromName: $fromName,
+                            subjectLine: $alert->subject,
+                            htmlBody: $htmlBody,
+                            textBody: $alert->text ?? '',
+                            trackId: $trackId,
+                            askClick: $askClick,
+                            global: $global,
+                            groupName: $group->nameshort,
+                            beaconBase: $modSite,
+                            recipientUserId: (int) $userId,
+                        ));
+                        $sent++;
+                    } catch (\Throwable $e) {
+                        Log::error('AlertService: failed to send alert email', [
+                            'alert_id' => $alert->id,
+                            'user_id' => $userId,
+                            'email' => $email,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+        }
+
+        $sent += $this->mailGroupContact($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, $global);
+
+        return $sent;
+    }
+
+    /**
+     * V1 parity (Alert::mailMods() owner block, Alert.php:315-353): if the group
+     * has a contact email, send the alert there too and record an 'OwnerEmail'
+     * tracking row. The contact address is the group's shared volunteer inbox,
+     * so it gets a copy independent of individual moderators' personal emails.
+     */
+    private function mailGroupContact(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun, bool $global): int
+    {
+        $contact = $group->contactmail ?? null;
+
+        if (!$contact || !filter_var($contact, FILTER_VALIDATE_EMAIL)) {
+            return 0;
+        }
+
+        if ($dryRun) {
+            return 0;
+        }
+
+        $trackId = DB::table('alerts_tracking')->insertGetId([
+            'alertid' => $alert->id,
+            'groupid' => $group->id,
+            'type' => 'OwnerEmail',
+        ]);
+
+        try {
+            app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
+                recipientEmail: $contact,
+                recipientName: $group->nameshort . ' volunteers',
+                fromAddress: $fromAddr,
+                fromName: $fromName,
+                subjectLine: $alert->subject,
+                htmlBody: $htmlBody,
+                textBody: $alert->text ?? '',
+                trackId: $trackId,
+                askClick: (bool) ($alert->askclick ?? false),
+                global: $global,
+                groupName: $group->nameshort,
+                beaconBase: config('freegle.sites.user', 'https://www.ilovefreegle.org'),
+            ));
+
+            return 1;
+        } catch (\Throwable $e) {
+            Log::error('AlertService: failed to send alert contact email', [
+                'alert_id' => $alert->id,
+                'group_id' => $group->id,
+                'email' => $contact,
+                'error' => $e->getMessage(),
+            ]);
+
+            return 0;
+        }
+    }
+
+    /**
+     * V1 parity (Alert::mailMods() cc block): for a single-group alert, send a
+     * copy back to the alert's own from-address (self-CC). No tracking row, no
+     * confirmation button, and not counted toward the returned total.
+     */
+    private function mailAlertSenderCopy(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody): void
+    {
+        if (!filter_var($fromAddr, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+
+        try {
+            app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
+                recipientEmail: $fromAddr,
+                recipientName: $group->nameshort . ' volunteers',
+                fromAddress: $fromAddr,
+                fromName: $fromName,
+                subjectLine: $alert->subject,
+                htmlBody: $htmlBody,
+                textBody: $alert->text ?? '',
+                askClick: false,
+                global: false,
+                groupName: $group->nameshort,
+            ));
+        } catch (\Throwable $e) {
+            Log::error('AlertService: failed to send alert sender copy', [
+                'alert_id' => $alert->id,
+                'group_id' => $group->id,
+                'email' => $fromAddr,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function resolveFrom(string $role): array
+    {
+        $geeks = config('freegle.mail.geeks_addr') ?: 'geeks@ilovefreegle.org';
+
+        if (isset(self::$fromMap[$role])) {
+            $entry = self::$fromMap[$role];
+            // Use ?: not config()'s default arg: config()'s default applies only
+            // when the key is ABSENT, but a role address may be present-but-null
+            // (its env var unset → config returns null). Fall back to geeks for
+            // both the absent and null cases.
+            $addr = isset($entry['config'])
+                ? (config($entry['config']) ?: $geeks)
+                : $entry['addr'];
+            return [$addr, $entry['name']];
+        }
+
+        return [$geeks, 'Freegle'];
+    }
+}

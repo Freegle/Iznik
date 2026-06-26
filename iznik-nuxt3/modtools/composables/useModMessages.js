@@ -8,6 +8,7 @@
 // - which in turn stops useModMessages watch(work) from updating the messages list
 // - until another timed update occurs
 
+import { onScopeDispose, getCurrentScope } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '@/stores/auth'
 // import { useModGroupStore } from '@/stores/modgroup'
@@ -31,6 +32,22 @@ const memberTerm = ref(null)
 const nextAfterRemoved = ref(null)
 
 const distance = ref(10)
+
+// Holds a workdetail refresh that arrived while a modal was open (e.g. a
+// moderator typing a rejection reason). The list is NOT refreshed while a modal
+// is open — re-rendering would unmount the modal and lose the draft — so the
+// pending refresh is parked here and applied when the modal closes.
+const pendingWorkRefresh = ref(null)
+
+// Bootstrap sets <body> overflow:hidden while a modal is open, so use that as a
+// cross-component "is any modal open?" signal. The typeof guard keeps it
+// SSR-safe (no document on the server).
+function aModalIsOpen() {
+  return (
+    typeof document !== 'undefined' &&
+    document.body?.style?.overflow === 'hidden'
+  )
+}
 
 const summary = computed(() => {
   if (!summarykey.value) return false
@@ -82,7 +99,7 @@ const messages = computed(() => {
   if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
     const allowed =
       collection.value === 'Pending'
-        ? ['Pending', 'PendingOther']
+        ? ['Pending', 'PendingOther', 'Spam']
         : [collection.value]
     const contextGid = groupid.value ? parseInt(groupid.value) : null
     messages = messages.filter((m) => {
@@ -264,41 +281,63 @@ export function setupModMessages(reset) {
   })
 
   watch(workdetail, (newVal, oldVal) => {
-    // console.log('<<<<useModMessages watch workdetail. oldVal:', oldVal, 'newVal:', newVal)
     if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
-    // if( collection.value!=='Pending') return
-    let doFetch = false
 
     const miscStore = useMiscStore()
-    // console.log('uMM getMessages',miscStore.deferGetMessages)
+
+    // When the work total INCREASES, genuinely new work has arrived (e.g. a new
+    // pending message). The list must refresh to show it - otherwise the count /
+    // red alert updates but the message stays invisible until a manual reload
+    // (Discourse #9737).
+    const newTotal = Number(newVal?.total ?? 0)
+    const oldTotal = Number(oldVal?.total ?? 0)
+    if (newTotal > oldTotal) {
+      // ...but NOT while a modal is open. Refreshing re-renders the message
+      // list, which unmounts an open modal (e.g. a moderator part-way through
+      // typing a rejection reason) and loses their draft. Park the refresh and
+      // apply it when the modal closes (see the observer below), so the new
+      // message still appears without a manual reload.
+      if (aModalIsOpen()) {
+        pendingWorkRefresh.value = newVal
+        return
+      }
+      getMessages(newVal)
+      return
+    }
+
+    // No new work (count unchanged or decreased by a mod action the component
+    // already handled): keep the existing suppression so the list does not
+    // reload under the user's feet.
     if (miscStore.deferGetMessages) return
-
-    const bodyoverflow = document.body.style.overflow
-    if (bodyoverflow !== 'hidden') {
-      if (newVal !== oldVal) {
-        // There's new stuff to fetch.
-        // console.log('Fetch')
-        doFetch = true
-      } else {
-        /* In Nuxt 2 miscStore visible was set if we are visible
-        const visible = miscStore.get('visible')
-        //console.log('Visible', visible)
-
-        if (!visible) {
-          // If we're not visible, then clear what we have in the store.  We don't want to do that under our own
-          // feet, but if we do this then we will pick up changes from other people and avoid confusion.
-          console.log('Clear')
-          await messageStore.clear()
-          doFetch = true
-        } */
-      }
-
-      if (doFetch) {
-        // console.log('uMM watch workdetail getmessages', newVal)
-        getMessages(newVal)
-      }
+    if (!aModalIsOpen()) {
+      getMessages(newVal)
     }
   })
+
+  // Apply a refresh that was deferred because a modal was open, as soon as the
+  // modal closes. Bootstrap toggles <body> overflow:hidden around modals, so we
+  // observe that attribute; when it clears and a refresh is pending, run it.
+  // This keeps an open rejection modal (and its draft) intact during editing
+  // while still surfacing the new pending message the moment it is dismissed.
+  if (
+    typeof document !== 'undefined' &&
+    typeof MutationObserver !== 'undefined'
+  ) {
+    const bodyOverflowObserver = new MutationObserver(() => {
+      if (pendingWorkRefresh.value && !aModalIsOpen()) {
+        const deferred = pendingWorkRefresh.value
+        pendingWorkRefresh.value = null
+        getMessages(deferred)
+      }
+    })
+    bodyOverflowObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['style'],
+    })
+    if (getCurrentScope()) {
+      onScopeDispose(() => bodyOverflowObserver.disconnect())
+    }
+  }
 
   return {
     busy,

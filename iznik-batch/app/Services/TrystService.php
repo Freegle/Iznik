@@ -171,7 +171,7 @@ class TrystService
             'location' => '',
         ];
 
-        return $userSite . '/calendar?data=' . base64_encode(json_encode($eventData));
+        return $userSite . '/calendar?data=' . rtrim(strtr(base64_encode(json_encode($eventData)), '+/', '-_'), '=');
     }
 
     /**
@@ -185,21 +185,22 @@ class TrystService
             return null;
         }
 
-        $email = $recipient->emails->where('preferred', 1)->first();
+        // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+        $emailAddr = $recipient->email_preferred;
 
-        if (!$email) {
+        if (!$emailAddr) {
             return null;
         }
 
         $title = 'Handover: ' . $recipient->display_name . ' and ' . $other->display_name;
 
         try {
-            Mail::send(new TrystCalendarInviteMail(
+            app(\App\Services\EmailSpoolerService::class)->spool(new TrystCalendarInviteMail(
                 title: $title,
                 calendarLink: $calendarLink,
                 recipientUserId: $recipient->id,
                 recipientName: $recipient->displayname,
-                recipientEmail: $email->email,
+                recipientEmail: $emailAddr,
             ));
 
             return $calendarLink;

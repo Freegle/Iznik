@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Community events in ' . $groupName])
+  @include('emails.mjml.partials.head', ['preview' => count($events) === 1 ? (\Illuminate\Support\Str::limit(strip_tags($events[0]['title']), 60) . ' - ' . $events[0]['start']) : (\Illuminate\Support\Str::limit(strip_tags($events[0]['title']), 50) . ' and ' . (count($events) - 1) . ' more community event' . (count($events) > 2 ? 's' : '') . ' near you')])
 
   <mj-body background-color="#f4f4f4">
 
@@ -11,8 +11,8 @@
           Community Event Roundup
         </mj-text>
         <mj-text font-size="14px" color="#555555">
-          Here are upcoming community events for {{ $groupName }}.
-          If you'd like to add one, <a href="https://{{ $userSite }}/communityevents">click here</a>.
+          Here are upcoming community events from your Freegle communities.
+          If you'd like to add one, <a href="{{ $userSite }}/communityevents">click here</a>.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -44,6 +44,17 @@
           {{ $event['description'] }}
         </mj-text>
         @endif
+        @if (!empty($event['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $event['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
+        </mj-text>
+        @endif
       </mj-column>
       <mj-column width="40%">
         <mj-image src="{{ $event['imageUrl'] }}" alt="{{ $event['title'] }}"
@@ -69,6 +80,17 @@
         @if (!empty($event['description']))
         <mj-text font-size="13px" color="#333333" padding="0 0 6px" line-height="1.5">
           {{ $event['description'] }}
+        </mj-text>
+        @endif
+        @if (!empty($event['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $event['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
         </mj-text>
         @endif
       </mj-column>
@@ -101,7 +123,7 @@
     <mj-section background-color="#ffffff" padding="16px 20px 20px">
       <mj-column>
         <mj-divider border-color="#e0e0e0" border-width="1px" padding="0 0 16px" />
-        <mj-button href="https://{{ $userSite }}/communityevents" mj-class="btn-success" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $userSite }}/communityevents" mj-class="btn-success" border-radius="3px" font-size="16px">
           View all community events
         </mj-button>
       </mj-column>

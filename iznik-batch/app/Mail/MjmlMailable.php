@@ -285,8 +285,11 @@ abstract class MjmlMailable extends Mailable
         $traceId = $this->getTraceIdForHeader();
         $headers->addTextHeader('X-Freegle-Trace-Id', $traceId);
 
-        // Email type for filtering/categorization.
-        $headers->addTextHeader('X-Freegle-Email-Type', class_basename($this));
+        // Email type for filtering/categorization. Subclasses can override
+        // getEmailType() to surface a more specific category (e.g. UnifiedDigest
+        // splits into UnifiedDigestImmediate / UnifiedDigestDaily so sysadmin
+        // dropdowns can distinguish the two modes).
+        $headers->addTextHeader('X-Freegle-Email-Type', $this->getEmailType());
 
         // Timestamp when email was created.
         $headers->addTextHeader('X-Freegle-Timestamp', $this->timestamp);
@@ -344,6 +347,16 @@ abstract class MjmlMailable extends Mailable
     protected function getRecipientUserId(): ?int
     {
         return null;
+    }
+
+    /**
+     * Email type used in the X-Freegle-Email-Type header and (via subclasses)
+     * the email_tracking.email_type column. Defaults to the class basename;
+     * override to split a single mailable into multiple categories.
+     */
+    public function getEmailType(): string
+    {
+        return class_basename($this);
     }
 
     /**

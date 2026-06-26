@@ -35,7 +35,7 @@ func GetWords(search string) []string {
 		"out", "day", "get", "has", "him", "how", "now", "see", "two", "who", "did", "its", "let", "she", "too", "use", "plz",
 		"of", "to", "in", "it", "is", "be", "as", "at", "so", "we", "he", "by", "or", "on", "do", "if", "me", "my", "up", "an", "go", "no", "us", "am",
 		"working", "broken", "black", "white", "grey", "blue", "green", "red", "yellow", "brown", "orange", "pink", "machine", "size", "set",
-		"various", "assorted", "different", "bits", "ladies", "gents", "kids", "nice", "brand", "pack", "soft", "single", "double",
+		"various", "assorted", "different", "bits", "ladies", "gents", "kids", "nice", "brand", "pack", "soft",
 		"top", "plastic", "electric", "unopened",
 	}
 
@@ -79,14 +79,14 @@ func groupFilter(groupids []uint64) string {
 	ret := ""
 
 	if len(groupids) > 0 {
-		ret = " AND messages_spatial.groupid IN ("
+		ret = " AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN ("
 		for i, id := range groupids {
 			if i > 0 {
 				ret += ","
 			}
 			ret += strconv.FormatUint(id, 10)
 		}
-		ret += ") "
+		ret += ") AND mg.collection = 'Approved' AND mg.deleted = 0) "
 	}
 
 	return ret
@@ -136,7 +136,7 @@ func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, 
 		bf = bf + " AND "
 	}
 
-	sql := "SELECT COUNT(*) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 		"INNER JOIN words ON messages_index.wordid = words.id " +
 		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 		"WHERE " +
@@ -177,7 +177,7 @@ func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, m
 			bf = bf + " AND "
 		}
 
-		sql := "SELECT COUNT(*) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 			"INNER JOIN words ON messages_index.wordid = words.id " +
 			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 			"WHERE (" + bf
@@ -211,7 +211,7 @@ func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64,
 	var res []SearchResult
 
 	if len(words) > 0 {
-		sql := "SELECT COUNT(*) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 			"INNER JOIN words ON messages_index.wordid = words.id " +
 			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 			"WHERE "
@@ -253,7 +253,7 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 	var res []SearchResult
 
 	if len(words) > 0 {
-		sql := "SELECT COUNT(*) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
+		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
 			"INNER JOIN words ON messages_index.wordid = words.id " +
 			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
 			"WHERE "

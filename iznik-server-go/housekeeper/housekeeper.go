@@ -340,7 +340,6 @@ var cronJobs = []CronJob{
 	// User Management
 	{Command: "users:update-ratings", Name: "Rating Visibility", Description: "Updates rating visibility based on whether the rater and ratee actually had chat interaction", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "User Management", Active: true},
 	{Command: "users:update-support-roles", Name: "Support Roles", Description: "Grants or removes Support Tools access based on team membership (never downgrades Admin users)", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
-	{Command: "users:update-kudos", Name: "User Kudos", Description: "Daily kudos recalculation for users active in the last 2 days", Schedule: "Daily at 4am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:update-lastaccess", Name: "Last Access", Description: "Hourly fallback users.lastaccess update from chat / membership activity", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
 	{Command: "users:update-modmails", Name: "Mod Mails Sync", Description: "Syncs recent mod actions into users_modmails (rejected/deleted/replied) and prunes old entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "User Management", Active: true},
 	{Command: "users:remap-locations", Name: "Remap Locations", Description: "Updates cached location names in user settings when the canonical name has changed", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "User Management", Active: true},
@@ -394,6 +393,12 @@ var cronJobs = []CronJob{
 
 	// Data & Integrations additions
 	{Command: "donations:update-giftaid", Name: "Gift Aid Update", Description: "Identifies postcodes/house numbers on giftaid records, marks eligible donations as giftaidconsent, and sends one-off chase-up emails to donors 2-30 days post-donation", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Data", Active: true},
+
+	// Final V1 crontab migrations
+	{Command: "notifications:exhort", Name: "Exhort Active Users", Description: "On-site notification nudge (default \"Tell us your Freegle story!\") to recently-active established users; 90-day per-user cooldown", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
+	{Command: "locations:update-postcodes", Name: "Postcode Refresh", Description: "Downloads the Doogal UK postcode dataset and adds new postcodes / refreshes moved lat/lng in the locations table", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Locations", Active: true},
+	{Command: "donations:paypal-download", Name: "PayPal Download (fallback)", Description: "Fallback: scans the last 30 days of PayPal NVP TransactionSearch results and upserts donations the IPN missed", Schedule: "Every 4 hours (:30)", IntervalMinutes: 240, Category: "Data", Active: true},
+	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and mods with TrashNothing preferred emails", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
 }
 
 // ActiveCronJobCount returns the number of active cron jobs in the static registry.

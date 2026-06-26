@@ -131,7 +131,9 @@ func NewLokiMiddleware(config LokiMiddlewareConfig) fiber.Handler {
 		}
 
 		// Log asynchronously using goroutine to avoid blocking response.
+		loki.goroutineWg.Add(1)
 		go func() {
+			defer loki.goroutineWg.Done()
 			duration := float64(time.Since(start).Milliseconds())
 
 			extra := map[string]string{

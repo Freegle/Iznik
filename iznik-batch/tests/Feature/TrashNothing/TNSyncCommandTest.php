@@ -481,39 +481,44 @@ class TNSyncCommandTest extends TestCase
     public function test_sync_location_change_updates_lastlocation(): void
     {
 
-        // Only run if we have location data in the test DB.
-        if (!DB::table('locations')->where('type', 'Postcode')->whereRaw("LOCATE(' ', name) > 0")->exists()) {
-            $this->markTestSkipped('No postcode data in test database');
-        }
-
         $user = $this->createTNUser();
 
-        // Find a valid postcode location to use as expected result.
-        $existingLoc = DB::table('locations')
-            ->where('type', 'Postcode')
-            ->whereRaw("LOCATE(' ', name) > 0")
-            ->whereNotNull('lat')
-            ->whereNotNull('lng')
-            ->first();
-
-        Http::fake([
-            '*/ratings*' => Http::response(['ratings' => []], 200),
-            '*/user-changes*' => Http::response([
-                'changes' => [[
-                    'fd_user_id' => $user->id,
-                    'location' => [
-                        'latitude' => (float) $existingLoc->lat,
-                        'longitude' => (float) $existingLoc->lng,
-                    ],
-                    'date' => self::DATE_SYNC,
-                ]],
-            ], 200),
+        // Seed a known postcode row; closestPostcode resolves the user's coords
+        // to it. tn:sync mocks HTTP via Http::fake, which also intercepts the
+        // spatial-server call, so we fake the postcodes KNN response here rather
+        // than seeding the live index.
+        $pcId = 99000201;
+        $lat = 55.9533;
+        $lng = -3.1883;
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $pcId], [
+            'name' => 'EH1 1AA',
+            'type' => 'Postcode',
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        try {
+            Http::fake([
+                '*/ratings*' => Http::response(['ratings' => []], 200),
+                '*/user-changes*' => Http::response([
+                    'changes' => [[
+                        'fd_user_id' => $user->id,
+                        'location' => ['latitude' => $lat, 'longitude' => $lng],
+                        'date' => self::DATE_SYNC,
+                    ]],
+                ], 200),
+                '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $pcId, 'distance' => 0]]], 200),
+            ]);
 
-        $lastlocation = DB::table('users')->where('id', $user->id)->value('lastlocation');
-        $this->assertNotNull($lastlocation);
+            $this->artisan('tn:sync')->assertExitCode(0);
+
+            $lastlocation = DB::table('users')->where('id', $user->id)->value('lastlocation');
+            $this->assertNotNull($lastlocation);
+        } finally {
+            DB::table('locations')->where('id', $pcId)->delete();
+        }
     }
 
     // =========================================================================
@@ -1274,6 +1279,73 @@ class TNSyncCommandTest extends TestCase
         ]);
 
         $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
+    // =========================================================================
+    // Staleness alerting (no-op cycle)
+    // =========================================================================
+
+    public function test_no_op_alerts_when_sync_is_stale(): void
+    {
+        // Stored sync date ~13 hours ago — older than the 12h threshold.
+        $staleDate = gmdate('Y-m-d\TH:i:s\Z', time() - (13 * 3600));
+        file_put_contents($this->dateFile, $staleDate);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        Log::spy();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'TN sync stale')
+            );
+    }
+
+    public function test_no_op_does_not_alert_when_sync_is_fresh(): void
+    {
+        // Stored sync date ~1 hour ago — well within the 12h threshold.
+        $freshDate = gmdate('Y-m-d\TH:i:s\Z', time() - 3600);
+        file_put_contents($this->dateFile, $freshDate);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        Log::spy();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // No warnings expected: Mockery's shouldNotHaveReceived() doesn't support ->withArgs() chaining.
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    public function test_no_op_does_not_alert_when_no_baseline(): void
+    {
+        // No sync date file, and no TN ratings seeded — there is no baseline,
+        // so a no-op cycle must not emit a stale warning.
+        if (file_exists($this->dateFile)) {
+            @unlink($this->dateFile);
+        }
+        $this->assertFileDoesNotExist($this->dateFile);
+
+        DB::table('ratings')->whereNotNull('tn_rating_id')->delete();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        Log::spy();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        Log::shouldNotHaveReceived('warning');
     }
 
     // =========================================================================

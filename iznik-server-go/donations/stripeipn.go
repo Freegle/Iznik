@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/queue"
 	"github.com/gofiber/fiber/v2"
 	stripe "github.com/stripe/stripe-go/v82"
 	stripecustomer "github.com/stripe/stripe-go/v82/customer"
@@ -89,15 +88,6 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 	// Determine if this is a recurring payment.
 	recurring := charge.Description == "Subscription creation"
 
-	// Check if this is the user's first recurring donation.
-	firstRecurring := false
-	if userID > 0 && recurring {
-		var previousCount int64
-		gdb.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionType IN ('subscr_payment', 'recurring_payment')", userID).Scan(&previousCount)
-		firstRecurring = previousCount == 0
-		log.Printf("[StripeIPN] User %d previous recurring donations: %d, first=%v", userID, previousCount, firstRecurring)
-	}
-
 	// Record the donation.
 	var transactionType *string
 	if recurring {
@@ -110,19 +100,18 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 		userIDPtr = &userID
 	}
 
-	result := gdb.Exec(
+	// Read the new donation id from the write result, not a read-split-routable SELECT
+	// (9832 class). Here it only feeds the log line below, but keep it correct anyway.
+	donationID, err := database.ExecInsertGetID(gdb,
 		"INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source, TransactionType, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		userIDPtr, userEmail, userName, time.Now().Format("2006-01-02 15:04:05"),
 		charge.ID, amount, TYPE_STRIPE, transactionType, TYPE_STRIPE,
 	)
 
-	if result.Error != nil {
-		log.Printf("[StripeIPN] Failed to record donation: %v", result.Error)
+	if err != nil {
+		log.Printf("[StripeIPN] Failed to record donation: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to record donation"})
 	}
-
-	var donationID uint64
-	gdb.Raw("SELECT id FROM users_donations WHERE TransactionID = ? ORDER BY id DESC LIMIT 1", charge.ID).Scan(&donationID)
 	log.Printf("[StripeIPN] Recorded donation id=%d for user=%d amount=£%.2f", donationID, userID, amount)
 
 	// Handle gift aid notification.
@@ -130,20 +119,9 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 		handleGiftAidNotification(userID)
 	}
 
-	// Queue thank-you email for significant donations.
-	if userID > 0 && ((recurring && firstRecurring) || (!recurring && amount >= MANUAL_THANKS)) {
-		log.Printf("[StripeIPN] Queuing thank-you for user %d, amount £%.2f, recurring=%v", userID, amount, recurring)
-
-		if err := queue.QueueTask(queue.TaskEmailDonateExternal, map[string]interface{}{
-			"user_name":  userName,
-			"user_id":    userID,
-			"user_email": userEmail,
-			"amount":     amount,
-			"source":     "stripe",
-		}); err != nil {
-			log.Printf("[StripeIPN] Failed to queue thank-you email: %v", err)
-		}
-	}
+	// Thank-you requests are no longer sent per donation: the daily
+	// mail:donations:thank-prep digest coordinates all thanking. See
+	// DonationThankPrepService.
 
 	return c.SendStatus(fiber.StatusOK)
 }
@@ -212,6 +190,21 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 		gdb.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", billingEmail).Scan(&userID)
 		if userID > 0 {
 			log.Printf("[StripeIPN] Matched user %d from billing email %s", userID, billingEmail)
+		}
+	}
+
+	// 4. Canonical-email and prior-donation fallbacks (V1 parity), using the
+	//    best available payer email.
+	if userID == 0 {
+		payerEmail := ""
+		if charge.BillingDetails != nil {
+			payerEmail = charge.BillingDetails.Email
+		}
+		if payerEmail != "" {
+			userID = MatchUserByEmailOrPriorDonation(payerEmail)
+			if userID > 0 {
+				log.Printf("[StripeIPN] Matched user %d via email/canon/prior donation for %s", userID, payerEmail)
+			}
 		}
 	}
 

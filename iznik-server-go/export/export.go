@@ -48,14 +48,23 @@ func PostExport(c *fiber.Ctx) error {
 	}
 	tag := hex.EncodeToString(tagBytes)
 
-	result := db.Exec("INSERT INTO users_exports (userid, tag) VALUES (?, ?)", myid, tag)
-	if result.Error != nil {
-		log.Printf("Failed to insert export for user %d: %v", myid, result.Error)
+	// Use LastInsertId on the write connection: a SELECT here would be routed to a
+	// read replica by the read/write split and, under Galera's cross-node apply
+	// window, may not yet see the just-inserted row (returning id=0).
+	var id uint64
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("Failed to get DB handle for export, user %d: %v", myid, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create export")
 	}
-
-	var id uint64
-	db.Raw("SELECT id FROM users_exports WHERE userid = ? AND tag = ? ORDER BY id DESC LIMIT 1", myid, tag).Scan(&id)
+	res, err := sqlDB.Exec("INSERT INTO users_exports (userid, tag) VALUES (?, ?)", myid, tag)
+	if err != nil {
+		log.Printf("Failed to insert export for user %d: %v", myid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create export")
+	}
+	if lastID, idErr := res.LastInsertId(); idErr == nil && lastID > 0 {
+		id = uint64(lastID)
+	}
 
 	return c.JSON(fiber.Map{
 		"id":  id,

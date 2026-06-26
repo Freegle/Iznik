@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -908,7 +909,7 @@ func TimeSeries(c *fiber.Ctx) error {
 			SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened,
 			SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked,
 			SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces
-		FROM email_tracking
+		FROM email_tracking FORCE INDEX (sent_at)
 		LEFT JOIN users ON email_tracking.userid = users.id
 		WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?
 	`
@@ -1036,7 +1037,7 @@ func StatsByType(c *fiber.Ctx) error {
 			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
 			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
 			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces
-		FROM email_tracking
+		FROM email_tracking FORCE INDEX (sent_at)
 		LEFT JOIN users ON email_tracking.userid = users.id
 		WHERE users.tnuserid IS NULL
 	`
@@ -1325,6 +1326,9 @@ func isValidRedirectURL(url string) bool {
 	// Allow modtools.org for moderator chat links
 	allowedDomains = append(allowedDomains, "modtools.org")
 
+	// Allow freegle.in for Freegle PayPal short links (e.g. donate CTA)
+	allowedDomains = append(allowedDomains, "freegle.in")
+
 	for _, domain := range allowedDomains {
 		if strings.Contains(url, domain) {
 			return true
@@ -1333,4 +1337,213 @@ func isValidRedirectURL(url string) bool {
 
 	// Reject URLs not matching our domains
 	return false
+}
+
+// DigestPositionStat represents the click-through rate for a single post
+// position within unified digest emails.
+type DigestPositionStat struct {
+	// Position is the zero-based ordinal of the post within the digest (0 = top).
+	Position int `json:"position"`
+	// Shown is the number of digest emails that displayed a post at this position.
+	Shown int64 `json:"shown"`
+	// EmailsClicked is the number of distinct digest emails with at least one
+	// click at this position (the click-through numerator).
+	EmailsClicked int64 `json:"emails_clicked"`
+	// Clicks is the total number of clicks recorded at this position.
+	Clicks int64 `json:"clicks"`
+	// CTR is the click-through rate (EmailsClicked / Shown) as a percentage.
+	CTR float64 `json:"ctr"`
+}
+
+// DigestClickPositions returns the click-through rate by post position within
+// unified digest emails. This shows how a post's vertical position in the
+// digest affects whether recipients click it.
+//
+// The metric is derived entirely from existing tracking data:
+//   - The denominator ("shown") comes from email_tracking.metadata.post_msgids,
+//     an ordered array of the msgids rendered in each digest. A digest with K
+//     posts shows positions 0..K-1, so position N was shown by every digest with
+//     more than N posts.
+//   - The numerator comes from email_tracking_clicks.link_position labels of the
+//     form "post_N", counting the distinct digest emails that registered a click
+//     at each position.
+//
+// Both sides are restricted to the same cohort (digests sent in the period, with
+// metadata, excluding Trash Nothing recipients) so the CTR never exceeds 100%.
+//
+// @Router /email/stats/digestpositions [get]
+// @Summary Get digest click-through rate by post position
+// @Description Returns click-through rate per post position within unified digests, for analysing how position affects engagement (Support/Admin only)
+// @Tags emailtracking
+// @Produce json
+// @Security BearerAuth
+// @Param start query string false "Start date (YYYY-MM-DD)"
+// @Param end query string false "End date (YYYY-MM-DD)"
+// @Param type query string false "Email type filter (default: all UnifiedDigest* types)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} fiber.Error "Unauthorized"
+// @Failure 403 {object} fiber.Error "Forbidden"
+func DigestClickPositions(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Check if user has support/admin role
+	if !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Support or Admin role required")
+	}
+
+	startDate := c.Query("start", "")
+	endDate := c.Query("end", "")
+
+	// Default to the last 7 days when no range is supplied. email_tracking is
+	// large (millions of rows/month), and these queries aggregate JSON metadata
+	// per row, so a wide default window makes the chart hang. Callers can still
+	// pass an explicit start/end for a longer range.
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		endDate = now.Format("2006-01-02")
+		startDate = now.AddDate(0, 0, -7).Format("2006-01-02")
+	}
+
+	// If endDate doesn't include a time component, extend it to end of day.
+	endDateTime := endDate
+	if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
+		endDateTime = endDate + " 23:59:59"
+	}
+
+	// By default consider all unified digest types; allow an exact-type override.
+	emailType := c.Query("type", "")
+	typeClause := "e.email_type LIKE 'UnifiedDigest%'"
+	var typeArgs []interface{}
+	if emailType != "" {
+		typeClause = "e.email_type = ?"
+		typeArgs = append(typeArgs, emailType)
+	}
+
+	// Conditions shared by both queries to keep the cohort consistent.
+	cohort := typeClause + `
+		AND u.tnuserid IS NULL
+		AND e.metadata IS NOT NULL
+		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
+		AND e.sent_at BETWEEN ? AND ?`
+
+	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
+	//    posts displayed positions 0..num_posts-1.
+	denomQuery := `
+		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
+		-- Force the sent_at index: otherwise the optimiser full-scans the whole
+		-- table (millions of rows + per-row JSON) instead of range-scanning the
+		-- date window, which made the chart hang.
+		FROM email_tracking e FORCE INDEX (sent_at)
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		GROUP BY num_posts`
+	denomArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
+
+	var sizeRows []struct {
+		NumPosts int   `gorm:"column:num_posts"`
+		Cnt      int64 `gorm:"column:cnt"`
+	}
+	db.Raw(denomQuery, denomArgs...).Scan(&sizeRows)
+
+	maxPosts := 0
+	for _, r := range sizeRows {
+		if r.NumPosts > maxPosts {
+			maxPosts = r.NumPosts
+		}
+	}
+
+	// shown[n] = number of digests whose size was greater than n (i.e. displayed
+	// a post at position n). sizeRows is small (one row per distinct digest size).
+	shown := make([]int64, maxPosts)
+	for _, r := range sizeRows {
+		for n := 0; n < r.NumPosts && n < maxPosts; n++ {
+			shown[n] += r.Cnt
+		}
+	}
+
+	// 2. Numerator: clicks on a post CARD at position N, grouped by position label.
+	//
+	// Two label schemes coexist:
+	//   - "post_N": the legacy (verbose) digest card link.
+	//   - "pN":     the current compact card link (TrackableEmail compact form,
+	//               UnifiedDigest emits "p{index}" for the per-post Reply CTA).
+	// Both mean "clicked the card for the post shown at vertical position N", so
+	// both must be counted - otherwise this stat only sees old emails and silently
+	// under-reports (compact "pN" clicks dominate live traffic). We deliberately
+	// exclude the summary-index links ("yN") and image links ("iN"): the summary
+	// sits at the top of the email, so a "yN" click is not a signal about the
+	// post's vertical position.
+	clickQuery := `
+		SELECT c.link_position AS link_position,
+		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
+		       COUNT(*) AS clicks
+		FROM email_tracking_clicks c
+		JOIN email_tracking e ON c.email_tracking_id = e.id
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
+		GROUP BY c.link_position`
+	clickArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
+
+	var clickRows []struct {
+		LinkPosition  string `gorm:"column:link_position"`
+		EmailsClicked int64  `gorm:"column:emails_clicked"`
+		Clicks        int64  `gorm:"column:clicks"`
+	}
+	db.Raw(clickQuery, clickArgs...).Scan(&clickRows)
+
+	emailsClickedByPos := make(map[int]int64)
+	clicksByPos := make(map[int]int64)
+	for _, r := range clickRows {
+		// link_position is "post_N" or "pN"; extract the trailing integer
+		// position regardless of the prefix/separator.
+		s := r.LinkPosition
+		i := len(s)
+		for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+			i--
+		}
+		if i == len(s) {
+			// No trailing digits - not a positional label.
+			continue
+		}
+		n, err := strconv.Atoi(s[i:])
+		if err != nil || n < 0 {
+			continue
+		}
+		emailsClickedByPos[n] += r.EmailsClicked
+		clicksByPos[n] += r.Clicks
+	}
+
+	// 3. Build the per-position result, ascending, skipping positions never shown.
+	data := make([]DigestPositionStat, 0, maxPosts)
+	for n := 0; n < maxPosts; n++ {
+		if shown[n] <= 0 {
+			continue
+		}
+		var ctr float64
+		if shown[n] > 0 {
+			ctr = float64(emailsClickedByPos[n]) / float64(shown[n]) * 100
+		}
+		data = append(data, DigestPositionStat{
+			Position:      n,
+			Shown:         shown[n],
+			EmailsClicked: emailsClickedByPos[n],
+			Clicks:        clicksByPos[n],
+			CTR:           ctr,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"data": data,
+		"period": fiber.Map{
+			"start": startDate,
+			"end":   endDate,
+			"type":  emailType,
+		},
+	})
 }

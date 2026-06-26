@@ -51,10 +51,8 @@ class NoticeboardService
                 continue;
             }
 
-            $email = DB::table('users_emails')
-                ->where('userid', $userId)
-                ->where('preferred', 1)
-                ->value('email');
+            // V1 parity: pick the best external email; skip if user has none.
+            $email = \App\Models\User::find($userId)?->email_preferred;
 
             if (!$email) {
                 continue;
@@ -74,7 +72,7 @@ class NoticeboardService
             }
 
             try {
-                Mail::send(new NoticeboardThankMail(
+                app(\App\Services\EmailSpoolerService::class)->spool(new NoticeboardThankMail(
                     recipientEmail: $email,
                     recipientName: $name,
                 ));

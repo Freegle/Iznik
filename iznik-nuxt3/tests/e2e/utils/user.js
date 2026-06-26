@@ -34,13 +34,11 @@ async function waitForAuthPersistence(page) {
       null,
       { timeout: timeouts.ui.appearance }
     ),
-    new Promise((_resolve, reject) =>
+    new Promise((_, reject) =>
       setTimeout(
         () =>
           reject(
-            new Error(
-              'waitForAuthPersistence timed out (renderer unresponsive)'
-            )
+            new Error('waitForAuthPersistence timed out (renderer unresponsive)')
           ),
         timeouts.ui.appearance + 5000
       )
@@ -114,6 +112,50 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
   console.log(`[logoutIfLoggedIn] Start — URL=${entryUrl}`)
 
   try {
+    // Wait for any in-flight redirect to settle before clicking the logout button.
+    // After signUpViaHomepage, the page may be at /browse which immediately redirects
+    // to /explore for new users (no group membership). If we click the logout button
+    // while /browse→/explore is still committing, the logout redirect (→/) competes with
+    // the in-flight /explore commit, causing two simultaneous hard navigations that freeze
+    // the V8 renderer for 35+ seconds before freeze-detection closes the page.
+    // Waiting for domcontentloaded ensures we are on a stable page before clicking.
+    // This only applies to /browse and /explore (internal pages, no external scripts
+    // that could block), not the home page where waitForLoadState was reverted in
+    // 697eabc2b because Google One Tap etc. can hang that event indefinitely.
+    if (!page.isClosed()) {
+      await page
+        .waitForLoadState('domcontentloaded', { timeout: 5000 })
+        .catch(() => {})
+    }
+
+    // /browse auto-redirects new users (no group membership) to /explore via JS
+    // AFTER DOMContentLoaded fires. waitForLoadState above resolves immediately
+    // because /browse's DOMContentLoaded has already fired by the time
+    // logoutIfLoggedIn is called, leaving the JS-initiated /browse→/explore
+    // redirect still in flight. Clicking logout while that navigation is
+    // committing causes two simultaneous hard navigations that freeze the V8
+    // renderer for 35+ seconds before freeze-detection closes the page.
+    if (!page.isClosed()) {
+      const currentPath = (() => {
+        try {
+          return new URL(page.url()).pathname
+        } catch {
+          return ''
+        }
+      })()
+      if (currentPath === '/browse') {
+        console.log(
+          '[logoutIfLoggedIn] At /browse — waiting for /browse→/explore redirect to complete'
+        )
+        await page
+          .waitForURL(/\/(explore|myposts)/, { timeout: 3000 })
+          .catch(() => {})
+        await page
+          .waitForLoadState('domcontentloaded', { timeout: 3000 })
+          .catch(() => {})
+      }
+    }
+
     // Clear any lingering modal backdrop from a prior modal (e.g. the login
     // modal that closes via route redirect after signUpViaHomepage). The
     // backdrop node in <div id="teleports"> otherwise intercepts pointer
@@ -230,6 +272,19 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
         console.log(
           '[logoutIfLoggedIn] Logout redirect already at home page, skipping explicit navigation'
         )
+        // The logout redirect changed the URL to '/' but Nuxt's post-navigation
+        // JavaScript (store updates, API calls) is still running. If the caller
+        // immediately navigates to another URL (e.g. /give via postMessage), the two
+        // concurrent navigations race and the V8 renderer can hang for 35+ seconds.
+        // Waiting for the sign-in button confirms Nuxt has fully hydrated the
+        // logged-out state, at which point it is safe for the caller to navigate.
+        // Unlike waitForLoadState('domcontentloaded'), this does not block on
+        // external scripts — it only depends on Vue/Nuxt hydration completing.
+        await page
+          .locator('.test-signinbutton')
+          .first()
+          .waitFor({ state: 'visible', timeout: 15000 })
+          .catch(() => {})
       } else {
         console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
         try {
@@ -1093,9 +1148,7 @@ async function loginViaHomepage(
     try {
       const button = allButtons[i]
       const text = await button.textContent().catch(() => 'NO_TEXT')
-      const isVisible = await button
-        .isVisible({ timeout: 5000 })
-        .catch(() => false)
+      const isVisible = await button.isVisible({ timeout: 5000 }).catch(() => false)
       const isDisabled = await button.isDisabled().catch(() => 'UNKNOWN')
       const classes = await button.getAttribute('class').catch(() => 'NO_CLASS')
       const type = await button.getAttribute('type').catch(() => 'NO_TYPE')
@@ -1110,9 +1163,7 @@ async function loginViaHomepage(
   // Debug: Check form state
   try {
     const modal = page.locator('#loginModal')
-    const modalVisible = await modal
-      .isVisible({ timeout: 5000 })
-      .catch(() => false)
+    const modalVisible = await modal.isVisible({ timeout: 5000 }).catch(() => false)
     console.log(`Login modal visible: ${modalVisible}`)
 
     if (modalVisible) {
@@ -1240,9 +1291,7 @@ async function loginViaHomepage(
         )
         for (let i = 0; i < allErrorElements.length; i++) {
           const element = allErrorElements[i]
-          const isVisible = await element
-            .isVisible({ timeout: 5000 })
-            .catch(() => false)
+          const isVisible = await element.isVisible({ timeout: 5000 }).catch(() => false)
           const text = await element.textContent().catch(() => '')
           console.log(`  ${i}: visible=${isVisible}, text="${text.trim()}"`)
         }

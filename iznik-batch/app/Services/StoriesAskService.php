@@ -41,13 +41,15 @@ class StoriesAskService
             ->whereNull('users.deleted')
             ->where('messages.arrival', '>=', $earliestDate)
             ->distinct()
-            ->pluck('messages.fromuser')
-            ->toArray();
+            ->select('messages.fromuser');
 
         $considered = 0;
         $asked = 0;
 
-        foreach ($candidates as $userId) {
+        // Stream distinct posters in keyset-paginated chunks (by fromuser) rather than
+        // pluck()-ing the entire 90-day poster set into memory at once.
+        foreach ($candidates->lazyById(1000, 'messages.fromuser', 'fromuser') as $candidate) {
+            $userId = $candidate->fromuser;
             $considered++;
 
             $outcomeCount = (int) DB::table('messages_by')
@@ -93,10 +95,9 @@ class StoriesAskService
             $asked++;
 
             if (!$dryRun) {
-                $email = DB::table('users_emails')
-                    ->where('userid', $userId)
-                    ->orderByDesc('preferred')
-                    ->value('email');
+                // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+                $userModel = \App\Models\User::find($userId);
+                $email = $userModel?->email_preferred;
 
                 $user = DB::table('users')->where('id', $userId)->first();
                 $name = $user?->fullname
@@ -104,7 +105,7 @@ class StoriesAskService
                     ?: 'Freegle User';
 
                 if ($email) {
-                    Mail::send(new AskMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new AskMail(
                         recipientName: $name,
                         recipientEmail: $email,
                         storiesUrl: config('freegle.sites.user') . '/stories',

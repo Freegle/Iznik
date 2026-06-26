@@ -53,6 +53,12 @@ class BackgroundEmailIntegrationTest extends TestCase
         $task = DB::table('background_tasks')->find($taskId);
         $this->assertNotNull($task->processed_at, 'Task should be marked as processed');
         $this->assertNull($task->failed_at, 'Task should not have failed');
+
+        // The handler now writes the mailable to the spool; flush it through
+        // the spool processor so the SMTP send actually fires for Mailpit to
+        // observe. In production these run as separate supervisor processes;
+        // here we chain them inline.
+        $this->artisan('mail:spool:process')->assertSuccessful();
     }
 
     /**

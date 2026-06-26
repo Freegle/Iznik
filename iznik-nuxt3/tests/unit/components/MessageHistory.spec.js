@@ -312,4 +312,45 @@ describe('MessageHistory', () => {
       expect(wrapper.find('a').exists()).toBe(false)
     })
   })
+
+  describe('message ID link URL for collection types', () => {
+    function wrapperWithCollection(collection) {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [{ groupid: 100, arrival: '2024-01-15T10:00:00Z', collection }],
+      })
+      return createWrapper({ modinfo: true })
+    }
+
+    it('uses /pending/ URL for Pending collection', () => {
+      const wrapper = wrapperWithCollection('Pending')
+      const btn = wrapper.find('.b-button')
+      expect(btn.attributes('to')).toContain('/messages/pending/')
+    })
+
+    it('uses /pending/ URL for PendingOther collection', () => {
+      const wrapper = wrapperWithCollection('PendingOther')
+      const btn = wrapper.find('.b-button')
+      expect(btn.attributes('to')).toContain('/messages/pending/')
+    })
+
+    it('uses /pending/ URL for Spam collection (not /messages/spam/)', () => {
+      const wrapper = wrapperWithCollection('Spam')
+      const btn = wrapper.find('.b-button')
+      expect(btn.attributes('to')).toContain('/messages/pending/')
+      expect(btn.attributes('to')).not.toContain('/messages/spam/')
+    })
+
+    it('uses /approved/ URL for Approved collection', () => {
+      const wrapper = wrapperWithCollection('Approved')
+      const btn = wrapper.find('.b-button')
+      expect(btn.attributes('to')).toContain('/messages/approved/')
+    })
+
+    it('uses /approved/ URL when collection is null', () => {
+      const wrapper = wrapperWithCollection(null)
+      const btn = wrapper.find('.b-button')
+      expect(btn.attributes('to')).toContain('/messages/approved/')
+    })
+  })
 })

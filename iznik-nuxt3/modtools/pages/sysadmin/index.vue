@@ -53,6 +53,25 @@
           />
         </b-tab>
 
+        <!-- Scrolling Tab: how far people scroll/engage — digest click-through by
+             position, and browse-feed scroll depth. -->
+        <b-tab @click="onDigestClicksTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Scrolling</h2>
+          </template>
+          <template v-if="showDigestClicks">
+            <h3 class="ms-2 mt-2">Digest click-through by position</h3>
+            <ModSysAdminDigestClicks
+              :key="'digestclicks-' + digestClicksBump"
+            />
+            <hr class="my-4" />
+            <h3 class="ms-2 mt-2">Browse-feed scroll depth</h3>
+            <ModSysAdminBrowseScroll
+              :key="'browsescroll-' + digestClicksBump"
+            />
+          </template>
+        </b-tab>
+
         <!-- Incoming Email Tab -->
         <b-tab @click="onIncomingEmailTab">
           <template #title>
@@ -66,6 +85,17 @@
           <ModSupportIncomingEmail
             v-if="showIncomingEmail"
             :key="'incomingemail-' + incomingEmailBump"
+          />
+        </b-tab>
+
+        <!-- Rippling Tab -->
+        <b-tab @click="onRipplingTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Rippling</h2>
+          </template>
+          <ModSysAdminRippling
+            v-if="showRippling"
+            :key="'rippling-' + ripplingBump"
           />
         </b-tab>
       </b-tabs>
@@ -93,14 +123,20 @@ const showCronJobs = ref(false)
 const cronJobsBump = ref(0)
 const showEmailStats = ref(false)
 const emailStatsBump = ref(0)
+const showDigestClicks = ref(false)
+const digestClicksBump = ref(0)
 const showIncomingEmail = ref(false)
 const incomingEmailBump = ref(0)
+const showRippling = ref(false)
+const ripplingBump = ref(0)
 
 const topTabMap = {
   housekeeping: 0,
   cronjobs: 1,
   outgoing: 2,
-  incoming: 3,
+  digest: 3,
+  incoming: 4,
+  rippling: 5,
 }
 
 function onHousekeepingTab() {
@@ -118,9 +154,19 @@ function onEmailStatsTab() {
   emailStatsBump.value = Date.now()
 }
 
+function onDigestClicksTab() {
+  showDigestClicks.value = true
+  digestClicksBump.value = Date.now()
+}
+
 function onIncomingEmailTab() {
   showIncomingEmail.value = true
   incomingEmailBump.value = Date.now()
+}
+
+function onRipplingTab() {
+  showRippling.value = true
+  ripplingBump.value = Date.now()
 }
 
 onMounted(() => {
@@ -131,7 +177,9 @@ onMounted(() => {
     if (tab === 'housekeeping') onHousekeepingTab()
     else if (tab === 'cronjobs') onCronJobsTab()
     else if (tab === 'outgoing') onEmailStatsTab()
+    else if (tab === 'digest') onDigestClicksTab()
     else if (tab === 'incoming') onIncomingEmailTab()
+    else if (tab === 'rippling') onRipplingTab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()

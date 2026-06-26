@@ -13,6 +13,13 @@ class MessageSpatialService
     private const RECENT_DAYS = 31;
     private const SRID = 3857;
 
+    private SpatialAdminService $spatialAdmin;
+
+    public function __construct(SpatialAdminService $spatialAdmin)
+    {
+        $this->spatialAdmin = $spatialAdmin;
+    }
+
     public function updateSpatialIndex(bool $dryRun = false): array
     {
         $stats = [
@@ -112,10 +119,12 @@ class MessageSpatialService
             ->get();
 
         $count = 0;
+        $deletedMsgids = [];
         foreach ($msgs as $msg) {
             if ($msg->outcome === Message::OUTCOME_WITHDRAWN || $msg->outcome === Message::OUTCOME_EXPIRED) {
                 if (!$dryRun) {
                     DB::table('messages_spatial')->where('id', $msg->id)->delete();
+                    $deletedMsgids[] = $msg->msgid;
                 }
                 $count++;
             } elseif ($msg->outcome === Message::OUTCOME_TAKEN || $msg->outcome === Message::OUTCOME_RECEIVED) {
@@ -145,12 +154,16 @@ class MessageSpatialService
             }
         }
 
+        if (!empty($deletedMsgids)) {
+            $this->spatialAdmin->removeItems('messages', $deletedMsgids);
+        }
+
         return $count;
     }
 
     private function removeDeletedMessages(bool $dryRun = false): int
     {
-        $ids = DB::table('messages_spatial')
+        $rows = DB::table('messages_spatial')
             ->join('messages', 'messages_spatial.msgid', '=', 'messages.id')
             ->leftJoin('users', 'users.id', '=', 'messages.fromuser')
             ->where(function ($q) {
@@ -158,54 +171,121 @@ class MessageSpatialService
                     ->orWhereNotNull('messages.deleted')
                     ->orWhereNotNull('users.deleted');
             })
-            ->pluck('messages_spatial.id');
+            ->select('messages_spatial.id', 'messages_spatial.msgid')
+            ->get();
 
-        if ($ids->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
         if (!$dryRun) {
-            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+            DB::table('messages_spatial')->whereIn('id', $rows->pluck('id'))->delete();
+            $this->spatialAdmin->removeItems('messages', $rows->pluck('msgid')->all());
         }
 
-        return $ids->count();
+        return $rows->count();
     }
 
     private function removeOldMessages(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
 
-        $ids = DB::table('messages_spatial')
+        $rows = DB::table('messages_spatial')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
             ->where('messages_groups.arrival', '<', $cutoff)
-            ->pluck('messages_spatial.id');
+            ->select('messages_spatial.id', 'messages_spatial.msgid')
+            ->get();
 
-        if ($ids->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
         if (!$dryRun) {
-            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+            DB::table('messages_spatial')->whereIn('id', $rows->pluck('id'))->delete();
+            $this->spatialAdmin->removeItems('messages', $rows->pluck('msgid')->all());
         }
 
-        return $ids->count();
+        return $rows->count();
     }
 
     private function removeNonApprovedMessages(bool $dryRun = false): int
     {
-        $ids = DB::table('messages_spatial')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
+        // Join on BOTH msgid AND groupid: messages_spatial holds one row per post (unique
+        // msgid) for a specific group, so a spatial row must only be dropped when the
+        // messages_groups row for ITS OWN group is non-approved. Joining on msgid alone
+        // would let a rippled-in Pending row on another group (#6) delete the origin post's
+        // approved spatial row, flickering it out of browse every spatial-index run.
+        $rows = DB::table('messages_spatial')
+            ->join('messages_groups', function ($join) {
+                $join->on('messages_groups.msgid', '=', 'messages_spatial.msgid')
+                    ->on('messages_groups.groupid', '=', 'messages_spatial.groupid');
+            })
             ->where('messages_groups.collection', '!=', MessageGroup::COLLECTION_APPROVED)
-            ->pluck('messages_spatial.id');
+            ->select('messages_spatial.id', 'messages_spatial.msgid')
+            ->get();
 
-        if ($ids->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
         if (!$dryRun) {
-            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+            DB::table('messages_spatial')->whereIn('id', $rows->pluck('id'))->delete();
+            $this->spatialAdmin->removeItems('messages', $rows->pluck('msgid')->all());
         }
 
-        return $ids->count();
+        return $rows->count();
+    }
+
+    /**
+     * Add a single just-approved message to the spatial index immediately, so it
+     * appears in browse/search without waiting for the every-5-minute reconciler.
+     *
+     * No-op unless the message is Approved, has a location, and has no outcome —
+     * messages_spatial backs the public browse/map, so Pending/Spam/Rejected
+     * messages must never be added here. Safe to call inside the same transaction
+     * that set the collection to Approved (it reads its own uncommitted write).
+     */
+    public function addApprovedMessage(int $msgid): void
+    {
+        $msg = DB::table('messages')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+            ->where('messages.id', $msgid)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereNotNull('messages.lat')
+            ->whereNotNull('messages.lng')
+            ->whereNull('messages_outcomes.id')
+            ->orderByDesc('messages_groups.arrival')
+            ->select(
+                'messages.id',
+                'messages.lat',
+                'messages.lng',
+                DB::raw('messages.type as msgtype'),
+                'messages_groups.groupid',
+                'messages_groups.arrival',
+            )
+            ->first();
+
+        if (!$msg) {
+            return;
+        }
+
+        // Coordinates come from the DB, not user input — safe to embed in WKT.
+        $wkt  = "POINT({$msg->lng} {$msg->lat})";
+        $srid = self::SRID;
+
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               point = ST_GeomFromText('$wkt', $srid),
+               groupid = ?,
+               msgtype = ?,
+               arrival = ?",
+            [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
+             $msg->groupid, $msg->msgtype, $msg->arrival]
+        );
     }
 }

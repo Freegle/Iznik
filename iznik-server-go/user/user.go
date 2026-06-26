@@ -81,6 +81,7 @@ type User struct {
 	Modmails           uint64          `json:"modmails" gorm:"-"`
 	Suspectreason      *string         `json:"suspectreason,omitempty" gorm:"-"`
 	Activedistance     *float64        `json:"activedistance" gorm:"-"`
+	Locationchanges    *int            `json:"locationchanges,omitempty" gorm:"-"`
 	Chatmodstatus      *string         `json:"chatmodstatus,omitempty" gorm:"->"`
 	Newsfeedmodstatus  *string         `json:"newsfeedmodstatus,omitempty" gorm:"->"`
 	Tnuserid           *uint64         `json:"tnuserid,omitempty" gorm:"->"`
@@ -476,15 +477,22 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	db := database.DBConn
 
 	var history []UserMessageHistory
+	// Use a correlated subquery to get the most recent posting date for each
+	// (message, group) pair instead of LEFT JOIN messages_postings.  The JOIN
+	// approach fans out: N messages_postings rows per message produce N result
+	// rows, causing duplicated entries in the posting-history modal when a message
+	// has been reposted (Discourse #9672).  The subquery filters by groupid so
+	// postings for one group never contaminate the arrival date of another group.
 	db.Raw("SELECT m.id, m.subject, m.type, "+
-		"GREATEST(COALESCE(mp.date, m.arrival), COALESCE(mp.date, m.arrival)) AS arrival, "+
+		"COALESCE("+
+		"(SELECT MAX(mp.date) FROM messages_postings mp WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), "+
+		"m.arrival) AS arrival, "+
 		"mg.groupid, mg.collection, "+
 		"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome "+
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
-		"LEFT JOIN messages_postings mp ON mp.msgid = m.id "+
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection = ? "+
-		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED).Scan(&history)
+		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
+		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
 
 	now := time.Now()
 	for ix, h := range history {
@@ -519,6 +527,27 @@ func ApplySettingsDefaultsToJSON(settings json.RawMessage, systemrole string) js
 	if _, ok := m["engagement"]; !ok {
 		m["engagement"] = true
 		changed = true
+	}
+
+	// settings.notifications is a nested object; create it when absent.
+	// Inject per-key defaults for any key absent from that sub-object.
+	{
+		var notifs map[string]interface{}
+		if raw, ok := m["notifications"]; ok {
+			notifs, _ = raw.(map[string]interface{})
+		}
+		if notifs == nil {
+			notifs = make(map[string]interface{})
+		}
+		notifChanged := false
+		if _, ok := notifs["dailypostspush"]; !ok {
+			notifs["dailypostspush"] = true
+			notifChanged = true
+		}
+		if notifChanged {
+			m["notifications"] = notifs
+			changed = true
+		}
 	}
 
 	// Mod-specific defaults only for users with a moderator+ systemrole.
@@ -1283,6 +1312,26 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		}()
 	}
 
+	// Under rippling-out a post's reach follows the poster's declared location, so a member who keeps
+	// changing location is the spam vector that group-spread (activedistance) used to be. Surface the
+	// count of distinct postcodes they have set in the last 90 days so mods reviewing a flagged member
+	// can see the hopping directly. We expose the count (cleanly available from the PostcodeChange log)
+	// rather than a geographic spread, which would need historical lat/lng we do not retain.
+	var locationchanges *int
+	if modtools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var n int
+			db.Raw("SELECT COUNT(DISTINCT text) FROM logs "+
+				"WHERE user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 90 DAY",
+				id, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&n)
+			if n > 0 {
+				locationchanges = &n
+			}
+		}()
+	}
+
 	wg.Wait()
 
 	// Resolve NULL ourPostingStatus → MODERATED.
@@ -1308,6 +1357,7 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	if callerIsMod || myid == id || auth.IsAdminOrSupport(myid) {
 		u.Activedistance = activedistance
+		u.Locationchanges = locationchanges
 		u.Lastpush = lastpush
 	}
 
@@ -1547,6 +1597,8 @@ func PostUser(c *fiber.Ctx) error {
 		return handleRemoveEmail(c, db, myid, req)
 	case "Unbounce":
 		return handleUnbounce(c, myid, req)
+	case "Unsubscribe":
+		return handleUserUnsubscribe(c, myid, req)
 	case "Merge":
 		return handleMerge(c, myid, req)
 	default:
@@ -1683,20 +1735,20 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
 	}
 
-	// Email doesn't exist at all — insert new row.
-	result := db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, ?, NOW(), ?, ?)",
+	// Email doesn't exist at all — insert new row. Use the INSERT's LastInsertId on the write
+	// connection; a "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the
+	// read/write split and can return a stale/0 id (Discourse 9832 class), so the caller would
+	// get the wrong emailid.
+	emailID, err := database.ExecInsertGetID(db,
+		"INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, ?, NOW(), ?, ?)",
 		targetID, email, primaryVal, canon, reverseString(canon))
-
-	if result.Error != nil {
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 4, "status": "Email add failed"})
 	}
 
 	if isPrimary {
 		db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND email != ?", targetID, email)
 	}
-
-	var emailID uint64
-	db.Raw("SELECT id FROM users_emails WHERE userid = ? AND email = ? ORDER BY id DESC LIMIT 1", targetID, email).Scan(&emailID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": emailID})
 }
@@ -1905,6 +1957,15 @@ func PutUser(c *fiber.Ctx) error {
 		if result.RowsAffected > 0 {
 			db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
 				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_JOINED, req.GroupID, newUserID, newUserID)
+
+			// V1 parity (User::addMembership, User.php:911-916): record the join in
+			// memberships_history with processingrequired=1 so the background
+			// member-review / welcome / abuse-detection consumer (memberships:process)
+			// treats this as a brand-new joiner. AddMembership() writes this row, but
+			// the website-signup path inserts the membership inline and never calls it,
+			// so without this the new member bypasses new-joiner scrutiny.
+			db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired, added) VALUES (?, ?, ?, 1, NOW())",
+				newUserID, req.GroupID, utils.COLLECTION_APPROVED)
 		}
 	}
 
@@ -1913,11 +1974,19 @@ func PutUser(c *fiber.Ctx) error {
 	// which collided across every session for the same user.
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, series, token)
-
+	// Use the INSERT's LastInsertId (write connection) rather than a
+	// "SELECT ... WHERE userid ORDER BY id DESC LIMIT 1", which the read/write
+	// split routes to a replica that can return the user's PREVIOUS session under
+	// Galera's cross-node apply window - putting the wrong session id in the JWT.
 	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", newUserID).Scan(&sessionID)
+	if sqlDB, dberr := db.DB(); dberr == nil {
+		if res, exErr := sqlDB.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+			newUserID, series, token); exErr == nil {
+			if lastID, idErr := res.LastInsertId(); idErr == nil && lastID > 0 {
+				sessionID = uint64(lastID)
+			}
+		}
+	}
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -1975,6 +2044,64 @@ func PutUser(c *fiber.Ctx) error {
 // Returns the pruned settings JSON ready for storage, and appends any SET clauses needed for the
 // users table (e.g. lastlocation) to the provided slices. Callers must include those clauses in
 // their UPDATE statement.
+// RapidLocationChangeThreshold is the number of DISTINCT postcodes a user may set within 24 hours
+// before they are flagged for moderator review. Rippling-out makes a post's reach follow the
+// poster's declared location (not their group memberships), so rapidly hopping location is the new
+// way to push posts into unrelated areas. This catches that pattern; it is the one spam signal
+// rippling newly requires (see plans/rippling-out-rollout/spam-checks-review-2026-06-18.md).
+//
+// Relaxed 4 -> 8 alongside the rippling go-live (this PR): under rippling, legitimate members
+// refine/correct their declared location more than before (it now drives what they see and where
+// their posts reach), so a few changes in a day is expected. 8 distinct postcodes in 24h is still
+// clearly abnormal and keeps the guard against genuine reach-hopping while cutting the false
+// positives the tighter value produced. Like PR #818's SEEN_THRESHOLD relax, this WEAKENS a spam
+// guard and is only safe once rippling is live. Tune the constant if it proves too tight/loose.
+const RapidLocationChangeThreshold = 8
+
+// CheckLocationChangeVelocity flags a user for moderator review when they have set too many distinct
+// postcodes in the last 24 hours. It is NON-DESTRUCTIVE: it sets the existing member-review flag
+// that mods already act on (memberships.reviewrequestedat), NOT a block, post-suppression, or
+// auto-ban, so a genuine mover/traveller is reviewed rather than punished. Moderators are never
+// flagged. Called right after a PostcodeChange has been logged.
+func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
+	if RapidLocationChangeThreshold <= 0 {
+		return
+	}
+
+	var distinct int
+	db.Raw("SELECT COUNT(DISTINCT text) FROM logs WHERE user = ? AND type = ? AND subtype = ? "+
+		"AND timestamp >= NOW() - INTERVAL 24 HOUR",
+		myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&distinct)
+
+	if distinct < RapidLocationChangeThreshold {
+		return
+	}
+
+	// Never flag moderators/owners.
+	var modCount int
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
+		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	if modCount > 0 {
+		return
+	}
+
+	reason := fmt.Sprintf("Changed location %d times in 24h (rippling-out reach-hopping signal)", distinct)
+
+	// Flag the user's memberships for review, but don't re-flag rows already pending (only a fresh
+	// request, or one whose previous request has already been actioned).
+	db.Exec("UPDATE memberships SET reviewrequestedat = NOW(), reviewreason = ? WHERE userid = ? "+
+		"AND (reviewrequestedat IS NULL OR (reviewedat IS NOT NULL AND reviewedat >= reviewrequestedat))",
+		reason, myid)
+
+	log2.Log(log2.LogEntry{
+		Type:    log2.LOG_TYPE_USER,
+		Subtype: log2.LOG_SUBTYPE_SUSPECT,
+		User:    &myid,
+		Byuser:  &myid,
+		Text:    &reason,
+	})
+}
+
 func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]string, setArgs *[]interface{}) []byte {
 	db := database.DBConn
 
@@ -2011,6 +2138,10 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 				Byuser:  &myid,
 				Text:    textPtr,
 			})
+
+			// Rippling-out: reach now follows declared location, so flag rapid location-hopping
+			// for moderator review (non-destructive).
+			CheckLocationChangeVelocity(db, myid)
 		}
 	}
 
@@ -2301,14 +2432,8 @@ func LimboUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Remove memberships so the user no longer appears in group member lists.
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
-
-	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
-
-	// Log the deletion (type='User', subtype='Deleted').
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
-		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, myid)
+	// Soft, recoverable limbo (shared with the Unsubscribe action).
+	softLimboUser(db, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2327,6 +2452,72 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", req.ID)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// LogGroupLeftForApprovedMemberships writes a per-group (Group, Left) audit log
+// for every Approved membership the user currently holds. V1 emits one such log
+// per group when the user actually leaves: at grace-period expiry the
+// processForgets cron calls User::forget(), which iterates the memberships and
+// calls User::removeMembership() per group, each writing a Left log
+// (User.php:1087-1095). V2 instead bulk-deletes approved memberships eagerly at
+// delete time, so by the time the cleanup cron runs there is nothing left to
+// iterate and the Left logs would never be written — at any point. We therefore
+// emit them here, immediately before the bulk delete. byUser is the actor recorded
+// in the log; pass 0 to record byuser as NULL (e.g. the partner flow, which has no
+// acting Freegle user).
+func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uint64) {
+	var groupids []uint64
+	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?",
+		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
+	for _, groupid := range groupids {
+		if byUser == 0 {
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, NULL, ?)",
+				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, groupid)
+		} else {
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, ?, ?)",
+				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, byUser, groupid)
+		}
+	}
+}
+
+// softLimboUser puts a user into a recoverable "limbo": it removes their approved
+// memberships (so they drop out of group member lists), marks the account deleted
+// (a 14-day grace period before users:cleanup runs forgetUser), and logs a
+// User/Deleted entry. The user can recover by logging back in within the grace
+// period. Shared by self-delete (DELETE /user) and the Support-tools Unsubscribe
+// action (POST /user action=Unsubscribe) so both behave identically. byUser is the
+// actor recorded in the log (the user themselves, or the support volunteer).
+func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
+	// V1 parity: record a per-group (Group, Left) audit log before the eager bulk
+	// delete drops the memberships (see LogGroupLeftForApprovedMemberships).
+	LogGroupLeftForApprovedMemberships(db, targetID, byUser)
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
+		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, byUser)
+}
+
+// handleUserUnsubscribe puts a target user into a recoverable limbo (soft-delete)
+// via the Support-tools "Unsubscribe" action. V1 parity: POST /user action=Unsubscribe
+// maps to a recoverable removal (User::limbo) — NOT the hard GDPR purge that
+// DELETE /user performs for support-on-another-user — so a user who unsubscribed
+// by mistake (e.g. one-click email unsubscribe) can recover by logging back in.
+// A regular user may unsubscribe only themselves; admin/support may unsubscribe
+// anyone. (Discourse #9738.)
+func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	targetID := req.ID
+
+	if targetID != myid && !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only admin/support can unsubscribe other users")
+	}
+
+	softLimboUser(database.DBConn, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2976,11 +3167,13 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 		Nameshort   string     `json:"nameshort"`
 		Namefull    string     `json:"namefull"`
 		Namedisplay string     `json:"namedisplay" gorm:"column:namedisplay"`
+		Text        string     `json:"text"`
 	}
 
 	var history []MembershipHistoryRow
 	db.Raw("SELECT l.timestamp, l.subtype AS type, l.groupid, "+
-		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay "+
+		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, "+
+		"COALESCE(l.text,'') AS text "+
 		"FROM logs l "+
 		"INNER JOIN `groups` g ON g.id = l.groupid "+
 		"WHERE l.user = ? AND l.type = 'Group' "+

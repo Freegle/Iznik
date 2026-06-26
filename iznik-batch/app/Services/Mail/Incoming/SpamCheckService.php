@@ -32,6 +32,17 @@ class SpamCheckService
 
     public const SUBJECT_THRESHOLD = 30;
 
+    // Distinct groups a SINGLE poster may reach from one IP (within HISTORY_WINDOW_DAYS) before being
+    // flagged. Under rippling-out + single-group posting a legitimate poster reaches their own area's
+    // group(s) only, so one account hitting many groups from one IP is the location-hopping signal.
+    public const USER_GROUP_THRESHOLD = 10;
+
+    // The IP/subject reputation checks below count history over this trailing window rather than for
+    // all time. Without it they accumulate years of legitimate shared-NAT and subject reuse, which
+    // under single-group posting (where a high distinct-group count is a much weaker signal) turns
+    // them into false-positive factories. 90 days keeps a meaningful spam window without that drift.
+    public const HISTORY_WINDOW_DAYS = 90;
+
     public const IMAGE_THRESHOLD = 5;
 
     public const IMAGE_THRESHOLD_TIME = 24; // hours
@@ -119,9 +130,14 @@ class SpamCheckService
      *
      * Returns null if message is clean, or [isSpam, reason, detail] if spam found.
      *
+     * When $forChatReply is true, skip subject-based heuristics
+     * (subject reuse, bulk-volunteer, greeting, subject-keyword) because the
+     * subject of an email reply just echoes the original post's subject and
+     * those checks produce guaranteed false positives.
+     *
      * @return array{bool, string, string}|null
      */
-    public function checkMessage(ParsedEmail $email): ?array
+    public function checkMessage(ParsedEmail $email, bool $forChatReply = false): ?array
     {
         $ip = $email->senderIp;
         $fromName = $email->fromName ?? '';
@@ -171,25 +187,30 @@ class SpamCheckService
             }
         }
 
-        // Subject reuse detection (only for subjects >= 10 chars)
+        // Subject-based heuristics. Skipped for chat replies because the reply's
+        // subject is just the original post's subject (e.g. "Washing Machine (BD4)"),
+        // so subject-reuse/bulk/greeting checks are guaranteed false positives.
         $prunedSubject = $this->pruneSubject($subject);
-        if (strlen($prunedSubject) >= 10) {
-            $subjectResult = $this->checkSubjectReuse($prunedSubject);
-            if ($subjectResult !== null) {
-                return $subjectResult;
+        if (! $forChatReply) {
+            // Subject reuse detection (only for subjects >= 10 chars)
+            if (strlen($prunedSubject) >= 10) {
+                $subjectResult = $this->checkSubjectReuse($prunedSubject);
+                if ($subjectResult !== null) {
+                    return $subjectResult;
+                }
             }
-        }
 
-        // Bulk volunteer mail detection
-        $bulkResult = $this->checkBulkVolunteerMail($email);
-        if ($bulkResult !== null) {
-            return $bulkResult;
-        }
+            // Bulk volunteer mail detection
+            $bulkResult = $this->checkBulkVolunteerMail($email);
+            if ($bulkResult !== null) {
+                return $bulkResult;
+            }
 
-        // Greeting spam detection
-        $greetingResult = $this->checkGreetingSpam($prunedSubject, $body);
-        if ($greetingResult !== null) {
-            return $greetingResult;
+            // Greeting spam detection
+            $greetingResult = $this->checkGreetingSpam($prunedSubject, $body);
+            if ($greetingResult !== null) {
+                return $greetingResult;
+            }
         }
 
         // Reference to known spammers
@@ -209,9 +230,12 @@ class SpamCheckService
                 return $keywordResult;
             }
 
-            $keywordResult = $this->checkSpamKeywords($subject, [self::ACTION_REVIEW, self::ACTION_SPAM]);
-            if ($keywordResult !== null) {
-                return $keywordResult;
+            // Subject-keyword check skipped for chat replies (subject echoes original post).
+            if (! $forChatReply) {
+                $keywordResult = $this->checkSpamKeywords($subject, [self::ACTION_REVIEW, self::ACTION_SPAM]);
+                if ($keywordResult !== null) {
+                    return $keywordResult;
+                }
             }
         }
 
@@ -435,6 +459,7 @@ class SpamCheckService
         $users = DB::table('messages_history')
             ->select('fromname')
             ->where('fromip', $ip)
+            ->where('arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
             ->whereNotNull('groupid')
             ->groupBy('fromuser')
             ->orderBy('arrival', 'desc')
@@ -453,26 +478,34 @@ class SpamCheckService
     }
 
     /**
-     * Check if IP has been used for too many different groups (matching legacy).
+     * Check if a SINGLE poster has reached too many different groups from one IP.
+     *
+     * Originally this counted distinct groups across ALL posters on an IP, which under rippling-out +
+     * single-group posting is just a "many users behind one NAT" artefact (each posts to their own
+     * area's group). The real signal is now ONE account reaching many groups from one IP - the
+     * location-hopping vector - so we decompose by fromuser and flag the worst single poster. Bounded
+     * to the trailing history window so long-lived shared IPs do not accumulate a false positive.
      *
      * @return array{bool, string, string}|null
      */
     public function checkIPGroups(string $ip): ?array
     {
-        $groups = DB::table('messages_history')
+        $worst = DB::table('messages_history')
             ->join('groups', 'groups.id', '=', 'messages_history.groupid')
-            ->select('groups.nameshort')
-            ->where('fromip', $ip)
-            ->groupBy('groupid')
-            ->get();
+            ->select('messages_history.fromuser')
+            ->selectRaw('COUNT(DISTINCT messages_history.groupid) as numgroups')
+            ->selectRaw('GROUP_CONCAT(DISTINCT groups.nameshort) as grouplist')
+            ->where('messages_history.fromip', $ip)
+            ->where('messages_history.arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
+            ->whereNotNull('messages_history.fromuser')
+            ->groupBy('messages_history.fromuser')
+            ->havingRaw('COUNT(DISTINCT messages_history.groupid) >= ?', [self::USER_GROUP_THRESHOLD])
+            ->orderByDesc('numgroups')
+            ->first();
 
-        $numGroups = $groups->count();
-
-        if ($numGroups >= self::GROUP_THRESHOLD) {
-            $list = $groups->pluck('nameshort')->implode(', ');
-
+        if ($worst !== null) {
             return [true, self::REASON_IP_USED_FOR_DIFFERENT_GROUPS,
-                "IP {$ip} recently used for {$numGroups} different groups ({$list})"];
+                "IP {$ip} poster {$worst->fromuser} recently posted to {$worst->numgroups} different groups ({$worst->grouplist})"];
         }
 
         return null;
@@ -487,6 +520,7 @@ class SpamCheckService
     {
         $count = DB::table('messages_history')
             ->where('prunedsubject', 'LIKE', "{$prunedSubject}%")
+            ->where('arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
             ->whereNotNull('groupid')
             ->distinct('groupid')
             ->count('groupid');

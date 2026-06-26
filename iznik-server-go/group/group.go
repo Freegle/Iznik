@@ -329,6 +329,17 @@ func GetGroup(c *fiber.Ctx) error {
 			group.Welcomemail = ""
 		}
 
+		// Default nil JSON fields to empty objects so the frontend never sees null,
+		// which would crash group.settings.X access and trigger an infinite store
+		// re-fetch loop (the store uses !group.settings as "not yet loaded"). Mirrors
+		// the same nil-guard in user/user.go.
+		if group.Settings == nil {
+			group.Settings = json.RawMessage("{}")
+		}
+		if group.Microvolunteeringoptions == nil {
+			group.Microvolunteeringoptions = json.RawMessage("{}")
+		}
+
 		return c.JSON(group)
 	} else {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
@@ -415,6 +426,15 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 				g.Welcomemail = ""
 			}
 
+			// Default nil JSON fields to empty objects (same nil-guard as single
+			// GetGroup path and user/user.go) so the frontend never receives null.
+			if g.Settings == nil {
+				g.Settings = json.RawMessage("{}")
+			}
+			if g.Microvolunteeringoptions == nil {
+				g.Microvolunteeringoptions = json.RawMessage("{}")
+			}
+
 			mu.Lock()
 			results = append(results, result{idx: idx, group: &g})
 			mu.Unlock()
@@ -491,7 +511,7 @@ func ListGroups(c *fiber.Ctx) error {
 			"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby "+
 			"FROM `groups` WHERE type = ?", FREEGLE).Scan(&groups)
 	} else {
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
+		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
 	}
 
 	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
@@ -676,8 +696,9 @@ type PatchGroupRequest struct {
 	AffiliationConfirmed  *string  `json:"affiliationconfirmed"`
 	Onhere                *int     `json:"onhere"`
 	Publish               *int     `json:"publish"`
-	Microvolunteering     *int     `json:"microvolunteering"`
-	Mentored              *int     `json:"mentored"`
+	Microvolunteering        *int             `json:"microvolunteering"`
+	Microvolunteeringoptions *json.RawMessage `json:"microvolunteeringoptions"`
+	Mentored                 *int             `json:"mentored"`
 	Ontn                  *int     `json:"ontn"`
 	Onlovejunk            *int              `json:"onlovejunk"`
 	Profile               *uint64           `json:"profile"`
@@ -761,6 +782,9 @@ func PatchGroup(c *fiber.Ctx) error {
 	}
 	if req.Microvolunteering != nil {
 		db.Exec("UPDATE `groups` SET microvolunteering = ? WHERE id = ?", *req.Microvolunteering, req.ID)
+	}
+	if req.Microvolunteeringoptions != nil {
+		db.Exec("UPDATE `groups` SET microvolunteeringoptions = ? WHERE id = ?", string(*req.Microvolunteeringoptions), req.ID)
 	}
 	if req.Mentored != nil {
 		db.Exec("UPDATE `groups` SET mentored = ? WHERE id = ?", *req.Mentored, req.ID)

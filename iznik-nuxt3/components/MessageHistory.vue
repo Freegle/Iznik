@@ -1,13 +1,13 @@
 <template>
   <div>
     <div
-      v-for="group in message?.groups"
+      v-for="group in displayGroups"
       :key="'message-' + message.id + '-' + group.id"
       class="text--small"
     >
       <client-only>
         <span :title="group.arrival" class="time"
-          >{{ grouparrivalago }}
+          >{{ grouparrivalago(group.arrival) }}
           <span v-if="showSummaryDetails">on </span>
         </span>
       </client-only>
@@ -26,7 +26,7 @@
           :to="
             modinfo && group.groupid
               ? '/messages/' +
-                (group.collection || 'approved').toLowerCase() +
+                (['Pending', 'PendingOther', 'Spam'].includes(group.collection) ? 'pending' : 'approved') +
                 '/' +
                 group.groupid +
                 '/' +
@@ -112,6 +112,23 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // When set (mod multi-group view), show only this group's arrival line instead of
+  // listing every group the post is on - the mod administers one group's copy at a time.
+  onlyGroupid: {
+    type: Number,
+    required: false,
+    default: null,
+  },
+})
+
+// The groups to list: just the current group when onlyGroupid is set, else all of them.
+// `message` is a computed declared below; the closure resolves it at access time.
+const displayGroups = computed(() => {
+  const groups = message.value?.groups || []
+  if (props.onlyGroupid) {
+    return groups.filter((g) => parseInt(g.groupid) === props.onlyGroupid)
+  }
+  return groups
 })
 
 const groupStore = useGroupStore()
@@ -200,9 +217,11 @@ const groups = computed(() => {
   return ret
 })
 
-const grouparrivalago = computed(() => {
-  return timeago(message.value?.groups[0]?.arrival, true)
-})
+// Each row in the v-for is a specific group, so show that group's own
+// arrival time rather than collapsing every row onto the first group.
+function grouparrivalago(arrival) {
+  return timeago(arrival, true)
+}
 
 const today = computed(() => {
   // MT
