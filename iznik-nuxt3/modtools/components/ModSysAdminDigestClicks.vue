@@ -1,16 +1,17 @@
 <template>
   <div class="digest-clicks">
     <p class="text-muted">
-      How far down the daily digest do people click? Each post in a digest is
-      tracked with its position (1 = top). This shows the
-      <strong>click-through rate</strong> — the percentage of digests displaying
-      a post at each position where the recipient clicked that post — so you can
-      see how a post's position affects engagement.
+      How far down the daily digest do people click? For each post position (1 =
+      top), this is the <strong>click-through rate</strong>:
+      <em
+        >clicks &divide; the number of digests that actually showed a post at
+        that position</em
+      >. So it already controls for the fact that far fewer digests are long
+      enough to have a post low down — a position with a tiny denominator isn't
+      compared on raw clicks. Positions whose sample is too small to be
+      meaningful are left off.
     </p>
 
-    <!-- Date range filter. We only ever analyse the DAILY digest: immediate digests
-         contain a single post, so they are always position 1 and tell us nothing about
-         how position affects clicks. -->
     <ModEmailDateFilter
       :loading="emailTrackingStore.digestPositionsLoading"
       fetch-label="Fetch"
@@ -43,30 +44,18 @@
         {{ insight }}
       </NoticeMessage>
 
-      <!-- Chart -->
-      <div class="chart-container mb-4">
+      <!-- Chart: click-through rate by position (adequate-sample positions only) -->
+      <div class="chart-container mb-2">
         <GChart
           type="ComboChart"
-          :data="emailTrackingStore.digestPositionsChartData"
+          :data="chartData"
           :options="getPositionChartOptions()"
           class="chart"
         />
       </div>
 
-      <!-- Detail table -->
-      <b-table
-        :items="tableRows"
-        :fields="tableFields"
-        striped
-        hover
-        responsive
-        small
-      />
-      <p class="text-muted small">
-        <strong>Emails shown</strong> is the number of digests that displayed a
-        post at that position (the click-through denominator).
-        <strong>Clicked</strong> counts the distinct digests where the recipient
-        clicked the post at that position.
+      <p v-if="summary" class="text-muted small">
+        {{ summary }}
       </p>
     </template>
 
@@ -95,39 +84,83 @@ const endDate = ref('')
 // analysis is meaningless for them. Fixed, not user-selectable.
 const digestType = ref('UnifiedDigestDaily')
 
-const tableFields = [
-  { key: 'position', label: 'Position', sortable: true },
-  { key: 'shown', label: 'Emails shown', sortable: true },
-  { key: 'clicks', label: 'Total clicks', sortable: true },
-  { key: 'emails_clicked', label: 'Clicked', sortable: true },
-  { key: 'ctr', label: 'Click-through rate', sortable: true },
-]
+// Minimum number of digests that must have shown a post at a position for its
+// click-through rate to be trustworthy. Deep positions appear in very few
+// digests, so a single click swings the rate wildly (a position seen 30 times
+// with one click reads as "3%"); plotting those produces meaningless spikes.
+// We require an absolute floor AND a fraction of the top position's sample, so
+// the cutoff scales with the period.
+const MIN_SAMPLE_ABS = 1000
+const MIN_SAMPLE_FRACTION = 0.01
 
-const tableRows = computed(() =>
-  (emailTrackingStore.digestPositions || []).map((p) => ({
-    position: (p.position ?? 0) + 1,
-    shown: (p.shown || 0).toLocaleString(),
-    clicks: (p.clicks || 0).toLocaleString(),
-    emails_clicked: (p.emails_clicked || 0).toLocaleString(),
-    ctr: `${(p.ctr || 0).toFixed(1)}%`,
-  }))
+const minSample = computed(() => {
+  const rows = emailTrackingStore.digestPositions || []
+  const top = rows.length ? rows[0].shown || 0 : 0
+  return Math.max(MIN_SAMPLE_ABS, Math.round(top * MIN_SAMPLE_FRACTION))
+})
+
+// Positions with a big enough sample to plot, in order.
+const significantPositions = computed(() =>
+  (emailTrackingStore.digestPositions || []).filter(
+    (p) => (p.shown || 0) >= minSample.value
+  )
 )
 
-// A plain-English takeaway comparing the top position to the rest.
-const insight = computed(() => {
+// Chart data: a single series - click-through rate vs position. No second axis;
+// the "emails shown" denominator is context, not a co-equal series to read off.
+const chartData = computed(() => {
+  const header = ['Position', 'Click-through rate (%)']
+  const rows = significantPositions.value.map((p) => [
+    (p.position ?? 0) + 1,
+    Number((p.ctr || 0).toFixed(3)),
+  ])
+  return [header, ...rows]
+})
+
+// One-line context under the chart: how much data, and where we stopped.
+const summary = computed(() => {
   const rows = emailTrackingStore.digestPositions || []
-  if (rows.length < 2) return null
-  const first = rows[0]
-  const last = rows[rows.length - 1]
-  if (!first.ctr) return null
-  const drop = first.ctr - last.ctr
-  if (drop <= 0) return null
-  const pct = Math.round((drop / first.ctr) * 100)
+  if (!rows.length) return null
+  const totalDigests = rows[0].shown || 0
+  const sig = significantPositions.value
+  if (!sig.length) return null
+  const lastPos = (sig[sig.length - 1].position ?? 0) + 1
   return (
-    `The top post is clicked ${first.ctr.toFixed(1)}% of the time, ` +
-    `falling to ${last.ctr.toFixed(1)}% by position ${last.position + 1} — ` +
-    `${pct}% lower. Posts further down the digest get fewer clicks.`
+    `Based on ${totalDigests.toLocaleString()} daily digests. ` +
+    `Shown to position ${lastPos} - beyond that, fewer than ` +
+    `${minSample.value.toLocaleString()} digests reached that depth, ` +
+    `so the rate is too noisy to plot.`
   )
+})
+
+// Plain-English takeaway: describe the actual shape of the decline using only
+// well-sampled positions, rather than the noisy deepest row.
+const insight = computed(() => {
+  const sig = significantPositions.value
+  if (sig.length < 2) return null
+  const first = sig[0]
+  if (!first.ctr) return null
+
+  const last = sig[sig.length - 1]
+  // Only describe a decline if there actually is one.
+  if (last.ctr >= first.ctr) return null
+
+  const at = (displayPos) =>
+    sig.find((p) => (p.position ?? 0) + 1 === displayPos)
+  const five = at(5) || sig[Math.min(4, sig.length - 1)]
+  const lastPos = (last.position ?? 0) + 1
+
+  let msg = `The top post is clicked ${first.ctr.toFixed(2)}% of the time`
+  if (five && five !== first) {
+    const halvedPos = (five.position ?? 0) + 1
+    msg += `, roughly halving to ${five.ctr.toFixed(
+      2
+    )}% by position ${halvedPos}`
+  }
+  msg +=
+    `, and it keeps declining - down to ${last.ctr.toFixed(2)}% by position ` +
+    `${lastPos}. Clicks fall off steadily with depth rather than levelling off.`
+  return msg
 })
 
 function fetchData() {
@@ -148,32 +181,18 @@ function onFilterFetch({ start, end }) {
 function getPositionChartOptions() {
   return {
     title: 'Click-through rate by position in the digest',
-    seriesType: 'bars',
-    legend: { position: 'bottom' },
-    chartArea: { width: '80%', height: '70%' },
+    legend: { position: 'none' },
+    chartArea: { width: '82%', height: '72%' },
     hAxis: {
       title: 'Position in digest (1 = top)',
     },
-    vAxes: {
-      0: {
-        title: 'Click-through rate (%)',
-        viewWindow: { min: 0 },
-        format: '#.#',
-      },
-      1: {
-        title: 'Emails shown',
-        viewWindow: { min: 0 },
-      },
+    vAxis: {
+      title: 'Click-through rate (%)',
+      viewWindow: { min: 0 },
+      format: '#.##',
     },
     series: {
-      0: { type: 'bars', targetAxisIndex: 0, color: '#17a2b8' },
-      1: {
-        type: 'line',
-        targetAxisIndex: 1,
-        color: '#adb5bd',
-        lineDashStyle: [4, 4],
-        pointSize: 3,
-      },
+      0: { type: 'line', color: '#17a2b8', lineWidth: 2, pointSize: 0 },
     },
     animation: { startup: true, duration: 500, easing: 'out' },
   }
@@ -182,8 +201,10 @@ function getPositionChartOptions() {
 // Exposed for unit testing.
 defineExpose({
   digestType,
-  tableFields,
-  tableRows,
+  minSample,
+  significantPositions,
+  chartData,
+  summary,
   insight,
   fetchData,
   onFilterFetch,
