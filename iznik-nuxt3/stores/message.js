@@ -806,6 +806,17 @@ export const useMessageStore = defineStore({
         throw held
       }
     },
+    // Reject an auto-published post from the oversight (checked/trusted) queue: pulls it back
+    // to Pending (held) via the markChecked endpoint's reject flag, and removes it from the
+    // local store so it leaves the oversight list immediately.
+    async rejectFromOversight(id, groupid) {
+      await api(this.config).message.markChecked({
+        groupid,
+        ids: [id],
+        reject: true,
+      })
+      this.remove({ id })
+    },
     async approve(id, groupid, subject, stdmsgid, body) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser

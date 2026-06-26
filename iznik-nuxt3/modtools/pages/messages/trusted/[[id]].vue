@@ -33,7 +33,7 @@
         here, and anything older than a week is excluded from this queue.
       </NoticeMessage>
       <div v-if="groupsreceived">
-        <ModMessages />
+        <ModMessages :oversight="true" />
         <infinite-loading
           direction="top"
           :identifier="bump"

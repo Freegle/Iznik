@@ -591,3 +591,142 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 		assert.GreaterOrEqual(t, wideRow.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
 	}
 }
+
+// Anchor regression (Discourse #9808): a RIPPLED post's reply-rate day/window must key on its
+// FIRST-RIPPLE date (MIN rippled_in arrival) — when rippling actually started — not on
+// messages.arrival (frozen at first-ever post) nor even its home appearance. A home-only post
+// stays anchored on its appearance (origin messages_groups.arrival). This dates rippled posts by
+// when the treatment began, and keeps the rippled cohort empty before go-live.
+func TestRipplingMetricsAnchorsRippledCohortOnFirstRippleDate(t *testing.T) {
+	prefix := uniquePrefix("ripanchor")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	db := database.DBConn
+
+	poster := CreateTestUser(t, prefix, "Poster")
+	group := CreateTestGroup(t, prefix)
+	other := CreateTestGroup(t, prefix+"b")
+	mid := CreateTestMessage(t, poster, group, "OFFER: anchor "+prefix, 51.5, -0.1)
+
+	// Three distinct dates: stale original post (30d ago), home appearance (3d ago), and the
+	// FIRST ripple (2d ago). The rippled cohort must be dated on the ripple date (2d ago).
+	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 30 DAY WHERE id = ?", mid)
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ? AND rippled_in = 0", mid)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW() - INTERVAL 2 DAY, 'Approved', 0, 1)", mid, other)
+
+	start := time.Now().AddDate(0, 0, -5).Format("2006-01-02 15:04:05")
+	end := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s&start=%s&end=%s",
+		token, url.QueryEscape(start), url.QueryEscape(end)), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	rows, ok := result["reply_rate_36h"].([]interface{})
+	assert.True(t, ok, "reply_rate_36h present")
+
+	// The post's home appearance (3d ago) and stale original arrival (30d ago) both differ from
+	// its first-ripple date (2d ago); the rippled cohort must land on the first-ripple date.
+	rippleDay := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
+	foundOnRippleDay := false
+	for _, r := range rows {
+		m, _ := r.(map[string]interface{})
+		if m["day"] == rippleDay {
+			foundOnRippleDay = true
+			assert.GreaterOrEqual(t, m["ripple_posts"].(float64), float64(1),
+				"rippled post is in the rippled cohort on its first-ripple day")
+		}
+	}
+	assert.True(t, foundOnRippleDay,
+		"rippled post appears on its first-ripple day, proving the cohort anchors on the ripple date")
+}
+
+// review_delay is always present with its numeric fields, even before the await columns are written
+// (all zeros is a valid empty state; the snapshot query fails-soft to zero if columns are absent).
+func TestRipplingMetricsReviewDelayFieldsPresent(t *testing.T) {
+	prefix := uniquePrefix("ripplerdfields")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	rd, ok := result["review_delay"].(map[string]interface{})
+	assert.True(t, ok, "review_delay field present")
+	for _, k := range []string{"awaiting_count", "median_await_seconds", "post_hours_delayed", "resumed_count"} {
+		_, has := rd[k]
+		assert.True(t, has, "%s field present", k)
+	}
+}
+
+// A rippling_reach row currently cap-paused (awaiting_review_since set) lifts awaiting_count and
+// yields a non-negative average wait.
+func TestRipplingMetricsReviewDelayAwaiting(t *testing.T) {
+	prefix := uniquePrefix("ripplerdawait")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db := database.DBConn
+	// Self-bootstrap the await columns if the Go test DB clone predates the migration.
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN awaiting_review_since TIMESTAMP NULL")
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN awaiting_review_seconds INT UNSIGNED NOT NULL DEFAULT 0")
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" awaiting widget", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	db.Exec(
+		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, awaiting_review_since, awaiting_review_seconds) "+
+			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+			"NOW() - INTERVAL 2 HOUR, NOW() - INTERVAL 30 MINUTE, 0) "+
+			"ON DUPLICATE KEY UPDATE awaiting_review_since = NOW() - INTERVAL 30 MINUTE",
+		msgID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	rd, _ := result["review_delay"].(map[string]interface{})
+	assert.GreaterOrEqual(t, rd["awaiting_count"].(float64), float64(1), "cap-paused row counted in awaiting_count")
+	assert.GreaterOrEqual(t, rd["median_await_seconds"].(float64), float64(0), "median_await_seconds non-negative")
+}
+
+// A reach row with awaiting_review_seconds accumulated and arrival in the default window lifts
+// post_hours_delayed (7200s / 3600 = 2 post-hours).
+func TestRipplingMetricsReviewDelayPostHours(t *testing.T) {
+	prefix := uniquePrefix("ripplerdhours")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db := database.DBConn
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN awaiting_review_since TIMESTAMP NULL")
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN awaiting_review_seconds INT UNSIGNED NOT NULL DEFAULT 0")
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" delayed lamp", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	db.Exec(
+		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, awaiting_review_since, awaiting_review_seconds) "+
+			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+			"NOW() - INTERVAL 3 DAY, NULL, 7200) "+
+			"ON DUPLICATE KEY UPDATE awaiting_review_seconds = 7200",
+		msgID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	rd, _ := result["review_delay"].(map[string]interface{})
+	assert.GreaterOrEqual(t, rd["post_hours_delayed"].(float64), float64(2.0), "7200s = 2 post-hours")
+}

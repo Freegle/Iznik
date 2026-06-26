@@ -766,6 +766,7 @@
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
+          :oversight="oversight"
         />
         <b-button
           v-if="editing"
@@ -888,6 +889,13 @@ const props = defineProps({
     type: Number,
     required: false,
     default: null,
+  },
+  // Passed down from the checked/trusted oversight pages to unlock the per-message Reject button
+  // in ModMessageButtons. Not set on any other page.
+  oversight: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
 })
 
