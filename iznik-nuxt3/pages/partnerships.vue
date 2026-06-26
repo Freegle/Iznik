@@ -1,160 +1,111 @@
 <template>
   <div class="partnerships">
-    <!-- ── Hero ─────────────────────────────────────────────── -->
     <section class="partnerships__hero">
-      <h1>Freegle supports charities &amp; community organisations</h1>
-      <p class="partnerships__hero-sub">Helping you, and the people you work with.</p>
+      <h1>Partner with Freegle</h1>
       <p class="partnerships__strapline">
-        Every day in your local community, freeglers are giving things away for
-        free. Freegle connects people to the things they need, locally and at no
-        cost.
+        We help people give and get things for free, locally — like online
+        dating for stuff. Together, we can do even more.
       </p>
-      <p class="partnerships__strapline partnerships__strapline--lead">
-        And there&rsquo;s plenty Freegle can do to support your organisation too.
-      </p>
-
-      <div class="partnerships__hero-actions">
-        <nuxt-link to="/charity" class="partnerships__btn partnerships__btn--primary">
-          <v-icon icon="star" />
-          Become a charity partner
-        </nuxt-link>
-        <nuxt-link to="/find" class="partnerships__btn partnerships__btn--outline">
-          <v-icon icon="search" />
-          Ask for something
-        </nuxt-link>
-        <nuxt-link to="/give" class="partnerships__btn partnerships__btn--outline">
-          <v-icon icon="gift" />
-          Give something away
-        </nuxt-link>
-      </div>
     </section>
 
-    <!-- ── Give & Get ───────────────────────────────────────── -->
-    <section class="partnerships__section partnerships__section--highlight">
-      <h2>Individuals and organisations can give and get with Freegle</h2>
-      <div class="partnerships__giveget">
-        <div class="partnerships__giveget-item">
-          <div class="partnerships__giveget-icon partnerships__giveget-icon--give">
-            <v-icon icon="gift" />
+    <section class="partnerships__section">
+      <h2>Why Partner with Us?</h2>
+      <p>
+        Freegle reduces waste, alleviates poverty and builds stronger
+        communities — all through the simple act of giving things a second life.
+        We've been doing it successfully for over 15 years.
+      </p>
+      <div class="partnerships__impacts">
+        <div class="partnerships__impact partnerships__impact--env">
+          <div class="partnerships__impact-visual">
+            <v-icon icon="leaf" />
           </div>
-          <h3>Got something you no longer need?</h3>
-          <p>Post it on Freegle and someone nearby will arrange to collect it.</p>
+          <h3>Environmental</h3>
+          <p>
+            Keeping usable items out of landfill, reducing carbon footprints and
+            driving the circular economy at grassroots level.
+          </p>
         </div>
-        <div class="partnerships__giveget-item">
-          <div class="partnerships__giveget-icon partnerships__giveget-icon--get">
+        <div class="partnerships__impact partnerships__impact--social">
+          <div class="partnerships__impact-visual">
             <v-icon icon="hand-holding-heart" />
           </div>
-          <h3>Need something for your organisation or the people you support?</h3>
-          <p>Just ask! Others nearby will get in contact if they can help.</p>
-        </div>
-      </div>
-      <p class="partnerships__giveget-free">Everything is free and always will be!</p>
-    </section>
-
-    <!-- ── Video ────────────────────────────────────────────── -->
-    <!-- Hidden until the consolidated video exists: flip showVideo to re-enable. -->
-    <section v-if="showVideo" class="partnerships__section partnerships__video">
-      <h2>Freegle helps organisations and the people you support</h2>
-      <!-- Video placeholder: replace with the embedded consolidated video when ready. -->
-      <div class="partnerships__video-frame">
-        <div class="partnerships__video-play">
-          <v-icon icon="play" />
-        </div>
-        <span class="partnerships__video-label">Single consolidated video</span>
-      </div>
-      <div class="partnerships__chapters">
-        <span
-          v-for="chapter in chapters"
-          :key="chapter.time"
-          class="partnerships__chapter"
-        >
-          <span class="partnerships__chapter-time">{{ chapter.time }}</span>
-          {{ chapter.label }}
-        </span>
-      </div>
-    </section>
-
-    <!-- ── Testimonial + logos ──────────────────────────────── -->
-    <!-- Hidden until we have a real testimonial and partner logos: flip showTestimonial. -->
-    <section
-      v-if="showTestimonial"
-      class="partnerships__section partnerships__testimonial"
-    >
-      <blockquote class="partnerships__quote">
-        &ldquo;Freegle helped us furnish our community centre and find volunteers
-        we didn&rsquo;t know existed locally.&rdquo;
-      </blockquote>
-      <p class="partnerships__quote-by">&mdash; Name, Organisation name, Town</p>
-      <div class="partnerships__logos">
-        <!-- Placeholder logo strip: swap for real partner logos (greyscale). -->
-        <div
-          v-for="logo in logoPlaceholders"
-          :key="logo"
-          class="partnerships__logo"
-        >
-          <v-icon :icon="logo" />
-        </div>
-      </div>
-      <p class="partnerships__logos-caption">
-        Trusted by charities and community groups across the UK.
-      </p>
-    </section>
-
-    <!-- ── What Freegle can do (cards) ──────────────────────── -->
-    <section class="partnerships__offer">
-      <div class="partnerships__offer-banner">
-        <h2>Here&rsquo;s what Freegle can do for your organisation</h2>
-        <p>Click to find out more and get started.</p>
-      </div>
-
-      <div class="partnerships__cards">
-        <nuxt-link
-          v-for="card in cards"
-          :key="card.key"
-          :to="card.to"
-          class="partnerships__card"
-          :class="`partnerships__card--${card.key}`"
-        >
-          <span class="partnerships__card-tag">
-            <v-icon :icon="card.icon" />
-            {{ card.tag }}
-          </span>
-          <h3>{{ card.title }}</h3>
-          <p>{{ card.text }}</p>
-          <span class="partnerships__card-go">
-            {{ card.cta }}
-            <v-icon icon="arrow-right" />
-          </span>
-        </nuxt-link>
-
-        <ExternalLink
-          href="mailto:partnerships@ilovefreegle.org?subject=Always%20Wanted%20-%20keep%20me%20posted"
-          class="partnerships__card partnerships__card--soon"
-        >
-          <span class="partnerships__card-tag">
-            <v-icon icon="clock" />
-            Coming soon
-          </span>
-          <h3>Always Wanted</h3>
+          <h3>Social</h3>
           <p>
-            A new feature in development &mdash; set a standing request for things
-            you always need.
+            Life-changing for people in poverty — furnishing homes and meeting
+            daily needs without financial compromise.
           </p>
-          <span class="partnerships__card-go">
-            Join the mailing list to hear first
-            <v-icon icon="arrow-right" />
-          </span>
-        </ExternalLink>
+        </div>
+        <div class="partnerships__impact partnerships__impact--community">
+          <div class="partnerships__impact-visual">
+            <v-icon icon="users" />
+          </div>
+          <h3>Community</h3>
+          <p>
+            Bringing neighbours together, building resilience and creating
+            opportunities across the UK.
+          </p>
+        </div>
       </div>
     </section>
 
-    <!-- ── Team ─────────────────────────────────────────────── -->
-    <section class="partnerships__section partnerships__team-section">
-      <h2>Meet the partnerships team</h2>
-      <p class="partnerships__team-intro">
+    <section class="partnerships__section partnerships__section--highlight">
+      <div class="partnerships__mission-vision">
+        <div class="partnerships__mission-item">
+          <h2>Our Mission</h2>
+          <p>
+            To reduce waste and alleviate poverty by increasing reuse — creating
+            more sustainable and resilient communities across the UK.
+          </p>
+        </div>
+        <div class="partnerships__mission-divider" />
+        <div class="partnerships__mission-item">
+          <h2>Our Vision</h2>
+          <p>
+            A world where useful items are not wasted and reuse in communities
+            is normalised.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="partnerships__section">
+      <h2>Our Values</h2>
+      <div class="partnerships__values">
+        <div class="partnerships__value">
+          <div class="partnerships__value-marker" />
+          <span
+            >Making a real difference to people's lives and the planet.</span
+          >
+        </div>
+        <div class="partnerships__value">
+          <div class="partnerships__value-marker" />
+          <span
+            >Kindness and efficient use of resources at the heart of everything
+            we do.</span
+          >
+        </div>
+        <div class="partnerships__value">
+          <div class="partnerships__value-marker" />
+          <span>Not-for-profit and community-led.</span>
+        </div>
+        <div class="partnerships__value">
+          <div class="partnerships__value-marker" />
+          <span
+            >Collaborative working with other organisations to maximise
+            impact.</span
+          >
+        </div>
+      </div>
+    </section>
+
+    <section class="partnerships__section">
+      <h2>The Team</h2>
+      <p>
         Our partnerships programme is delivered by a dedicated team with deep
         expertise in waste prevention, reuse and community engagement.
       </p>
+
       <div class="partnerships__team">
         <div
           v-for="member in team"
@@ -198,20 +149,25 @@
       </div>
     </section>
 
-    <!-- ── Get in touch ─────────────────────────────────────── -->
     <section class="partnerships__section partnerships__section--cta">
-      <h2>Get in touch</h2>
-      <p>
-        Find out more about how Freegle could work for and with your
-        organisation &mdash; we&rsquo;re here to help.
-      </p>
-      <ExternalLink
-        href="mailto:partnerships@ilovefreegle.org"
-        class="partnerships__contact-btn"
-      >
-        <v-icon icon="envelope" />
-        Contact the Freegle Partnerships Team
-      </ExternalLink>
+      <h2>Get in Touch</h2>
+      <p>Interested in partnering with Freegle? We'd love to hear from you.</p>
+      <div class="partnerships__cta-links">
+        <ExternalLink
+          href="mailto:partnerships@ilovefreegle.org"
+          class="partnerships__email-link"
+        >
+          <v-icon icon="envelope" />
+          partnerships@ilovefreegle.org
+        </ExternalLink>
+        <ExternalLink
+          href="https://www.linkedin.com/company/freegle"
+          class="partnerships__freegle-linkedin"
+        >
+          <v-icon :icon="['fab', 'linkedin']" />
+          Follow Freegle on LinkedIn
+        </ExternalLink>
+      </div>
     </section>
   </div>
 </template>
@@ -228,72 +184,9 @@ useHead(
     route,
     runtimeConfig,
     'Partnerships',
-    'Freegle supports charities and community organisations. Ask for what you need, give what you no longer want, recruit volunteers and promote your events — all free.'
+    'Partner with Freegle to reduce waste, alleviate poverty and build stronger communities.'
   )
 )
-
-/* No consolidated video yet — keep the section code but hidden. */
-const showVideo = false
-
-/* No real testimonial or partner logos yet — keep the section code but hidden. */
-const showTestimonial = false
-
-const chapters = [
-  { time: '0:00', label: 'Freegle & your organisation' },
-  { time: '0:50', label: 'Giving something away' },
-  { time: '1:30', label: 'Looking for something' },
-  { time: '2:10', label: 'How we can help you' },
-]
-
-const logoPlaceholders = ['users', 'leaf', 'heart', 'star', 'comments']
-
-const cards = [
-  {
-    key: 'charity',
-    tag: 'Charity Partner',
-    icon: 'star',
-    title: 'Register as a Charity Partner',
-    text: 'Get recognised status on Freegle — your posts carry trusted credibility and you can promote your good work to your local community, for free.',
-    to: '/charity',
-    cta: 'Register your charity',
-  },
-  {
-    key: 'wanted',
-    tag: 'WANTED',
-    icon: 'search',
-    title: 'Ask for stuff',
-    text: "Post a WANTED on behalf of your organisation or the people you support — whether it's furniture, clothing, household items, equipment, supplies, or anything else you need.",
-    to: '/find',
-    cta: 'Post a WANTED',
-  },
-  {
-    key: 'offer',
-    tag: 'OFFER',
-    icon: 'gift',
-    title: 'Give stuff away',
-    text: 'Got surplus stock, equipment or items your organisation no longer needs? Offer them to your local community so they get reused, not wasted.',
-    to: '/give',
-    cta: 'Post an OFFER',
-  },
-  {
-    key: 'volunteer',
-    tag: 'Volunteer Opportunities',
-    icon: 'hands-helping',
-    title: 'Post a volunteer opportunity',
-    text: 'Are you a charity or good cause that needs volunteers? Ask our lovely community of freeglers to help.',
-    to: '/volunteerings',
-    cta: 'Post an opportunity',
-  },
-  {
-    key: 'events',
-    tag: 'Community Events',
-    icon: 'calendar-alt',
-    title: 'Promote your community events',
-    text: 'Let people in your area know about upcoming events and activities by listing them for free on Freegle.',
-    to: '/communityevents',
-    cta: 'Add an event',
-  },
-]
 
 const team = [
   {
@@ -341,7 +234,7 @@ const team = [
 @import 'assets/css/_color-vars.scss';
 
 .partnerships {
-  max-width: 960px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 1rem;
 
@@ -355,103 +248,31 @@ const team = [
 .partnerships__hero {
   text-align: center;
   padding: 2.5rem 1.5rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.5rem;
   background: linear-gradient(135deg, $color-green--bg-gradient 0%, white 100%);
   border-bottom: 3px solid $color-green-background;
 
   h1 {
-    font-size: 1.625rem;
+    font-size: 1.75rem;
     font-weight: 700;
     color: $color-header;
-    margin-bottom: 0.5rem;
-    line-height: 1.25;
+    margin-bottom: 0.75rem;
 
     @include media-breakpoint-up(md) {
-      font-size: 2.375rem;
+      font-size: 2.5rem;
     }
   }
 }
 
-.partnerships__hero-sub {
-  font-size: 1.0625rem;
-  font-weight: 600;
-  color: $color-green--dark;
-  margin-bottom: 1rem;
-
-  @include media-breakpoint-up(md) {
-    font-size: 1.25rem;
-  }
-}
-
 .partnerships__strapline {
-  font-size: 1rem;
-  line-height: 1.65;
+  font-size: 1.0625rem;
+  line-height: 1.6;
   color: $gray-700;
-  max-width: 620px;
-  margin: 0 auto 0.75rem;
+  max-width: 560px;
+  margin: 0 auto;
 
   @include media-breakpoint-up(md) {
-    font-size: 1.0625rem;
-  }
-}
-
-.partnerships__strapline--lead {
-  font-weight: 600;
-  color: $color-header;
-}
-
-.partnerships__hero-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.625rem;
-  max-width: 340px;
-  margin: 1.5rem auto 0;
-
-  @include media-breakpoint-up(md) {
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: center;
-    max-width: none;
-  }
-}
-
-.partnerships__btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.7rem 1.5rem;
-  font-size: 1rem;
-  font-weight: 600;
-  text-decoration: none;
-  border: 2px solid $color-green-background;
-  transition: all 0.18s ease;
-
-  &:hover {
-    text-decoration: none;
-    transform: translateY(-1px);
-  }
-}
-
-.partnerships__btn--primary {
-  background: $color-green-background;
-  color: white;
-
-  &:hover {
-    background: darken($color-green-background, 8%);
-    border-color: darken($color-green-background, 8%);
-    color: white;
-  }
-}
-
-.partnerships__btn--outline {
-  background: white;
-  color: $color-header;
-
-  &:hover {
-    background: $color-green--bg-gradient;
-    color: $color-header;
+    font-size: 1.125rem;
   }
 }
 
@@ -467,263 +288,54 @@ const team = [
     padding: 2rem;
   }
 
-  > h2 {
+  h2 {
     font-size: 1.25rem;
     font-weight: 700;
     color: $color-header;
-    margin-bottom: 1rem;
-    text-align: center;
+    margin-bottom: 0.75rem;
 
     @include media-breakpoint-up(md) {
-      font-size: 1.5rem;
+      font-size: 1.375rem;
     }
+  }
+
+  > p {
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    color: $gray-700;
+    margin-bottom: 1rem;
   }
 }
 
 .partnerships__section--highlight {
   background: linear-gradient(135deg, $color-green--bg-gradient 0%, white 100%);
+  border-left: 3px solid $color-green-background;
 }
 
-/* ── Give & Get ───────────────────────────────────────────── */
+/* ── Impact cards ─────────────────────────────────────────── */
 
-.partnerships__giveget {
+.partnerships__impacts {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 1.25rem;
-
-  @include media-breakpoint-up(md) {
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-  }
-}
-
-.partnerships__giveget-item {
-  text-align: center;
-
-  h3 {
-    font-size: 1.0625rem;
-    font-weight: 700;
-    color: $gray-800;
-    margin-bottom: 0.5rem;
-  }
-
-  p {
-    font-size: 0.9375rem;
-    line-height: 1.6;
-    color: $gray-700;
-    margin: 0;
-  }
-}
-
-.partnerships__giveget-icon {
-  width: 3.25rem;
-  height: 3.25rem;
-  margin: 0 auto 0.875rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  font-size: 1.375rem;
-}
-
-.partnerships__giveget-icon--give {
-  background: rgba($color-green-background, 0.15);
-  color: $color-green-background;
-}
-
-.partnerships__giveget-icon--get {
-  background: rgba($color-secondary, 0.15);
-  color: $color-secondary;
-}
-
-.partnerships__giveget-free {
-  text-align: center;
-  font-size: 1.0625rem;
-  font-weight: 700;
-  color: $color-header;
-  margin: 1.5rem 0 0;
-}
-
-/* ── Video ────────────────────────────────────────────────── */
-
-.partnerships__video-frame {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   gap: 1rem;
-  background: linear-gradient(135deg, #243018 0%, #3b5226 100%);
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.partnerships__video-play {
-  width: 4.5rem;
-  height: 4.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: $color-white-opacity-90;
-  color: $color-green-background;
-  font-size: 1.75rem;
-  padding-left: 0.35rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  transition: transform 0.18s ease;
-
-  .partnerships__video-frame:hover & {
-    transform: scale(1.08);
-  }
-}
-
-.partnerships__video-label {
-  color: $color-white-opacity-90;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.partnerships__chapters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 1rem;
-}
-
-.partnerships__chapter {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.8125rem;
-  color: $gray-700;
-  background: $color-gray--lighter;
-  border: 1px solid $color-gray-3;
-}
-
-.partnerships__chapter-time {
-  font-weight: 700;
-  color: $color-green--dark;
-}
-
-/* ── Testimonial + logos ──────────────────────────────────── */
-
-.partnerships__testimonial {
-  text-align: center;
-}
-
-.partnerships__quote {
-  font-size: 1.1875rem;
-  line-height: 1.55;
-  font-weight: 600;
-  font-style: italic;
-  color: $color-header;
-  max-width: 640px;
-  margin: 0 auto 0.75rem;
+  margin-top: 1.25rem;
 
   @include media-breakpoint-up(md) {
-    font-size: 1.375rem;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
-.partnerships__quote-by {
-  font-size: 0.9375rem;
-  color: $gray-600;
-  margin-bottom: 1.75rem;
-}
-
-.partnerships__logos {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.75rem;
-}
-
-.partnerships__logo {
-  width: 5.25rem;
-  height: 3rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  color: $color-gray--base;
-  background: $color-gray--lighter;
-  border: 1px solid $color-gray-3;
-  filter: grayscale(1);
-}
-
-.partnerships__logos-caption {
-  font-size: 0.8125rem;
-  color: $color-gray--normal;
-  margin: 0.875rem 0 0;
-}
-
-/* ── Offer / cards ────────────────────────────────────────── */
-
-.partnerships__offer {
-  margin-bottom: 1rem;
-}
-
-.partnerships__offer-banner {
-  text-align: center;
+.partnerships__impact {
   padding: 1.5rem;
-  background: $color-header;
-  color: white;
+  border-top: 3px solid transparent;
+  text-align: center;
 
   @include media-breakpoint-up(md) {
-    padding: 1.75rem;
-  }
-
-  h2 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: white !important;
-    margin-bottom: 0.25rem;
-
-    @include media-breakpoint-up(md) {
-      font-size: 1.5rem;
-    }
-  }
-
-  p {
-    font-size: 0.9375rem;
-    color: $color-white-opacity-90;
-    margin: 0;
-  }
-}
-
-.partnerships__cards {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.875rem;
-  margin-top: 0.875rem;
-
-  @include media-breakpoint-up(md) {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.partnerships__card {
-  display: flex;
-  flex-direction: column;
-  padding: 1.375rem;
-  background: white;
-  border-top: 4px solid $color-gray--light;
-  box-shadow: var(--shadow-sm);
-  text-decoration: none;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-
-  &:hover {
-    text-decoration: none;
-    transform: translateY(-3px);
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+    padding: 1.75rem 1.25rem;
   }
 
   h3 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     font-weight: 700;
     color: $gray-800;
     margin-bottom: 0.5rem;
@@ -731,100 +343,130 @@ const team = [
 
   p {
     font-size: 0.875rem;
-    line-height: 1.6;
+    line-height: 1.65;
     color: $gray-700;
-    margin: 0 0 1rem;
-    flex: 1;
+    margin: 0;
   }
 }
 
-.partnerships__card-tag {
-  display: inline-flex;
+.partnerships__impact--env {
+  background: #f0f7ed;
+  border-top-color: $color-green-background;
+}
+
+.partnerships__impact--social {
+  background: #fef7f0;
+  border-top-color: $color-warning;
+}
+
+.partnerships__impact--community {
+  background: #eef5fc;
+  border-top-color: $color-secondary;
+}
+
+.partnerships__impact-visual {
+  width: 3.5rem;
+  height: 3.5rem;
+  margin: 0 auto 1rem;
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
-  align-self: flex-start;
-  padding: 0.25rem 0.7rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-radius: 2rem;
-}
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 1.375rem;
 
-.partnerships__card-go {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: $color-header;
-
-  svg {
-    transition: transform 0.18s ease;
+  .partnerships__impact--env & {
+    background: rgba($color-green-background, 0.15);
+    color: $color-green-background;
   }
 
-  .partnerships__card:hover & svg {
-    transform: translateX(3px);
+  .partnerships__impact--social & {
+    background: rgba($color-warning, 0.15);
+    color: $color-warning;
+  }
+
+  .partnerships__impact--community & {
+    background: rgba($color-secondary, 0.15);
+    color: $color-secondary;
   }
 }
 
-/* Per-card accent colours (the action boxes stand out from the page) */
+/* ── Mission / Vision ─────────────────────────────────────── */
 
-@mixin card-accent($color, $tint) {
-  border-top-color: $color;
-  background: $tint;
+.partnerships__mission-vision {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 
-  .partnerships__card-tag {
-    background: rgba($color, 0.15);
-    color: $color;
-  }
-
-  .partnerships__card-go {
-    color: $color;
+  @include media-breakpoint-up(md) {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 2rem;
   }
 }
 
-.partnerships__card--charity {
-  @include card-accent($color-green-background, #f1f8ec);
+.partnerships__mission-item {
+  flex: 1;
+
+  p {
+    font-size: 1rem;
+    line-height: 1.7;
+    color: $gray-700;
+    font-style: italic;
+    margin: 0;
+  }
 }
 
-.partnerships__card--wanted {
-  @include card-accent($color-secondary, #ecf6fa);
+.partnerships__mission-divider {
+  display: none;
+
+  @include media-breakpoint-up(md) {
+    display: block;
+    width: 1px;
+    align-self: stretch;
+    background: $color-green-background;
+    opacity: 0.3;
+  }
 }
 
-.partnerships__card--offer {
-  @include card-accent($color-warning, #fdf4e9);
+/* ── Values ───────────────────────────────────────────────── */
+
+.partnerships__values {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.partnerships__card--volunteer {
-  @include card-accent($color-green--dark, #ecf4f2);
+.partnerships__value {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.875rem;
+  padding: 0.75rem 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: $gray-700;
+  border-bottom: 1px solid $gray-200;
+
+  &:last-child {
+    border-bottom: none;
+  }
 }
 
-.partnerships__card--events {
-  @include card-accent($color-blue--light, #eef4fb);
-}
-
-.partnerships__card--soon {
-  @include card-accent($color-gray--normal, $color-gray--lighter);
+.partnerships__value-marker {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 0.5rem;
+  border-radius: 50%;
+  background: $color-green-background;
 }
 
 /* ── Team ─────────────────────────────────────────────────── */
-
-.partnerships__team-intro {
-  text-align: center;
-  font-size: 0.9375rem;
-  line-height: 1.7;
-  color: $gray-700;
-  max-width: 640px;
-  margin: 0 auto;
-}
 
 .partnerships__team {
   display: grid;
   grid-template-columns: 1fr;
   gap: 1.25rem;
-  margin-top: 1.5rem;
+  margin-top: 1.25rem;
 
   @include media-breakpoint-up(md) {
     grid-template-columns: repeat(2, 1fr);
@@ -946,17 +588,21 @@ const team = [
   @include media-breakpoint-up(md) {
     padding: 2.5rem;
   }
+}
 
-  > p {
-    font-size: 1rem;
-    line-height: 1.65;
-    color: $gray-700;
-    max-width: 540px;
-    margin: 0 auto 1.5rem;
+.partnerships__cta-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+
+  @include media-breakpoint-up(sm) {
+    flex-direction: row;
+    justify-content: center;
   }
 }
 
-.partnerships__contact-btn {
+.partnerships__email-link {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -965,13 +611,33 @@ const team = [
   color: white;
   background: $color-green-background;
   text-decoration: none;
-  padding: 0.8rem 1.85rem;
+  padding: 0.75rem 1.75rem;
   border: 2px solid $color-green-background;
   transition: all 0.2s ease;
 
   &:hover {
     background: darken($color-green-background, 8%);
     border-color: darken($color-green-background, 8%);
+    color: white;
+    text-decoration: none;
+  }
+}
+
+.partnerships__freegle-linkedin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: #0a66c2;
+  background: white;
+  text-decoration: none;
+  padding: 0.75rem 1.75rem;
+  border: 2px solid #0a66c2;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: #0a66c2;
     color: white;
     text-decoration: none;
   }
