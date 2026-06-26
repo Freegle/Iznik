@@ -2084,6 +2084,113 @@ class ContentCheckTest extends TestCase
         $this->assertStringContainsString('20', $result['detail']);
     }
 
+    public function test_ip_abuse_ignores_rippled_in_groups(): void
+    {
+        // A single post rippled out into many groups must NOT be flagged as IP abuse.
+        // Rippling-out inserts messages_groups rows (rippled_in=1) for the SAME message,
+        // so one member's one post can land in 20-30 groups. Only native (rippled_in=0)
+        // postings should count toward the 20-group threshold.
+        // Discourse https://discourse.ilovefreegle.org/t/not-sure-if-this-is-abuse-or-rippling-out/9833
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 1 native origin-group row.
+        $origin = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $origin->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+            'rippled_in' => 0,
+        ]);
+
+        // 25 rippled-in rows (the same message fanned out by the rippling engine).
+        for ($i = 0; $i < 25; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Approved',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull(
+            $result,
+            'A single post rippled into 25 groups must not trigger IP abuse (rippled_in rows are excluded)'
+        );
+    }
+
+    public function test_ip_abuse_counts_only_native_groups_not_rippled(): void
+    {
+        // When a genuinely multi-posted IP also has rippled-in rows, the count must
+        // reflect only the native postings, so the detail reports the true native total.
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 20 native group rows — genuine multi-group posting, should flag.
+        for ($i = 0; $i < 20; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 0,
+            ]);
+        }
+
+        // 15 rippled-in rows — must NOT inflate the count beyond the 20 native groups.
+        for ($i = 0; $i < 15; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Approved',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, '20 native group postings should still be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
+        $this->assertStringContainsString('20', $result['detail']);
+        $this->assertCount(20, $result['groups'], 'group list must contain only the 20 native groups');
+    }
+
     public function test_ip_abuse_ignores_messages_older_than_31_days(): void
     {
         // V1 queries messages_history which is pruned to 31 days.

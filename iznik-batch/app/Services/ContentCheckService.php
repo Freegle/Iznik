@@ -1409,11 +1409,21 @@ class ContentCheckService
             ];
         }
 
-        // IP used to post to 20+ different groups
+        // IP used to post to 20+ different groups.
+        //
+        // Exclude rippled-in rows (messages_groups.rippled_in = 1). Rippling-out
+        // (ExpandService::rippleIntoNewGroups) inserts one messages_groups row per
+        // nearby intersecting group for the SAME message — a single post can fan
+        // out to 20-30 groups. Those rows share the one origin message's fromip, so
+        // counting them would flag every rippled post as IP abuse (false positive:
+        // one member, one post, many groups). We only want to detect an IP genuinely
+        // used to post to many DIFFERENT groups, i.e. native (non-rippled) postings.
+        // See Discourse https://discourse.ilovefreegle.org/t/not-sure-if-this-is-abuse-or-rippling-out/9833
         $groupCount = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->where('messages.fromip', $fromip)
             ->where('messages.arrival', '>=', $window)
+            ->where('messages_groups.rippled_in', 0)
             ->distinct('messages_groups.groupid')
             ->count();
 
@@ -1422,6 +1432,7 @@ class ContentCheckService
                 ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
                 ->where('messages.fromip', $fromip)
                 ->where('messages.arrival', '>=', $window)
+                ->where('messages_groups.rippled_in', 0)
                 ->select('messages_groups.groupid')
                 ->groupBy('messages_groups.groupid')
                 ->orderByRaw('MAX(messages_groups.arrival) DESC')
