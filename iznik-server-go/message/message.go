@@ -2994,9 +2994,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		var itemID uint64
 		db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
 		if itemID == 0 {
-			// Genuinely new item — insert it.
-			db.Exec("INSERT INTO items (name) VALUES (?)", *req.Item)
-			db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
+			// Genuinely new item — insert it. ON DUPLICATE KEY handles a concurrent/lagged
+			// insert; read the id from the write result, not a read-split-routable SELECT (9832).
+			itemID, _ = database.ExecInsertGetID(db,
+				"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", *req.Item)
 		}
 		// Do NOT update items.name when found by case-insensitive match.
 		// items is a shared canonical dictionary; normalising the casing from a single
@@ -3503,12 +3504,16 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	// user and defeated UNIQUE KEY (id, series, token).
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+	// Read the new session id from the INSERT's LastInsertId on the write connection. A
+	// "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the read/write
+	// split and can return a stale/0 id (Discourse 9832 class), embedding a wrong sessionid in
+	// the JWT below.
+	sessionID, err := database.ExecInsertGetID(db,
+		"INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
 		newUserID, series, token)
-
-	// Use token to find our specific session (avoids race with concurrent requests).
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? AND token = ? ORDER BY id DESC LIMIT 1", newUserID, token).Scan(&sessionID)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("failed to create session: %w", err)
+	}
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -3705,9 +3710,10 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create item record.
 	if req.Item != "" {
-		db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
-		var itemID uint64
-		db.Raw("SELECT id FROM items WHERE name = ? LIMIT 1", req.Item).Scan(&itemID)
+		// ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id) already lets the write report the id for
+		// both new and existing rows; take it from the result, not a read-split-routable SELECT.
+		itemID, _ := database.ExecInsertGetID(db,
+			"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
 		if itemID > 0 {
 			db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", newMsgID, itemID)
 		}
