@@ -462,6 +462,41 @@
           </b-tr>
         </b-tbody>
       </b-table-simple>
+
+      <!-- Earned-reach review gate (dark unless RIPPLE_EARNED_REACH_ENABLED) -->
+      <h5 class="section-h">Review gate — auto-published post holds</h5>
+      <p class="text-muted small mb-2">
+        When the earned-reach gate is on, an auto-published post ripples into
+        more communities only as review accrues (weight must reach
+        2&times; the number of communities it has reached); below that it
+        pauses. These show how many posts are gated now and how much total
+        delay the gate has added over the selected period.
+      </p>
+      <b-table-simple v-if="reviewDelay" hover responsive small>
+        <b-tbody>
+          <b-tr>
+            <b-td class="text-muted small fw-semibold">
+              Posts awaiting review now
+            </b-td>
+            <b-td>{{ reviewDelay.awaiting_count }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-td class="text-muted small">Average current wait</b-td>
+            <b-td>{{ formatAwaitSeconds(reviewDelay.median_await_seconds) }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-td class="text-muted small">Previously held, now resumed</b-td>
+            <b-td>{{ reviewDelay.resumed_count }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-td class="text-muted small">
+              Post-hours delayed (selected period)
+            </b-td>
+            <b-td>{{ (reviewDelay.post_hours_delayed || 0).toFixed(1) }}</b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
+      <p v-else class="text-muted small">No review gate data yet.</p>
     </div>
     <p v-else class="text-muted small">No data yet.</p>
   </div>
@@ -532,6 +567,8 @@ const metricsError = ref(null)
 const metricsDegraded = ref([])
 // The start|end the loaded metrics sections belong to, so a density change doesn't refetch them.
 let metricsWindow = null
+// Earned-reach review gate: how many auto-published posts are held now + total delay over the period.
+const reviewDelay = ref(null)
 
 const stratumLabel = computed(() =>
   stratum.value === 'all' ? 'all-density' : stratum.value
@@ -833,6 +870,14 @@ function stopLoadProgress() {
 
 onBeforeUnmount(() => clearInterval(loadTimer))
 
+// Format a seconds value as a human-readable duration for the review-gate wait display.
+function formatAwaitSeconds(secs) {
+  if (!secs || secs <= 0) return '—'
+  if (secs < 60) return '< 1 min'
+  if (secs < 3600) return `${Math.round(secs / 60)} min`
+  return `${(secs / 3600).toFixed(1)} h`
+}
+
 async function fetchAnalytics() {
   loading.value = true
   error.value = null
@@ -891,6 +936,7 @@ async function loadMetrics() {
     hotspots.value = metrics?.hotspots || []
     attributionCaptureFrom.value = metrics?.attribution_capture_from || ''
     heldBySource.value = metrics?.held_reply_by_source || []
+    reviewDelay.value = metrics?.review_delay || null
     metricsDegraded.value = metrics?.degraded || []
   } catch (e) {
     if (isStale()) return
@@ -967,7 +1013,13 @@ function onFilterFetch({ start, end }) {
   fetchAnalytics()
 }
 
-defineExpose({ fetchAnalytics, stratum, setStratum, onFilterFetch })
+defineExpose({
+  fetchAnalytics,
+  stratum,
+  setStratum,
+  onFilterFetch,
+  reviewDelay,
+})
 </script>
 
 <style scoped lang="scss">
