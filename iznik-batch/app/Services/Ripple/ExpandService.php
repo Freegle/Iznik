@@ -69,10 +69,16 @@ class ExpandService
         //    their origin group, withdrawn, expired or deleted (Taken/Received stay in
         //    messages_spatial and are excluded): drop reach AND pull every rippled-in copy,
         //    removing now-purposeless ripple-joined memberships.
-        $this->removeStaleAndRetract($dryRun, $stats, $onlyMsgid, $withinPolyWkt);
+        // Retraction is deliberately NOT area-scoped (only --msgid restricts it). A rippled_in
+        // copy is a committed artifact whose cleanup must complete even after the post's origin
+        // group leaves the trial - at which point its origin drops out of $withinPolyWkt. Area-
+        // scoping the retraction stranded copies in receiving groups when a group was removed
+        // from the experiment (poster had already left, but the post stayed live there). See
+        // ExpandServiceTest::test_*_retraction_*_not_gated_by_current_area_scope.
+        $this->removeStaleAndRetract($dryRun, $stats, $onlyMsgid);
         // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
         //     leave removes the poster's post from that group (not just their membership).
-        $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid, $withinPolyWkt);
+        $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid);
 
         // 2. Initialise reach for posts new to messages_spatial.
         $this->initialiseNew($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
@@ -92,11 +98,12 @@ class ExpandService
      * stops further expansion and lets ripple:release-replies treat the post as gone, releasing
      * any held replies) and retract every rippled-in copy (see retractRippledCopiesForRemovedPost).
      *
-     * Scope-aware: a scoped run restricts removal to the in-scope subset (onlyMsgid, or reach
-     * origin within withinPolyWkt — the same filter advanceDue uses), so the group experiment
-     * retracts correctly. $stats['removed'] keeps its meaning: reach rows dropped.
+     * Scope: only --msgid restricts this (controlled single-post testing). It is intentionally
+     * NOT area-scoped - retracting an already-rippled copy must complete regardless of whether the
+     * post's origin is still inside the current trial polygon, otherwise copies are stranded in
+     * receiving groups when a group leaves the experiment. $stats['removed'] = reach rows dropped.
      */
-    private function removeStaleAndRetract(bool $dryRun, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
+    private function removeStaleAndRetract(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
         try {
             $scopeSql = '';
@@ -104,9 +111,6 @@ class ExpandService
             if ($onlyMsgid !== null) {
                 $scopeSql = ' AND mr.msgid = ?';
                 $params[] = $onlyMsgid;
-            } elseif ($withinPolyWkt !== null) {
-                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(mr.lng, mr.lat), ' . self::SRID . '))';
-                $params[] = $withinPolyWkt;
             }
 
             $stale = DB::select(
@@ -826,19 +830,18 @@ class ExpandService
      * rows); the membership re-join and any future re-ripple are blocked by the same
      * most-recent-join-wins rule. Best-effort: never breaks the run.
      */
-    private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
+    private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
         try {
-            // Scope-aware so this runs under a scoped (group-experiment) run too: restrict to the
-            // chosen post, or to posts whose origin point falls inside the area polygon.
+            // Scope: only --msgid restricts this (controlled single-post testing). Deliberately NOT
+            // area-scoped - a poster who left a rippled-into group must have their post pulled even
+            // after the post's origin group leaves the trial (its origin then falls outside the
+            // current area), otherwise the copy is stranded in a group they explicitly opted out of.
             $scopeSql = '';
             $params = [];
             if ($onlyMsgid !== null) {
                 $scopeSql = ' AND mg.msgid = ?';
                 $params[] = $onlyMsgid;
-            } elseif ($withinPolyWkt !== null) {
-                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(m.lng, m.lat), ' . self::SRID . '))';
-                $params[] = $withinPolyWkt;
             }
 
             $rows = DB::select(
