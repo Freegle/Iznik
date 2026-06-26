@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Ripple;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -83,5 +84,93 @@ class ExpandCommandTest extends TestCase
         ])
             ->expectsOutputToContain('union of 2 area polygon(s)')
             ->assertExitCode(0);
+    }
+
+    /**
+     * Single-instance guard: the scheduler's withoutOverlapping() is unreliable for
+     * runInBackground() jobs (the overlap mutex is freed when the foreground tick forks), so on
+     * 2026-06-26 dozens of ripple:expand runs piled up and starved the serial worker with
+     * messages_groups/logs lock waits. The command now takes a DB-backed Cache lock and exits
+     * cleanly if another run holds it. We prove it SKIPPED the body by asserting publishTrialGroups
+     * (which only runs inside the guarded run()) never wrote the trial-group config row.
+     */
+    public function test_second_run_exits_without_working_while_the_lock_is_held(): void
+    {
+        Http::fake();
+        config(['freegle.ripple.within_groups' => ['111', '222']]);
+        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+
+        $held = Cache::lock('ripple:expand:run', 30);
+        $this->assertTrue($held->get(), 'precondition: acquire the lock as another run');
+
+        try {
+            $this->artisan('ripple:expand', ['--limit' => 1])
+                ->expectsOutputToContain('Another ripple:expand run is in progress')
+                ->assertExitCode(0);
+
+            $this->assertNull(
+                DB::table('config')->where('key', 'ripple.within_groups')->value('value'),
+                'a locked-out run must not reach publishTrialGroups (body was skipped)'
+            );
+        } finally {
+            $held->release();
+        }
+
+        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+    }
+
+    /**
+     * A normal run releases the lock when it finishes, so the next scheduled run can acquire it.
+     */
+    public function test_normal_run_releases_the_lock_when_it_finishes(): void
+    {
+        Http::fake();
+
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
+
+        $after = Cache::lock('ripple:expand:run', 30);
+        $this->assertTrue(
+            $after->get(),
+            'lock must be free after a normal run completes (released in finally)'
+        );
+        $after->release();
+    }
+
+    /**
+     * Controlled one-offs are exempt from the single-instance lock: an operator must be able to run
+     * --dry-run / --msgid alongside the scheduled cron (they do no bulk expansion). With the lock
+     * held, both still execute their body (proved by their run-only output lines).
+     */
+    public function test_dry_run_is_exempt_from_the_single_instance_lock(): void
+    {
+        Http::fake();
+
+        $held = Cache::lock('ripple:expand:run', 30);
+        $this->assertTrue($held->get());
+
+        try {
+            $this->artisan('ripple:expand', ['--dry-run' => true, '--limit' => 1])
+                ->expectsOutputToContain('DRY RUN')
+                ->expectsOutputToContain('Initialised:')
+                ->assertExitCode(0);
+        } finally {
+            $held->release();
+        }
+    }
+
+    public function test_msgid_run_is_exempt_from_the_single_instance_lock(): void
+    {
+        Http::fake();
+
+        $held = Cache::lock('ripple:expand:run', 30);
+        $this->assertTrue($held->get());
+
+        try {
+            $this->artisan('ripple:expand', ['--msgid' => 999999])
+                ->expectsOutputToContain('Restricting run to message ID: 999999')
+                ->assertExitCode(0);
+        } finally {
+            $held->release();
+        }
     }
 }
