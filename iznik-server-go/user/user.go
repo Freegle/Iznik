@@ -446,11 +446,21 @@ func InventName(db *gorm.DB, id uint64) string {
 	return name
 }
 
+// activeModSettingsSQL is a SQL predicate over a memberships.settings JSON column that mirrors the
+// isActiveModForGroup Go helper used for the work-count badges: a mod is "active" (not stepped back
+// to backup) unless settings.active=0; when the active key is ABSENT the legacy settings.showmessages
+// flag governs (showmessages=0 => backup); a NULL/empty settings, or both keys absent, means active.
+// Shared by GetActiveModGroupIDs and IsActiveModOfGroup so the work queues (Edit/Pending/Spam) and
+// their per-group access checks agree, and so a backup mod never sees a backup group's queue.
+const activeModSettingsSQL = "(settings IS NULL " +
+	"OR (JSON_EXTRACT(settings, '$.active') IS NOT NULL AND JSON_EXTRACT(settings, '$.active') != 0) " +
+	"OR (JSON_EXTRACT(settings, '$.active') IS NULL AND (JSON_EXTRACT(settings, '$.showmessages') IS NULL OR JSON_EXTRACT(settings, '$.showmessages') != 0)))"
+
 func GetActiveModGroupIDs(userid uint64) []uint64 {
 	db := database.DBConn
 	var groupIDs []uint64
 	result := db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? "+
-		"AND (settings IS NULL OR JSON_EXTRACT(settings, '$.active') IS NULL OR JSON_EXTRACT(settings, '$.active') != 0)",
+		"AND "+activeModSettingsSQL,
 		userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Pluck("groupid", &groupIDs)
 	if result.Error != nil {
 		log.Printf("Failed to get active mod group IDs for user %d: %v", userid, result.Error)

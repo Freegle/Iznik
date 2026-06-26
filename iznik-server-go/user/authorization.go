@@ -19,6 +19,31 @@ func IsModOfGroup(myid uint64, groupid uint64) bool {
 	return auth.IsModOfGroup(myid, groupid)
 }
 
+// IsActiveModOfGroup reports whether myid is an ACTIVE moderator/owner of the group. Admin/Support
+// always qualify; otherwise the membership must be Moderator/Owner AND the mod must not have stepped
+// back to backup (activeModSettingsSQL: settings.active wins, legacy settings.showmessages as
+// fallback). This is stricter than IsModOfGroup, which checks role only - it is used to keep a
+// group's work queues (Pending/Spam/Edit) hidden from backup mods even when an explicit groupid is
+// requested, matching the groupid=0 path (GetActiveModGroupIDs) and the work-count badges.
+func IsActiveModOfGroup(myid uint64, groupid uint64) bool {
+	if auth.IsAdminOrSupport(myid) {
+		return true
+	}
+	if groupid == 0 {
+		return false
+	}
+	db := database.DBConn
+	var count int64
+	result := db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?) AND collection = ? "+
+		"AND "+activeModSettingsSQL,
+		myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&count)
+	if result.Error != nil {
+		log.Printf("Failed to check active mod role for user %d group %d: %v", myid, groupid, result.Error)
+		return false
+	}
+	return count > 0
+}
+
 // IsModOfUser checks if myid is Admin/Support or a Moderator/Owner of any
 // group that targetid also belongs to (including groups the target is banned from).
 func IsModOfUser(myid, targetid uint64) bool {

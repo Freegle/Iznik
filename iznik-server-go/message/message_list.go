@@ -107,6 +107,12 @@ func ListMessages(c *fiber.Ctx) error {
 			if !user.IsModOfGroup(myid, groupid) {
 				return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this group")
 			}
+			// Backup mods (settings.active=0, or legacy showmessages=0) have stepped back and must
+			// not see a group's work queue (Pending/Spam/Edit/Rejected) even via an explicit
+			// groupid - mirrors the groupid=0 path and the work-count badges.
+			if !user.IsActiveModOfGroup(myid, groupid) {
+				return c.JSON(ListMessagesResponse{Messages: []ListMessageItem{}})
+			}
 		}
 		groupIDs = []uint64{groupid}
 	}
@@ -419,6 +425,15 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		if collection != utils.COLLECTION_APPROVED {
 			if !user.IsModOfGroup(myid, groupid) {
 				return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this group")
+			}
+			// Work queues (Pending/Spam/Edit/Rejected) belong to ACTIVE mods only. A backup mod
+			// (settings.active=0, or legacy showmessages=0) has stepped back and must not see this
+			// group's queue even when an explicit groupid is requested - e.g. the ModTools group
+			// selector re-sending a remembered backup group's id. Mirrors the groupid=0 path
+			// (GetActiveModGroupIDs) and the work-count badges; return an empty list (not 403) so
+			// the UI degrades gracefully if it re-selects a now-backup group.
+			if !user.IsActiveModOfGroup(myid, groupid) {
+				return c.JSON(fiber.Map{"messages": []uint64{}})
 			}
 		}
 		groupIDs = []uint64{groupid}
