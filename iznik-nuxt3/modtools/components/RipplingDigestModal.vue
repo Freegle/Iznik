@@ -47,9 +47,14 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
     memberLat !== null && memberLat !== undefined
       ? crowFliesKm(memberLat, memberLng, p.lat, p.lng)
       : null
+  // Show distance in MILES, formatted exactly like the real email
+  // (UnifiedDigest: "< 1 mile" else "N miles" rounded).
   const distStr =
     kmStraight !== null
-      ? `${kmStraight.toFixed(1)} km`
+      ? (() => {
+          const miles = kmStraight * 0.621371
+          return miles < 1 ? '< 1 mile' : `${Math.round(miles)} miles`
+        })()
       : `${p.drive_min.toFixed(0)} min in reach`
   const when = formatTimeAgo(p.arrival)
   // Cross-posted items carry every group they landed in; mirror the real
@@ -211,7 +216,7 @@ function openPost(p, rank, memberLat, memberLng) {
       : null
   const distStr =
     kmStraight !== null
-      ? `${kmStraight.toFixed(1)} km as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
+      ? `${(kmStraight * 0.621371).toFixed(1)} miles as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
       : `${p.drive_min.toFixed(0)} min in reach`
   bodyHTML.value = `
     <div style="padding:16px;font-size:13px;line-height:1.5">
