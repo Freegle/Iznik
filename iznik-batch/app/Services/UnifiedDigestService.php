@@ -362,11 +362,18 @@ class UnifiedDigestService
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    // Gated by the master activation switch: this reach-coordination ledger is only
-                    // meaningful once rippling is on (the expander mailer that reads it is inert while
-                    // off), so we don't touch the new table at all in the dark state. The immediate
-                    // mail itself is unaffected - it still sends.
-                    if ($spooled && config('freegle.ripple.enabled')) {
+                    // Record this send in the reach-coordination ledger whenever rippling is active
+                    // in EITHER mode — the global master switch OR the scoped within-group experiment.
+                    // The reach mailer (mailNewlyReachedForPost) excludes anyone already in this ledger;
+                    // if the immediate (cursor) path doesn't record here, a rippled post gets mailed
+                    // twice — immediate-on-arrival AND again by the reach mailer. Gating on
+                    // ripple.enabled alone missed the scoped experiment (within_groups), which ran with
+                    // the global flag off and double-mailed members (~8k dup emails/day; Edinburgh
+                    // "Bird cherry sapling", 2026-06-27). When rippling is fully dark (no global flag
+                    // and no within_groups) the reach mailer self-idles, so we skip the write then.
+                    $ripplingActive = config('freegle.ripple.enabled')
+                        || !empty(config('freegle.ripple.within_groups'));
+                    if ($spooled && $ripplingActive) {
                         // Coordinate with the expander-driven reach mailer: record this send so
                         // mailNewlyReachedForPost never re-mails the same member once the post's
                         // reach row appears (the post is cursor-mailed on arrival, before the reach
