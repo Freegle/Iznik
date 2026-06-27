@@ -3,9 +3,11 @@ package test
 import (
 	json2 "encoding/json"
 	"fmt"
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -71,4 +73,42 @@ func TestJobClick(t *testing.T) {
 	// Test with missing job ID - still returns success (matches PHP behavior)
 	resp, _ = getApp().Test(httptest.NewRequest("POST", "/api/job", nil))
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+// TestJobClick_JSONBody guards the transport the web app actually uses: it POSTs
+// the click as a JSON body (Content-Type: application/json), which Fiber's
+// FormValue does not parse. Before the JSON-body branch, every web click was
+// stored with jobid=0/link='', making logs_jobs useless for click attribution.
+func TestJobClick_JSONBody(t *testing.T) {
+	jobID := CreateTestJob(t, 52.5833189, -2.0455619)
+	link := fmt.Sprintf("https://example.com/job/%d?utm=jsonbody", jobID)
+
+	body := fmt.Sprintf(`{"id":%d,"link":%q}`, jobID, link)
+	req := httptest.NewRequest("POST", "/api/job", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The id and link from the JSON body must be persisted, not dropped.
+	var gotID uint64
+	var gotLink string
+	database.DBConn.Raw("SELECT jobid, link FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID).Row().Scan(&gotID, &gotLink)
+	assert.Equal(t, jobID, gotID)
+	assert.Equal(t, link, gotLink)
+}
+
+// TestJobClick_ContentFree guards the bot/scanner case: a POST /job with neither an id nor a
+// link must record NOTHING (it returns success but writes no row), so logs_jobs is not flooded
+// with jobid=0/link='' noise that buries the genuine clicks.
+func TestJobClick_ContentFree(t *testing.T) {
+	var before int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE (jobid IS NULL OR jobid = 0) AND (link IS NULL OR link = '')").Row().Scan(&before)
+
+	resp, _ := getApp().Test(httptest.NewRequest("POST", "/api/job", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var after int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE (jobid IS NULL OR jobid = 0) AND (link IS NULL OR link = '')").Row().Scan(&after)
+	assert.Equal(t, before, after, "content-free POST /job must not insert a logs_jobs row")
 }

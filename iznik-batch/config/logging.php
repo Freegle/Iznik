@@ -54,7 +54,7 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', (string) env('LOG_STACK', 'single')),
+            'channels' => explode(',', (string) env('LOG_STACK', 'daily')),
             'ignore_exceptions' => false,
         ],
 
@@ -69,7 +69,7 @@ return [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
-            'days' => env('LOG_DAILY_DAYS', 14),
+            'days' => env('LOG_DAILY_DAYS', 7),
             'replace_placeholders' => true,
         ],
 
@@ -129,10 +129,14 @@ return [
 
         // Incoming mail processing logs
         // Structured for Loki ingestion
+        // 'daily' rotates into incoming-mail-YYYY-MM-DD.log and prunes to LOG_DAILY_DAYS.
+        // (Loki ingests the separate /var/log/freegle/incoming_mail.log written by
+        // LokiService, not this file, so rotating here does not affect ingestion.)
         'incoming_mail' => [
-            'driver' => 'single',
+            'driver' => 'daily',
             'path' => storage_path('logs/incoming-mail.log'),
             'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('LOG_DAILY_DAYS', 7),
             'replace_placeholders' => true,
         ],
 

@@ -56,21 +56,45 @@ class Job extends Model
         }
 
         $results = static::select('id', 'title', 'canonical_title', 'location', 'company', 'city', 'url', 'cpc', 'clickability')
+            // Expected value (cpc * clickability) discounted by a mild freshness
+            // factor, matching the public jobs page (Go job.GetJobs) so digest and
+            // web agree on ordering. Older WhatJobs postings are likelier already
+            // filled/closed (so a click redirects to a different job and doesn't
+            // convert), so decay the score with the posting age: factor 1.0 when
+            // fresh, floored at 0.5 by ~7 days. posted_at NULL -> treated as fresh.
+            // Selected as `score` so the variety step below can weight by it.
+            ->selectRaw('cpc * clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), posted_at), 0) * 0.07) AS score')
             ->whereIn('id', $ids)
             ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
             ->where('visible', 1)
-            // Rank by expected value (cpc * clickability), matching the public
-            // jobs page (Go job.GetJobs) so digest and web agree on ordering.
-            ->orderByRaw('cpc * clickability DESC, id ASC')
+            ->orderByRaw('score DESC, id ASC')
             ->get();
 
-        // Randomize the candidate pool so consecutive immediate-mode digests
-        // (or chat notifications) to the same user don't show identical job
-        // rows every time. The pool is already CPC-biased, so the picks
-        // remain weighted toward higher-CPC ads — we're just breaking the
-        // exact top-N determinism.
+        // Dedup of duplicate WhatJobs postings (one recruitment ad spammed to many
+        // towns as separate rows — Discourse 9363) is done upstream in the spatial
+        // KNN server, which returns the nearest distinct (company, title), so the
+        // candidate ids here are already distinct.
+
+        // Vary the picks across consecutive sends so the same user doesn't see
+        // identical job rows every immediate-mode digest / chat notification —
+        // but WEIGHTED by score, not uniformly. A plain shuffle() threw away the
+        // score-DESC ordering above and took a uniform random sample of the
+        // (proximity-selected) pool, which is why clicked ads averaged a LOWER
+        // cpc than the pool: the revenue ranking was computed then discarded.
+        //
+        // Weighted reservoir sampling (Efraimidis-Spirakis): each row gets key
+        // u^(1/score) with u uniform in (0,1]; taking the highest keys draws a
+        // sample without replacement in which higher-score rows are likelier to
+        // come first. So variety is preserved while the picks lean to higher
+        // expected revenue. Only applied when the pool exceeds the limit (below
+        // it there's nothing to choose, so score-DESC order stands — keeping the
+        // deterministic ordering the sub-limit tests assert).
         if ($results->count() > $limit) {
-            $results = $results->shuffle();
+            $results = $results->sortByDesc(function ($job) {
+                $score = max((float) $job->score, 1e-6);
+                $u = (mt_rand() + 1) / (mt_getrandmax() + 2); // uniform in (0,1)
+                return pow($u, 1.0 / $score);
+            })->values();
         }
 
         // Add images to jobs using the pre-computed canonical_title column.

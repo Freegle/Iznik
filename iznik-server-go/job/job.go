@@ -2,6 +2,7 @@ package job
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
@@ -120,22 +121,42 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 		CPC          float64        `gorm:"column:cpc"`
 		Clickability float64        `gorm:"column:clickability"`
 		Externaluid  sql.NullString `gorm:"column:externaluid"`
+		DistKm       float64        `gorm:"column:dist_km"`
 	}
+
+	// The KNN distance is a planar degree value (the geometry stores lat/lng tagged
+	// SRID 3857), which the client mis-reads as km and shows as "Nearby" for
+	// everything. Return the real great-circle km via ST_Distance_Sphere on the
+	// geometry centroid so the distance / "Nearby" label is honest. Dedup of the
+	// duplicate WhatJobs postings (one recruitment ad spammed to thousands of towns
+	// as separate rows — Discourse 9363) is done upstream in the spatial KNN server,
+	// which returns the nearest distinct (company, title), so the ids arriving here
+	// are already distinct and we just enrich them.
+	distExpr := "ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry))))"
+	args := []any{lng, lat}
+	args = append(args, categoryArgs...)
 
 	db.Raw(fmt.Sprintf(
 		"SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, "+
-			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid "+
+			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, "+
+			distExpr+" / 1000 AS dist_km "+
 			"FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
 			"WHERE jobs.id IN (%s) AND %s AND %s "+
-			"ORDER BY jobs.cpc * jobs.clickability DESC, jobs.id ASC LIMIT %d",
+			// Rank by expected value (cpc * clickability) discounted by a mild
+			// freshness factor: older WhatJobs postings are likelier already
+			// filled/closed, so a click redirects to a different job and doesn't
+			// convert. Decay the score with posting age (floored at 0.5 by ~7
+			// days); posted_at NULL -> treated as fresh. Kept identical to the
+			// digest ordering in iznik-batch Job::nearLocation.
+			"ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT %d",
 		placeholders, categoryClause, areaClause, JOBS_LIMIT,
-	), categoryArgs...).Scan(&rows)
+	), args...).Scan(&rows)
 
 	ret := make([]Job, 0, len(rows))
 	for _, r := range rows {
 		job := Job{
 			ID:           r.ID,
-			Dist:         distByID[int64(r.ID)],
+			Dist:         r.DistKm,
 			Url:          r.Url,
 			Title:        r.Title,
 			Location:     r.Location,
@@ -186,7 +207,10 @@ func GetJob(c *fiber.Ctx) error {
 
 // RecordJobClick records a job click for analytics
 func RecordJobClick(c *fiber.Ctx) error {
-	// Check query params first, then form body.
+	// Accept the click parameters from any of the transports our clients use:
+	// query string and form body (the digest email links), and a JSON body
+	// (the web app posts Content-Type: application/json, which FormValue does
+	// not parse - so without this branch every web click logged id=0/link='').
 	jobID := c.Query("id")
 	if jobID == "" {
 		jobID = c.FormValue("id")
@@ -195,6 +219,28 @@ func RecordJobClick(c *fiber.Ctx) error {
 	link := c.Query("link")
 	if link == "" {
 		link = c.FormValue("link")
+	}
+
+	if jobID == "" && link == "" {
+		var body struct {
+			ID   json.Number `json:"id"`
+			Link string      `json:"link"`
+		}
+		if err := c.BodyParser(&body); err == nil {
+			jobID = body.ID.String()
+			link = body.Link
+		}
+	}
+
+	// Drop content-free hits. Bots/scanners POST /job with neither an id nor a link, which
+	// otherwise floods logs_jobs with jobid=0/link='' rows that bury the genuine clicks. A real
+	// click always carries at least a job id (web app) or a link (digest email link), so record
+	// nothing when both are absent - but still return success so the caller sees no error.
+	if (jobID == "" || jobID == "0") && link == "" {
+		return c.JSON(fiber.Map{
+			"ret":    0,
+			"status": "Success",
+		})
 	}
 
 	// Get user ID from context if authenticated (optional)

@@ -118,4 +118,87 @@ class NewsfeedModNotifMailTest extends TestCase
             '"View all chitchat" button must link to ' . $userSite . '/chitchat'
         );
     }
+
+    public function test_preheader_contains_count_and_post_preview(): void
+    {
+        // The mj-preview should include both the count (so moderators know how many
+        // posts await) and a snippet from the first post so they can triage at a glance.
+        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
+
+        $html = view('emails.mjml.newsfeed.mod-notif', [
+            'posts'    => [
+                [
+                    'id'         => 42,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => 'Anyone know a good plumber nearby?',
+                    'added'      => '2026-05-22 10:30:00',
+                    'userName'   => 'Jane Plumber',
+                    'userAvatar' => null,
+                ],
+            ],
+            'count'    => 1,
+            'userSite' => $userSite,
+            'email'    => 'mod@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('1 chitchat post from your members', $html);
+        $this->assertStringContainsString('Anyone know a good plumber nearby?', $html);
+    }
+
+    public function test_preheader_pluralises_count_correctly(): void
+    {
+        // Two or more posts should produce "posts" (plural) in the preview.
+        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
+
+        $html = view('emails.mjml.newsfeed.mod-notif', [
+            'posts'    => [
+                [
+                    'id'         => 1,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => 'First post preview text here',
+                    'added'      => '2026-05-22 10:00:00',
+                    'userName'   => 'Alice',
+                    'userAvatar' => null,
+                ],
+                [
+                    'id'         => 2,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => 'Second post preview text here',
+                    'added'      => '2026-05-22 11:00:00',
+                    'userName'   => 'Bob',
+                    'userAvatar' => null,
+                ],
+            ],
+            'count'    => 2,
+            'userSite' => $userSite,
+            'email'    => 'mod@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('2 chitchat posts from your members', $html);
+    }
+
+    public function test_preheader_falls_back_to_username_when_no_post_preview(): void
+    {
+        // When no preview text is available, the preheader should fall back to
+        // "<userName> posted" so the inbox line is still informative.
+        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
+
+        $html = view('emails.mjml.newsfeed.mod-notif', [
+            'posts'    => [
+                [
+                    'id'         => 5,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => '',
+                    'added'      => '2026-05-22 09:00:00',
+                    'userName'   => 'Maria Garcia',
+                    'userAvatar' => null,
+                ],
+            ],
+            'count'    => 1,
+            'userSite' => $userSite,
+            'email'    => 'mod@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('Maria Garcia posted', $html);
+    }
 }

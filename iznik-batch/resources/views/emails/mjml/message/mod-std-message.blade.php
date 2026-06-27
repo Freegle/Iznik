@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'Message from ' . $groupName . ' volunteers'])
+    @include('emails.mjml.partials.head', ['preview' => \Illuminate\Support\Str::limit(strip_tags($body), 87)])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

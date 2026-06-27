@@ -35,4 +35,15 @@ class DigestStyle
      * renderings so the cut-off can never drift between the two variants.
      */
     public const SUMMARY_VISIBLE_LINES = 3;
+
+    /**
+     * Maximum number of live posts carried in the body of a daily digest, across
+     * ALL MIME parts (HTML, plain text, AMP). A dense-area daily digest can run to
+     * hundreds of posts; without a cap the HTML balloons past Gmail's ~102KB clip
+     * (silently truncating mid-post) and the AMP part exceeds AMP4Email's 200KB
+     * hard limit. When the cap bites, each part shows an "in this digest" intro
+     * pointing the reader to the website for the remaining posts. Originally an
+     * AMP-only guard; now shared so all three parts cut off at the same place.
+     */
+    public const DIGEST_POST_CAP = 65;
 }

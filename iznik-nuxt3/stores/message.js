@@ -297,8 +297,8 @@ export const useMessageStore = defineStore({
 
       return messages || []
     },
-    async view(id) {
-      await api(this.config).message.view(id)
+    async view(id, source) {
+      await api(this.config).message.view(id, source)
     },
     async update(params) {
       const authStore = useAuthStore()
@@ -563,6 +563,10 @@ export const useMessageStore = defineStore({
       const message = await api(this.config).message.fetchMT(params, logError)
       if (message && !message.subject) message.subject = ''
       return message
+    },
+    // Actual rippling-out progress of a post, for the moderation reach map.
+    async fetchReach(id, logError = true) {
+      return await api(this.config).message.reach(id, logError)
     },
     async updateMT(params) {
       // Rely on refresh elsewhere

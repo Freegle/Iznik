@@ -404,7 +404,7 @@ function gtmRegister() {
 }
 
 function loginNative(e) {
-  loginType.value = 'Freegle'
+  loginType.value = 'email/password'
 
   if (signUp.value) {
     api.bandit.chosen({

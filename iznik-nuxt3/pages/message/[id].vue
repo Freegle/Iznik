@@ -103,6 +103,7 @@
             :id="id"
             class="mt-3"
             :start-expanded="true"
+            :view-source="$route.query.src || 'message_page'"
             hide-close
             record-view
             @not-found="error = true"

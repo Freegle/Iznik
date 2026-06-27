@@ -178,6 +178,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             );
             $card['messageUrl'] = $viewUrl;
             $card['fallbackReplyUrl'] = $viewUrl;
+            // Photo/title links read $post['viewUrl']; point them at the same
+            // completed-post URL so all three links on a came-and-went card are
+            // consistent (and none carry ?reply=1).
+            $card['viewUrl'] = $viewUrl;
 
             return $card;
         });
@@ -456,9 +460,21 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $immediateIsOffer = $immediatePost ? ($immediatePost['type'] === 'Offer') : false;
         $immediateAccentColor = $immediateIsOffer ? '#3c763d' : '#4895DD';
 
+        // Cap the live-post list carried by the HTML and plain-text MIME parts to the same
+        // DIGEST_POST_CAP as AMP. A dense-area daily digest can otherwise list hundreds of
+        // posts and get clipped by Gmail (~102KB) mid-post with no graceful overflow. When the
+        // cap bites, the template shows an intro under "In this digest" sending the reader to
+        // the website for the rest. (Immediate digests are single-post, so this never bites.)
+        $postCap = DigestStyle::DIGEST_POST_CAP;
+        $liveMorePosts = max(0, $this->preparedPosts->count() - $postCap);
+        $livePosts = $liveMorePosts > 0
+            ? $this->preparedPosts->take($postCap)->values()
+            : $this->preparedPosts;
+
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
-            'posts' => $this->preparedPosts,
+            'posts' => $livePosts,
+            'morePosts' => $liveMorePosts,
             'completedPosts' => $this->preparedCompletedPosts,
             'post' => $immediatePost,
             'isOffer' => $immediateIsOffer,
@@ -537,7 +553,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // shrinks all three) and surface an "and N more — browse all" link.
             // The HTML and text parts still carry EVERY post; this cap is AMP
             // only. applyAmpToMessage()'s 199KB guard remains the final backstop.
-            $ampCap = 65;
+            $ampCap = DigestStyle::DIGEST_POST_CAP;
             $ampMorePosts = max(0, $ampPosts->count() - $ampCap);
             if ($ampMorePosts > 0) {
                 $ampPosts = $ampPosts->take($ampCap)->values();
@@ -680,10 +696,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // with the title and a parenthetical post count. Keep the item-name
         // teaser after it since it lifts open rates and mirrors the immediate
         // subject's "[Group] Item" shape.
+        //
+        // The body caps the listed posts at DIGEST_POST_CAP (a dense-area daily
+        // digest would otherwise be clipped by Gmail mid-post). When the count
+        // exceeds that cap the parenthetical overstates what's actually in the
+        // email, so drop it and just say "What's New" — below the cap the count
+        // still matches the body.
         $count = $this->posts->count();
         $itemNames = $this->getItemNamesForSubject();
 
-        $subject = "What's New ({$count} post" . ($count === 1 ? '' : 's') . ')';
+        $subject = $count > DigestStyle::DIGEST_POST_CAP
+            ? "What's New"
+            : "What's New ({$count} post" . ($count === 1 ? '' : 's') . ')';
 
         if ($itemNames) {
             $subject .= " - {$itemNames}";
@@ -916,6 +940,21 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $this->userSite . '/message/' . $message->id
         );
 
+        // View-only card link: clicking a post's PHOTO or TITLE means "show me
+        // the item", not "reply", so it points at the message page WITHOUT
+        // ?reply=1. Only the Reply button uses $messageUrl (?reply=1); without
+        // this split, clicking the photo wrongly auto-opened the reply compose
+        // pane on arrival. Reuses the 's' compact type (handler reconstructs
+        // /message/{id} with no ?reply=1) but carries its own "v{index}" tag so
+        // card photo/title clicks stay distinguishable in click tracking from
+        // summary-index clicks ("y") and reply clicks ("p").
+        $viewUrl = $this->trackedResourceUrl(
+            's',
+            (int) $message->id,
+            "v{$index}",
+            $this->userSite . '/message/' . $message->id
+        );
+
         // Format arrival time for display in UK local time (BST in summer, GMT in winter).
         // Always include minutes (e.g. "Sun 1 Mar, 11:00am") so the time
         // shape is consistent — V1 single.html-style "Mon, 25th May 9:00am".
@@ -978,8 +1017,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             'messageText' => $messageText,
             'messageUrl' => $messageUrl,
             'summaryUrl' => $summaryUrl,
-            // Both templates' card links (image href, title, Reply fallback)
-            // use these keys; the live path's messageUrl IS the reply URL.
+            // Photo + title links use $viewUrl (no ?reply=1 — just view the
+            // item). Only the Reply button uses $messageUrl / $fallbackReplyUrl
+            // (?reply=1 — open the reply compose pane). fallbackReplyUrl is the
+            // non-AMP fallback for the AMP in-email reply form, so it stays on
+            // the reply URL.
+            'viewUrl' => $viewUrl,
             'fallbackReplyUrl' => $messageUrl,
             'imageUrl' => $imageUrl,
             'displayImageUrl' => $displayImageUrl,

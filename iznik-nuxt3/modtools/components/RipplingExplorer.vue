@@ -1,5 +1,9 @@
 <template>
-  <div id="rippling-root" style="position: relative; width: 100%; height: 100%">
+  <div
+    id="rippling-root"
+    :class="{ 'rpl-minimal': minimal }"
+    style="position: relative; width: 100%; height: 100%"
+  >
     <div id="rippling-map" style="position: absolute; inset: 0"></div>
 
     <div id="rippling-panel">
@@ -330,7 +334,10 @@
       </div>
     </div>
 
-    <RipplingLegend :mode="legendMode" />
+    <RipplingLegend :mode="legendMode" :minimal="minimal" />
+
+    <!-- Minimal mode: the groups the current reach frame hits (bottom-left, above legend). -->
+    <div v-if="minimal" id="rippling-reach-groups" class="rpl-reach-groups" />
 
     <div id="rippling-status" style="display: none">Loading…</div>
 
@@ -367,6 +374,20 @@ const legendMode = ref('outbound')
 const props = defineProps({
   spatialUrl: { type: String, default: 'http://localhost:8196' },
   jwt: { type: String, default: '' },
+  // Minimal mode (e.g. embedded in the per-post reach modal): hide the controls
+  // panel and legend, leaving just the map, the ripple point and the time scrubber.
+  minimal: { type: Boolean, default: false },
+  // Seed the ripple at a fixed point and run it straight away, instead of waiting
+  // for a map click / search (used by the per-post reach modal).
+  initialLat: { type: Number, default: null },
+  initialLng: { type: Number, default: null },
+  initialView: { type: String, default: null },
+  // How long the post has already been live (hours). The seeded reach opens at the
+  // matching point on the scrubber (static, no animation): the EXPECTED point ("up to").
+  initialElapsedHours: { type: Number, default: null },
+  // The ACTUAL reach point (elapsed-hours equivalent), shown as a "now" marker ONLY when
+  // the engine is behind the expected point. Null = up to date -> show just "up to".
+  actualElapsedHours: { type: Number, default: null },
 })
 
 let cleanup = null
@@ -377,3 +398,43 @@ onUnmounted(() => {
   if (cleanup) cleanup()
 })
 </script>
+
+<style>
+/* Minimal mode (per-post reach modal): keep the controls in the DOM (the explorer
+   wires them up by id) but hide them, leaving just the map, the ripple point and the
+   time scrubber. */
+.rpl-minimal #rippling-panel,
+.rpl-minimal #rippling-status {
+  display: none !important;
+}
+
+/* Minimal mode: "groups reached" box, bottom-left, above the legend. */
+.rpl-reach-groups {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  max-height: 32vh;
+  overflow-y: auto;
+  min-width: 130px;
+  max-width: 230px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  z-index: 1000;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.rpl-reach-groups .rpl-rg-title {
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 4px;
+}
+.rpl-reach-groups .rpl-rg-item {
+  color: #222;
+  padding: 1px 0;
+}
+.rpl-reach-groups .rpl-rg-empty {
+  color: #999;
+}
+</style>

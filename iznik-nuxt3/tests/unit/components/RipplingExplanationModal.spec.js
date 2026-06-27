@@ -32,7 +32,7 @@ function mountComponent() {
             '<button :class="variant" @click="$emit(\'click\')"><slot /></button>',
           props: ['variant'],
         },
-        RipplingExplanation: {
+        RipplingExplanationGeneral: {
           template: '<div class="rippling-explanation-stub" />',
         },
       },
@@ -49,11 +49,11 @@ describe('RipplingExplanationModal', () => {
       'ripplingExplanationModal'
     )
     expect(wrapper.find('.b-modal').attributes('title')).toBe(
-      'How does this work?'
+      'What rippling out means'
     )
   })
 
-  it('renders the reusable RipplingExplanation component', async () => {
+  it('renders the reusable RipplingExplanationGeneral component', async () => {
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.find('.rippling-explanation-stub').exists()).toBe(true)

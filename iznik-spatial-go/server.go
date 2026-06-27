@@ -171,8 +171,58 @@ func (srv *server) rebuild(name string) error {
 
 	state.swapIndex(live)
 	state.lastSync = time.Now()
+	// The index now matches the source as of this build. For drift-aware
+	// datasets, record that baseline so the next CheckDrift compares against the
+	// freshly-built state rather than re-triggering on the change we just healed.
+	if dc, ok := state.ds.(DriftChecker); ok {
+		if err := dc.NoteReconciled(srv.mysqlDB); err != nil {
+			log.Printf("spatial-server: %s note-reconciled failed: %v", name, err)
+		}
+	}
 	log.Printf("spatial-server: %s rebuilt in %s", name, time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+// checkAndRebuildOnDrift runs a dataset's optional drift check and, if it
+// reports the index has drifted from the source in a way the incremental delta
+// cannot self-heal (swap-style hard deletes), triggers a full rebuild. It is a
+// no-op for datasets that do not implement DriftChecker. Returns whether a
+// rebuild ran. Safe to call on every delta tick.
+func (srv *server) checkAndRebuildOnDrift(name string, state *datasetState) bool {
+	dc, ok := state.ds.(DriftChecker)
+	if !ok {
+		return false
+	}
+	// Skip if a rebuild is already running — rebuild() also guards via its
+	// atomic CAS, but checking first avoids a wasted CheckDrift and a noisy
+	// "already in progress" error.
+	if state.rebuilding.Load() {
+		return false
+	}
+
+	var need bool
+	var reason string
+	err := state.withIndex(func(idx *Index) error {
+		var e error
+		need, reason, e = dc.CheckDrift(srv.mysqlDB, idx)
+		return e
+	})
+	switch {
+	case err == errIndexNotReady:
+		return false
+	case err != nil:
+		log.Printf("spatial-server: drift check %s failed: %v", name, err)
+		return false
+	case !need:
+		return false
+	}
+
+	log.Printf("spatial-server: drift-triggered rebuild of %s: %s", name, reason)
+	if err := srv.rebuild(name); err != nil {
+		log.Printf("spatial-server: drift rebuild %s failed: %v", name, err)
+		return false
+	}
+	return true
 }
 
 // rebuildAll rebuilds all datasets.
@@ -266,11 +316,24 @@ func (srv *server) startScheduler() {
 				default:
 					s.lastSync = time.Now()
 				}
+				// After applying the delta, check whether the source table has
+				// drifted from the index in a way the delta can't self-heal
+				// (swap-style hard deletes) and rebuild if so. No-op for datasets
+				// that don't implement DriftChecker.
+				srv.checkAndRebuildOnDrift(n, s)
 			}
 		}(name, state, interval)
 	}
 }
 
 func (srv *server) idxPath(name string) string {
+	// The jobs index Extra schema gained a `company` field (for KNN-side dedup of
+	// the duplicate WhatJobs postings — Discourse 9363). A pre-company on-disk index
+	// would be adopted at startup and dedup on (", title) — collapsing distinct
+	// employers — until the next nightly/swap rebuild. Bumping the filename means a
+	// deploy can't find the old index and rebuilds once from MySQL with `company`.
+	if name == "jobs" {
+		return srv.idxDir + "/" + name + ".v2.db"
+	}
 	return srv.idxDir + "/" + name + ".db"
 }

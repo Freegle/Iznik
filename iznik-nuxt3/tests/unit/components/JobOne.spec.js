@@ -218,7 +218,10 @@ describe('JobOne', () => {
     it('logs click to jobStore', async () => {
       const wrapper = createWrapper()
       await wrapper.find('.job-item').trigger('click')
-      expect(mockJobStore.log).toHaveBeenCalledWith({ id: 123 })
+      expect(mockJobStore.log).toHaveBeenCalledWith({
+        id: 123,
+        link: 'https://jobs.example.com/123',
+      })
     })
 
     it('logs click action for analytics', async () => {

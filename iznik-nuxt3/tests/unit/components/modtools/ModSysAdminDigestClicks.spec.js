@@ -9,7 +9,6 @@ const mockEmailTrackingStore = {
   digestPositionsLoading: false,
   digestPositionsError: null,
   hasDigestPositions: false,
-  digestPositionsChartData: null,
   setFilters: vi.fn(),
   fetchDigestPositions: vi.fn().mockResolvedValue({}),
 }
@@ -39,23 +38,7 @@ describe('ModSysAdminDigestClicks', () => {
               '<div class="notice-message" :class="variant"><slot /></div>',
             props: ['variant'],
           },
-          'b-form-select': {
-            template:
-              '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value); $emit(\'change\', $event.target.value)"><slot /></select>',
-            props: ['modelValue', 'options', 'size'],
-          },
           'b-spinner': { template: '<span class="spinner" />' },
-          'b-table': {
-            template: '<table class="table"><slot /></table>',
-            props: [
-              'items',
-              'fields',
-              'striped',
-              'hover',
-              'responsive',
-              'small',
-            ],
-          },
           GChart: {
             template: '<div class="gchart" :data-type="type" />',
             props: ['type', 'data', 'options'],
@@ -75,13 +58,15 @@ describe('ModSysAdminDigestClicks', () => {
     mockEmailTrackingStore.digestPositionsLoading = false
     mockEmailTrackingStore.digestPositionsError = null
     mockEmailTrackingStore.hasDigestPositions = false
-    mockEmailTrackingStore.digestPositionsChartData = null
   })
 
   describe('rendering', () => {
-    it('explains the click-through metric', () => {
+    it('explains the click-through metric and its denominator', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('click-through rate')
+      expect(wrapper.text().toLowerCase()).toContain(
+        'digests that actually showed a post'
+      )
     })
 
     it('renders the date filter', () => {
@@ -91,19 +76,37 @@ describe('ModSysAdminDigestClicks', () => {
 
     it('shows the empty message when there is no data', () => {
       const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('No digest click data available')
+      expect(wrapper.text()).toContain('No daily-digest click data available')
     })
 
-    it('shows the chart when data is present', async () => {
+    it('shows a single-series CTR chart when data is present', async () => {
       mockEmailTrackingStore.hasDigestPositions = true
-      mockEmailTrackingStore.digestPositionsChartData = [
-        ['Position', 'Click-through rate (%)', 'Emails shown'],
-        ['1', 50, 100],
+      mockEmailTrackingStore.digestPositions = [
+        {
+          position: 0,
+          shown: 200000,
+          emails_clicked: 1000,
+          clicks: 1200,
+          ctr: 0.5,
+        },
+        {
+          position: 1,
+          shown: 100000,
+          emails_clicked: 300,
+          clicks: 350,
+          ctr: 0.3,
+        },
       ]
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.gchart').exists()).toBe(true)
       expect(wrapper.find('.gchart').attributes('data-type')).toBe('ComboChart')
+      // Two columns only - no "Emails shown" series.
+      expect(wrapper.vm.chartData[0]).toEqual([
+        'Position',
+        'Click-through rate (%)',
+      ])
+      expect(wrapper.vm.chartData[1]).toEqual([1, 0.5])
     })
 
     it('shows an error message when the store has an error', async () => {
@@ -114,78 +117,87 @@ describe('ModSysAdminDigestClicks', () => {
     })
   })
 
-  describe('digest type options', () => {
-    it('offers All / Immediate / Daily', () => {
+  describe('digest type', () => {
+    it('is pinned to the daily digest (immediate is always position 1)', () => {
       const wrapper = mountComponent()
-      const options = wrapper.vm.digestTypeOptions
-      expect(options).toContainEqual({ text: 'All digests', value: '' })
-      expect(options).toContainEqual({
-        text: 'Immediate',
-        value: 'UnifiedDigestImmediate',
-      })
-      expect(options).toContainEqual({
-        text: 'Daily',
-        value: 'UnifiedDigestDaily',
-      })
+      expect(wrapper.vm.digestType).toBe('UnifiedDigestDaily')
     })
   })
 
-  describe('tableRows', () => {
-    it('formats positions as 1-based and CTR as a percentage', () => {
+  describe('sample-size cutoff', () => {
+    it('drops positions whose sample is too small to trust', () => {
       mockEmailTrackingStore.digestPositions = [
-        { position: 0, shown: 1000, clicks: 520, emails_clicked: 500, ctr: 50 },
-        { position: 1, shown: 1000, clicks: 260, emails_clicked: 250, ctr: 25 },
+        { position: 0, shown: 200000, emails_clicked: 1000, ctr: 0.5 },
+        { position: 1, shown: 100000, emails_clicked: 300, ctr: 0.3 },
+        // Deep tail: a single click off 31 digests reads as 3.2% - noise.
+        { position: 329, shown: 31, emails_clicked: 1, ctr: 3.2 },
       ]
       const wrapper = mountComponent()
-      const rows = wrapper.vm.tableRows
-      expect(rows[0].position).toBe(1)
-      expect(rows[0].ctr).toBe('50.0%')
-      expect(rows[0].shown).toBe('1,000')
-      expect(rows[1].position).toBe(2)
-      expect(rows[1].ctr).toBe('25.0%')
+      expect(wrapper.vm.significantPositions.map((p) => p.position)).toEqual([
+        0, 1,
+      ])
+      // The 3.2% spike is not plotted.
+      expect(wrapper.vm.chartData.some((r) => r[1] === 3.2)).toBe(false)
     })
   })
 
   describe('insight', () => {
-    it('is null with fewer than two positions', () => {
+    it('is null with fewer than two well-sampled positions', () => {
       mockEmailTrackingStore.digestPositions = [
-        { position: 0, shown: 10, clicks: 5, emails_clicked: 5, ctr: 50 },
+        { position: 0, shown: 200000, emails_clicked: 1000, ctr: 0.5 },
+        { position: 329, shown: 31, emails_clicked: 1, ctr: 3.2 },
       ]
       const wrapper = mountComponent()
       expect(wrapper.vm.insight).toBeNull()
     })
 
-    it('describes the drop from the top position to the last', () => {
+    it('describes the decline using well-sampled positions, not the noisy tail', () => {
       mockEmailTrackingStore.digestPositions = [
-        { position: 0, shown: 100, clicks: 80, emails_clicked: 80, ctr: 80 },
-        { position: 2, shown: 100, clicks: 20, emails_clicked: 20, ctr: 20 },
+        { position: 0, shown: 200000, emails_clicked: 1160, ctr: 0.58 },
+        { position: 4, shown: 150000, emails_clicked: 345, ctr: 0.23 },
+        { position: 29, shown: 100000, emails_clicked: 70, ctr: 0.07 },
+        { position: 329, shown: 31, emails_clicked: 1, ctr: 3.2 },
       ]
       const wrapper = mountComponent()
       const text = wrapper.vm.insight
-      expect(text).toContain('80.0%')
-      expect(text).toContain('20.0%')
-      expect(text).toContain('position 3')
-      expect(text).toContain('75% lower')
+      expect(text).toContain('0.58%')
+      expect(text).toContain('position 5')
+      expect(text).toContain('0.07%')
+      expect(text).toContain('position 30')
+      expect(text).not.toContain('3.2') // the noisy tail spike is not used
+      expect(text.toLowerCase()).toContain('declin')
     })
 
-    it('is null when there is no drop (flat or rising)', () => {
+    it('is null when clicks do not decline', () => {
       mockEmailTrackingStore.digestPositions = [
-        { position: 0, shown: 100, clicks: 20, emails_clicked: 20, ctr: 20 },
-        { position: 1, shown: 100, clicks: 30, emails_clicked: 30, ctr: 30 },
+        { position: 0, shown: 200000, emails_clicked: 200, ctr: 0.1 },
+        { position: 1, shown: 150000, emails_clicked: 450, ctr: 0.3 },
       ]
       const wrapper = mountComponent()
       expect(wrapper.vm.insight).toBeNull()
     })
   })
 
+  describe('summary', () => {
+    it('reports the total digests and the cutoff position', () => {
+      mockEmailTrackingStore.digestPositions = [
+        { position: 0, shown: 200000, emails_clicked: 1000, ctr: 0.5 },
+        { position: 1, shown: 100000, emails_clicked: 300, ctr: 0.3 },
+      ]
+      const wrapper = mountComponent()
+      expect(wrapper.vm.summary).toContain('200,000')
+      expect(wrapper.vm.summary).toContain('position 2')
+    })
+  })
+
   describe('chart options', () => {
-    it('returns a ComboChart configuration with two axes', () => {
+    it('uses a single click-through-rate axis (no emails-shown axis)', () => {
       const wrapper = mountComponent()
       const options = wrapper.vm.getPositionChartOptions()
-      expect(options.seriesType).toBe('bars')
-      expect(options.vAxes[0].title).toBe('Click-through rate (%)')
-      expect(options.vAxes[1].title).toBe('Emails shown')
-      expect(options.series[1].type).toBe('line')
+      expect(options.vAxis.title).toBe('Click-through rate (%)')
+      expect(options.vAxes).toBeUndefined()
+      expect(options.series[0].type).toBe('line')
+      expect(options.series[1]).toBeUndefined()
     })
   })
 
@@ -195,25 +207,10 @@ describe('ModSysAdminDigestClicks', () => {
       wrapper.vm.onFilterFetch({ start: '2026-01-01', end: '2026-01-31' })
 
       expect(mockEmailTrackingStore.setFilters).toHaveBeenCalledWith({
-        type: '',
+        type: 'UnifiedDigestDaily',
         start: '2026-01-01',
         end: '2026-01-31',
       })
-      expect(mockEmailTrackingStore.fetchDigestPositions).toHaveBeenCalled()
-    })
-
-    it('onTypeChange refetches only once dates are known', () => {
-      const wrapper = mountComponent()
-
-      // No dates yet → should not fetch.
-      wrapper.vm.onTypeChange()
-      expect(mockEmailTrackingStore.fetchDigestPositions).not.toHaveBeenCalled()
-
-      // After a fetch sets the dates → type change refetches.
-      wrapper.vm.onFilterFetch({ start: '2026-01-01', end: '2026-01-31' })
-      mockEmailTrackingStore.fetchDigestPositions.mockClear()
-      wrapper.vm.digestType = 'UnifiedDigestDaily'
-      wrapper.vm.onTypeChange()
       expect(mockEmailTrackingStore.fetchDigestPositions).toHaveBeenCalled()
     })
   })

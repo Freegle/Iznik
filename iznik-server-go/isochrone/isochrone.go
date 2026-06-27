@@ -130,28 +130,35 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 			return existingPointID
 		}
 
-		// No existing row — insert fresh.
-		result := db.Exec("INSERT IGNORE INTO isochrones (locationid, transport, minutes, source, polygon) VALUES (?, ?, ?, ?, "+
+		// No existing row — insert fresh. Take the new id from the write result; the SELECT
+		// fallback below only runs if INSERT IGNORE skipped a pre-existing row (9832 class).
+		id, insErr := database.ExecInsertGetID(db, "INSERT IGNORE INTO isochrones (locationid, transport, minutes, source, polygon) VALUES (?, ?, ?, ?, "+
 			"CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END)",
 			locationid, transport, minutes, source, wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID)
-		if result.Error != nil {
-			log.Printf("Failed to insert isochrone from %s for location %d: %v", source, locationid, result.Error)
+		if insErr != nil {
+			log.Printf("Failed to insert isochrone from %s for location %d: %v", source, locationid, insErr)
 			return 0
 		}
+		isoID = id
 	} else {
 		// Both providers unavailable — fall back to location geometry as placeholder.
 		log.Printf("All isochrone providers failed for location %d, using location geometry as fallback", locationid)
-		result := db.Exec("INSERT IGNORE INTO isochrones (locationid, transport, minutes, polygon) "+
+		id, insErr := database.ExecInsertGetID(db, "INSERT IGNORE INTO isochrones (locationid, transport, minutes, polygon) "+
 			"SELECT ?, ?, ?, COALESCE(geometry, ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
 			locationid, transport, minutes, utils.SRID, locationid)
-		if result.Error != nil {
-			log.Printf("Failed to create fallback isochrone for location %d: %v", locationid, result.Error)
+		if insErr != nil {
+			log.Printf("Failed to create fallback isochrone for location %d: %v", locationid, insErr)
 			return 0
 		}
+		isoID = id
 	}
 
-	db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? ORDER BY id DESC LIMIT 1",
-		locationid, transport, minutes).Scan(&isoID)
+	if isoID == 0 {
+		// INSERT IGNORE skipped a pre-existing row (the checks above missed it, e.g. under
+		// read-split lag); read that existing row's id.
+		db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? ORDER BY id DESC LIMIT 1",
+			locationid, transport, minutes).Scan(&isoID)
+	}
 
 	return isoID
 }
@@ -264,14 +271,16 @@ func CreateIsochrone(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create isochrone")
 	}
 
-	// Link user to isochrone (upsert).
-	db.Exec("INSERT INTO isochrones_users (userid, isochroneid, nickname) VALUES (?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE nickname = VALUES(nickname)",
+	// Link user to isochrone (upsert). ON DUPLICATE KEY UPDATE ... id=LAST_INSERT_ID(id) makes the
+	// write report the id for both new and existing rows; take it from the result, not a
+	// read-split-routable SELECT (9832 class).
+	newID, err := database.ExecInsertGetID(db,
+		"INSERT INTO isochrones_users (userid, isochroneid, nickname) VALUES (?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE nickname = VALUES(nickname), id = LAST_INSERT_ID(id)",
 		myid, isoID, req.Nickname)
-
-	var newID uint64
-	db.Raw("SELECT id FROM isochrones_users WHERE userid = ? AND isochroneid = ? ORDER BY id DESC LIMIT 1",
-		myid, isoID).Scan(&newID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to link isochrone")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }

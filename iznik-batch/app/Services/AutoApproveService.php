@@ -91,6 +91,17 @@ class AutoApproveService
                     ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
                     ->where('spam_mg.deleted', 0);
             })
+            // Never auto-approve a post that has already been collected. A rippled-in row can
+            // still be Pending when the poster marks the item Taken/Received - the take retires the
+            // pending rows it can see, but a take via a non-Go path (V1 mark()) leaves them. Approving
+            // it would re-list a gone item in a new group and fire a "newly reached" mail, so skip
+            // anything with a Taken/Received outcome.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_outcomes')
+                    ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
+                    ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
+            })
             ->where(function ($q) {
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
@@ -100,8 +111,12 @@ class AutoApproveService
                 // Rippling-out rows already Approved on their origin group: a short mod-veto
                 // window, then auto-approve (membership gate bypassed in shouldApproveOnGroup).
                 ->orWhere(function ($q2) {
+                    // Configurable mod-veto window (default 1h via the const; 0 = immediate,
+                    // used during reach experiments to keep moderation load off receiving
+                    // groups). >= so that 0 means "eligible as soon as it arrives".
+                    $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
                     $q2->where('messages_groups.rippled_in', 1)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::RIPPLED_IN_PENDING_HOURS])
+                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
                         ->whereExists(function ($q3) {
                             $q3->select(DB::raw(1))
                                 ->from('messages_groups as origin_mg')
@@ -117,20 +132,34 @@ class AutoApproveService
 
         foreach ($candidates as $msgid => $groupRows) {
             try {
-                // V1: check for recent logs referencing this message ONCE (not per group).
-                // This avoids auto-approving messages recently held/unheld, while still
-                // allowing multi-group messages to be approved across all groups in one pass.
-                $recentLogs = DB::table('logs')
-                    ->where('msgid', $msgid)
-                    ->where('timestamp', '>', now()->subHours(self::PENDING_HOURS))
-                    ->exists();
-
-                if ($recentLogs) {
-                    $stats['skipped'] += $groupRows->count();
-                    continue;
-                }
+                // V1 parity: skip auto-approving a message that was recently held/unheld.
+                // Lazy-evaluated so the query only runs when there is at least one non-rippled-in
+                // candidate that needs the guard. Rippled-in rows bypass this check entirely:
+                // the relevant hold on the nearby group is already expressed by the heldby IS NULL
+                // filter in the candidates query, and finding an approval log from the ORIGIN group
+                // here must not block the short veto window on the receiving group (which is how
+                // ~30 posts "disappeared suddenly" — they were stuck Pending for 48h instead of 1h
+                // and then batch-approved when the origin-approval log aged out, Discourse 9812/3).
+                $recentLogsChecked = false;
+                $recentLogs = false;
 
                 foreach ($groupRows as $candidate) {
+                    $isRippledIn = (int) ($candidate->rippled_in ?? 0) === 1;
+
+                    if (!$isRippledIn) {
+                        if (!$recentLogsChecked) {
+                            $recentLogs = DB::table('logs')
+                                ->where('msgid', $msgid)
+                                ->where('timestamp', '>', now()->subHours(self::PENDING_HOURS))
+                                ->exists();
+                            $recentLogsChecked = true;
+                        }
+                        if ($recentLogs) {
+                            $stats['skipped']++;
+                            continue;
+                        }
+                    }
+
                     if ($this->shouldApproveOnGroup($candidate, $candidate->groupid)) {
                         if ($dryRun) {
                             Log::info("Dry run: would auto-approve message #{$candidate->msgid} on group #{$candidate->groupid}");

@@ -40,17 +40,17 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use REPLACE INTO so that if (userid, pafid) already exists, it replaces the row.
-	result := db.Exec("REPLACE INTO users_addresses (userid, pafid, instructions, lat, lng) VALUES (?, ?, ?, ?, ?)",
+	// Use REPLACE INTO so that if (userid, pafid) already exists, it replaces the row. Read the
+	// id from the write result's LastInsertId: REPLACE is DELETE+INSERT on conflict so the new
+	// row has a fresh AUTO_INCREMENT id, and a "SELECT id ... WHERE userid AND pafid" here is
+	// routed to a read replica under the read/write split and can return a stale id or none
+	// (Discourse 9832 class).
+	id, err := database.ExecInsertGetID(db,
+		"REPLACE INTO users_addresses (userid, pafid, instructions, lat, lng) VALUES (?, ?, ?, ?, ?)",
 		myid, req.PafID, req.Instructions, req.Lat, req.Lng)
-
-	if result.Error != nil {
+	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create address")
 	}
-
-	// Get the ID of the inserted/replaced row
-	var id uint64
-	db.Raw("SELECT id FROM users_addresses WHERE userid = ? AND pafid = ?", myid, req.PafID).Scan(&id)
 
 	return c.JSON(fiber.Map{"id": id})
 }

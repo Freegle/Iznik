@@ -847,6 +847,14 @@ describe('LoginModal', () => {
       await flushPromises()
       expect(wrapper.text()).not.toContain('You usually use')
     })
+
+    it('shows email/password hint for native login type', async () => {
+      mockLoginType.value = 'email/password'
+      mockForceLogin.value = true
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('You usually use email/password')
+    })
   })
 
   describe('exposed methods', () => {

@@ -23,7 +23,12 @@
               </b-input-group>
             </NoticeMessage>
             <NoticeMessage
-              v-if="editing && editmessage && message.groups && message.groups.length > 1"
+              v-if="
+                editing &&
+                editmessage &&
+                message.groups &&
+                message.groups.length > 1
+              "
               variant="warning"
               class="w-100 mb-2"
             >
@@ -89,7 +94,8 @@
               <span
                 v-if="message.matchedon && message.matchedon.type === 'Vector'"
                 class="highlight"
-              >{{ eSubject }}</span>
+                >{{ eSubject }}</span
+              >
               <Highlighter
                 v-else-if="message.matchedon"
                 :search-words="[String(message.matchedon.word)]"
@@ -139,45 +145,72 @@
               :message="message"
               modinfo
               display-message-link
+              :only-groupid="currentGroupid"
             />
             <div
-              v-if="homegroup && groupid && groupid !== homegroupids[0]"
+              v-if="
+                homegroup &&
+                groupid &&
+                groupid !== homegroupids[0] &&
+                !alreadyOnHomeGroup
+              "
               class="small text-danger"
             >
               Possibly should be on {{ homegroup }}
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
-            <div
-              v-if="otherGroups.length > 0"
-              class="small text-muted"
-            >
+            <div v-if="otherGroups.length > 0" class="small text-muted">
               Also on:
-              <span
-                v-for="(g, idx) in otherGroups"
-                :key="g.groupid"
-              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
+              <ShowMore
+                :items="otherGroups"
+                :limit="3"
+                inline
+                keyfield="groupid"
+              >
+                <template #item="{ item }">{{
+                  groupStore.get(item.groupid)?.namedisplay ||
+                  'Group ' + item.groupid
+                }}</template>
+              </ShowMore>
             </div>
             <NoticeMessage
-              v-if="isRippledInToContextGroup"
+              v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
               variant="info"
               class="mt-1 mb-2"
+              data-test="multi-group-mod-warning"
             >
-              This post is starting to become available to some of your group
-              members.
-              <a href="#" @click.prevent="ripplingExplanationModal?.show()">
-                Learn more
-              </a>
-            </NoticeMessage>
-            <NoticeMessage
-              v-if="isRippledInToContextGroup && pending"
-              variant="warning"
-              class="mt-1 mb-2"
-              data-test="ripple-out-of-area-reject-warning"
-            >
-              This post rippled in from a neighbouring community, so the poster
-              may not live in your group's area. That is expected - please
-              don't reject it just for being "out of area". Only reject for the
-              usual reasons (spam, breaks the rules, wrong sort of thing).
+              <span v-if="onMultipleOfMyGroups">
+                This post is on several of your communities. You're moderating
+                for <strong>{{ currentGroupName || 'this group' }}</strong> -
+                approving or rejecting here affects
+                <strong>{{ currentGroupName || 'this group' }}</strong> only.
+              </span>
+              <span v-if="isRippledInToContextGroup">
+                <span
+                  v-if="pending"
+                  data-test="ripple-out-of-area-reject-warning"
+                >
+                  This post has rippled in from a neighbouring community -
+                  that's expected, so
+                  <strong class="text-danger"
+                    >please don't reject it just for being "out of area"</strong
+                  >
+                  (only reject for the usual reasons: spam, breaks the rules,
+                  wrong sort of thing).
+                </span>
+                <span v-else>
+                  This post was
+                  <strong>rippled in</strong> from a neighbouring community and
+                  automatically approved onto
+                  <strong>{{ currentGroupName || 'this group' }}</strong> to
+                  keep moderation load low. You don't need to do anything; you
+                  can still reject it for the usual reasons (spam, breaks the
+                  rules), just not for being "out of area".
+                </span>
+                <a href="#" @click.prevent="ripplingExplanationModal?.show()">
+                  Learn more
+                </a>
+              </span>
             </NoticeMessage>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
@@ -238,7 +271,9 @@
                   icon-name="reply"
                   confirm
                   @handle="backToPending"
-                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
+                  ><span class="d-none d-sm-inline"
+                    >Back to Pending</span
+                  ></SpinButton
                 >
               </div>
               <div class="ms-2">
@@ -292,7 +327,7 @@
                   </p>
                   <ModMessageButton
                     :messageid="message.id"
-                    :groupid="groupid"
+                    :groupid="currentGroupid"
                     variant="warning"
                     icon="play"
                     release
@@ -340,7 +375,11 @@
               {{ message.spamreason }}
             </NoticeMessage>
             <NoticeMessage
-              v-if="pending && membership && membership.ourpostingstatus === 'MODERATED'"
+              v-if="
+                pending &&
+                membership &&
+                membership.ourpostingstatus === 'MODERATED'
+              "
               variant="info"
               class="mb-2"
             >
@@ -383,12 +422,11 @@
               v-if="
                 message.worry?.length ||
                 message.groups?.some(
-                  (g) =>
-                    g.contentcheck_reasons &&
-                    g.contentcheck_reasons.length
+                  (g) => g.contentcheck_reasons && g.contentcheck_reasons.length
                 )
               "
               :messageid="message.id"
+              :groupid="currentGroupid"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
@@ -423,9 +461,12 @@
                 class="mb-3 rounded border p-2 preline forcebreak fw-bold"
               >
                 <span
-                  v-if="message.matchedon && message.matchedon.type === 'Vector'"
+                  v-if="
+                    message.matchedon && message.matchedon.type === 'Vector'
+                  "
                   class="highlight"
-                >{{ eBody }}</span>
+                  >{{ eBody }}</span
+                >
                 <Highlighter
                   v-else-if="message.matchedon"
                   :search-words="[String(message.matchedon.word)]"
@@ -476,6 +517,15 @@
               :boundary="group.poly || group.polyofficial"
               :height="150"
             />
+            <b-button
+              v-if="canShowReach"
+              variant="white"
+              size="sm"
+              class="mt-2 w-100"
+              @click="reachMapModal?.show()"
+            >
+              <v-icon icon="map-marker-alt" /> View rippling reach
+            </b-button>
           </b-col>
           <b-col cols="12" lg="3">
             <div
@@ -486,7 +536,7 @@
                 :message="message"
                 :userid="fromUserId"
                 modinfo
-                :groupid="groupid"
+                :groupid="currentGroupid"
               />
               <div v-else-if="fromUserId && !fromUser">
                 <Spinner :size="20" />
@@ -584,7 +634,7 @@
             <ModMemberActions
               v-if="showActions && message.groups && message.groups.length"
               :userid="fromUserId"
-              :groupid="groupid"
+              :groupid="currentGroupid"
               @commentadded="updateComments"
             />
           </b-col>
@@ -645,10 +695,11 @@
             !editing
           "
           :messageid="message.id"
-          :groupid="groupid"
+          :groupid="currentGroupid"
           :modconfigid="configid"
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
+          :is-home-group="isHomeGroup"
         />
         <b-button
           v-if="editing"
@@ -681,6 +732,14 @@
       :safelist="false"
     />
     <RipplingExplanationModal ref="ripplingExplanationModal" />
+    <ModMessageReachMap
+      v-if="message && message.id"
+      ref="reachMapModal"
+      :messageid="message.id"
+      :lat="position?.lat"
+      :lng="position?.lng"
+      :arrival="reachArrival"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -688,6 +747,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Highlighter from 'vue-highlight-words'
+import ShowMore from '~/components/ShowMore.vue'
 
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
@@ -805,12 +865,13 @@ const fromUser = computed(() => {
 })
 const { typeOptions } = setupKeywords()
 const { me, myid } = useMe()
-const { myModGroups, myModGroup } = useModMe()
+const { myModGroups, myModGroup, amAModOn } = useModMe()
 
 const top = ref(null)
 const bottom = ref(null)
 const spamConfirm = ref(null)
 const ripplingExplanationModal = ref(null)
+const reachMapModal = ref(null)
 
 const saving = ref(false)
 const saved = ref(false)
@@ -845,27 +906,127 @@ const messageGroup = computed(() => {
   return groupid.value || null
 })
 
-// Get the group info for the contextual group (multi-group support).
-const contextGroup = computed(() => {
-  if (!message.value?.groups?.length) return null
+// The group this copy is being administered on. In a specific group's queue that's the
+// explicit context group; in the all-communities view we pick the group I moderate that
+// most needs attention - a Pending one first, then the most-recent arrival - so a Reject
+// here is unambiguous and the rippled-in notice has a group to anchor to.
+const currentGroupid = computed(() => {
+  if (props.contextGroupid) return parseInt(props.contextGroupid)
+  const mine = moderatedGroupsOnPost.value
+  if (mine.length) {
+    const pending = mine.filter((g) =>
+      ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+    )
+    const pool = pending.length ? pending : mine
+    let pick = pool[0]
+    for (const g of pool) {
+      if (
+        g.arrival &&
+        (!pick.arrival || new Date(g.arrival) > new Date(pick.arrival))
+      )
+        pick = g
+    }
+    return parseInt(pick.groupid)
+  }
   const gid = parseInt(groupid.value)
-  return message.value.groups.find((g) => parseInt(g.groupid) === gid) || message.value.groups[0]
+  return gid || null
 })
 
-// Other groups this message is on (for multi-group indicator).
+// Get the group info for the group being administered (multi-group support).
+const contextGroup = computed(() => {
+  if (!message.value?.groups?.length) return null
+  const gid = currentGroupid.value
+  return (
+    message.value.groups.find((g) => parseInt(g.groupid) === gid) ||
+    message.value.groups[0]
+  )
+})
+
+// The origin group: the earliest arrival across the post's groups (shown as "First
+// posted on ..."). Excluded from "Also on" so it isn't listed twice.
+const originGroupid = computed(() => {
+  const groups = message.value?.groups || []
+  let earliest = null
+  for (const g of groups) {
+    if (!g.arrival) continue
+    if (!earliest || new Date(g.arrival) < new Date(earliest.arrival))
+      earliest = g
+  }
+  return earliest ? parseInt(earliest.groupid) : null
+})
+
+// Other groups this message is on (for the "Also on" indicator): everything except the
+// group being administered (context) and the origin/first-posted group.
 const otherGroups = computed(() => {
   if (!message.value?.groups) return []
-  const gid = parseInt(groupid.value)
-  return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
+  const gid = currentGroupid.value
+  const origin = originGroupid.value
+  return message.value.groups.filter((g) => {
+    const id = parseInt(g.groupid)
+    return id !== gid && id !== origin
+  })
+})
+
+// Suppress the "Possibly should be on <homegroup>" hint when the post is ALREADY on that
+// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. The
+// template's `groupid !== homegroupids[0]` only covers the case where the home group is the
+// group currently being administered; a post on its home group but viewed under a different
+// group's context (common once a post ripples onto several groups) would otherwise be told
+// it "should be on" a group it's already a member of.
+const alreadyOnHomeGroup = computed(() => {
+  const homeId = homegroupids.value?.[0]
+  if (!homeId) return false
+  return (message.value?.groups || []).some(
+    (g) => parseInt(g.groupid) === homeId
+  )
+})
+
+// The groups this post is on that the current user actually moderates. When there's more
+// than one, a Reject/Approve here is ambiguous unless we say which group it applies to.
+const moderatedGroupsOnPost = computed(() =>
+  (message.value?.groups || []).filter((g) => amAModOn(parseInt(g.groupid)))
+)
+const onMultipleOfMyGroups = computed(
+  () => moderatedGroupsOnPost.value.length > 1
+)
+// The name of the group this copy is being administered on (the context group).
+const currentGroupName = computed(() => {
+  const gid = contextGroup.value?.groupid
+  return gid ? groupStore.get(parseInt(gid))?.namedisplay : null
+})
+
+// Whether the copy being administered is the post's home/origin group. Delete and Delete
+// as Spam (which remove the post itself) are only offered here, not on a rippled-in copy.
+const isHomeGroup = computed(() => {
+  const origin = originGroupid.value
+  return origin == null || currentGroupid.value === origin
+})
+
+// Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
+// The modal itself explains when a post isn't rippling yet.
+const canShowReach = computed(
+  () => message.value?.type === 'Offer' || message.value?.type === 'Wanted'
+)
+
+// When the post entered the rippling system: the earliest arrival across its groups
+// (a repost ripples from the repost time, not the original post date). The engine uses
+// MIN(messages_spatial.arrival); mirror that so the reach opens at the right point.
+const reachArrival = computed(() => {
+  const arrivals = (message.value?.groups || [])
+    .map((g) => g.arrival)
+    .filter(Boolean)
+  if (arrivals.length) {
+    return arrivals.reduce((a, b) => (new Date(a) <= new Date(b) ? a : b))
+  }
+  return message.value?.date || null
 })
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
-// group we're viewing it under, so it is "starting to become available" to this group's
-// members. Use the EXPLICIT context group (props.contextGroupid) — not the groupid
-// fallback to groups[0] — so the banner only shows when moderating a specific group's
-// queue, never in the all-groups view. See isRippledInToContextGroup for the rule.
+// group this copy is being administered on, so it is "starting to become available" to
+// that group's members. Anchored to currentGroupid (the explicit context group, or the
+// group being administered in the all-communities view) so the banner shows in both.
 const isRippledInToContextGroup = computed(() =>
-  isRippledIn(message.value?.groups, props.contextGroupid)
+  isRippledIn(message.value?.groups, currentGroupid.value)
 )
 
 const messageHistory = computed(() => {
@@ -1336,7 +1497,7 @@ async function save() {
 function settingsChange(param, val) {
   const params = {
     userid: fromUserId.value,
-    groupid: groupid.value,
+    groupid: currentGroupid.value,
   }
   params[param] = val
   memberStore.update(params)
@@ -1414,7 +1575,11 @@ function checkHistory(duplicateCheck) {
 
           const key = histMsg.id + '-' + histMsg.arrival
 
-          if (duplicateCheck && groupsInCommon && histMsg.id < message.value.id) {
+          if (
+            duplicateCheck &&
+            groupsInCommon &&
+            histMsg.id < message.value.id
+          ) {
             // Same group, and this history message was posted before the one we're
             // rendering (message ids are auto-increment, so a lower id means earlier).
             // So the message we're rendering is the second/subsequent copy and IS a
@@ -1485,7 +1650,7 @@ function cancelEdit() {
 }
 
 async function backToPending(callback) {
-  await messageStore.backToPending(message.value.id, groupid.value)
+  await messageStore.backToPending(message.value.id, currentGroupid.value)
   callback()
 }
 

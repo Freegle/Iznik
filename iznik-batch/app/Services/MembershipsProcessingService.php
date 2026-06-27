@@ -60,7 +60,11 @@ class MembershipsProcessingService
             $group = Group::find($groupId);
             $hasWelcome = $group && $group->onhere && !empty($group->welcomemail);
             $user = $hasWelcome ? User::find($userId) : null;
-            $wouldSendWelcome = $hasWelcome && $user && $user->email_preferred;
+            // Rippled auto-joins (Rippling Out) get NO per-group welcome - a single bundled intro
+            // email (RippleIntroMail) is sent by the ripple expander instead. Suppressing here
+            // (not skipping the history row) keeps abuse detection running for the join.
+            $isRippled = (bool) ($entry->rippled ?? false);
+            $wouldSendWelcome = $hasWelcome && $user && $user->email_preferred && !$isRippled;
 
             $flaggedCount = $this->countFlaggedComments($userId, $groupId);
 
@@ -92,7 +96,7 @@ class MembershipsProcessingService
             }
 
             $this->applyFlaggedComments($userId, $groupId);
-            $this->checkSeenOnManyGroups($userId, $groupId);
+            $this->checkSeenOnManyGroups($userId, $groupId, $isRippled);
         }
 
         if (!$dryRun) {
@@ -113,9 +117,16 @@ class MembershipsProcessingService
      * memberships_processing, but only the flagged-comments check was ported.
      * The result was that the members-flagged-for-review queue dried up to ~0.
      */
-    private function checkSeenOnManyGroups(int $userId, int $groupJustAdded): void
+    private function checkSeenOnManyGroups(int $userId, int $groupJustAdded, bool $justAddedIsRippled = false): void
     {
-        $threshold = 16; // Spam::SEEN_THRESHOLD
+        // Distinct groups joined/applied to in a year before a member is "suspect" and flagged.
+        // Relaxed 16 -> 35 for rippling-out: a post's reach now follows the poster's declared
+        // location + drive-time isochrone, not their group-membership count, so joining many groups
+        // is no longer a reach-amplification signal - it is mostly power users with many local
+        // groups. At 16 this became a false-positive factory for them; 35 still guards against
+        // abnormal join sprees. This WEAKENS detection and is only safe once rippling is live.
+        // (This is the live equivalent of V1 Spam::SEEN_THRESHOLD, which is obsolete.)
+        $threshold = 35;
 
         $user = User::find($userId);
         if (!$user) {
@@ -140,13 +151,23 @@ class MembershipsProcessingService
             ->where('logs.user', $userId)
             ->where('logs.type', 'Group')
             ->where('logs.subtype', 'Joined')
+            // Exclude rippling auto-joins (text='Rippled'): they follow the poster's post reaching
+            // a group, not a deliberate join spree, so they must not count toward "seen on many
+            // groups" - otherwise a single far-reaching post would flag the poster everywhere.
+            ->where(function ($q) {
+                $q->whereNull('logs.text')->orWhere('logs.text', '!=', 'Rippled');
+            })
             ->where('logs.groupid', '!=', $groupJustAdded)
             ->whereNull('spam_users.userid')
             ->where('logs.timestamp', '>=', $start)
             ->distinct()
             ->count('logs.groupid');
 
-        $count++; // the just-added group, excluded from the query above
+        // The just-added group is excluded from the query above and counted here - but NOT when it
+        // is itself a rippling auto-join, so a rippled membership never pushes the total over.
+        if (!$justAddedIsRippled) {
+            $count++;
+        }
 
         if ($count <= $threshold) {
             return;

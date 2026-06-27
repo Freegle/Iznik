@@ -31,7 +31,12 @@
         ';
     @endphp
     @include('emails.mjml.partials.head', [
-        'preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you',
+        {{-- Preheader = the actual content, so the inbox preview shows what the post(s)
+             are (V1 parity: single.mjml used the post body, multiple.mjml the subject list).
+             $post (loop-local) is not in scope here, so build from $posts (the array). --}}
+        'preview' => $mode === 'immediate'
+            ? (collect($posts)->first()['subject'] ?? ($postCount . ' new post near you'))
+            : (collect($posts)->pluck('itemName')->filter()->take(3)->implode(', ') ?: ($postCount . ' new posts near you')),
         'mediaStyles' => $mediaStyles ?? '',
     ])
 
@@ -68,7 +73,7 @@
                  only the image-view scroll-depth ping is lost on the hero. --}}
             <mj-column width="38%" padding="0" vertical-align="top">
                 <mj-image
-                    href="{{ $post['messageUrl'] }}"
+                    href="{{ $post['viewUrl'] }}"
                     src="{{ $post['displayImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
@@ -84,7 +89,7 @@
                 </mj-text>
                 {{-- Title --}}
                 <mj-text padding="0 0 4px 0" font-size="18px" font-weight="700" color="#212529" line-height="1.25">
-                    <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
+                    <a href="{{ $post['viewUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
                 {{-- The full description is rendered in its own section
                      below; no snippet here, since the immediate digest is
@@ -251,6 +256,11 @@
                 <mj-text font-size="13px" color="#212529" padding="0 0 8px 0">
                     <strong style="text-transform: uppercase; letter-spacing: 0.3px;">In this digest</strong>
                 </mj-text>
+                @if(!empty($morePosts) && $morePosts > 0)
+                <mj-text font-size="13px" color="#6c757d" padding="0 0 8px 0">
+                    We've limited this to {{ \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP }} posts, but if you're keen there are <a href="{{ $browseUrl }}" style="color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }};">even more on the website</a>.
+                </mj-text>
+                @endif
                 <mj-text font-size="14px" color="#212529" line-height="1.6" padding="0">
                     @foreach($summaryPosts->take($summaryVisible) as $summaryPost)
                     <a href="{{ $summaryPost['summaryUrl'] }}" style="{{ $summaryLink }}">{{ $summaryPost['subject'] }}</a><br>

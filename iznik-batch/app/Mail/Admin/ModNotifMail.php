@@ -61,6 +61,9 @@ class ModNotifMail extends MjmlMailable
             'email' => $this->email,
             'htmlSummary' => $this->htmlSummary,
             'settingsUrl' => $this->settingsUrl,
+            // The count-bearing subject (e.g. "MODERATE: 5 things to do") so the inbox
+            // preview shows how much is waiting, not a generic line.
+            'modNotifSubject' => $this->modNotifSubject,
         ];
 
         return $this

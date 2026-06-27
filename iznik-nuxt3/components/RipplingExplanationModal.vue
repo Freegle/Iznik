@@ -3,12 +3,12 @@
     <b-modal
       id="ripplingExplanationModal"
       ref="modal"
-      title="How does this work?"
+      title="What rippling out means"
       size="lg"
       no-stacking
     >
       <template #default>
-        <RipplingExplanation />
+        <RipplingExplanationGeneral />
       </template>
       <template #footer>
         <b-button variant="white" @click="hide"> Close </b-button>
@@ -19,8 +19,7 @@
 
 <script setup>
 import { useOurModal } from '~/composables/useOurModal'
-
-// RipplingExplanation is auto-imported from components/ (Nuxt), matching RipplingHelpModal.
+import RipplingExplanationGeneral from '~/components/RipplingExplanationGeneral.vue'
 
 const { modal, show, hide } = useOurModal({ autoShow: false })
 

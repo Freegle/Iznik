@@ -2,8 +2,8 @@ package test
 
 import (
 	"bytes"
-	json2 "encoding/json"
 	"encoding/json"
+	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -488,6 +488,44 @@ func TestMessagesByUser(t *testing.T) {
 	// Invalid user
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/user/z/message", nil))
 	assert.Equal(t, 404, resp.StatusCode)
+}
+
+// Regression: rippling-out writes a messages_groups row (rippled_in=1) per group a post ripples
+// into, so the same post has many messages_groups rows. My Posts must still show the post ONCE
+// (at its origin group), not once per group — the join must restrict to the origin (rippled_in=0)
+// membership. Before the fix this returned the post once per group.
+func TestMyPostsRippledMessageAppearsOnce(t *testing.T) {
+	prefix := uniquePrefix("ripplededup")
+	originGroup := CreateTestGroup(t, prefix+"orig")
+	rippledGroupA := CreateTestGroup(t, prefix+"ripA")
+	rippledGroupB := CreateTestGroup(t, prefix+"ripB")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, originGroup, "Member")
+	msgID := CreateTestMessage(t, userID, originGroup, "OFFER: Rippled Downlighter", 51.5, -0.1)
+
+	// Simulate ExpandService::rippleIntoNewGroups: the post gains a messages_groups row
+	// (rippled_in=1) in each rippled-into group, exactly as the live rippler does.
+	db := database.DBConn
+	for _, g := range []uint64{rippledGroupA, rippledGroupB} {
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+			"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, g)
+	}
+
+	_, token := CreateTestSession(t, userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	require.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "a post rippled into multiple groups must appear exactly once in My Posts")
 }
 
 func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
@@ -1306,6 +1344,52 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	assert.Equal(t, "Rejected", collection, "Reject with stdmsg should move to Rejected collection")
 
 	// Log creation is now handled by the batch processor (not synchronously in the Go API).
+}
+
+// A reject that lands on a message which is no longer Pending (e.g. it was
+// re-approved/promoted to live before the mod's click arrived) must NOT silently
+// queue a rejection email/log nor claim success - otherwise the mod and the poster
+// both get told it was rejected while the post stays live (Discourse 9815).
+func TestPostMessageRejectNonPendingDoesNotEmailOrLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_nonpending")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	// The message is live (Approved) by the time the reject lands.
+	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupID,
+		"subject": "Sorry",
+		"body":    "Not suitable for this group.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// No rejection email/log task must be queued — nothing was actually rejected.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_rejected' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "Must not queue a rejection email when the message was not Pending")
+
+	// Collection must be unchanged (still live), not falsely Rejected.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "A non-pending message must not be silently rejected")
 }
 
 func TestPostMessageRejectNoSubjectDeletes(t *testing.T) {
@@ -4638,6 +4722,131 @@ func TestPostMessageViewDedup(t *testing.T) {
 	var viewCount int
 	db.Raw("SELECT count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&viewCount)
 	assert.Equal(t, 1, viewCount)
+}
+
+// TestMessagePageviewSemantics verifies the pageview flag distinguishes a genuine
+// page-open (handleView => 1) from a list-scroll impression (MarkSeen => 0), that a
+// scroll-then-open is upgraded to 1, and that an open-then-scroll is never downgraded.
+func TestMessagePageviewSemantics(t *testing.T) {
+	db := database.DBConn
+
+	// Returns (exists, pageview) where pageview is -1 for NULL (legacy/unknown).
+	getPageview := func(msgID, userID uint64) (bool, int) {
+		var cnt int
+		db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&cnt)
+		if cnt == 0 {
+			return false, -1
+		}
+		var pv int
+		db.Raw("SELECT COALESCE(pageview, -1) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&pv)
+		return true, pv
+	}
+	doView := func(token string, msgID uint64) {
+		body, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "View"})
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	doMarkSeen := func(token string, msgID uint64) {
+		req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString(fmt.Sprintf(`{"ids": [%d]}`, msgID)))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	// Distinct viewer (not the owner) so MarkSeen records against a real recipient.
+	setup := func(label string) (msgID uint64, token string, viewerID uint64) {
+		prefix := uniquePrefix(label)
+		groupID := CreateTestGroup(t, prefix)
+		ownerID := CreateTestUser(t, prefix+"_owner", "User")
+		CreateTestMembership(t, ownerID, groupID, "Member")
+		viewerID = CreateTestUser(t, prefix+"_viewer", "User")
+		CreateTestMembership(t, viewerID, groupID, "Member")
+		_, token = CreateTestSession(t, viewerID)
+		msgID = CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
+		return
+	}
+
+	// genuine page-open => pageview = 1
+	msgID, token, viewerID := setup("pv_open")
+	doView(token, msgID)
+	exists, pv := getPageview(msgID, viewerID)
+	assert.True(t, exists, "page-open should create a View row")
+	assert.Equal(t, 1, pv, "page-open => pageview=1")
+
+	// list-scroll impression => pageview = 0
+	msgID, token, viewerID = setup("pv_seen")
+	doMarkSeen(token, msgID)
+	exists, pv = getPageview(msgID, viewerID)
+	assert.True(t, exists, "impression should create a View row")
+	assert.Equal(t, 0, pv, "scroll impression => pageview=0")
+
+	// scroll THEN open => upgraded to 1
+	msgID, token, viewerID = setup("pv_seen_open")
+	doMarkSeen(token, msgID)
+	doView(token, msgID)
+	_, pv = getPageview(msgID, viewerID)
+	assert.Equal(t, 1, pv, "open after scroll => upgraded to pageview=1")
+
+	// open THEN scroll => stays 1 (never downgraded)
+	msgID, token, viewerID = setup("pv_open_seen")
+	doView(token, msgID)
+	doMarkSeen(token, msgID)
+	_, pv = getPageview(msgID, viewerID)
+	assert.Equal(t, 1, pv, "scroll after open must not downgrade pageview")
+}
+
+// TestMessagePageviewSource verifies a notification-tagged page-open records its source
+// (e.g. ripple_notify), and that a later untagged (organic) open never clears that
+// attribution - the key property for distinguishing notification-click from organic browse.
+func TestMessagePageviewSource(t *testing.T) {
+	db := database.DBConn
+
+	getSource := func(msgID, userID uint64) string {
+		var s string
+		db.Raw("SELECT COALESCE(source, '') FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&s)
+		return s
+	}
+	doView := func(token string, msgID uint64, source string) {
+		body := map[string]interface{}{"id": msgID, "action": "View"}
+		if source != "" {
+			body["source"] = source
+		}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	// notification-tagged open records the source; a later organic open does not clear it
+	{
+		prefix := uniquePrefix("pv_src_notify")
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
+
+		doView(token, msgID, "ripple_notify")
+		assert.Equal(t, "ripple_notify", getSource(msgID, userID), "tagged open records source")
+		doView(token, msgID, "") // organic, within dedup window -> UPDATE path
+		assert.Equal(t, "ripple_notify", getSource(msgID, userID), "organic open must not clear notification source")
+	}
+
+	// organic-only open leaves source unset (NULL)
+	{
+		prefix := uniquePrefix("pv_src_organic")
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
+
+		doView(token, msgID, "")
+		assert.Equal(t, "", getSource(msgID, userID), "organic open leaves source NULL")
+	}
 }
 
 // --- Adversarial tests ---

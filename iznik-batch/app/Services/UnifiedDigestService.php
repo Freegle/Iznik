@@ -37,6 +37,8 @@ class UnifiedDigestService
      */
     public const MODE_IMMEDIATE = 'immediate';
     public const MODE_DAILY = 'daily';
+    /** Reach-mail: decoupled, sharded pass that mails members newly inside a rippling post's reach. */
+    public const MODE_REACH = 'reach';
 
     /**
      * Send unified digests to users who want them.
@@ -49,6 +51,10 @@ class UnifiedDigestService
     {
         if ($mode === self::MODE_IMMEDIATE) {
             return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards, $shouldStop);
+        }
+
+        if ($mode === self::MODE_REACH) {
+            return $this->sendReachDigests($limit, $dryRun, $shard, $shards, $shouldStop);
         }
 
         $stats = [
@@ -147,15 +153,22 @@ class UnifiedDigestService
             return $stats;
         }
 
+        // The EXISTS is left as a per-group correlated subquery (NO_SEMIJOIN) so it resolves via
+        // the memberships(groupid,...) index and short-circuits on the first immediate member of
+        // each group. Without the hint the optimiser materialises the semijoin using only the
+        // `collection` index, scanning ~2.37M Approved rows (10-24s) because there is no index on
+        // memberships.emailfrequency. Immediate members are ~0.7% of Approved, so the per-group
+        // lookup is far cheaper. (A memberships(emailfrequency,groupid) index would make either
+        // plan fast, but this needs no DDL.) groups_digests is tiny (~3k rows).
         $query = DB::table('groups_digests as gd')
             ->where('gd.frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->whereExists(function ($q) {
-                $q->select(DB::raw(1))->from('memberships')
+                $q->select(DB::raw('/*+ QB_NAME(imm_member) */ 1'))->from('memberships')
                     ->whereColumn('memberships.groupid', 'gd.groupid')
                     ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
                     ->where('memberships.collection', Membership::COLLECTION_APPROVED);
             })
-            ->select('gd.groupid', 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
+            ->select(DB::raw('/*+ NO_SEMIJOIN(@imm_member) */ gd.groupid'), 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
 
         // Partition groups across parallel shards. MOD(groupid, shards) =
         // shard means each group is owned by exactly one shard. Disjoint
@@ -455,9 +468,75 @@ class UnifiedDigestService
      * messages with identical microsecond-precision arrival timestamps
      * can't both fall past the cursor and one of them be missed.
      */
+
     /**
-     * Expander-driven rippling immediate mail (#0 step 4). Called by ExpandService after each
-     * reach write (init + every tick). Mails the post to every immediate-eligible member of a
+     * Decoupled, sharded reach-mail pass. Mails members who are newly inside a rippling post's
+     * reach polygon — the work that used to run inline in ExpandService's serial Phase-2 loop,
+     * where (per the 2026-06-24 live profile) it was ~75% of the run's wall-clock. Pulling it out
+     * lets the reach writes stay serial (Galera single-writer) while the mail fans out in parallel.
+     *
+     * Processes rippling_reach rows whose reach changed recently (updated_at within the configured
+     * window — reach only changes on init/advance, never on this pass, which writes only
+     * rippling_reach_notified), partitioned across parallel workers by MOD(msgid, shards) exactly
+     * as the immediate-digest cron partitions by MOD(groupid, shards). Disjoint partitions → shards
+     * run concurrently with no locking. Idempotent regardless of window overlap: the
+     * rippling_reach_notified ledger means an already-notified member is never re-mailed.
+     *
+     * @param int|null $limit Cap on posts processed per run (null = no cap).
+     * @param int $shard Shard index (0..shards-1).
+     * @param int $shards Total shard count; posts partitioned by MOD(msgid, shards).
+     * @return array{posts_processed:int,emails_sent:int,errors:int,stopped?:bool}
+     */
+    public function sendReachDigests(?int $limit = null, bool $dryRun = false, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
+    {
+        $stats = ['posts_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
+
+        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+            return $stats;
+        }
+
+        // Only posts whose reach changed recently need a mail check — an unchanged polygon has no
+        // newly-inside members the ledger hasn't already covered. This mirrors the old inline
+        // trigger (mail fired on each init/advance). The window overlaps the cron interval so a
+        // post is never dropped between ticks; overlap is harmless because the ledger dedupes.
+        $windowMinutes = (int) config('freegle.ripple.reach_mail_window_minutes', 60);
+
+        $query = DB::table('rippling_reach')
+            ->whereIn('status', ['expanding', 'done'])
+            ->where('updated_at', '>=', now()->subMinutes($windowMinutes));
+
+        // Disjoint MOD(msgid, shards) partition — same model as sendImmediateDigests' MOD(groupid,
+        // shards); each post is owned by exactly one shard, so shards run concurrently safely.
+        if ($shards > 1) {
+            $query->whereRaw('MOD(msgid, ?) = ?', [$shards, $shard]);
+        }
+
+        $query->orderBy('updated_at'); // oldest-changed first so a backlog drains fairly
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        foreach ($query->pluck('msgid') as $msgid) {
+            if ($shouldStop && $shouldStop()) {
+                $stats['stopped'] = true;
+                break;
+            }
+            try {
+                $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun);
+                $stats['posts_processed']++;
+            } catch (\Throwable $e) {
+                $stats['errors']++;
+                Log::warning('reach-mail: failed for post', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Newly-reached rippling immediate mail (#0 step 4). Called by the decoupled, sharded reach-mail
+     * pass (sendReachDigests) and by AutoApproveService (the post-'done' approval gap) — no longer
+     * inline in ExpandService's serial loop. Mails the post to every immediate-eligible member of a
      * group it is APPROVED on whose location the reach NOW covers and who has not already been
      * notified (rippling_reach_notified), recording each so a later tick — or another rippled-in
      * group — never re-mails them. Because it re-runs every tick (no cursor), members the reach
@@ -487,6 +566,10 @@ class UnifiedDigestService
                  JOIN users u ON u.id = m.userid
                  LEFT JOIN locations l ON l.id = u.lastlocation
                  WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0
+                   AND NOT EXISTS (
+                         SELECT 1 FROM messages_outcomes mo
+                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received')
+                       )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
                    AND ST_Contains(mr.polygon, ST_SRID(POINT(
                          CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL

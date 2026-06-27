@@ -117,6 +117,19 @@ if (config('freegle.ripple.enabled')) {
         ->runInBackground();
 }
 
+// Group experiment (per-group before/after): when RIPPLE_WITHIN_GROUPS lists group ids, ripple ONLY
+// those groups' posts - even while the global switch above is OFF. The scoped run bypasses the global
+// gate in ExpandService::process(), so the rest of the network stays dark. During the experiment you
+// run with RIPPLE_ENABLED=false and RIPPLE_WITHIN_GROUPS set, so only this scoped cron is active.
+$rippleWithinGroups = (array) config('freegle.ripple.within_groups', []);
+if (!empty($rippleWithinGroups)) {
+    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups)])
+        ->everyMinute()
+        ->withoutOverlapping()
+        ->sendOutputTo(cronLog('ripple:expand-experiment'))
+        ->runInBackground();
+}
+
 // Release/expire held external (email/TN) replies as posts ripple out (#3).
 // Inert until the reach engine is live -- nothing to release until a reply is held.
 Schedule::command('ripple:release-replies')
@@ -188,6 +201,16 @@ Schedule::command('cleanup:sessions')
     ->dailyAt('03:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('cleanup:sessions'))
+    ->runInBackground();
+
+// Compress rotated batch log files and prune those older than the retention
+// window (default 7 days). The Monolog 'daily' channel rotates app logs but
+// does not compress them, and supervisor's scheduler/worker/spooler logs are
+// not Monolog-managed at all - this keeps storage/logs bounded.
+Schedule::command('logs:rotate')
+    ->dailyAt('00:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('logs:rotate'))
     ->runInBackground();
 
 // Remove spam members from groups and clean up their content.
@@ -480,6 +503,22 @@ foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
     Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards={$immediateShardCount} --max-iterations=60")
         ->everyMinute()
         ->sendOutputTo(cronLog("mail:digest:unified.shard{$shardIndex}"))
+        ->runInBackground();
+}
+
+// Reach mail - rippling reach notifications, decoupled from ExpandService's serial Phase-2
+// loop (which no longer mails inline; see ExpandService::initialiseNew). Mails members newly
+// inside a rippling post's reach, sharded by MOD(msgid, N) exactly as immediate mode shards by
+// MOD(groupid, N) - disjoint partitions, per-shard flock (lockKeySuffix), no locking between
+// shards. Scheduled unconditionally like ripple:release-replies above: sendReachDigests' window
+// query self-idles when no reach rows changed recently, so it costs nothing while rippling is
+// dark AND it covers both the global cron and the scoped group experiment (the old inline mail
+// ran in both paths). Each invocation drains the whole window in one pass, so no --max-iterations.
+$reachMailShardCount = 4;
+foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
+    Schedule::command("mail:digest:unified --mode=reach --shard={$reachShard} --shards={$reachMailShardCount}")
+        ->everyMinute()
+        ->sendOutputTo(cronLog("mail:digest:unified.reach.shard{$reachShard}"))
         ->runInBackground();
 }
 
@@ -821,6 +860,20 @@ Schedule::command('data:fetch-app-versions')
 Schedule::command('integrations:sync-whatjobs')
     ->cron('0 */3 * * *')
     ->between('08:00', '22:00')
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
+    ->runInBackground();
+
+// Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
+// schedule above starts at 09:00 UTC, so the morning digest would otherwise
+// ship jobs last synced ~21:00 the night before (9-10h stale -> closed
+// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
+// (and the post-swap KNN rebuild it triggers) completes before the digest.
+// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
+// command mutex with the run above via withoutOverlapping.
+Schedule::command('integrations:sync-whatjobs')
+    ->timezone(config('freegle.timezone'))
+    ->dailyAt('05:00')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();

@@ -38,11 +38,21 @@ func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 	user.CheckLocationChangeVelocity(db, userID)
 	assert.Equal(t, 0, flaggedCount(), "two location changes is not enough to flag")
 
-	// At threshold (4 distinct postcodes in 24h) -> flagged for review + a Suspect log written.
+	// Still below the relaxed threshold (4 distinct postcodes) -> not flagged. Before the
+	// rippling go-live relax (4 -> 8) this would have flagged; now it must not, so that members
+	// who legitimately refine their declared location a few times in a day are not flagged.
 	seed("AB3 3CC")
 	seed("AB4 4DD")
 	user.CheckLocationChangeVelocity(db, userID)
-	assert.Greater(t, flaggedCount(), 0, "four distinct location changes in 24h flags the user for review")
+	assert.Equal(t, 0, flaggedCount(), "four distinct location changes in 24h no longer flags after the relax")
+
+	// At the threshold (8 distinct postcodes in 24h) -> flagged for review + a Suspect log written.
+	seed("AB5 5EE")
+	seed("AB6 6FF")
+	seed("AB7 7GG")
+	seed("AB8 8HH")
+	user.CheckLocationChangeVelocity(db, userID)
+	assert.Greater(t, flaggedCount(), 0, "eight distinct location changes in 24h flags the user for review")
 
 	var suspect int
 	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = 'User' AND subtype = 'Suspect'", userID).Scan(&suspect)
@@ -61,7 +71,8 @@ func TestLocationChangeVelocitySkipsMods(t *testing.T) {
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", modID)
 	defer db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", modID)
 
-	for _, pc := range []string{"AB1 1AA", "AB2 2BB", "AB3 3CC", "AB4 4DD", "AB5 5EE"} {
+	// Seed well past the threshold so this would flag a normal user; a moderator must still not be.
+	for _, pc := range []string{"AB1 1AA", "AB2 2BB", "AB3 3CC", "AB4 4DD", "AB5 5EE", "AB6 6FF", "AB7 7GG", "AB8 8HH", "AB9 9II"} {
 		db.Exec("INSERT INTO logs (type, subtype, user, byuser, text, timestamp) "+
 			"VALUES ('User', 'PostcodeChange', ?, ?, ?, NOW())", modID, modID, pc)
 	}

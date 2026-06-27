@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'How to reply to posts on Freegle'])
+  @include('emails.mjml.partials.head', ['preview' => 'To reply to a post, use the Reply button next to it in the digest email.'])
   <mj-body background-color="#ffffff">
     {{-- Header with logo --}}
     @include('emails.mjml.components.header')

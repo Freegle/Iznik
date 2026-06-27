@@ -273,6 +273,130 @@ class DailyPostsPushTest extends TestCase
         $this->assertSame('https://cdn.example.com/a.jpg', $payload['image']);
     }
 
+    /**
+     * Helper: create an approved OFFER with a single attachment, optionally AI.
+     */
+    private function postWithPhoto(User $user, Group $group, string $subject, string $url, bool $ai = false, int $primary = 1): Message
+    {
+        $msg = $this->createApprovedMessage($user, $group, $subject);
+        MessageAttachment::create([
+            'msgid'        => $msg->id,
+            'externalurl'  => $url,
+            'archived'     => 0,
+            'primary'      => $primary,
+            'externalmods' => $ai ? json_encode(['ai' => true]) : null,
+        ]);
+        $msg->load('attachments');
+
+        return $msg;
+    }
+
+    public function test_collage_puts_real_photos_before_ai_and_pads_with_ai(): void
+    {
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // Interleaved real/AI posts: real A, AI X, real B, AI Y, real C.
+        // Collage must list real photos first (in order), then pad to 4 with AI.
+        $posts = $this->buildPostsArray([
+            $this->postWithPhoto($user, $group, 'OFFER: A (London)', 'https://cdn.example.com/realA.jpg'),
+            $this->postWithPhoto($user, $group, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
+            $this->postWithPhoto($user, $group, 'OFFER: B (London)', 'https://cdn.example.com/realB.jpg'),
+            $this->postWithPhoto($user, $group, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
+            $this->postWithPhoto($user, $group, 'OFFER: C (London)', 'https://cdn.example.com/realC.jpg'),
+        ]);
+
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
+        $images  = json_decode($payload['images'], true);
+
+        // 3 real first (digest order), then 1 AI to fill the 4-photo collage.
+        $this->assertSame([
+            'https://cdn.example.com/realA.jpg',
+            'https://cdn.example.com/realB.jpg',
+            'https://cdn.example.com/realC.jpg',
+            'https://cdn.example.com/aiX.jpg',
+        ], $images);
+        // The single image also prefers a real photo.
+        $this->assertSame('https://cdn.example.com/realA.jpg', $payload['image']);
+    }
+
+    public function test_collage_pads_with_ai_when_too_few_real(): void
+    {
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // Only one real photo available; AI photos fill the remaining slots so the
+        // collage still renders (needs >= 2 photos).
+        $posts = $this->buildPostsArray([
+            $this->postWithPhoto($user, $group, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
+            $this->postWithPhoto($user, $group, 'OFFER: A (London)', 'https://cdn.example.com/realA.jpg'),
+            $this->postWithPhoto($user, $group, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
+        ]);
+
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
+        $images  = json_decode($payload['images'], true);
+
+        $this->assertSame([
+            'https://cdn.example.com/realA.jpg',
+            'https://cdn.example.com/aiX.jpg',
+            'https://cdn.example.com/aiY.jpg',
+        ], $images);
+        // image prefers the real photo even though an AI post came first in the digest.
+        $this->assertSame('https://cdn.example.com/realA.jpg', $payload['image']);
+    }
+
+    public function test_collage_uses_ai_when_no_real_photos(): void
+    {
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // No real photos at all — AI photos are the only option, so use them.
+        $posts = $this->buildPostsArray([
+            $this->postWithPhoto($user, $group, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
+            $this->postWithPhoto($user, $group, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
+        ]);
+
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
+        $images  = json_decode($payload['images'], true);
+
+        $this->assertSame([
+            'https://cdn.example.com/aiX.jpg',
+            'https://cdn.example.com/aiY.jpg',
+        ], $images);
+    }
+
+    public function test_within_post_prefers_real_attachment_over_ai(): void
+    {
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // A single post carrying BOTH an AI illustration (primary) and a real photo.
+        // The post must contribute its real photo, even though the AI one is primary.
+        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (London)');
+        MessageAttachment::create([
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/ai.jpg',
+            'archived'     => 0,
+            'primary'      => 1,
+            'externalmods' => json_encode(['ai' => true]),
+        ]);
+        MessageAttachment::create([
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/real.jpg',
+            'archived'     => 0,
+            'primary'      => 0,
+            'externalmods' => null,
+        ]);
+        $msg->load('attachments');
+
+        $posts   = $this->buildPostsArray([$msg]);
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
+
+        $this->assertSame('https://cdn.example.com/real.jpg', $payload['image']);
+        $images = json_decode($payload['images'], true);
+        $this->assertSame(['https://cdn.example.com/real.jpg'], $images);
+    }
+
     // -------------------------------------------------------------------------
     // notifyDailyNewPosts — send path (mocked service)
     // -------------------------------------------------------------------------

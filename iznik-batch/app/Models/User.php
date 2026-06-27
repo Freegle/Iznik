@@ -1121,6 +1121,14 @@ class User extends Model implements Auditable
             // --- Merge memberships ---
             $id2Memberships = Membership::where('userid', $id2)->get();
 
+            // Conflict memberships (id1 was already a member, so id2's row is merged
+            // into id1's and then removed) are collected here and deleted AFTER commit.
+            // We keep the in-memory models rather than re-querying by userid post-commit:
+            // under the read/write split that re-query hits a possibly-lagging replica,
+            // where a just-reparented membership can still show userid=$id2 and would be
+            // wrongly deleted, silently dropping a membership that should survive on id1.
+            $membershipsToDelete = [];
+
             # Merge the top-level memberships
             foreach ($id2Memberships as $id2Memb) {
                 $id1Memb = Membership::where('userid', $id1)
@@ -1159,6 +1167,9 @@ class User extends Model implements Auditable
                     if (!$dryRun) {
                         $id1Memb->save();
                     }
+
+                    // id2's row for this group is now redundant — delete it after commit.
+                    $membershipsToDelete[] = $id2Memb;
                 }
             }
 
@@ -1522,12 +1533,16 @@ class User extends Model implements Auditable
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
             Logger::info("Merged {$id1} < {$id2}, {$reason}");
-            Membership::where('userid', $id2)->get()->each(function ($m) use ($dryRun) {
+            // Delete the conflict memberships collected during the merge loop above.
+            // These are in-memory models, so $m->delete() removes them by primary key
+            // (firing model events for auditing) WITHOUT a fresh SELECT — avoiding the
+            // read-split replica-lag hazard described where $membershipsToDelete is built.
+            foreach ($membershipsToDelete as $m) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
                 if (!$dryRun) {
                     $m->delete();
                 }
-            });
+            }
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
             if (!$dryRun) {
                 User::find($id2)?->delete();

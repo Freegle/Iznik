@@ -153,4 +153,85 @@ class VolunteeringDigestMailTest extends TestCase
         $this->assertStringStartsWith($userSite, $volUrl,
             'Volunteering URL must start with the configured site URL (no extra protocol prepended)');
     }
+
+    // ─── Preheader (mj-preview) assertions ────────────────────────────────────
+
+    public function test_preheader_shows_first_title_for_single_opportunity(): void
+    {
+        // Single opportunity: preview is just the title with no trailing " and N more".
+        $userSite = config('freegle.sites.user');
+
+        $vol = $this->makeVolunteering(1);
+        $vol['title'] = 'Help at the Riverside Food Bank';
+
+        $html = view('emails.mjml.volunteering.digest', [
+            'volunteerings'  => [$vol],
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email'          => 'test@example.com',
+            'jobAds'         => collect(),
+            'jobsUrl'        => $userSite . '/jobs',
+            'donateUrl'      => 'https://freegle.in/paypal1510',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Help at the Riverside Food Bank</mj-preview>',
+            $html,
+            'Single-opportunity preheader must contain the opportunity title'
+        );
+    }
+
+    public function test_preheader_shows_title_and_more_count_for_multiple_opportunities(): void
+    {
+        // Multiple opportunities: preview appends " and N more" after the first title.
+        $userSite = config('freegle.sites.user');
+
+        $vol1 = $this->makeVolunteering(1);
+        $vol1['title'] = 'Help at the Riverside Food Bank';
+
+        $vol2 = $this->makeVolunteering(2);
+        $vol2['title'] = 'Garden volunteer at Greenway Park';
+
+        $vol3 = $this->makeVolunteering(3);
+        $vol3['title'] = 'Admin helper for local charity';
+
+        $html = view('emails.mjml.volunteering.digest', [
+            'volunteerings'  => [$vol1, $vol2, $vol3],
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email'          => 'test@example.com',
+            'jobAds'         => collect(),
+            'jobsUrl'        => $userSite . '/jobs',
+            'donateUrl'      => 'https://freegle.in/paypal1510',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Help at the Riverside Food Bank and 2 more</mj-preview>',
+            $html,
+            'Multi-opportunity preheader must show the first title followed by " and N more"'
+        );
+    }
+
+    public function test_preheader_falls_back_when_volunteerings_is_empty(): void
+    {
+        // When the volunteerings array happens to be empty the null-coalescing
+        // fallback in the template must prevent a blank preheader.
+        $userSite = config('freegle.sites.user');
+
+        $html = view('emails.mjml.volunteering.digest', [
+            'volunteerings'  => [],
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email'          => 'test@example.com',
+            'jobAds'         => collect(),
+            'jobsUrl'        => $userSite . '/jobs',
+            'donateUrl'      => 'https://freegle.in/paypal1510',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Volunteer opportunities near you</mj-preview>',
+            $html,
+            'Preheader must fall back to the generic string when the opportunities list is empty'
+        );
+    }
 }

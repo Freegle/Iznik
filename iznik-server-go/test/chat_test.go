@@ -4470,3 +4470,161 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	assert.Equal(t, int64(0), countAfter,
 		"after markAllRead, unread count must be 0 (got %d: handleAllSeen skips chats with no roster entry)", countAfter)
 }
+
+// =============================================================================
+// CommonGroups tests
+// =============================================================================
+
+func TestCommonGroupsShared(t *testing.T) {
+	prefix := uniquePrefix("commongroups")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix+"_g")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/"+fmt.Sprint(chatid)+"/commongroups?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var groups []chat.CommonGroup
+	json2.Unmarshal(rsp(resp), &groups)
+	assert.Equal(t, 1, len(groups))
+	assert.Equal(t, groupID, groups[0].ID)
+}
+
+func TestCommonGroupsNone(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnone")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	g1 := CreateTestGroup(t, prefix+"_g1")
+	g2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, user1ID, g1, "Member")
+	CreateTestMembership(t, user2ID, g2, "Member")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/"+fmt.Sprint(chatid)+"/commongroups?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var groups []chat.CommonGroup
+	json2.Unmarshal(rsp(resp), &groups)
+	assert.Equal(t, 0, len(groups))
+}
+
+func TestCommonGroupsNotMember(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnm")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/"+fmt.Sprint(chatid)+"/commongroups?jwt="+token, nil))
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// =============================================================================
+// ReportNoGroup tests
+// =============================================================================
+
+func TestReportNoGroup(t *testing.T) {
+	prefix := uniquePrefix("reportnogroup")
+	db := database.DBConn
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Want a girlfriend?")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{
+		"id": chatid, "action": "ReportNoGroup", "reason": "Spam", "comment": "creepy",
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_chat_spam_report' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid).Scan(&taskCount)
+	assert.Greater(t, taskCount, int64(0))
+}
+
+func TestReportNoGroupRejectedWhenCommonGroup(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupcg")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix+"_g")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestReportNoGroupNotMember(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupnm")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestCommonGroupsNotLoggedIn(t *testing.T) {
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat/1/commongroups", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+func TestCommonGroupsChatNotFound(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnf")
+	uid := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, uid)
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/999999999/commongroups?jwt="+token, nil))
+	assert.Equal(t, 404, resp.StatusCode)
+}
+
+func TestReportNoGroupMissingReason(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupmr")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestReportNoGroupChatNotFound(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupnf")
+	uid := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, uid)
+
+	payload := map[string]interface{}{"id": 999999999, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+}

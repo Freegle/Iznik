@@ -162,7 +162,48 @@ class ContentCheckService
             $reasons[] = $r;
         }
 
-        return $reasons;
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * Collapse reasons that flag the SAME keyword more than once.
+     *
+     * Concern keywords and the legacy per-group worry words overlap: a per-group
+     * worry word that has been migrated into concern_keywords (scope=group) is
+     * matched by BOTH checkConcernKeywords and checkPerGroupWorryWords, producing
+     * two reasons ("Matched concern keyword 'x'" and "Matched per-group worry
+     * word 'x'") for the one word. Keep a single reason per keyword, preferring
+     * the richer ConcernKeyword (it carries a category that drives mod guidance).
+     * Reasons without a keyword (Vague, PhoneNumber, …) are never de-duplicated.
+     */
+    private function dedupeReasons(array $reasons): array
+    {
+        $indexByKeyword = [];
+        $out = [];
+
+        foreach ($reasons as $reason) {
+            $keyword = isset($reason['keyword']) ? strtolower(trim((string) $reason['keyword'])) : '';
+
+            if ($keyword === '') {
+                $out[] = $reason;
+                continue;
+            }
+
+            if (!isset($indexByKeyword[$keyword])) {
+                $indexByKeyword[$keyword] = count($out);
+                $out[] = $reason;
+                continue;
+            }
+
+            // Already have a reason for this keyword; prefer ConcernKeyword.
+            $existingIndex = $indexByKeyword[$keyword];
+            if ($reason['check'] === self::CHECK_CONCERN_KEYWORD
+                && $out[$existingIndex]['check'] !== self::CHECK_CONCERN_KEYWORD) {
+                $out[$existingIndex] = $reason;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -201,30 +242,46 @@ class ContentCheckService
     }
 
     /**
-     * Process all unprocessed pending messages in batches of 100.
+     * Only NEW approved-on-arrival posts are content-checked (bounded by arrival),
+     * so the historical backlog of already-live posts is never rescanned.
+     */
+    private const APPROVED_CHECK_WINDOW_HOURS = 24;
+
+    /**
+     * Process all unprocessed messages in batches of 100.
      *
-     * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int, 'errors' => int]
+     * Covers Pending posts awaiting their first check, and NEW Approved-on-arrival
+     * posts (e.g. from unmoderated members) that bypass the Pending queue - those
+     * are checked too but never auto-demoted; problems are surfaced to mods.
+     *
+     * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int,
+     *                 'checked_approved' => int, 'flagged_approved' => int, 'errors' => int]
      */
     public function processUnprocessed(bool $dryRun = false): array
     {
-        $stats = ['approved' => 0, 'kept_pending' => 0, 'blocked' => 0, 'errors' => 0];
+        $stats = [
+            'approved'         => 0,
+            'kept_pending'     => 0,
+            'blocked'          => 0,
+            'checked_approved' => 0,
+            'flagged_approved' => 0,
+            'errors'           => 0,
+        ];
 
-        DB::table('messages_groups as mg')
-            ->join('messages as m', 'm.id', '=', 'mg.msgid')
-            ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
-            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
-            ->whereNull('mg.contentcheck_checked_at')
-            ->where('mg.deleted', 0)
-            ->whereNull('m.deleted')
-            ->whereNotNull('m.fromuser')
-            ->whereNull('u.deleted')
-            ->orderBy('mg.msgid')
-            ->orderBy('mg.groupid')
-            ->chunk(100, function ($candidates) use (&$stats, $dryRun) {
+        // Per-row processing, shared by the two candidate queries below.
+        $processChunk = function ($candidates) use (&$stats, $dryRun) {
                 foreach ($candidates as $row) {
                     try {
-                        $reasons     = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+                        $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+
+                        // Already-live (Approved-on-arrival) posts: content-check them but
+                        // never auto-demote a post members can already see. Clean -> just
+                        // record the check; any reasons -> store them and notify mods.
+                        if ($row->collection === MessageGroup::COLLECTION_APPROVED) {
+                            $this->recordApprovedCheck($row, $reasons, $dryRun, $stats);
+                            continue;
+                        }
+
                         $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser)
                                     || $this->isGroupModerated((int) $row->groupid);
                         $promote     = empty($reasons) && !$isModerated;
@@ -310,9 +367,94 @@ class ContentCheckService
                         $stats['errors']++;
                     }
                 }
-            });
+        };
+
+        // The old single query OR'd the two cases (Pending, or recent Approved)
+        // together. No index leads with the selective predicate, so MySQL could
+        // only satisfy the ORDER BY mg.msgid + LIMIT by walking the `deleted`
+        // index - millions of rows - re-filtering each (EXPLAIN: ~4.59M rows,
+        // filtered 2.5%). Splitting into two passes lets each use an existing
+        // index. Which posts get checked, and how, is unchanged.
+        $base = fn () => DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
+            ->whereNull('mg.contentcheck_checked_at')
+            ->where('mg.deleted', 0)
+            // Never fight a mod: a held message has been deliberately pulled back /
+            // is under review, so leave it alone rather than re-promoting it (9816/9815).
+            ->whereNull('mg.heldby')
+            ->whereNull('m.deleted')
+            ->whereNotNull('m.fromuser')
+            ->whereNull('u.deleted')
+            ->orderBy('mg.msgid')
+            ->orderBy('mg.groupid');
+
+        // Pending posts awaiting their first check. Served by the single-column
+        // `collection` index; being a secondary index it returns rows already
+        // ordered by the appended (msgid, groupid) clustered key, so no filesort,
+        // and Pending is the small live mod queue.
+        $base()
+            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
+            ->chunk(100, $processChunk);
+
+        // NEW approved-on-arrival posts, bounded to recent arrivals so the
+        // historical backlog of live posts is never rescanned. Served by the
+        // `arrival` index range over just the recent window.
+        $base()
+            ->where('mg.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('mg.arrival', '>', now()->subHours(self::APPROVED_CHECK_WINDOW_HOURS))
+            ->chunk(100, $processChunk);
 
         return $stats;
+    }
+
+    /**
+     * Record the content check for an already-Approved (live) post. We never demote a
+     * post members can already see: a clean post is simply stamped as checked; a post
+     * with reasons keeps its reasons stored and notifies the group's mods so a human
+     * can review it. Bounded to new arrivals by the caller.
+     */
+    private function recordApprovedCheck(object $row, array $reasons, bool $dryRun, array &$stats): void
+    {
+        $hasReasons = !empty($reasons);
+
+        if ($dryRun) {
+            $stats[$hasReasons ? 'flagged_approved' : 'checked_approved']++;
+            return;
+        }
+
+        if ($hasReasons) {
+            DB::transaction(function () use ($row, $reasons, &$stats) {
+                DB::table('messages_groups')
+                    ->where('msgid', $row->msgid)
+                    ->where('groupid', $row->groupid)
+                    ->update([
+                        'contentcheck_checked_at' => now(),
+                        'contentcheck_reasons'    => json_encode($reasons),
+                    ]);
+
+                DB::table('background_tasks')->insert([
+                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
+                    'data'      => json_encode(['group_id' => (int) $row->groupid]),
+                ]);
+
+                $stats['flagged_approved']++;
+            });
+
+            Log::info("ContentCheck: flagged already-approved message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+            return;
+        }
+
+        DB::table('messages_groups')
+            ->where('msgid', $row->msgid)
+            ->where('groupid', $row->groupid)
+            ->update([
+                'contentcheck_checked_at' => now(),
+                'contentcheck_reasons'    => null,
+            ]);
+
+        $stats['checked_approved']++;
     }
 
     /**
@@ -595,6 +737,7 @@ class ContentCheckService
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
                 'action'   => $kw->action ?? 'flag',
+                'keyword'  => $word,
                 'detail'   => "Matched concern keyword '{$word}'",
             ];
         }
@@ -1031,6 +1174,7 @@ class ContentCheckService
                     'check'    => self::CHECK_PER_GROUP_WORRY,
                     'category' => null,
                     'action'   => 'flag',
+                    'keyword'  => $word,
                     'detail'   => "Matched per-group worry word '{$word}'",
                 ];
             }
@@ -1265,11 +1409,21 @@ class ContentCheckService
             ];
         }
 
-        // IP used to post to 20+ different groups
+        // IP used to post to 20+ different groups.
+        //
+        // Exclude rippled-in rows (messages_groups.rippled_in = 1). Rippling-out
+        // (ExpandService::rippleIntoNewGroups) inserts one messages_groups row per
+        // nearby intersecting group for the SAME message — a single post can fan
+        // out to 20-30 groups. Those rows share the one origin message's fromip, so
+        // counting them would flag every rippled post as IP abuse (false positive:
+        // one member, one post, many groups). We only want to detect an IP genuinely
+        // used to post to many DIFFERENT groups, i.e. native (non-rippled) postings.
+        // See Discourse https://discourse.ilovefreegle.org/t/not-sure-if-this-is-abuse-or-rippling-out/9833
         $groupCount = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->where('messages.fromip', $fromip)
             ->where('messages.arrival', '>=', $window)
+            ->where('messages_groups.rippled_in', 0)
             ->distinct('messages_groups.groupid')
             ->count();
 
@@ -1278,6 +1432,7 @@ class ContentCheckService
                 ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
                 ->where('messages.fromip', $fromip)
                 ->where('messages.arrival', '>=', $window)
+                ->where('messages_groups.rippled_in', 0)
                 ->select('messages_groups.groupid')
                 ->groupBy('messages_groups.groupid')
                 ->orderByRaw('MAX(messages_groups.arrival) DESC')

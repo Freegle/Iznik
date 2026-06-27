@@ -257,6 +257,8 @@ const LOG_FORMATTERS = {
         let text = 'Joined'
         if (log.text === 'Manual') {
           text += ' (clicked Join button)'
+        } else if (log.text === 'Rippled') {
+          text += ' (auto-joined - post rippled into this group)'
         } else if (log.text) {
           text += ' (auto-joined when posting/replying)'
         }

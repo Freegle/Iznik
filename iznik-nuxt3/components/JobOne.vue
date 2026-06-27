@@ -281,6 +281,7 @@ function clicked() {
   // Log to server for revenue tracking.
   jobStore.log({
     id: job.value.id,
+    link: job.value.url,
   })
 
   // Log click to client log for analytics.

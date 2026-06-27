@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Is your volunteer opportunity still active?'])
+  @include('emails.mjml.partials.head', ['preview' => 'Please confirm: ' . $title . ' on ' . $groupName . ' - is it still active?'])
 
   <mj-body background-color="#f4f4f4">
 

@@ -81,6 +81,14 @@
       Unknown chat message type {{ chatmessage?.type }}, {{ chat }}
       {{ chatmessage }}
     </div>
+    <b-badge
+      v-if="chatmessage?.heldbyrippling"
+      variant="warning"
+      class="mt-1"
+      data-testid="rippling-held-badge"
+    >
+      Held: rippling out
+    </b-badge>
     <chat-message-warning v-if="phoneNumber" />
     <chat-message-date-read :id="id" :chatid="chatid" :last="last" :pov="pov" />
 

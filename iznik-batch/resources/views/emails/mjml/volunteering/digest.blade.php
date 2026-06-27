@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Volunteer opportunities near you'])
+  @include('emails.mjml.partials.head', ['preview' => ($volunteerings[0]['title'] ?? 'Volunteer opportunities near you') . (count($volunteerings) > 1 ? ' and ' . (count($volunteerings) - 1) . ' more' : '')])
 
   <mj-body background-color="#f4f4f4">
 

@@ -76,7 +76,7 @@ func (d *GroupsDataset) Query(idx *Index, params QueryParams) ([]QueryResult, er
 	if params.Limit <= 0 {
 		params.Limit = 10
 	}
-	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, nil)
+	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, nil, nil)
 }
 
 func (d *GroupsDataset) Within(idx *Index, params QueryParams) ([]int64, error) {

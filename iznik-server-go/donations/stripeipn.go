@@ -100,19 +100,18 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 		userIDPtr = &userID
 	}
 
-	result := gdb.Exec(
+	// Read the new donation id from the write result, not a read-split-routable SELECT
+	// (9832 class). Here it only feeds the log line below, but keep it correct anyway.
+	donationID, err := database.ExecInsertGetID(gdb,
 		"INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source, TransactionType, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		userIDPtr, userEmail, userName, time.Now().Format("2006-01-02 15:04:05"),
 		charge.ID, amount, TYPE_STRIPE, transactionType, TYPE_STRIPE,
 	)
 
-	if result.Error != nil {
-		log.Printf("[StripeIPN] Failed to record donation: %v", result.Error)
+	if err != nil {
+		log.Printf("[StripeIPN] Failed to record donation: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to record donation"})
 	}
-
-	var donationID uint64
-	gdb.Raw("SELECT id FROM users_donations WHERE TransactionID = ? ORDER BY id DESC LIMIT 1", charge.ID).Scan(&donationID)
 	log.Printf("[StripeIPN] Recorded donation id=%d for user=%d amount=£%.2f", donationID, userID, amount)
 
 	// Handle gift aid notification.

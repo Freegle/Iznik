@@ -25,6 +25,7 @@ class ReachService
     private string $curve;
     private string $mode;
     private float $maxMinutes;
+    private int $requestTimeout;
 
     /** @var int[] hours-since-arrival thresholds, one per expansion tick */
     private array $hazardHours;
@@ -35,6 +36,7 @@ class ReachService
         $this->curve = config('freegle.ripple.curve', 'step-70');
         $this->mode = config('freegle.ripple.mode', 'drive');
         $this->maxMinutes = (float) config('freegle.ripple.max_minutes', 30);
+        $this->requestTimeout = (int) config('freegle.ripple.request_timeout', 60);
         $this->hazardHours = config('freegle.ripple.hazard_hours', [1, 3, 6, 12, 24, 48, 72, 120, 168]);
     }
 
@@ -66,14 +68,8 @@ class ReachService
     public function computeSchedule(float $lat, float $lng): ?array
     {
         try {
-            $response = Http::timeout(20)->get("{$this->url}/v1/ripple-schedule", [
-                'lat' => $lat,
-                'lng' => $lng,
-                'mode' => $this->mode,
-                'ticks' => $this->totalTicks(),
-                'max_minutes' => $this->maxMinutes,
-                'curve' => $this->curve,
-            ]);
+            $response = Http::timeout($this->requestTimeout)
+                ->get("{$this->url}/v1/ripple-schedule", $this->scheduleParams($lat, $lng));
         } catch (\Throwable $e) {
             Log::warning("ripple: schedule fetch failed: {$e->getMessage()}", ['lat' => $lat, 'lng' => $lng]);
             return null;
@@ -84,7 +80,80 @@ class ReachService
             return null;
         }
 
-        $body = $response->json() ?? [];
+        return $this->parseScheduleResponse($response->json() ?? []);
+    }
+
+    /**
+     * Compute schedules for several origins CONCURRENTLY (one HTTP request per origin,
+     * fanned out via Http::pool / curl_multi). Read-only: callers apply the results to
+     * the DB serially afterwards. Returns one entry per input origin, index-aligned,
+     * each a parsed schedule or null (unreachable / off-graph / empty).
+     *
+     * The caller is expected to pass DISTINCT (already-blurred) origins — computeSchedule
+     * is deterministic per origin, so de-duplicating origins before calling this turns
+     * O(posts) routing calls into O(distinct origins).
+     *
+     * @param array<int,array{lat:float,lng:float}> $origins
+     * @return array<int,?array>
+     */
+    public function computeSchedulesBatch(array $origins): array
+    {
+        if (empty($origins)) {
+            return [];
+        }
+
+        $url = "{$this->url}/v1/ripple-schedule";
+        try {
+            $responses = Http::pool(fn ($pool) => array_map(
+                fn ($o) => $pool->timeout($this->requestTimeout)
+                    ->get($url, $this->scheduleParams((float) $o['lat'], (float) $o['lng'])),
+                array_values($origins)
+            ));
+        } catch (\Throwable $e) {
+            Log::warning("ripple: schedule pool failed: {$e->getMessage()}");
+            return array_fill(0, count($origins), null);
+        }
+
+        $out = [];
+        foreach (array_values($origins) as $i => $o) {
+            $resp = $responses[$i] ?? null;
+            if ($resp instanceof \Throwable) {
+                Log::warning("ripple: schedule fetch failed: {$resp->getMessage()}", $o);
+                $out[$i] = null;
+                continue;
+            }
+            if ($resp === null || !$resp->successful()) {
+                Log::warning('ripple: schedule HTTP ' . ($resp ? $resp->status() : 'no-response'), $o);
+                $out[$i] = null;
+                continue;
+            }
+            $out[$i] = $this->parseScheduleResponse($resp->json() ?? []);
+        }
+
+        return $out;
+    }
+
+    /** Query parameters for a /v1/ripple-schedule request at the given origin. */
+    private function scheduleParams(float $lat, float $lng): array
+    {
+        return [
+            'lat' => $lat,
+            'lng' => $lng,
+            'mode' => $this->mode,
+            'ticks' => $this->totalTicks(),
+            'max_minutes' => $this->maxMinutes,
+            'curve' => $this->curve,
+        ];
+    }
+
+    /**
+     * Parse a /v1/ripple-schedule JSON body into the schedule structure, or null if it
+     * carries no usable ticks. Shared by the single and batch paths.
+     *
+     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>}|null
+     */
+    public function parseScheduleResponse(array $body): ?array
+    {
         $schedule = $body['schedule'] ?? [];
         if (empty($schedule)) {
             return null;

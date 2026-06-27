@@ -14,6 +14,7 @@ import AIImagesAPI from './AIImagesAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
 import BanditAPI from './BanditAPI.js'
+import BrowseAPI from './BrowseAPI.js'
 import CharityAPI from './CharityAPI.js'
 import ChatAPI from './ChatAPI.js'
 import CommentAPI from './CommentAPI.js'
@@ -64,6 +65,7 @@ export default (config) => {
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),
     bandit: new BanditAPI(options),
+    browse: new BrowseAPI(options),
     charity: new CharityAPI(options),
     chat: new ChatAPI(options),
     comment: new CommentAPI(options),

@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'A warning from ' . $siteName . ' about ' . $spammerName])
+  @include('emails.mjml.partials.head', ['preview' => 'Be careful - you have been talking to ' . $spammerName . (!empty($messageSubject) ? ' about: ' . $messageSubject : '')])
   <mj-body background-color="#ffffff">
     {{-- Header --}}
     <mj-section mj-class="bg-freegle" padding="20px">

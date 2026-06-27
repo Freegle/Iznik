@@ -81,6 +81,8 @@ return [
         'support_addr' => env('FREEGLE_SUPPORT_ADDR', 'support@ilovefreegle.org'),
         // ChitChat support - receives newsfeed report emails.
         'chitchat_support_addr' => env('FREEGLE_CHITCHAT_SUPPORT_ADDR', 'support@ilovefreegle.org'),
+        // Spam team - receives chat reports where the two users share no group.
+        'spam_addr' => env('FREEGLE_SPAM_ADDR', env('FREEGLE_SUPPORT_ADDR', 'support@ilovefreegle.org')),
         // Partnerships address for charity partner signups.
         'partnerships_addr' => env('FREEGLE_PARTNERSHIPS_ADDR', 'partnerships@ilovefreegle.org'),
         // Info address for donation notifications and general admin emails.
@@ -281,19 +283,56 @@ return [
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
         'enabled' => (bool) env('RIPPLE_ENABLED', false),
-        // Go-live arrival cutoff (server local time). Only posts that arrived on or
-        // after this instant ever START rippling; older pending posts are left alone.
-        // This is the flood guard: when RIPPLE_ENABLED first flips on, every historical
-        // pending post would otherwise become eligible at once and fan out a wall of
-        // mail. With the cutoff, only recent posts ripple, so go-live is a trickle.
+        // Arrival cutoff (server local time). Only posts that arrived on or after this
+        // instant ever START rippling; older pending posts are left alone. This is the
+        // flood guard: when rippling first turns on, every historical pending post would
+        // otherwise become eligible at once and fan out a wall of mail. With the cutoff,
+        // only recent posts ripple, so turn-on is a trickle. It applies to the scoped
+        // group experiment too (an area run still ripples only post-cutoff posts inside
+        // the polygon), so for a clean before/after boundary set RIPPLE_ENABLED_AT in
+        // .env.background to the day you switch the experiment on, alongside
+        // RIPPLE_WITHIN_GROUPS - otherwise the first run back-fills the gap to this date.
         // Empty string disables the cutoff (ripple everything, e.g. in tests).
-        'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-21'),
+        'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-23'),
+        // Group experiment scope: comma-separated group ids that ripple even while the global
+        // RIPPLE_ENABLED switch is OFF. When non-empty, the scheduled ripple:expand cron runs SCOPED
+        // to these groups' polygons, so ONLY these groups' posts ripple (origin-in-polygon) and
+        // everyone else stays dark - this is the per-group before/after experiment. Empty = no
+        // experiment. RIPPLE_ENABLED remains the network-wide kill switch for the unscoped rollout.
+        'within_groups' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) env('RIPPLE_WITHIN_GROUPS', ''))
+        ))),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.
         'mode' => env('RIPPLE_MODE', 'drive'),
         // Maximum drive-time (minutes) the reach may grow to.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // How many reach schedules to compute CONCURRENTLY (Http::pool fan-out in
+        // ExpandService::initialiseNew). Each /v1/ripple-schedule request is CPU-bound on the
+        // routing host (one Dijkstra + polygon rasterisations), so cap this near the routing
+        // host's core count; exceeding it just queues on the routing server. DB writes stay
+        // serial regardless. 1 = sequential (the old behaviour).
+        'compute_concurrency' => (int) env('RIPPLE_COMPUTE_CONCURRENCY', 8),
+        // Per-request timeout (seconds) for a /v1/ripple-schedule call. A dense-origin post can
+        // take tens of seconds; the pool path uses this so one slow post does not abort the chunk.
+        'request_timeout' => (int) env('RIPPLE_REQUEST_TIMEOUT', 60),
+        // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
+        // DISTINCT repliers (distinct users with an Interested chat reply on the post,
+        // chat_messages.refmsgid = msgid) stops expanding - it already has plenty of interest, so
+        // further reach is wasted. Applies both at init (an already-saturated post never starts
+        // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
+        // 5 = the figure from the Discourse rippling thread.
+        'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
+        // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
+        // origin group, waits before it is approved onto the rippled-in group (it was already
+        // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
+        // into the Pending mod queue - this keeps the moderation load of rippling off the
+        // receiving groups, since the post was already moderated on its origin group. >0 leaves
+        // it Pending for AutoApproveService to approve after the window (a mod-veto window for
+        // groups that want to eyeball rippled-in posts before they appear).
+        'rippled_in_pending_hours' => (int) env('RIPPLE_RIPPLED_IN_PENDING_HOURS', 0),
         // Wall-clock hazard schedule (hours since arrival) at which the reach
         // expands one tick. One schedule tick is requested per entry, so the
         // number of ticks equals the length of this array.
