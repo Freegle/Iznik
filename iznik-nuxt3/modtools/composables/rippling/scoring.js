@@ -3,7 +3,10 @@
 // Bucket a post by its lifecycle state and return the marker colour, a
 // short label, and which section of the digest mock-up it belongs in.
 export function classifyPost(p) {
-  if (p.successful)
+  // has_success (a Taken/Received outcome) is the authoritative "came and went"
+  // signal in the new simulator response; the legacy `successful` flag may not be
+  // set on those rows, so check both.
+  if (p.successful || p.has_success)
     return { color: '#888', label: 'completed', section: 'completed' }
   if (p.promised)
     return { color: '#f39c12', label: 'promised', section: 'promised' }
@@ -62,24 +65,26 @@ export function swingometerDisplay(pct, localBaseline, baselineReady) {
   return { ready: true, label, color, aboveBaseline, diff }
 }
 
-// Split a digest-simulator response into the three sections shown in the
-// V1 production digest:
+// Split a digest-simulator response into the sections used to draw the map
+// markers and the side pie. Consumes the NEW simulator contract:
 //
-//   * active   — still-claimable posts, sorted by score, home + cross
-//   * promised — someone has expressed interest, post still in flight
-//   * completed — already taken (since last digest)
+//   * top_picks (aka selected) + deferred — the deduped "available" pool
+//     (the real send's Top picks; the real digest has no separate Promised
+//     section, so promised-but-no-outcome posts live in here)
+//   * came_and_went                       — deduped Taken/Received posts
 //
-// Mutates each post with a 1-based `_rank` matching its global position
-// in the ranked array (active → promised → taken).  Inputs are not
-// otherwise modified.
+// Mutates each post with a 1-based `_rank` matching its global position in the
+// ranked array (available → came-and-went). Inputs are not otherwise modified.
+// `promised` is still surfaced as a slice for the side pie only.
 export function partitionInboxData(data) {
-  const rawList = [].concat(data.selected || [], data.deferred || [])
-  const active = rawList.filter((p) => !p.successful && !p.promised)
+  const available = [].concat(data.top_picks || data.selected || [], data.deferred || [])
+  const completed = [].concat(data.came_and_went || [])
+  const promised = available.filter((p) => p.promised)
+  const active = available.filter((p) => !p.promised)
   const activeHome = active.filter((p) => p.home_group)
   const activeCross = active.filter((p) => !p.home_group)
-  const promised = rawList.filter((p) => p.promised && !p.successful)
-  const taken = rawList.filter((p) => p.successful)
-  const ranked = active.concat(promised, taken)
+  const taken = completed
+  const ranked = available.concat(completed)
   ranked.forEach((p, i) => (p._rank = i + 1))
   return { ranked, active, activeHome, activeCross, promised, taken }
 }

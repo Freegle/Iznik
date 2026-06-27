@@ -47,6 +47,14 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
       ? `${kmStraight.toFixed(1)} km`
       : `${p.drive_min.toFixed(0)} min in reach`
   const when = formatTimeAgo(p.arrival)
+  // Cross-posted items carry every group they landed in; mirror the real
+  // digest's "Posted to: A, B, C" line (only when posted to more than one).
+  const postedToHTML =
+    p.posted_to_names && p.posted_to_names.length > 1
+      ? `<div class="rpl-digest-meta">Posted to: ${p.posted_to_names
+          .map(escapeHTML)
+          .join(', ')}</div>`
+      : ''
   const thumb = thumbUrlFor(p)
   const thumbHTML = thumb
     ? `<img src="${thumb}" loading="lazy" referrerpolicy="no-referrer" style="width:48px;height:48px;border-radius:4px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'"/>`
@@ -77,7 +85,9 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
     `<div class="rpl-digest-title">${msgtype}: ${subject}</div>` +
     `<div class="rpl-digest-meta">` +
     `${homeChip} · ${groupName} · ${distStr} · ${when}` +
-    `</div></div>` +
+    `</div>` +
+    postedToHTML +
+    `</div>` +
     scoreCol +
     thumbHTML +
     `</div>`
@@ -86,10 +96,20 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
 
 // Public API ─────────────────────────────────────────────────────────────
 
-// Show the full mock-up: top picks → promised → completed, each
-// section soft-capped at 100 entries with a "+N more" footer.
-function openDigest(ranked, memberLat, memberLng) {
-  if (!ranked || !ranked.length) {
+// Show the full mock-up using the SAME sections/format as the real digest
+// email (UnifiedDigest / unified.blade.php):
+//
+//   1. "Top picks (N)"                          — deduped available, capped 65
+//   2. "Since last digest, these came and went" — deduped Taken/Received
+//
+// There is deliberately NO "Promised" section: the real send has none, and
+// promised-but-no-outcome posts are just available (they sit in top_picks).
+// `data` is the raw simulator response (new contract).
+function openDigest(data, memberLat, memberLng) {
+  const topPicks = (data && (data.top_picks || data.selected)) || []
+  const cameAndWent = (data && data.came_and_went) || []
+
+  if (!topPicks.length && !cameAndWent.length) {
     const msg =
       memberLat === null || memberLat === undefined
         ? 'Drop a location first.'
@@ -105,24 +125,6 @@ function openDigest(ranked, memberLat, memberLng) {
     `<strong>This isn't how the digest will look</strong> — it's a list of what the digest would <em>contain</em> under the current sliders, in order.  The real email will be laid out by the unified-digest team.` +
     `</div>`
 
-  const sections = { active: [], promised: [], completed: [] }
-  ranked.forEach((p) => {
-    const cls = classifyPost(p)
-    sections[cls.section].push(buildDigestRow(p, p._rank, memberLat, memberLng))
-  })
-
-  const SOFT_CAP = 100 // Display cap for the promised/completed sections (active uses DIGEST_POST_CAP).
-  // The real unified digest only emails the first DigestStyle::DIGEST_POST_CAP (65) live
-  // posts ("Top picks"); the rest are website-only. Mirror that cap here so the preview
-  // reflects what actually goes out, rather than the looser 100-row display soft cap.
-  const DIGEST_POST_CAP = 65
-  const truncate = (rows) => {
-    if (rows.length <= SOFT_CAP) return { html: rows.join(''), extra: 0 }
-    return {
-      html: rows.slice(0, SOFT_CAP).join(''),
-      extra: rows.length - SOFT_CAP,
-    }
-  }
   const moreFooter = (n) =>
     `<div style="padding:10px 12px;font-size:11px;color:#888;text-align:center;background:#fafafa;border-top:1px solid #eee">` +
     `<em>… and ${n} more on the website.  Amazed you've scrolled this far.</em></div>`
@@ -131,31 +133,38 @@ function openDigest(ranked, memberLat, memberLng) {
     (sub ? `<div style="font-weight:400;color:#888;font-size:10.5px;margin-top:2px">${sub}</div>` : '') +
     `</div>`
 
+  // deduped_count is the FULL Top-picks total (before the 65 display cap);
+  // top_picks is already capped server-side and deferred_count is the overflow
+  // shown only on the website. Mirror the email's subject semantics: the header
+  // count is the total, but only the capped set is listed (+ "…and N more").
+  const dedupedCount =
+    data.deduped_count != null ? data.deduped_count : topPicks.length
+  const deferredCount =
+    data.deferred_count != null
+      ? data.deferred_count
+      : Math.max(0, dedupedCount - topPicks.length)
+  const cameCount =
+    data.came_and_went_count != null ? data.came_and_went_count : cameAndWent.length
+
   let html = intro
-  if (sections.active.length) {
-    html += sectionHeader(`Top picks (${sections.active.length})`)
-    // Apply the real digest's 65 live-post cap (not the 100-row display soft cap).
-    const extra = Math.max(0, sections.active.length - DIGEST_POST_CAP)
-    html += sections.active.slice(0, DIGEST_POST_CAP).join('')
-    if (extra) html += moreFooter(extra)
+  let rank = 0
+  if (topPicks.length) {
+    html += sectionHeader(`Top picks (${dedupedCount})`)
+    topPicks.forEach((p) => {
+      rank += 1
+      html += buildDigestRow(p, rank, memberLat, memberLng)
+    })
+    if (deferredCount > 0) html += moreFooter(deferredCount)
   }
-  if (sections.promised.length) {
+  if (cameAndWent.length) {
     html += sectionHeader(
-      `Promised (${sections.promised.length})`,
-      'Someone has expressed interest but the post is still in flight.'
-    )
-    const r = truncate(sections.promised)
-    html += r.html
-    if (r.extra) html += moreFooter(r.extra)
-  }
-  if (sections.completed.length) {
-    html += sectionHeader(
-      `Since last digest, these came and went (${sections.completed.length})`,
+      `Since last digest, these came and went (${cameCount})`,
       '<em>Switch to immediate notifications to see these in time.</em>'
     )
-    const r = truncate(sections.completed)
-    html += r.html
-    if (r.extra) html += moreFooter(r.extra)
+    cameAndWent.forEach((p) => {
+      rank += 1
+      html += buildDigestRow(p, rank, memberLat, memberLng)
+    })
   }
   bodyHTML.value = html
   headerText.value = '📄 Digest mock-up'
