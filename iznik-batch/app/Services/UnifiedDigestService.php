@@ -1563,12 +1563,16 @@ class UnifiedDigestService
      */
     protected function getDeduplicationKey(Message $message): string
     {
-        // If we have a TrashNothing post ID, use it - it's definitive.
-        if ($message->tnpostid) {
-            return "tn:{$message->tnpostid}";
-        }
-
-        // Otherwise, combine fromuser + normalized subject + location.
+        // Always key on CONTENT (fromuser + normalized subject + location), never
+        // tnpostid. A TrashNothing item re-posted / re-crossposted on different days
+        // gets a NEW tnpostid each time, so a "tn:{id}" key produced a distinct key
+        // per posting and the daily digest showed the same item N times while the
+        // website (which dedups by content) showed one (Neville Reid, Discourse
+        // 9808/#233 — "Small lamp" 4x; 27 such items in 4 days). bodiesMatch() still
+        // treats an equal tnpostid as a definitive duplicate and otherwise compares
+        // normalized bodies, so genuine cross-posts (same tnpostid) AND same-item
+        // reposts (different tnpostid, same body) both merge, while two different
+        // items that merely share subject+location stay separate (bodies differ).
         $normalizedSubject = $this->normalizeSubject($message->subject);
 
         return implode('|', [

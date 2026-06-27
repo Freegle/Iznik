@@ -108,7 +108,7 @@ export async function setupRipplingExplorer({
   let viewMode = 'outbound'
   let inboxLayer = null
   let inboxIsoLayer = null
-  let lastRanked = [] // last digest-simulator response, used by the mock-up modal
+  let lastDigestData = null // last digest-simulator response, used by the mock-up modal
   const inboundRow = document.getElementById('rippling-inbound-row')
 
   document.querySelectorAll('.rpl-mode-btn[data-view]').forEach((btn) => {
@@ -261,7 +261,7 @@ export async function setupRipplingExplorer({
   // in digest order.  All rendering lives in <RipplingDigestModal>; this
   // file just calls it with the data and the member's current location.
   showDigestBtn.addEventListener('click', () =>
-    digestModal.value?.openDigest(lastRanked, currentLat, currentLng)
+    digestModal.value?.openDigest(lastDigestData, currentLat, currentLng)
   )
   function openPostDetail(p, rank) {
     digestModal.value?.openPost(p, rank, currentLat, currentLng)
@@ -306,7 +306,11 @@ export async function setupRipplingExplorer({
   // Writes the text summary + pie chart that sit above the sliders.
   function updateInboxHomeSummary(data, parts) {
     const homeSummary = document.getElementById('rippling-home-summary')
-    const total = data.pool_size || 0
+    // deduped_count is the deduped Top-picks total (what's actually in the
+    // digest); pool_size is the raw pre-dedup count (debug only) in the new
+    // simulator contract, so don't use it for the headline.
+    const total =
+      data.deduped_count != null ? data.deduped_count : data.pool_size || 0
     const homeHead =
       data.home_groups && data.home_groups.length
         ? `<strong>Home:</strong> ${data.home_groups
@@ -389,7 +393,7 @@ export async function setupRipplingExplorer({
     })
     const totalRanked = ranked.length
     const colorFor = (p) => {
-      if (p.successful) return '#888'
+      if (p.successful || p.has_success) return '#888'
       if (p.promised) return '#f39c12'
       return p.home_group ? '#27ae60' : '#1f77b4'
     }
@@ -400,7 +404,9 @@ export async function setupRipplingExplorer({
         totalRanked > 1 ? (minRank - 1) / Math.max(totalRanked - 1, 1) : 0
       const baseOpacity = 0.95 - 0.45 * t
       const dotOpacity =
-        bucketPosts[0].successful || bucketPosts[0].promised
+        bucketPosts[0].successful ||
+        bucketPosts[0].has_success ||
+        bucketPosts[0].promised
           ? 0.85
           : baseOpacity
       // Truncate the label list at 6 ranks to avoid overflow.
@@ -457,7 +463,7 @@ export async function setupRipplingExplorer({
   function drawInbox(data) {
     if (!data) return
     const parts = partitionInboxData(data)
-    lastRanked = parts.ranked
+    lastDigestData = data
 
     updateInboxHomeSummary(data, parts)
     drawHomeGroupPolygons(data.home_groups)
@@ -666,7 +672,7 @@ export async function setupRipplingExplorer({
     groupFeatures = []
     homeGroupIds = new Set()
     lastIsoData = null
-    lastRanked = []
+    lastDigestData = null
     allFreeglers = []
     freeglersGrid = []
     totalLocatedFromServer = 0
