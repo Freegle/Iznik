@@ -142,16 +142,22 @@ describe('rippling/scoring', () => {
       expect(r.ranked[2]._rank).toBe(3)
     })
 
-    it('orders active → promised → taken in the ranked array (V1 digest model)', () => {
+    it('orders available (top picks + deferred) before came-and-went in the ranked array', () => {
+      // New simulator contract: available posts (top_picks/selected + deferred)
+      // keep their incoming order and come first; came_and_went (taken) follows.
+      // There is no active→promised→taken reordering any more.
       const data = {
-        selected: [
-          post({ msgid: 10, successful: true }), // taken
-          post({ msgid: 11 }), // active
-          post({ msgid: 12, promised: true }), // promised
+        top_picks: [
+          post({ msgid: 11 }), // active, still available
+          post({ msgid: 12, promised: true }), // promised, still available
         ],
+        came_and_went: [post({ msgid: 10, successful: true })], // taken
       }
       const r = partitionInboxData(data)
       expect(r.ranked.map((p) => p.msgid)).toEqual([11, 12, 10])
+      expect(r.active.map((p) => p.msgid)).toEqual([11])
+      expect(r.promised.map((p) => p.msgid)).toEqual([12])
+      expect(r.taken.map((p) => p.msgid)).toEqual([10])
     })
 
     it('splits active posts into home-group and rippled-in buckets', () => {
@@ -167,9 +173,12 @@ describe('rippling/scoring', () => {
       expect(r.activeCross.map((p) => p.msgid)).toEqual([2])
     })
 
-    it('treats successful posts as taken even when also flagged promised', () => {
+    it('treats came-and-went posts as taken, not promised, even when flagged promised', () => {
+      // came_and_went is the authoritative "taken" signal in the new contract:
+      // such a post is taken even if it still carries a promised flag, and it
+      // must not leak into the promised slice (which is drawn from available).
       const data = {
-        selected: [post({ msgid: 5, successful: true, promised: true })],
+        came_and_went: [post({ msgid: 5, successful: true, promised: true })],
       }
       const r = partitionInboxData(data)
       expect(r.taken).toHaveLength(1)

@@ -33,7 +33,12 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
   const homeChip = p.home_group
     ? `<span style="color:#27ae60;font-weight:600">home</span>`
     : `<span style="color:#1f77b4">rippled in</span>`
-  const subject = escapeHTML(p.subject || '(no title)')
+  // The subject already carries an "OFFER:/WANTED:" prefix; we render the type
+  // separately ("Offer:/Wanted:"), so strip it to avoid "Wanted: WANTED: …"
+  // (the real email shows a type pill + the clean item name).
+  const subject = escapeHTML(
+    (p.subject || '(no title)').replace(/^\s*(OFFER|WANTED)\s*:\s*/i, '')
+  )
   const msgtype = escapeHTML(p.msgtype)
   const groupName = escapeHTML(
     p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
@@ -42,9 +47,14 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
     memberLat !== null && memberLat !== undefined
       ? crowFliesKm(memberLat, memberLng, p.lat, p.lng)
       : null
+  // Show distance in MILES, formatted exactly like the real email
+  // (UnifiedDigest: "< 1 mile" else "N miles" rounded).
   const distStr =
     kmStraight !== null
-      ? `${kmStraight.toFixed(1)} km`
+      ? (() => {
+          const miles = kmStraight * 0.621371
+          return miles < 1 ? '< 1 mile' : `${Math.round(miles)} miles`
+        })()
       : `${p.drive_min.toFixed(0)} min in reach`
   const when = formatTimeAgo(p.arrival)
   // Cross-posted items carry every group they landed in; mirror the real
@@ -189,7 +199,12 @@ function openPost(p, rank, memberLat, memberLng) {
   const cls = classifyPost(p)
   const groupName = p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
   const fmt = (n) => (n || 0).toFixed(2)
-  const subject = escapeHTML(p.subject || '(no title)')
+  // The subject already carries an "OFFER:/WANTED:" prefix; we render the type
+  // separately ("Offer:/Wanted:"), so strip it to avoid "Wanted: WANTED: …"
+  // (the real email shows a type pill + the clean item name).
+  const subject = escapeHTML(
+    (p.subject || '(no title)').replace(/^\s*(OFFER|WANTED)\s*:\s*/i, '')
+  )
   const msgtype = escapeHTML(p.msgtype)
   const thumb = thumbUrlFor(p)
   const thumbHTML = thumb
@@ -201,7 +216,7 @@ function openPost(p, rank, memberLat, memberLng) {
       : null
   const distStr =
     kmStraight !== null
-      ? `${kmStraight.toFixed(1)} km as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
+      ? `${(kmStraight * 0.621371).toFixed(1)} miles as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
       : `${p.drive_min.toFixed(0)} min in reach`
   bodyHTML.value = `
     <div style="padding:16px;font-size:13px;line-height:1.5">
