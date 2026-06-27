@@ -42,6 +42,7 @@ class StatsGenerationService
     public const TYPE_WEIGHT = 'Weight';
     public const TYPE_ACTIVE_USERS = 'ActiveUsers';
     public const TYPE_ACTIVITY = 'Activity';
+    public const TYPE_BULK_ITEMS_COLLECTED = 'BulkItemsCollected';
 
     /**
      * Generate stats for every group for the given date.
@@ -322,6 +323,18 @@ class StatsGenerationService
 
         // ACTIVITY: rolled-up "things happened today" — approved-messages + replies (V1 formula).
         $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVITY, $activity, $dryRun);
+
+        // BULK_ITEMS_COLLECTED: total quantity of bulk-offer catalogue items marked
+        // Collected on this group on $date. Visible at item level (not post level),
+        // so a 120-item clearance contributes up to 120 here vs 1 in OUTCOMES.
+        $bulkCollected = (int) DB::table('messages_bulk_items_interest')
+            ->join('messages_groups', 'messages_bulk_items_interest.msgid', '=', 'messages_groups.msgid')
+            ->where('messages_bulk_items_interest.updated_at', '>=', $date)
+            ->whereRaw('DATE(messages_bulk_items_interest.updated_at) = ?', [$date])
+            ->where('messages_bulk_items_interest.state', 'Collected')
+            ->where('messages_groups.groupid', $groupId)
+            ->sum('messages_bulk_items_interest.quantity');
+        $rows += $this->writeCount($date, $groupId, self::TYPE_BULK_ITEMS_COLLECTED, $bulkCollected, $dryRun);
 
         return $rows;
     }

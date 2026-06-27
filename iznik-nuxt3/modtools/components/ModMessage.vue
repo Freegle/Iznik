@@ -507,6 +507,26 @@
                   See how members see it
                 </b-button>
               </b-alert>
+              <!-- Access instructions (bulk clearance): collapsible, mod-only context -->
+              <div v-if="message.accessinstructions" class="mb-3">
+                <b-button
+                  variant="link"
+                  class="p-0 text-decoration-none"
+                  @click="showAccessInstructions = !showAccessInstructions"
+                >
+                  <v-icon icon="info-circle" />
+                  <span v-if="showAccessInstructions"
+                    >Hide access instructions</span
+                  >
+                  <span v-else>Show access instructions</span>
+                </b-button>
+                <div
+                  v-if="showAccessInstructions"
+                  class="mt-1 rounded border border-info p-2 preline forcebreak small"
+                >
+                  {{ message.accessinstructions }}
+                </div>
+              </div>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -922,6 +942,7 @@ const isBulk = computed(
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)
+const showAccessInstructions = ref(false)
 const editing = ref(false)
 const expanded = ref(false)
 const editgroup = ref(null)

@@ -263,6 +263,17 @@ class SendDailyPostsPushCommand extends Command
 
         $postsArray = $deduped->values()->all();
 
+        // Attach bulk item counts so the push payload can show "(N items)" for clearances.
+        $msgIds = array_map(fn ($p) => $p['message']->id, $postsArray);
+        $bulkCounts = DB::table('messages_bulk_items')
+            ->whereIn('msgid', $msgIds)
+            ->groupBy('msgid')
+            ->pluck(DB::raw('COUNT(*)'), 'msgid');
+        $postsArray = array_map(function (array $p) use ($bulkCounts) {
+            $p['bulkcount'] = (int) ($bulkCounts[$p['message']->id] ?? 0);
+            return $p;
+        }, $postsArray);
+
         if ($dryRun) {
             $this->line(
                 "  [dry-run] user={$user->id} posts=" . count($postsArray) .

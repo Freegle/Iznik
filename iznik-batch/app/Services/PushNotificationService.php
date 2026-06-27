@@ -1286,13 +1286,17 @@ class PushNotificationService
         $lines = [];
         foreach (array_slice($posts, 0, $maxLines) as $item) {
             $msg = $item['message'];
-            $lines[] = $this->formatPostLine($msg);
+            $lines[] = $this->formatPostLine($msg, (int) ($item['bulkcount'] ?? 0));
         }
 
         $moreCount = max(0, $count - count($lines));
 
         // ---- Single-line fallback message ----
-        $allNames = array_map(fn ($item) => $this->extractItemName($item['message']), $posts);
+        $allNames = array_map(function ($item) {
+            $name = $this->extractItemName($item['message']);
+            $bulkcount = (int) ($item['bulkcount'] ?? 0);
+            return $bulkcount > 0 ? "{$name} ({$bulkcount} items)" : $name;
+        }, $posts);
         $previewNames = array_slice($allNames, 0, $maxLines);
         $message = implode(', ', $previewNames);
         if ($moreCount > 0) {
@@ -1303,6 +1307,10 @@ class PushNotificationService
         if ($count === 1) {
             // Single post: title is the item name itself (BigPictureStyle).
             $title = $this->extractItemName($posts[0]['message']);
+            $bulkcount = (int) ($posts[0]['bulkcount'] ?? 0);
+            if ($bulkcount > 0) {
+                $title .= " ({$bulkcount} items)";
+            }
         } else {
             $title = $count . ' new freegles near you';
         }
@@ -1373,12 +1381,16 @@ class PushNotificationService
      * Format a single post into a short line for the InboxStyle lines[] array.
      *
      * Pattern: "Offer: {ItemName} ({LocationName})"
+     * For multi-item bulk clearances, appends " (N items)" after the name.
      * Mirrors V1's notification content and the app's chat-list preview style.
      */
-    private function formatPostLine(\App\Models\Message $msg): string
+    private function formatPostLine(\App\Models\Message $msg, int $bulkcount = 0): string
     {
         $type = ucfirst(strtolower((string) ($msg->type ?? 'Offer')));
         $name = $this->extractItemName($msg);
+        if ($bulkcount > 0) {
+            $name .= " ({$bulkcount} items)";
+        }
         $location = $this->extractLocationName($msg);
 
         if ($location !== '') {

@@ -253,8 +253,13 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				// Fetch first image only for thumbnail.
-				db.Raw("SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC LIMIT 1", msgID).Scan(&attachments)
+				// Fetch first image for thumbnail. For bulk offers, prefer a
+				// post-level attachment (bulkitemid IS NULL) as the hero image
+				// so the listing card shows the cover photo rather than an
+				// item thumbnail; fall back to any attachment if none exists.
+				db.Raw("SELECT id, msgid, archived, externaluid, externalmods "+
+					"FROM messages_attachments WHERE msgid = ? "+
+					"ORDER BY (bulkitemid IS NULL) DESC, `primary` DESC, id ASC LIMIT 1", msgID).Scan(&attachments)
 			}()
 
 			go func() {

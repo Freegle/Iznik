@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -306,18 +307,43 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 				break
 			}
 		}
-		var existingID uint64
-		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
-			chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
-		if existingID > 0 {
-			// Re-express: update body and reset processing flags so the notification
-			// pipeline re-fires (fix #7: processingrequired=1, processingsuccessful=0).
-			db.Exec("UPDATE chat_messages SET message = ?, date = ?, processingrequired = 1, processingsuccessful = 0 WHERE id = ?", body, time.Now(), existingID)
-		} else {
-			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-				chatid, target, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+		// Dedupe consolidated interest message: use a transaction with
+		// SELECT … FOR UPDATE on the existing row to close the race window
+		// under concurrent re-express (task 3). No global unique index needed.
+		sqlDB, txErr := db.DB()
+		if txErr == nil {
+			tx, txErr2 := sqlDB.Begin()
+			if txErr2 == nil {
+				var existingID uint64
+				// Lock any existing row so concurrent re-expresses serialise here.
+				row := tx.QueryRow("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1 FOR UPDATE",
+					chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED)
+				_ = row.Scan(&existingID)
+				if existingID > 0 {
+					// Re-express: update body and reset processing flags so the
+					// notification pipeline re-fires (fix #7).
+					tx.Exec("UPDATE chat_messages SET message = ?, date = ?, processingrequired = 1, processingsuccessful = 0 WHERE id = ?",
+						body, time.Now(), existingID)
+				} else {
+					tx.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
+						chatid, target, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+				}
+				tx.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+				tx.Commit() //nolint:errcheck
+			} else {
+				// Fallback without transaction — best effort.
+				var existingID uint64
+				db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
+					chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
+				if existingID > 0 {
+					db.Exec("UPDATE chat_messages SET message = ?, date = ?, processingrequired = 1, processingsuccessful = 0 WHERE id = ?", body, time.Now(), existingID)
+				} else {
+					db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
+						chatid, target, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+				}
+				db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+			}
 		}
-		db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "chatid": chatid})
@@ -379,10 +405,26 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		return fiber.NewError(fiber.StatusNotFound, "Interest row not found")
 	}
 
-	// Promising an item (moving it to Reserved) reveals the offer's private
-	// access instructions to that replier — once, via chat.
-	if *req.State == "Reserved" && priorState != "Reserved" {
+	// Promising an item (moving it to Reserved) mirrors the normal promise flow:
+	// write a messages_promises row and post a CHAT_MESSAGE_PROMISED system message.
+	if *req.State == "Reserved" && priorState != "Reserved" &&
+		priorState != "Collected" {
+		// REPLACE INTO is idempotent; mirrors handlePromise exactly.
+		db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgid, *req.Userid)
+		// System chat message (blank body, just the type) so the recipient's
+		// chat list shows the "Promised" indicator.
+		chatid, chatErr := chat.GetOrCreateUser2UserChat(db, fromuser, *req.Userid)
+		if chatErr == nil && chatid != 0 {
+			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, '', 1)",
+				chatid, fromuser, utils.CHAT_MESSAGE_PROMISED, msgid, time.Now())
+			db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+		}
 		sendAccessInstructions(db, msgid, fromuser, *req.Userid)
+	}
+
+	// Reverse the promise row when leaving Reserved back to Interested.
+	if priorState == "Reserved" && *req.State == "Interested" {
+		db.Exec("DELETE FROM messages_promises WHERE msgid = ? AND userid = ?", msgid, *req.Userid)
 	}
 
 	// Rejection notification (fix #3): when the offerer rejects a replier, send
@@ -418,6 +460,211 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	} else if priorState == "Collected" && *req.State != "Collected" && priorQuantity > 0 {
 		db.Exec("UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
 			priorQuantity, msgid)
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// BulkInterestStateItem is one transition in a batch state-change request.
+type BulkInterestStateItem struct {
+	Bulkitemid uint64 `json:"bulkitemid"`
+	Userid     uint64 `json:"userid"`
+	State      string `json:"state"`
+}
+
+// BulkInterestStateBatchRequest is the request body for POST /message/bulk/state.
+// Each entry is applied in order inside a single database transaction; the whole
+// batch is rolled back if any entry fails the permission or over-allocation check.
+type BulkInterestStateBatchRequest struct {
+	Items []BulkInterestStateItem `json:"items"`
+}
+
+// HandleBulkInterestStateBatch applies many state transitions for a single bulk
+// offer in one call. Exported for route registration.
+//
+// @Summary Batch-update bulk-offer interest states
+// @Description Apply multiple Reserved/Collected/Interested/Withdrawn/Rejected state transitions for a bulk offer in a single atomic call. All transitions are applied in a transaction; any validation failure rolls back the whole batch.
+// @Tags message
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body BulkInterestStateBatchRequest true "List of {bulkitemid, userid, state} transitions"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} fiber.Error
+// @Failure 401 {object} fiber.Error
+// @Failure 403 {object} fiber.Error
+// @Failure 404 {object} fiber.Error
+// @Failure 409 {object} fiber.Error
+// @Router /message/bulk/state [post]
+func HandleBulkInterestStateBatch(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	db := database.DBConn
+
+	var batchReq BulkInterestStateBatchRequest
+	if err := c.BodyParser(&batchReq); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+	if len(batchReq.Items) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "items is required")
+	}
+
+	validStates := map[string]bool{
+		"Interested": true,
+		"Reserved":   true,
+		"Collected":  true,
+		"Withdrawn":  true,
+		"Rejected":   true,
+	}
+
+	// Validate all items up-front before touching the DB.
+	for _, it := range batchReq.Items {
+		if it.Bulkitemid == 0 || it.Userid == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "each item requires bulkitemid and userid")
+		}
+		if !validStates[it.State] {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid state: "+it.State)
+		}
+	}
+
+	// Cache per-item ownership so we make at most one DB round-trip per item.
+	type itemMeta struct {
+		msgid    uint64
+		fromuser uint64
+	}
+	itemCache := map[uint64]itemMeta{}
+
+	for _, it := range batchReq.Items {
+		if _, ok := itemCache[it.Bulkitemid]; !ok {
+			var msgid, fromuser uint64
+			db.Raw("SELECT bi.msgid, m.fromuser FROM messages_bulk_items bi "+
+				"INNER JOIN messages m ON m.id = bi.msgid WHERE bi.id = ?", it.Bulkitemid).
+				Row().Scan(&msgid, &fromuser)
+			if msgid == 0 {
+				return fiber.NewError(fiber.StatusNotFound, "Item not found")
+			}
+			itemCache[it.Bulkitemid] = itemMeta{msgid: msgid, fromuser: fromuser}
+		}
+		meta := itemCache[it.Bulkitemid]
+		if meta.fromuser != myid && !isModForMessage(db, myid, meta.msgid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not your post")
+		}
+	}
+
+	// Apply each transition via the shared single-row logic, collecting
+	// post-transaction side-effects (promise rows, chat messages) to fire
+	// after the transaction commits so they don't hold the DB lock.
+	type sideEffect struct {
+		kind       string // "promise", "reversePromise", "rejection", "access"
+		msgid      uint64
+		fromuser   uint64
+		userid     uint64
+		bulkitemid uint64
+	}
+	var effects []sideEffect
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	}
+	tx, err := sqlDB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not begin transaction")
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, it := range batchReq.Items {
+		meta := itemCache[it.Bulkitemid]
+
+		var priorState string
+		var priorQty uint
+		tx.QueryRow("SELECT COALESCE(state, ''), COALESCE(quantity, 0) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
+			it.Bulkitemid, it.Userid).Scan(&priorState, &priorQty)
+
+		// Over-allocation guard — mirrors handleBulkInterestState exactly.
+		if it.State == "Reserved" && priorState != "Reserved" {
+			var itemQty uint
+			tx.QueryRow("SELECT quantity FROM messages_bulk_items WHERE id = ?", it.Bulkitemid).Scan(&itemQty)
+			if itemQty > 0 {
+				var allocatedByOthers uint
+				tx.QueryRow("SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items_interest "+
+					"WHERE bulkitemid = ? AND userid != ? AND state IN ('Reserved','Collected')",
+					it.Bulkitemid, it.Userid).Scan(&allocatedByOthers)
+				if allocatedByOthers+priorQty > itemQty {
+					return fiber.NewError(fiber.StatusConflict, "Item is already fully allocated")
+				}
+			}
+		}
+
+		res, execErr := tx.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
+			it.State, it.Bulkitemid, it.Userid)
+		if execErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+		}
+		ra, _ := res.RowsAffected()
+		if ra == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "Interest row not found")
+		}
+
+		// availablenow bookkeeping — mirrors handleBulkInterestState.
+		if it.State == "Collected" && priorState != "Collected" && priorQty > 0 {
+			tx.Exec("UPDATE messages SET availablenow = GREATEST(0, CAST(availablenow AS SIGNED) - ?) WHERE id = ?",
+				priorQty, meta.msgid)
+		} else if priorState == "Collected" && it.State != "Collected" && priorQty > 0 {
+			tx.Exec("UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
+				priorQty, meta.msgid)
+		}
+
+		// Schedule side-effects for after commit.
+		if it.State == "Reserved" && priorState != "Reserved" && priorState != "Collected" {
+			effects = append(effects, sideEffect{kind: "promise", msgid: meta.msgid, fromuser: meta.fromuser, userid: it.Userid})
+			effects = append(effects, sideEffect{kind: "access", msgid: meta.msgid, fromuser: meta.fromuser, userid: it.Userid})
+		}
+		if priorState == "Reserved" && it.State == "Interested" {
+			effects = append(effects, sideEffect{kind: "reversePromise", msgid: meta.msgid, fromuser: meta.fromuser, userid: it.Userid})
+		}
+		if it.State == "Rejected" && priorState != "Rejected" {
+			effects = append(effects, sideEffect{kind: "rejection", msgid: meta.msgid, fromuser: meta.fromuser, userid: it.Userid, bulkitemid: it.Bulkitemid})
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Transaction failed")
+	}
+
+	// Fire side-effects after the transaction commits.
+	for _, e := range effects {
+		switch e.kind {
+		case "promise":
+			db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", e.msgid, e.userid)
+			chatid, chatErr := chat.GetOrCreateUser2UserChat(db, e.fromuser, e.userid)
+			if chatErr == nil && chatid != 0 {
+				db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, '', 1)",
+					chatid, e.fromuser, utils.CHAT_MESSAGE_PROMISED, e.msgid, time.Now())
+				db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+			}
+		case "reversePromise":
+			db.Exec("DELETE FROM messages_promises WHERE msgid = ? AND userid = ?", e.msgid, e.userid)
+		case "access":
+			sendAccessInstructions(db, e.msgid, e.fromuser, e.userid)
+		case "rejection":
+			chatid, _ := chat.GetOrCreateUser2UserChat(db, e.fromuser, e.userid)
+			if chatid != 0 {
+				var itemName string
+				db.Raw("SELECT name FROM messages_bulk_items WHERE id = ?", e.bulkitemid).Scan(&itemName)
+				body := "Unfortunately the item you were interested in"
+				if itemName != "" {
+					body += " (" + itemName + ")"
+				}
+				body += " has gone to someone else. Thank you for your interest!"
+				db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
+					chatid, e.fromuser, utils.CHAT_MESSAGE_DEFAULT, e.msgid, time.Now(), body)
+				db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

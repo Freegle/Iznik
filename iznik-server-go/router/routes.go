@@ -25,12 +25,12 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
-	"github.com/freegle/iznik-server-go/browse"
-	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
+	"github.com/freegle/iznik-server-go/avatar"
+	"github.com/freegle/iznik-server-go/browse"
 	"github.com/freegle/iznik-server-go/changes"
 	"github.com/freegle/iznik-server-go/charity"
 	"github.com/freegle/iznik-server-go/chat"
@@ -56,18 +56,18 @@ import (
 	"github.com/freegle/iznik-server-go/message"
 
 	"github.com/freegle/iznik-server-go/microvolunteering"
-	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
-	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/simulation"
 	"github.com/freegle/iznik-server-go/spammers"
 	"github.com/freegle/iznik-server-go/src"
+	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/status"
 	"github.com/freegle/iznik-server-go/stdmsg"
 	"github.com/freegle/iznik-server-go/story"
@@ -902,6 +902,32 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/message", message.PostMessage)
 		rg.Patch("/message", message.PatchMessage)
 
+		// Bulk-offer interest batch state-change
+		// @Router /message/bulk/state [post]
+		// @Summary Batch-update bulk-offer interest states
+		// @Description Apply multiple Reserved/Collected/Interested/Withdrawn/Rejected state transitions in one atomic call.
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param body body message.BulkInterestStateBatchRequest true "Transitions"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error
+		// @Failure 401 {object} fiber.Error
+		// @Failure 403 {object} fiber.Error
+		// @Failure 409 {object} fiber.Error
+		rg.Post("/message/bulk/state", message.HandleBulkInterestStateBatch)
+
+		// Concierge helper delegate token mint
+		// @Router /message/{id}/helpertoken [post]
+		// @Summary Mint a concierge helper delegate token
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Param id path integer true "Message ID"
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/message/:id/helpertoken", message.MintHelperTokenForMessage)
+
 		// @Router /message/tn/{tnpostid} [patch]
 		// @Summary Update all messages by TN post ID
 		// @Description Edit ALL Freegle messages that share the given Trash Nothing post ID. Used by partner integrations when a TN post is submitted to multiple Freegle groups.
@@ -1388,7 +1414,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Success 200
 		rg.Post("/stripeipn", donations.StripeIPN)
-
 
 		// Gift Aid
 		// @Router /giftaid [get]

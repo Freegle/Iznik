@@ -1243,9 +1243,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             return null;
         }
 
+        // For bulk offers every per-item attachment has bulkitemid set and
+        // primary=0, while the post-level hero photo has bulkitemid IS NULL.
+        // Sort post-level attachments first (isItem=0 sorts before 1), then
+        // by primary descending within each tier so a user-uploaded photo
+        // beats an AI-generated one. Non-bulk posts have no per-item
+        // attachments so this has no effect on them.
         return $message->attachments
             ->filter(fn($a) => !empty($a->externaluid) || !empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
-            ->sortByDesc('primary')
+            ->sortBy([
+                [fn($a) => empty($a->bulkitemid) ? 0 : 1, 'asc'],
+                ['primary', 'desc'],
+            ])
             ->first();
     }
 

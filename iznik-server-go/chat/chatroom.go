@@ -25,45 +25,45 @@ type Tabler interface {
 }
 
 type ChatRoomListEntry struct {
-	ID            uint64     `json:"id" gorm:"primary_key"`
-	Chattype      string     `json:"chattype"`
-	Groupid       uint64     `json:"groupid"`
-	User1         uint64     `json:"user1"`
-	User2         uint64     `json:"user2"`
-	Otheruid      uint64     `json:"otheruid"`
-	Otherdeleted  *time.Time `json:"-"`
-	Supporter     bool       `json:"supporter"`
-	Icon          string     `json:"icon"`
-	Lastdate      *time.Time `json:"lastdate"`
-	Lastmsg       uint64     `json:"lastmsg"`
-	Lastmsgseen   uint64     `json:"lastmsgseen"`
-	Lasttype      *time.Time `json:"lasttype"`
-	Name          string     `json:"name"`
-	Nameshort     string     `json:"-"`
-	Namefull      string     `json:"-"`
-	Firstname     string     `json:"-"`
-	Lastname      string     `json:"-"`
-	Fullname      string     `json:"-"`
-	Replyexpected uint64     `json:"replyexpected"`
-	Snippet       string     `json:"snippet"`
-	Unseen        uint64     `json:"unseen"`
-	Chatmsg       string     `json:"-"`
-	Chatmsgtype   string     `json:"-"`
-	Refmsgtype    string     `json:"-"`
-	Gimageid      uint64     `json:"-"`
-	U1imageid     uint64     `json:"-"`
-	U2imageid     uint64     `json:"-"`
-	U1imageurl      string          `json:"-"`
-	U2imageurl      string          `json:"-"`
-	U1externaluid   string          `json:"-"`
-	U2externaluid   string          `json:"-"`
-	U1externalmods  json.RawMessage `json:"-"`
-	U2externalmods  json.RawMessage `json:"-"`
-	U1archived      int             `json:"-"`
-	U2archived      int             `json:"-"`
-	U1useprofile    bool            `json:"-"`
-	U2useprofile    bool            `json:"-"`
-	Status        string     `json:"status"`
+	ID             uint64          `json:"id" gorm:"primary_key"`
+	Chattype       string          `json:"chattype"`
+	Groupid        uint64          `json:"groupid"`
+	User1          uint64          `json:"user1"`
+	User2          uint64          `json:"user2"`
+	Otheruid       uint64          `json:"otheruid"`
+	Otherdeleted   *time.Time      `json:"-"`
+	Supporter      bool            `json:"supporter"`
+	Icon           string          `json:"icon"`
+	Lastdate       *time.Time      `json:"lastdate"`
+	Lastmsg        uint64          `json:"lastmsg"`
+	Lastmsgseen    uint64          `json:"lastmsgseen"`
+	Lasttype       *time.Time      `json:"lasttype"`
+	Name           string          `json:"name"`
+	Nameshort      string          `json:"-"`
+	Namefull       string          `json:"-"`
+	Firstname      string          `json:"-"`
+	Lastname       string          `json:"-"`
+	Fullname       string          `json:"-"`
+	Replyexpected  uint64          `json:"replyexpected"`
+	Snippet        string          `json:"snippet"`
+	Unseen         uint64          `json:"unseen"`
+	Chatmsg        string          `json:"-"`
+	Chatmsgtype    string          `json:"-"`
+	Refmsgtype     string          `json:"-"`
+	Gimageid       uint64          `json:"-"`
+	U1imageid      uint64          `json:"-"`
+	U2imageid      uint64          `json:"-"`
+	U1imageurl     string          `json:"-"`
+	U2imageurl     string          `json:"-"`
+	U1externaluid  string          `json:"-"`
+	U2externaluid  string          `json:"-"`
+	U1externalmods json.RawMessage `json:"-"`
+	U2externalmods json.RawMessage `json:"-"`
+	U1archived     int             `json:"-"`
+	U2archived     int             `json:"-"`
+	U1useprofile   bool            `json:"-"`
+	U2useprofile   bool            `json:"-"`
+	Status         string          `json:"status"`
 
 	Search bool `json:"search,omitempty" gorm:"column:search"`
 }
@@ -72,9 +72,10 @@ type ChatRoomListEntry struct {
 // ensuring chat listing icons match user profile fetch results.
 //
 // Chat icon rules:
-//   User2Mod, mod viewing:  icon = member's profile (the user who contacted the group)
-//   User2Mod, user viewing: icon = group logo
-//   User2User:              icon = other user's profile
+//
+//	User2Mod, mod viewing:  icon = member's profile (the user who contacted the group)
+//	User2Mod, user viewing: icon = group logo
+//	User2User:              icon = other user's profile
 //
 // The image data MUST come from the latest users_images row (ORDER BY id DESC
 // LIMIT 1) to match GetProfileRecord(). Using an arbitrary row causes avatar
@@ -170,12 +171,66 @@ func ListForUser(c *fiber.Ctx) error {
 
 	r := listChats(myid, chattypes, start, search, 0, keepChat, includeClosed, true)
 
+	// since_msgid + msgid shortcut: filter rooms to those that reference the
+	// given post (msgid) and have at least one chat message with id > since_msgid.
+	// Both params must be non-zero for the filter to activate; absent or zero =>
+	// current (unfiltered) behaviour is preserved.
+	msgidParam, _ := strconv.ParseUint(c.Query("msgid", "0"), 10, 64)
+	sinceMsgidParam, _ := strconv.ParseUint(c.Query("since_msgid", "0"), 10, 64)
+	if msgidParam > 0 {
+		r = filterRoomsByPostMsgid(r, myid, msgidParam, sinceMsgidParam)
+	}
+
 	if len(r) == 0 {
 		// Force [] rather than null to be returned.
 		return c.JSON(make([]string, 0))
 	} else {
 		return c.JSON(r)
 	}
+}
+
+// filterRoomsByPostMsgid filters a chat room list to rooms that have at least
+// one chat_messages row with refmsgid = postMsgid (and id > sinceMsgid when
+// sinceMsgid > 0). Called only when msgid query param is non-zero; the caller
+// must already be a participant (listChats guarantees that).
+func filterRoomsByPostMsgid(rooms []ChatRoomListEntry, myid uint64, postMsgid uint64, sinceMsgid uint64) []ChatRoomListEntry {
+	if len(rooms) == 0 {
+		return rooms
+	}
+	db := database.DBConn
+
+	// Build a set of qualifying chat room IDs in one query.
+	ids := make([]string, 0, len(rooms))
+	for _, r := range rooms {
+		ids = append(ids, strconv.FormatUint(r.ID, 10))
+	}
+	idList := strings.Join(ids, ",")
+
+	var qualifyingIDs []uint64
+	if sinceMsgid > 0 {
+		db.Raw("SELECT DISTINCT chatid FROM chat_messages "+
+			"WHERE chatid IN ("+idList+") AND refmsgid = ? AND id > ?",
+			postMsgid, sinceMsgid).Scan(&qualifyingIDs)
+	} else {
+		db.Raw("SELECT DISTINCT chatid FROM chat_messages "+
+			"WHERE chatid IN ("+idList+") AND refmsgid = ?",
+			postMsgid).Scan(&qualifyingIDs)
+	}
+
+	if len(qualifyingIDs) == 0 {
+		return nil
+	}
+	keep := make(map[uint64]bool, len(qualifyingIDs))
+	for _, id := range qualifyingIDs {
+		keep[id] = true
+	}
+	filtered := rooms[:0]
+	for _, r := range rooms {
+		if keep[r.ID] {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
 
 // ListForUserMT handles GET /chat/rooms for moderator chat listing.

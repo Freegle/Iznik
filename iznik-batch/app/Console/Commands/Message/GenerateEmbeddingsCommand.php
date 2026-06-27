@@ -46,8 +46,17 @@ class GenerateEmbeddingsCommand extends Command
 
             $batchLimit = min($remaining, $chunkSize);
 
+            // Bulk-clearance messages have many items appended to textbody by
+            // buildBulkSummary; use a wider window so more of the catalogue
+            // is covered by the embedding. Normal messages keep the 500-char cap.
             $messages = DB::select('
-                SELECT ms.msgid, m.subject, LEFT(m.textbody, 500) as body
+                SELECT ms.msgid, m.subject,
+                       LEFT(m.textbody,
+                            CASE WHEN EXISTS (
+                                SELECT 1 FROM messages_bulk_items
+                                WHERE msgid = ms.msgid
+                            ) THEN 2500 ELSE 500 END
+                       ) AS body
                 FROM messages_spatial ms
                 JOIN messages m ON m.id = ms.msgid
                 LEFT JOIN messages_embeddings me ON me.msgid = ms.msgid

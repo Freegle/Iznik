@@ -15,6 +15,7 @@ use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
 use App\Models\BackgroundTask;
 use App\Models\ChatRoom;
+use App\Models\MessageOutcome;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
@@ -816,8 +817,9 @@ class ProcessBackgroundTasksCommand extends Command
         // 2. Notify interested users who replied but didn't get the item.
         // Find User2User chat rooms with INTERESTED messages referencing this message,
         // excluding users who are in messages_by (i.e. who got the item).
+        // Also fetch user1/user2 so we can identify the replier for bulk-offer checks.
         $replies = DB::select(
-            "SELECT DISTINCT chatid FROM chat_messages
+            "SELECT DISTINCT chat_rooms.id AS chatid, chat_rooms.user1, chat_rooms.user2 FROM chat_messages
              INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid AND chat_rooms.chattype = 'User2User'
              LEFT JOIN messages_by ON messages_by.msgid = chat_messages.refmsgid
                  AND messages_by.userid IN (chat_rooms.user1, chat_rooms.user2)
@@ -826,7 +828,30 @@ class ProcessBackgroundTasksCommand extends Command
             [$msgId]
         );
 
+        // For bulk offers expiring, skip repliers who already collected all their items.
+        $isBulkOffer = $outcome === MessageOutcome::OUTCOME_EXPIRED
+            && DB::table('messages_bulk_items')->where('msgid', $msgId)->exists();
+
         foreach ($replies as $reply) {
+            // For bulk offers that expired, check this replier's interest state.
+            // The replier is the chat participant who is not the poster.
+            if ($isBulkOffer && $fromUser) {
+                $replierId = ($reply->user1 == $fromUser) ? $reply->user2 : $reply->user1;
+
+                if ($replierId) {
+                    // Fetch all bulk-interest states this replier registered for this message.
+                    $states = DB::table('messages_bulk_items_interest')
+                        ->where('msgid', $msgId)
+                        ->where('userid', $replierId)
+                        ->pluck('state');
+
+                    if ($states->isNotEmpty() && $states->every(fn ($s) => $s === 'Collected')) {
+                        // Replier collected all their items — no expiry notification needed.
+                        continue;
+                    }
+                }
+            }
+
             // Check if this message was unpromised in this chat (TYPE_RENEGED).
             // If so, don't send the generic message as it may not be appropriate.
             $unpromised = DB::table('chat_messages')

@@ -88,6 +88,16 @@ class MessageSearchService
             return $total;
         }
 
+        // Pre-fetch bulk item names keyed by msgid so we can index them without per-message queries.
+        $msgids = $msgs->pluck('msgid')->all();
+        $bulkItemNames = DB::table('messages_bulk_items')
+            ->whereIn('msgid', $msgids)
+            ->orderBy('msgid')
+            ->orderBy('position')
+            ->get(['msgid', 'name'])
+            ->groupBy('msgid')
+            ->map(fn ($rows) => $rows->pluck('name')->implode(' '));
+
         $count = 0;
 
         foreach ($msgs as $msg) {
@@ -96,6 +106,12 @@ class MessageSearchService
             [$type, $item] = $this->parseSubject($msg->subject);
             if ($item) {
                 $toadd = $item;
+            }
+
+            // For bulk posts, append item names so that a search for "chair" matches
+            // an "Office Clearance" post whose catalogue includes a chair.
+            if (isset($bulkItemNames[$msg->msgid])) {
+                $toadd .= ' ' . $bulkItemNames[$msg->msgid];
             }
 
             $arrivalTimestamp = Carbon::parse($msg->arrival)->timestamp;

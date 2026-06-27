@@ -186,7 +186,13 @@ const {
 } = useMessageDisplay(idRef)
 
 // Bulk offer ("clearance"): number of catalogue items, for a list indicator.
-const bulkCount = computed(() => message.value?.bulkitems?.length || 0)
+// The list endpoint provides bulkcount (an integer); bulkitems (the full array)
+// is only present when the full message is loaded. Fall back to the array length
+// so the badge works in both contexts.  Item thumbnails are not included in the
+// list payload, so no thumbnail strip is rendered here.
+const bulkCount = computed(
+  () => message.value?.bulkcount || message.value?.bulkitems?.length || 0
+)
 
 const miscStore = useMiscStore()
 const { isLandscape } = useOrientation()
