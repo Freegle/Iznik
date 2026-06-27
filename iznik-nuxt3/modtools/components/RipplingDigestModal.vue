@@ -33,7 +33,12 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
   const homeChip = p.home_group
     ? `<span style="color:#27ae60;font-weight:600">home</span>`
     : `<span style="color:#1f77b4">rippled in</span>`
-  const subject = escapeHTML(p.subject || '(no title)')
+  // The subject already carries an "OFFER:/WANTED:" prefix; we render the type
+  // separately ("Offer:/Wanted:"), so strip it to avoid "Wanted: WANTED: …"
+  // (the real email shows a type pill + the clean item name).
+  const subject = escapeHTML(
+    (p.subject || '(no title)').replace(/^\s*(OFFER|WANTED)\s*:\s*/i, '')
+  )
   const msgtype = escapeHTML(p.msgtype)
   const groupName = escapeHTML(
     p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
@@ -189,7 +194,12 @@ function openPost(p, rank, memberLat, memberLng) {
   const cls = classifyPost(p)
   const groupName = p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
   const fmt = (n) => (n || 0).toFixed(2)
-  const subject = escapeHTML(p.subject || '(no title)')
+  // The subject already carries an "OFFER:/WANTED:" prefix; we render the type
+  // separately ("Offer:/Wanted:"), so strip it to avoid "Wanted: WANTED: …"
+  // (the real email shows a type pill + the clean item name).
+  const subject = escapeHTML(
+    (p.subject || '(no title)').replace(/^\s*(OFFER|WANTED)\s*:\s*/i, '')
+  )
   const msgtype = escapeHTML(p.msgtype)
   const thumb = thumbUrlFor(p)
   const thumbHTML = thumb
