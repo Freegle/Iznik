@@ -3,6 +3,7 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Admin\AdminMail;
+use App\Mail\Admin\ChaseAdminMail;
 use App\Models\User;
 use Tests\TestCase;
 
@@ -227,5 +228,30 @@ class AdminMailTest extends TestCase
         $envelope = $mail->envelope();
 
         $this->assertEquals(config('freegle.mail.noreply_addr'), $envelope->from->address);
+    }
+
+    public function test_chase_admin_preheader_shows_group_subject_and_pending_time(): void
+    {
+        // The inbox preview should tell the moderator which group needs attention,
+        // which admin is waiting, and how long it has been pending — all without
+        // opening the email.
+        $html = view('emails.mjml.admin.chase', [
+            'groupName'       => 'Freegle Testington',
+            'adminSubject'    => 'Welcome post for new members',
+            'pendingTimeText' => '3 days',
+            'pendingHours'    => 72,
+            'modToolsUrl'     => 'https://modtools.org/admins',
+            'adminId'         => 1,
+            'userName'        => 'Test Mod',
+            'siteName'        => config('freegle.branding.name', 'Freegle'),
+            'trackingPixelMjml' => null,
+        ])->render();
+
+        $this->assertStringContainsString('Freegle Testington', $html,
+            'Preheader must contain the group name');
+        $this->assertStringContainsString('Welcome post for new members', $html,
+            'Preheader must contain the admin subject');
+        $this->assertStringContainsString('3 days', $html,
+            'Preheader must state how long the admin has been pending');
     }
 }

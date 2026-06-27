@@ -52,7 +52,7 @@ func setupTestIndex(t *testing.T) *Index {
 // polygons — the smaller area must win.
 func TestFindNearestPolygon_PointInsideBothPolygons(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, 0, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(1), results[0].ID, "smallest enclosing area should be returned")
@@ -61,7 +61,7 @@ func TestFindNearestPolygon_PointInsideBothPolygons(t *testing.T) {
 // TestFindNearestPolygon_PointInsideLargeOnly: query inside Large but outside Small.
 func TestFindNearestPolygon_PointInsideLargeOnly(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, -0.04, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, -0.04, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "large area should be returned when point inside large only")
@@ -71,7 +71,7 @@ func TestFindNearestPolygon_PointInsideLargeOnly(t *testing.T) {
 func TestFindNearestPolygon_PointNearButOutside(t *testing.T) {
 	idx := setupTestIndex(t)
 	// (-0.06, 51.5) is 0.01° west of Large's west edge (-0.05).
-	results, err := FindNearestPolygon(idx, -0.06, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, -0.06, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "large area should be found via buffer expansion")
@@ -80,7 +80,7 @@ func TestFindNearestPolygon_PointNearButOutside(t *testing.T) {
 // TestFindNearestPolygon_NoMatch: query far from all test geometries returns empty slice.
 func TestFindNearestPolygon_NoMatch(t *testing.T) {
 	idx := setupTestIndex(t)
-	results, err := FindNearestPolygon(idx, 5, 51.5, 1, nil)
+	results, err := FindNearestPolygon(idx, 5, 51.5, 1, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, results, "should return no results when no area is within max buffer radius")
 }
@@ -89,7 +89,7 @@ func TestFindNearestPolygon_NoMatch(t *testing.T) {
 func TestFindNearestPolygon_LimitReturnsMultiple(t *testing.T) {
 	idx := setupTestIndex(t)
 	// Query at centre: both polygons match. limit=2 should return both.
-	results, err := FindNearestPolygon(idx, 0, 51.5, 2, nil)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// First result should be small (smallest area), second large.
@@ -109,7 +109,7 @@ func TestFindNearestPolygon_SmallAreaIsReturnedWithoutFilter(t *testing.T) {
 		"POLYGON((0 51.5, 0.001 51.5, 0.001 51.501, 0 51.501, 0 51.5))")
 	require.NoError(t, InsertItems(idx, []Item{tiny}, nil))
 
-	results, err := FindNearestPolygon(idx, 0.0005, 51.5005, 1, nil)
+	results, err := FindNearestPolygon(idx, 0.0005, 51.5005, 1, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(99), results[0].ID)
@@ -126,10 +126,114 @@ func TestFindNearestPolygon_MatchFilterExpandsPastNonMatching(t *testing.T) {
 		name, _ := extra["name"].(string)
 		return name == "Large Area"
 	}
-	results, err := FindNearestPolygon(idx, 0, 51.5, 1, onlyLarge)
+	results, err := FindNearestPolygon(idx, 0, 51.5, 1, onlyLarge, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, int64(2), results[0].ID, "filter must skip non-matching items without counting them")
+}
+
+// makeJobItem builds a polygon Item carrying the jobs dataset's Extra fields
+// (company/title), so jobsDedupKey can key on them.
+func makeJobItem(t *testing.T, extID int64, company, title, wkt string) Item {
+	t.Helper()
+	g, err := geom.UnmarshalWKT(wkt)
+	require.NoError(t, err)
+	minXY, maxXY, ok := g.Envelope().MinMaxXYs()
+	require.True(t, ok, "geometry must have an envelope")
+	return Item{
+		ExtID:  extID,
+		Area:   g.Area(),
+		WKB:    g.AsBinary(),
+		MinLng: minXY.X,
+		MaxLng: maxXY.X,
+		MinLat: minXY.Y,
+		MaxLat: maxXY.Y,
+		Extra:  map[string]any{"company": company, "title": title},
+	}
+}
+
+// TestFindNearestPolygon_DedupKeyExpandsPastDuplicate: the jobs use-case. WhatJobs
+// posts the same (company, title) ad to many towns; with a dedupKey the nearest
+// instance is kept and the buffer expands past the farther copies to fill the
+// limit with distinct jobs (Discourse 9363). Three items along +lng from the
+// query point: id=1 and id=2 are the SAME (company, title) at increasing distance,
+// id=3 is a distinct ad farther still.
+func TestFindNearestPolygon_DedupKeyExpandsPastDuplicate(t *testing.T) {
+	idx, err := CreateIndex(":memory:")
+	require.NoError(t, err)
+	defer idx.Close()
+
+	nearDup := makeJobItem(t, 1, "Deliveroo", "Rider",
+		"POLYGON((-0.001 51.499, 0.001 51.499, 0.001 51.501, -0.001 51.501, -0.001 51.499))")
+	farDup := makeJobItem(t, 2, "Deliveroo", "Rider",
+		"POLYGON((0.009 51.499, 0.011 51.499, 0.011 51.501, 0.009 51.501, 0.009 51.499))")
+	distinct := makeJobItem(t, 3, "Acme", "Cleaner",
+		"POLYGON((0.019 51.499, 0.021 51.499, 0.021 51.501, 0.019 51.501, 0.019 51.499))")
+	require.NoError(t, InsertItems(idx, []Item{nearDup, farDup, distinct}, nil))
+
+	// Without dedup, the nearest two are both "Deliveroo Rider" (the duplicate).
+	plain, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, plain, 2)
+	plainIDs := []int64{plain[0].ID, plain[1].ID}
+	assert.ElementsMatch(t, []int64{1, 2}, plainIDs, "no dedup: nearest two are the duplicate pair")
+
+	// With dedup, the farther copy (id=2) is skipped and expansion continues to the
+	// distinct ad (id=3), so the result is one of each.
+	deduped, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, jobsDedupKey)
+	require.NoError(t, err)
+	require.Len(t, deduped, 2)
+	dedupIDs := []int64{deduped[0].ID, deduped[1].ID}
+	assert.ElementsMatch(t, []int64{1, 3}, dedupIDs, "dedup keeps nearest of the pair and fills with the distinct ad")
+	assert.NotContains(t, dedupIDs, int64(2), "the farther duplicate must be dropped")
+}
+
+// makeJobItemBH is makeJobItem with an explicit bodyhash in Extra, for the
+// nationwide-dup case where copies carry differing company/title but one body.
+func makeJobItemBH(t *testing.T, extID int64, company, title, bodyhash, wkt string) Item {
+	t.Helper()
+	item := makeJobItem(t, extID, company, title, wkt)
+	item.Extra["bodyhash"] = bodyhash
+	return item
+}
+
+// TestJobsDedupKey_CollapsesByBodyhashAcrossCompanyTitle: WhatJobs spams one ad
+// to many towns with DIFFERING company/title but the SAME body (analysis of
+// email_tracking_clicks: 94% of >80km clicks were on these). The (company,title)
+// key let the far copies through; keying on bodyhash collapses them so the
+// nearest is served and the buffer expands to a genuinely distinct (different
+// body) ad. id=1 and id=2 share a bodyhash at increasing distance; id=3 has a
+// different body farther still.
+func TestJobsDedupKey_CollapsesByBodyhashAcrossCompanyTitle(t *testing.T) {
+	idx, err := CreateIndex(":memory:")
+	require.NoError(t, err)
+	defer idx.Close()
+
+	nearDup := makeJobItemBH(t, 1, "CourierCo", "Bike Courier", "samebody",
+		"POLYGON((-0.001 51.499, 0.001 51.499, 0.001 51.501, -0.001 51.501, -0.001 51.499))")
+	farDup := makeJobItemBH(t, 2, "RidersLtd", "Delivery Driver", "samebody",
+		"POLYGON((0.009 51.499, 0.011 51.499, 0.011 51.501, 0.009 51.501, 0.009 51.499))")
+	distinct := makeJobItemBH(t, 3, "Acme", "Cleaner", "otherbody",
+		"POLYGON((0.019 51.499, 0.021 51.499, 0.021 51.501, 0.019 51.501, 0.019 51.499))")
+	require.NoError(t, InsertItems(idx, []Item{nearDup, farDup, distinct}, nil))
+
+	// Without dedup, the nearest two are the same-body pair despite differing
+	// company/title — exactly the far-copy leak the old (company,title) key had.
+	plain, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, plain, 2)
+	assert.ElementsMatch(t, []int64{1, 2}, []int64{plain[0].ID, plain[1].ID},
+		"no dedup: nearest two are the same-body pair")
+
+	// With bodyhash dedup, the farther same-body copy (id=2) is dropped and the
+	// search expands to the different-body ad (id=3).
+	deduped, err := FindNearestPolygon(idx, 0, 51.5, 2, nil, jobsDedupKey)
+	require.NoError(t, err)
+	require.Len(t, deduped, 2)
+	dedupIDs := []int64{deduped[0].ID, deduped[1].ID}
+	assert.ElementsMatch(t, []int64{1, 3}, dedupIDs,
+		"bodyhash dedup keeps nearest of the same-body pair and fills with the distinct-body ad")
+	assert.NotContains(t, dedupIDs, int64(2), "the farther same-body copy must be dropped")
 }
 
 // TestFindNearestPoints_ReturnsNearestPoint: point dataset query returns nearest point.
@@ -216,4 +320,42 @@ func TestCircleWKT_FirstPointRightmost(t *testing.T) {
 	_, maxXY, ok := g.Envelope().MinMaxXYs()
 	require.True(t, ok)
 	assert.InDelta(t, -0.05, maxXY.X, 1e-9, "rightmost x should be cx+r")
+}
+
+// TestJobBufferLevelsExtendReach is the regression guard for the WhatJobs
+// rural-reach drop (PR #764 routed jobs through the shared 0.32° ladder, halving
+// reach and dropping click volume ~40%). A job ~0.4° away — beyond the shared
+// 0.32° ceiling but within the jobs ladder's 0.64° — must be invisible to the
+// default ladder yet found via jobBufferLevels, exactly as the jobs Query uses it.
+func TestJobBufferLevelsExtendReach(t *testing.T) {
+	// jobBufferLevels must strictly extend the shared ladder (same prefix, wider tail).
+	require.Greater(t, len(jobBufferLevels), len(bufferLevels),
+		"jobs ladder must add reach beyond the shared ceiling")
+	for i := range bufferLevels {
+		assert.Equal(t, bufferLevels[i], jobBufferLevels[i],
+			"jobs ladder must share the inner-level prefix so dense queries behave identically")
+	}
+	assert.Greater(t, jobBufferLevels[len(jobBufferLevels)-1], 0.32,
+		"jobs ladder must reach past the 0.32° postcode-scale ceiling")
+
+	idx, err := CreateIndex(":memory:")
+	require.NoError(t, err)
+	defer idx.Close()
+
+	// A small job polygon centred ~0.4° east of the query point — ~0.39° from it,
+	// i.e. past 0.32° (out of reach for postcode/area lookups) but inside 0.64°.
+	job := makeTestItem(t, 7, "Far Job", "Polygon",
+		"POLYGON((0.39 51.49, 0.41 51.49, 0.41 51.51, 0.39 51.51, 0.39 51.49))")
+	require.NoError(t, InsertItems(idx, []Item{job}, nil))
+
+	// Default ladder (0.32° ceiling) cannot reach it — this is the regression we fix.
+	shortReach, err := FindNearestPolygon(idx, 0, 51.5, 1, nil, nil)
+	require.NoError(t, err)
+	assert.Empty(t, shortReach, "0.32° ceiling must not reach a 0.39°-distant job (proves the bug exists)")
+
+	// Jobs ladder reaches it — restoring the pre-spatial 64km behaviour.
+	jobReach, err := findNearestPolygonLevels(idx, 0, 51.5, 1, nil, nil, jobBufferLevels[:])
+	require.NoError(t, err)
+	require.Len(t, jobReach, 1, "jobs ladder must reach the 0.39°-distant job")
+	assert.Equal(t, int64(7), jobReach[0].ID)
 }

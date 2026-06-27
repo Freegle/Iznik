@@ -32,6 +32,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 // Pre-compiled regexps to avoid recompiling on every message fetch.
@@ -1116,6 +1117,11 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 			}
 
 			sql += "WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
+				// Rippling-out adds a messages_groups row (rippled_in=1) per group a post ripples
+				// into, so without this a rippled post appears once PER GROUP in My Posts. Restrict
+				// to the origin membership (rippled_in=0) so each of the user's own posts shows
+				// exactly once; the rippled-in copies are system propagation, not separate posts.
+				"messages_groups.rippled_in = 0 AND " +
 				"messages.type IN (?, ?)"
 
 			if active {
@@ -1881,7 +1887,12 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 		Arrival string
 	}
 	var rows []spatialRow
-	db.Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
+	// Pin to the write host: the caller has just UPDATEd messages_groups.collection
+	// to Approved on the source. Under the read/write split a plain SELECT would be
+	// routed to the read replica, which may not have applied that write yet (Galera
+	// apply-lag), so the row would be missed and the post left out of the spatial
+	// index until the periodic reconciler runs.
+	db.Clauses(dbresolver.Write).Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
 		"messages_groups.groupid AS groupid, "+
 		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
 		"FROM messages "+
@@ -1939,8 +1950,10 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
+	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -2090,7 +2103,9 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		// Cascade soft-delete: if no non-deleted groups remain, mark messages.deleted
 		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
 		var remainingGroups int64
-		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 		if remainingGroups == 0 {
 			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
@@ -2199,7 +2214,9 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// If no non-deleted groups remain, soft-delete the message itself.
 	var remainingGroups int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 	if remainingGroups == 0 {
 		if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 			log.Printf("Failed to soft-delete message %d: %v", req.ID, result.Error)
@@ -2262,7 +2279,9 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// If no non-deleted groups remain, soft-delete the message itself.
 	var remainingGroups int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 	if remainingGroups == 0 {
 		db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", req.ID)
 
@@ -2369,8 +2388,10 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
+	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -2725,7 +2746,10 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// This catches pre-validation drafts created before PUT /message required
 	// item, and any other path that leaves subject empty by submit time.
 	var finalSubject string
-	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
+	// Pin to the write host: we may have just UPDATEd messages.subject above, and this
+	// read gates a hard validation error. A lagging replica could see the old/empty
+	// subject and wrongly reject a valid post.
+	db.Clauses(dbresolver.Write).Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
 	if strings.TrimSpace(finalSubject) == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
 	}
@@ -2752,7 +2776,9 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// Record history entry for spam checking (V1 parity: Message::save() inserts into messages_history).
 	// We fetch user email/name from the DB since platform messages don't have envelope headers.
 	var histSubject string
-	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&histSubject)
+	// Pin to the write host: this is the subject we may have just UPDATEd, written here
+	// into messages_history. A lagging replica read would persist a stale/empty subject.
+	db.Clauses(dbresolver.Write).Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&histSubject)
 	var histFromname string
 	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&histFromname)
 	// V1 parity: submit() calls inventEmail() to get/create the user's @users.ilovefreegle.org
@@ -3021,9 +3047,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		var itemID uint64
 		db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
 		if itemID == 0 {
-			// Genuinely new item — insert it.
-			db.Exec("INSERT INTO items (name) VALUES (?)", *req.Item)
-			db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
+			// Genuinely new item — insert it. ON DUPLICATE KEY handles a concurrent/lagged
+			// insert; read the id from the write result, not a read-split-routable SELECT (9832).
+			itemID, _ = database.ExecInsertGetID(db,
+				"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", *req.Item)
 		}
 		// Do NOT update items.name when found by case-insensitive match.
 		// items is a shared canonical dictionary; normalising the casing from a single
@@ -3553,12 +3580,16 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	// user and defeated UNIQUE KEY (id, series, token).
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+	// Read the new session id from the INSERT's LastInsertId on the write connection. A
+	// "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the read/write
+	// split and can return a stale/0 id (Discourse 9832 class), embedding a wrong sessionid in
+	// the JWT below.
+	sessionID, err := database.ExecInsertGetID(db,
+		"INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
 		newUserID, series, token)
-
-	// Use token to find our specific session (avoids race with concurrent requests).
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? AND token = ? ORDER BY id DESC LIMIT 1", newUserID, token).Scan(&sessionID)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("failed to create session: %w", err)
+	}
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -3697,19 +3728,27 @@ func PutMessage(c *fiber.Ctx) error {
 	if req.Groupid > 0 {
 		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
 	}
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+	// Use the INSERT's own auto-increment id. A "SELECT id ... ORDER BY id DESC
+	// LIMIT 1" here is unsafe under the read/write split: the SELECT is routed to
+	// a read replica that may not yet have applied this INSERT, so it can return
+	// the user's PREVIOUS message - causing the new post (and its photos) to be
+	// grafted onto an existing one (Discourse 9832 "mixed up offers"). Read the id
+	// back from the write connection via LastInsertId, as CreateGroup does.
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	}
+	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
 		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
-
-	if result.Error != nil {
+	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}
 
-	var newMsgID uint64
-	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", myid).Scan(&newMsgID)
-
-	if newMsgID == 0 {
+	lastID, err := sqlResult.LastInsertId()
+	if err != nil || lastID <= 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
+	newMsgID := uint64(lastID)
 
 	// For Draft collection, store in messages_drafts.
 	// For other collections, add to messages_groups.
@@ -3750,9 +3789,10 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create item record.
 	if req.Item != "" {
-		db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
-		var itemID uint64
-		db.Raw("SELECT id FROM items WHERE name = ? LIMIT 1", req.Item).Scan(&itemID)
+		// ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id) already lets the write report the id for
+		// both new and existing rows; take it from the result, not a read-split-routable SELECT.
+		itemID, _ := database.ExecInsertGetID(db,
+			"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
 		if itemID > 0 {
 			db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", newMsgID, itemID)
 		}

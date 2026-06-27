@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'Thank you for your donation!'])
+    @include('emails.mjml.partials.head', ['preview' => 'Thank you for your donation - you help keep Freegle free for everyone.'])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

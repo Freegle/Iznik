@@ -1735,20 +1735,20 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
 	}
 
-	// Email doesn't exist at all — insert new row.
-	result := db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, ?, NOW(), ?, ?)",
+	// Email doesn't exist at all — insert new row. Use the INSERT's LastInsertId on the write
+	// connection; a "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the
+	// read/write split and can return a stale/0 id (Discourse 9832 class), so the caller would
+	// get the wrong emailid.
+	emailID, err := database.ExecInsertGetID(db,
+		"INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, ?, NOW(), ?, ?)",
 		targetID, email, primaryVal, canon, reverseString(canon))
-
-	if result.Error != nil {
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 4, "status": "Email add failed"})
 	}
 
 	if isPrimary {
 		db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND email != ?", targetID, email)
 	}
-
-	var emailID uint64
-	db.Raw("SELECT id FROM users_emails WHERE userid = ? AND email = ? ORDER BY id DESC LIMIT 1", targetID, email).Scan(&emailID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": emailID})
 }
@@ -1974,11 +1974,19 @@ func PutUser(c *fiber.Ctx) error {
 	// which collided across every session for the same user.
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, series, token)
-
+	// Use the INSERT's LastInsertId (write connection) rather than a
+	// "SELECT ... WHERE userid ORDER BY id DESC LIMIT 1", which the read/write
+	// split routes to a replica that can return the user's PREVIOUS session under
+	// Galera's cross-node apply window - putting the wrong session id in the JWT.
 	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", newUserID).Scan(&sessionID)
+	if sqlDB, dberr := db.DB(); dberr == nil {
+		if res, exErr := sqlDB.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+			newUserID, series, token); exErr == nil {
+			if lastID, idErr := res.LastInsertId(); idErr == nil && lastID > 0 {
+				sessionID = uint64(lastID)
+			}
+		}
+	}
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{

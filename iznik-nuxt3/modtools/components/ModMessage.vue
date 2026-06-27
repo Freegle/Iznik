@@ -148,7 +148,12 @@
               :only-groupid="currentGroupid"
             />
             <div
-              v-if="homegroup && groupid && groupid !== homegroupids[0]"
+              v-if="
+                homegroup &&
+                groupid &&
+                groupid !== homegroupids[0] &&
+                !alreadyOnHomeGroup
+              "
               class="small text-danger"
             >
               Possibly should be on {{ homegroup }}
@@ -156,12 +161,17 @@
             </div>
             <div v-if="otherGroups.length > 0" class="small text-muted">
               Also on:
-              <span v-for="(g, idx) in otherGroups" :key="g.groupid"
-                >{{
-                  groupStore.get(g.groupid)?.namedisplay ||
-                  'Group ' + g.groupid
-                }}<span v-if="idx < otherGroups.length - 1">, </span></span
+              <ShowMore
+                :items="otherGroups"
+                :limit="3"
+                inline
+                keyfield="groupid"
               >
+                <template #item="{ item }">{{
+                  groupStore.get(item.groupid)?.namedisplay ||
+                  'Group ' + item.groupid
+                }}</template>
+              </ShowMore>
             </div>
             <NoticeMessage
               v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
@@ -416,6 +426,7 @@
                 )
               "
               :messageid="message.id"
+              :groupid="currentGroupid"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
@@ -770,6 +781,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Highlighter from 'vue-highlight-words'
+import ShowMore from '~/components/ShowMore.vue'
 
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
@@ -995,6 +1007,20 @@ const otherGroups = computed(() => {
     const id = parseInt(g.groupid)
     return id !== gid && id !== origin
   })
+})
+
+// Suppress the "Possibly should be on <homegroup>" hint when the post is ALREADY on that
+// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. The
+// template's `groupid !== homegroupids[0]` only covers the case where the home group is the
+// group currently being administered; a post on its home group but viewed under a different
+// group's context (common once a post ripples onto several groups) would otherwise be told
+// it "should be on" a group it's already a member of.
+const alreadyOnHomeGroup = computed(() => {
+  const homeId = homegroupids.value?.[0]
+  if (!homeId) return false
+  return (message.value?.groups || []).some(
+    (g) => parseInt(g.groupid) === homeId
+  )
 })
 
 // The groups this post is on that the current user actually moderates. When there's more

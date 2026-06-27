@@ -2128,7 +2128,12 @@ class IncomingMailService
                 // visible link. Without the lookup the chat message exists
                 // but ModTools wouldn't be able to show the original SMTP
                 // source.
+                // useWritePdo: a concurrent sibling process inserted this row on the
+                // write host. Under the read/write split a plain read could hit a
+                // lagging replica that hasn't applied that insert yet, returning null
+                // and dropping the chat-message-to-SMTP-source link.
                 $existingId = DB::table('messages')
+                    ->useWritePdo()
                     ->where('messageid', $messageId)
                     ->value('id');
                 if ($existingId) {
@@ -3151,7 +3156,7 @@ class IncomingMailService
 
         // Use TYPE_INTERESTED only when we found the post being replied to.
         // Without a refmsgid, use TYPE_DEFAULT since we can't link to a specific post.
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $senderUser->id,
             $email,
@@ -3160,6 +3165,14 @@ class IncomingMailService
             spamScore: $spamScore,
             prependSubject: $prependSubject
         );
+
+        // Rippling-out (#3): a direct-email reply to a SPECIFIC post (refmsgid resolved via the
+        // x-fd-msgid header or subject match) must be held when the replier's area isn't covered
+        // by the post's reach yet - the same gate as the digest reply path - so the poster isn't
+        // notified out-of-reach via this route. Only when we linked the reply to a post.
+        if ($refMsgId !== null && $chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser);
+        }
 
         // Track email reply in email_tracking for AMP comparison stats.
         $this->trackEmailReply($chat->id, $senderUser->id);
@@ -3982,15 +3995,20 @@ class IncomingMailService
      */
     private function addToSpatialIndex(int $messageId, int $groupId): void
     {
-        $message = Message::find($messageId);
+        // useWritePdo: this runs immediately after the message is created and its
+        // messages_groups row set to Approved (see routeToGroup). Under the read/write
+        // split a plain read could hit a lagging replica and return null, silently
+        // skipping the spatial-index entry until the reconciler cron catches up.
+        $message = Message::query()->useWritePdo()->find($messageId);
         if (! $message || (! $message->lat && ! $message->lng)) {
             return;
         }
 
         $srid = config('freegle.srid', 3857);
 
-        // Get arrival from messages_groups
+        // Get arrival from messages_groups (same read-your-write reasoning as above).
         $mg = DB::table('messages_groups')
+            ->useWritePdo()
             ->where('msgid', $messageId)
             ->where('groupid', $groupId)
             ->first();

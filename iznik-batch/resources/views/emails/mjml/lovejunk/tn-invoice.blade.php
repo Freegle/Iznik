@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Please raise an invoice for LoveJunk advertising income'])
+  @include('emails.mjml.partials.head', ['preview' => 'Please raise a LoveJunk invoice for £' . $tnAmount . ' (' . $start . ' to ' . $end . ')'])
 
   <mj-body background-color="#f4f4f4">
 

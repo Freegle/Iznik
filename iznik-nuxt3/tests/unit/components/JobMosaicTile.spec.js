@@ -304,7 +304,10 @@ describe('JobMosaicTile', () => {
     it('logs job click', async () => {
       const wrapper = createWrapper()
       await wrapper.find('.mosaic-tile').trigger('click')
-      expect(mockJobStore.log).toHaveBeenCalledWith({ id: 1 })
+      expect(mockJobStore.log).toHaveBeenCalledWith({
+        id: 1,
+        link: 'https://example.com/job/1',
+      })
     })
 
     it('navigates to /jobs when not already on jobs page', async () => {

@@ -83,6 +83,51 @@ class WelcomeMailTest extends TestCase
     }
 
     /**
+     * Build minimal stub data to render the welcome MJML view directly.
+     */
+    private function welcomeViewData(?string $firstName): array
+    {
+        $dummyImage = ['src' => 'https://example.com/img.jpg', 'srcset' => ''];
+
+        return [
+            'firstName'         => $firstName,
+            'email'             => 'stub@example.com',
+            'password'          => null,
+            'giveUrl'           => 'https://www.ilovefreegle.org/give',
+            'findUrl'           => 'https://www.ilovefreegle.org/find',
+            'termsUrl'          => 'https://www.ilovefreegle.org/terms',
+            'helpUrl'           => 'https://www.ilovefreegle.org/help',
+            'safetyUrl'         => 'https://www.ilovefreegle.org/safety',
+            'settingsUrl'       => 'https://www.ilovefreegle.org/settings',
+            'heroImage'         => $dummyImage,
+            'ruleFreeImage'     => $dummyImage,
+            'ruleNiceImage'     => $dummyImage,
+            'ruleSafeImage'     => $dummyImage,
+            'trackingPixelMjml' => null,
+        ];
+    }
+
+    public function test_preheader_contains_first_name_when_provided(): void
+    {
+        $html = view('emails.mjml.welcome.welcome', $this->welcomeViewData('Beatrice'))->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Welcome, Beatrice! Give stuff away or find what you need for free.</mj-preview>',
+            $html
+        );
+    }
+
+    public function test_preheader_uses_fallback_when_no_first_name(): void
+    {
+        $html = view('emails.mjml.welcome.welcome', $this->welcomeViewData(null))->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Welcome to Freegle! Give stuff away or find what you need for free.</mj-preview>',
+            $html
+        );
+    }
+
+    /**
      * Regression: the `groups` table has no `autoemail`/`modsemail` columns
      * and the previous fallback `config('freegle.mail.support')` did not exist
      * (the actual key is `support_addr`). The envelope() therefore handed null

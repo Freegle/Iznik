@@ -1105,6 +1105,58 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(ChatMessage::TYPE_INTERESTED, $chatMsg->type);
     }
 
+    /**
+     * Rippling-out: a direct-email reply to a specific post (refmsgid resolved via x-fd-msgid) from
+     * a replier whose area the post's reach has NOT reached yet must be HELD - the same gate as the
+     * digest reply path - so the poster is not notified out-of-reach via the direct-mail route.
+     */
+    public function test_direct_mail_reply_to_post_held_when_replier_outside_reach(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        // Replier located OUTSIDE the post's reach polygon (reach covers ~51.5,-0.1; replier 52.0,1.0).
+        $replier = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('replier'),
+            'lastlocation' => $this->createLocation(52.0, 1.0),
+        ]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // The post is rippling out; its reach does not yet cover the replier's location.
+        DB::statement('DELETE FROM rippling_reach WHERE msgid = ?', [$message->id]);
+        DB::insert(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, rejected_groups, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
+        );
+
+        $replierEmail = $replier->emails->first()->email;
+        $posterSlugAddr = "someslug-{$poster->id}@users.ilovefreegle.org";
+        $emailRaw = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => $posterSlugAddr,
+            'Subject' => $message->subject,
+            'x-fd-msgid' => (string) $message->id,
+        ], 'I would love this item!');
+        $parsed = $this->parser->parse($emailRaw, $replierEmail, $posterSlugAddr);
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $replier->id)
+            ->where('type', ChatMessage::TYPE_INTERESTED)
+            ->orderBy('id', 'desc')
+            ->first();
+        $this->assertNotNull($chatMsg, 'Direct mail reply to a post should create a TYPE_INTERESTED message');
+        $this->assertEquals($message->id, $chatMsg->refmsgid);
+
+        // The out-of-reach reply must be HELD so the poster is not notified until reach catches up.
+        $held = DB::table('rippling_held_replies')->where('chatmsgid', $chatMsg->id)->first();
+        $this->assertNotNull($held, 'Out-of-reach direct-email reply to a post must be held');
+        $this->assertSame('held', $held->status);
+    }
+
     public function test_direct_mail_finds_refmsgid_by_subject(): void
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);

@@ -15,6 +15,9 @@ The aim is to keep freegling as local as possible. Your neighbours get first cha
 which means less driving and a fairer go for everyone close by. If nobody nearby wants
 it, it reaches further afield automatically - you do not need to do anything extra.
 
+If enough people nearby reply to your post, it stops spreading further - it already has
+plenty of interest, so there is no need to show it to people further away.
+
 ---
 
 ## What happens when your post ripples into a new community?
@@ -63,6 +66,42 @@ into (which could be quite a few), you get **one single email** that explains:
 This is a one-off notice about your own post. It is sent even if you normally have
 emails turned off for group-feed messages, because it is about something that just
 happened to your account.
+
+---
+
+## Your daily "What's New" email
+
+Because rippling switches your immediate alerts to a daily digest (see above), and joins
+you to more communities, your daily "What's New" email can now gather posts from several
+communities. To keep the email a sensible length - and to stop it being clipped partway
+through by email providers like Gmail - it lists up to around 65 posts. If there are more
+than that, the email shows the first batch and links you to the website to browse the
+rest, and the subject line simply says "What's New" rather than giving an exact post
+count. Nothing is missing - everything is always there on the browse page.
+
+---
+
+## Getting posts that ripple towards you
+
+Rippling works in the other direction too: posts from neighbouring communities ripple
+towards you. If you have a community set to **immediate emails**, you will get an alert
+the moment a rippling post first reaches your area - just as you would for a post made
+directly in that community. You only ever get **one** alert per post, however far it
+later travels, and only once it is actually close enough for you to reply.
+
+If you would rather not hear about them straight away, set that community to daily digest
+in Settings - those posts then simply appear in your next "What's New" instead.
+
+---
+
+## Reminders about your post
+
+If your item is still available after a while, we remind you shortly before we
+automatically repost it ("Will Repost: ..."), and later we check in to ask what happened
+("What happened to: ..."). Even though your post may be live in several communities at
+once through rippling, you only ever get **one** reminder and **one** check-in each time -
+not one per community. Whatever you choose - mark it taken, withdraw it, or promise it to
+someone - applies to your post everywhere it has reached, so a single tap settles it.
 
 ---
 
@@ -125,5 +164,6 @@ normal. Nothing is lost - it is just "not yet" rather than "no".
 | Email defaults | Immediate is switched to daily; no-email and daily are unchanged |
 | Community events/volunteering emails | Left at whatever you already had |
 | Intro email | One bundled email explains what happened and how to change things |
+| Repost reminders / check-ins | One per item, not one per community |
 | Leaving a community | Removes your post from it; you are not re-joined |
 | Changing settings | Adjust per community in Settings at any time |

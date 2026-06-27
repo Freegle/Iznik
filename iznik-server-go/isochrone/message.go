@@ -31,6 +31,15 @@ func Messages(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// The 'mygroups' browse view shows posts from the user's member groups only — the same
+	// universe Count uses for that view — so the nav badge/divider count matches what the feed
+	// renders and "Mark seen" can actually clear it. (The default 'nearby' view below is the
+	// location/isochrone feed.) Without this the list always returned the location feed while
+	// Count branched to member groups, leaving a non-clearable count for mygroups users.
+	if effectiveBrowseView(c, db, myid) == "mygroups" {
+		return myGroupsMessages(c, db, myid)
+	}
+
 	var isochrones []IsochronesUsers
 	res := []message.MessageSummary{}
 
@@ -132,6 +141,71 @@ func Messages(c *fiber.Ctx) error {
 	return c.JSON(res)
 }
 
+// effectiveBrowseView resolves the browse view for this request: an explicit ?browseView= wins,
+// otherwise the user's saved setting, otherwise "nearby". Defaulting to the user's setting (rather
+// than always "nearby") keeps the count and feed correct even when a client path omits or mis-sends
+// the param — the cause of mygroups users seeing a stuck "nearby" count they couldn't clear.
+func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
+	if bv := c.Query("browseView", ""); bv != "" {
+		return bv
+	}
+	var setting string
+	// COALESCE to '' so users who have never set browseView (JSON_EXTRACT -> SQL NULL) scan cleanly
+	// into the non-nullable string instead of erroring "converting NULL to string is unsupported"
+	// on every such request. NULL still falls through to the "nearby" default below.
+	db.Raw("SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')), '') FROM users WHERE id = ?", myid).Scan(&setting)
+	if setting == "mygroups" {
+		return "mygroups"
+	}
+	return "nearby"
+}
+
+// myGroupsMsgIDs returns the open (successful=0) message ids in the user's member groups — the
+// shared universe for the 'mygroups' browse view, so Messages (the feed) and Count (the badge)
+// agree and "Mark seen" can drain the count.
+func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
+	var ids []uint64
+	db.Raw("SELECT DISTINCT messages_spatial.msgid FROM memberships "+
+		"INNER JOIN messages_spatial ON messages_spatial.groupid = memberships.groupid "+
+		"WHERE memberships.userid = ? AND messages_spatial.successful = 0", myid).Scan(&ids)
+	return ids
+}
+
+// myGroupsMessages renders the 'mygroups' browse feed: posts from the viewer's member groups,
+// with the unseen flag, blurred. No location/postvisibility/reach filtering — the viewer is a
+// member, and Count's mygroups branch is unfiltered too, so feed and badge stay in lock-step.
+func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
+	res := []message.MessageSummary{}
+	msgIDs := myGroupsMsgIDs(db, myid)
+
+	if len(msgIDs) > 0 {
+		placeholders := make([]string, len(msgIDs))
+		args := make([]any, len(msgIDs)+2)
+		args[0] = myid
+		args[1] = utils.MESSAGE_LIKES_VIEW
+		for i, id := range msgIDs {
+			placeholders[i] = "?"
+			args[i+2] = id
+		}
+		db.Raw(fmt.Sprintf(
+			"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
+				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
+				"ms.msgtype AS type, ms.arrival, "+
+				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+				"FROM messages_spatial ms "+
+				"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
+				"WHERE ms.msgid IN (%s)",
+			strings.Join(placeholders, ",")),
+			args...).Scan(&res)
+	}
+
+	for ix, r := range res {
+		res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+	}
+
+	return c.JSON(res)
+}
+
 // FilterReachBlocked removes messages whose rippling reach exists but does not yet cover
 // the viewer's location (§6 — a post stays hidden until the ripple reaches you). It is
 // inert until the reach engine populates rippling_reach: a missing table or no matching
@@ -181,7 +255,7 @@ func Count(c *fiber.Ctx) error {
 
 	var count uint64 = 0
 
-	browseView := c.Query("browseView", "nearby")
+	browseView := effectiveBrowseView(c, db, myid)
 
 	if browseView == "mygroups" {
 		db.Raw("SELECT COUNT(DISTINCT(messages_spatial.msgid)) FROM memberships "+

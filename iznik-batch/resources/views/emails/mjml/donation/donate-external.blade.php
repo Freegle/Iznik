@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Donation received'])
+  @include('emails.mjml.partials.head', ['preview' => $userName . ' donated £' . number_format($amount, 2) . ' via ' . $channel])
 
   <mj-body>
     @include('emails.mjml.partials.header', ['title' => 'Donation'])

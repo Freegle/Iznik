@@ -17,11 +17,18 @@ class JobModelTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->seededJobIds) {
-            $this->removeSpatial('jobs', $this->seededJobIds);
-            $this->seededJobIds = [];
+        // parent::tearDown() must always run (it cleans up the DB connection);
+        // removeSpatial() is already best-effort, but guard with finally so no
+        // teardown failure can ever leave the connection holding locks and flake
+        // the next test's clearJobsTable() DELETE.
+        try {
+            if ($this->seededJobIds) {
+                $this->removeSpatial('jobs', $this->seededJobIds);
+                $this->seededJobIds = [];
+            }
+        } finally {
+            parent::tearDown();
         }
-        parent::tearDown();
     }
 
     /**
@@ -223,6 +230,61 @@ class JobModelTest extends TestCase
             $limit,
             count($allSeen),
             'Repeated calls should surface more than $limit unique jobs from the pool'
+        );
+    }
+
+    public function test_near_location_weights_variety_by_score(): void
+    {
+        // When the pool exceeds the limit, the variety step is WEIGHTED by score
+        // (cpc * clickability * freshness), not a uniform shuffle. A much
+        // higher-cpc job should be drawn into the great majority of sends, while
+        // the floor-cpc jobs still rotate (variety preserved). A uniform shuffle
+        // would put the top job in only ~limit/pool ≈ 33% of draws — the bug this
+        // fixes (clicked ads were averaging a lower cpc than the pool).
+        $this->clearJobsTable();
+
+        mt_srand(424242); // deterministic so the statistical assertion can't flake
+
+        $limit = 4;
+        $top = $this->seedJob(['title' => 'Top CPC', 'cpc' => 1.00]);
+        $floorIds = [];
+        for ($i = 0; $i < 11; $i++) {
+            $floorIds[] = $this->seedJob(['title' => 'Floor ' . $i, 'cpc' => 0.11]);
+        }
+        $sampleFloor = $floorIds[0];
+
+        $runs = 200;
+        $topPicks = 0;
+        $floorPicks = 0;
+        $seen = [];
+        for ($r = 0; $r < $runs; $r++) {
+            $result = Job::nearLocation(51.5074, -0.1278, $limit);
+            $this->assertCount($limit, $result);
+            foreach ($result as $job) {
+                $seen[$job->id] = true;
+            }
+            if ($result->contains('id', $top)) {
+                $topPicks++;
+            }
+            if ($result->contains('id', $sampleFloor)) {
+                $floorPicks++;
+            }
+        }
+
+        $this->assertGreaterThan(
+            (int) ($runs * 0.7),
+            $topPicks,
+            "High-score job should be weighted into most draws (got {$topPicks}/{$runs})"
+        );
+        $this->assertGreaterThan(
+            $floorPicks * 2,
+            $topPicks,
+            "High-score job should be picked far more often than a floor job ({$topPicks} vs {$floorPicks})"
+        );
+        $this->assertGreaterThan(
+            $limit,
+            count($seen),
+            'Variety preserved: repeated calls surface more than $limit distinct jobs'
         );
     }
 

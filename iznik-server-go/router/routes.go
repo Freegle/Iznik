@@ -25,6 +25,7 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/browse"
 	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
@@ -105,6 +106,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Accept json
 		// @Produce json
 		rg.Post("/abtest", abtest.PostABTest)
+
+		// Browse-feed scroll depth: record how far down the feed a session scrolled.
+		// @Router /scrolldepth [post]
+		// @Summary Record browse-feed scroll depth
+		// @Description One row per browse session (furthest feed position reached); no login required
+		// @Tags browse
+		// @Accept json
+		// @Produce json
+		rg.Post("/scrolldepth", browse.RecordScrollDepth)
 
 		// Message Activity
 		// @Router /activity [get]
@@ -279,6 +289,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {array} chat.ChatMessage
 		rg.Get("/chat/:id/message", chat.GetChatMessages)
+
+		// @Router /chat/{id}/commongroups [get]
+		// @Summary Groups in common between the two chat participants
+		// @Tags chat
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Security BearerAuth
+		// @Success 200 {array} chat.CommonGroup
+		rg.Get("/chat/:id/commongroups", chat.GetCommonGroups)
 
 		// Create Chat Message
 		// @Router /chat/{id}/message [post]
@@ -1296,6 +1315,14 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Unauthorized"
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
+
+		// Browse-feed scroll-depth curve for the sysadmin "Scrolling" tab (Support/Admin).
+		// @Router /modtools/scroll/depth [get]
+		// @Summary Browse-feed scroll-depth curve
+		// @Description For each feed position N, the fraction of sessions that scrolled at least N deep
+		// @Tags browse
+		// @Produce json
+		rg.Get("/modtools/scroll/depth", browse.ScrollDepthCurve)
 
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]

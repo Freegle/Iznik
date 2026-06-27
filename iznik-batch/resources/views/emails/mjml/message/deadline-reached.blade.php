@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'Your post has reached its deadline'])
+    @include('emails.mjml.partials.head', ['preview' => 'Deadline reached: ' . \Illuminate\Support\Str::limit(strip_tags($post->subject), 70)])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')

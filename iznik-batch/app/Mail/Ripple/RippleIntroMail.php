@@ -76,6 +76,8 @@ class RippleIntroMail extends MjmlMailable
             'emails.mjml.ripple.intro',
             [
                 'firstName' => $this->user->firstname ?? null,
+                // The post that rippled, so the preheader can name it in the inbox preview.
+                'postSubject' => $this->message?->subject,
                 'email' => $recipientEmail,
                 'userSite' => $userSite,
                 'settingsUrl' => "{$userSite}/settings",

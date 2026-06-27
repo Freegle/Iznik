@@ -132,20 +132,34 @@ class AutoApproveService
 
         foreach ($candidates as $msgid => $groupRows) {
             try {
-                // V1: check for recent logs referencing this message ONCE (not per group).
-                // This avoids auto-approving messages recently held/unheld, while still
-                // allowing multi-group messages to be approved across all groups in one pass.
-                $recentLogs = DB::table('logs')
-                    ->where('msgid', $msgid)
-                    ->where('timestamp', '>', now()->subHours(self::PENDING_HOURS))
-                    ->exists();
-
-                if ($recentLogs) {
-                    $stats['skipped'] += $groupRows->count();
-                    continue;
-                }
+                // V1 parity: skip auto-approving a message that was recently held/unheld.
+                // Lazy-evaluated so the query only runs when there is at least one non-rippled-in
+                // candidate that needs the guard. Rippled-in rows bypass this check entirely:
+                // the relevant hold on the nearby group is already expressed by the heldby IS NULL
+                // filter in the candidates query, and finding an approval log from the ORIGIN group
+                // here must not block the short veto window on the receiving group (which is how
+                // ~30 posts "disappeared suddenly" — they were stuck Pending for 48h instead of 1h
+                // and then batch-approved when the origin-approval log aged out, Discourse 9812/3).
+                $recentLogsChecked = false;
+                $recentLogs = false;
 
                 foreach ($groupRows as $candidate) {
+                    $isRippledIn = (int) ($candidate->rippled_in ?? 0) === 1;
+
+                    if (!$isRippledIn) {
+                        if (!$recentLogsChecked) {
+                            $recentLogs = DB::table('logs')
+                                ->where('msgid', $msgid)
+                                ->where('timestamp', '>', now()->subHours(self::PENDING_HOURS))
+                                ->exists();
+                            $recentLogsChecked = true;
+                        }
+                        if ($recentLogs) {
+                            $stats['skipped']++;
+                            continue;
+                        }
+                    }
+
                     if ($this->shouldApproveOnGroup($candidate, $candidate->groupid)) {
                         if ($dryRun) {
                             Log::info("Dry run: would auto-approve message #{$candidate->msgid} on group #{$candidate->groupid}");

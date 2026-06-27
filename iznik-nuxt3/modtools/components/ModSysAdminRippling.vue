@@ -21,8 +21,25 @@
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else>
+      <b-form-checkbox
+        v-model="trialOnly"
+        switch
+        size="sm"
+        class="mb-2"
+        @change="onTrialChange"
+      >
+        Trial groups only<span
+          v-if="trialOnly && trialGroupIds.length"
+          class="text-muted small"
+        >
+          ({{ trialGroupIds.length }} in RIPPLE_WITHIN_GROUPS)</span>
+      </b-form-checkbox>
+      <p v-if="trialOnly && !trialGroupIds.length" class="text-warning small mb-2">
+        No trial groups configured (RIPPLE_WITHIN_GROUPS is empty) - nothing to show.
+      </p>
+
       <b-form-group
-        v-if="groupOptions.length"
+        v-if="groupOptions.length && !trialOnly"
         label="Group:"
         label-cols="auto"
         label-class="small fw-bold"
@@ -56,14 +73,42 @@
           v-if="replyRateChart"
           type="LineChart"
           :data="replyRateChart"
-          :options="pctChartOptions('Reply rate (%)', '#28a745')"
+          :options="cohortPctOptions('Reply rate (%)')"
           style="width: 100%; height: 300px"
         />
-        <p v-else class="text-muted small">No data yet.</p>
+        <p v-if="replyRateChart" class="text-muted small fst-italic mt-1 mb-0">
+          The dashed tail is still settling - the most recent posts haven't had a full 36h to get a reply yet.
+        </p>
+        <p v-if="!replyRateChart" class="text-muted small">No data yet.</p>
       </div>
 
       <div class="mb-3">
-        <strong class="small">How much of the lift is rippling?</strong>
+        <strong class="small">Are posts getting more replies?</strong>
+        <p class="text-muted small mb-1">
+          Mean number of replies a post gets within 36h.
+          <span class="text-success fw-bold">Good:</span> rippled-out posts
+          average more replies each than home-only - reach is deepening
+          interest, not just turning 0-reply posts into 1.
+        </p>
+        <GChart
+          v-if="repliesPerPostChart"
+          type="LineChart"
+          :data="repliesPerPostChart"
+          :options="cohortPctOptions('Mean replies / post')"
+          style="width: 100%; height: 300px"
+        />
+        <p
+          v-if="repliesPerPostChart"
+          class="text-muted small fst-italic mt-1 mb-0"
+        >
+          The dashed tail is still settling - the most recent posts haven't had
+          a full 36h to gather replies yet.
+        </p>
+        <p v-if="!repliesPerPostChart" class="text-muted small">No data yet.</p>
+      </div>
+
+      <div class="mb-3">
+        <strong class="small">Share of replies from rippling</strong>
         <p class="text-muted small mb-1">
           Share of replies that came via rippling vs your own members.
           <span class="text-success fw-bold">Good:</span> a real share - the
@@ -96,7 +141,7 @@
           v-if="replyDistanceChart"
           type="LineChart"
           :data="replyDistanceChart"
-          :options="kmChartOptions()"
+          :options="cohortKmOptions()"
           style="width: 100%; height: 300px"
         />
         <p v-else class="text-muted small">No data yet.</p>
@@ -113,10 +158,13 @@
           v-if="takenRateChart"
           type="LineChart"
           :data="takenRateChart"
-          :options="pctChartOptions('Taken/received (%)', '#6f42c1')"
+          :options="cohortPctOptions('Taken/received (%)')"
           style="width: 100%; height: 300px"
         />
-        <p v-else class="text-muted small">No data yet.</p>
+        <p v-if="takenRateChart" class="text-muted small fst-italic mt-1 mb-0">
+          The dashed tail is still settling - recent posts haven't had time to be collected yet.
+        </p>
+        <p v-if="!takenRateChart" class="text-muted small">No data yet.</p>
       </div>
 
       <h6 class="mt-4">Where to look — geographic hotspots</h6>
@@ -214,41 +262,119 @@ const hotspots = ref([])
 const heldReplySummary = ref([])
 // Headline reply KPIs (per-day series for the line charts)
 const replyRate = ref([])
+const repliesPerPost = ref([])
 const replySource = ref([])
 const replyDistance = ref([])
 const takenRate = ref([])
 // Per-group KPI filter (results differ a lot by place; 0 = all groups).
 const groupOptions = ref([])
 const groupFilter = ref(0)
+// Trial scope: limit every KPI to the RIPPLE_WITHIN_GROUPS trial set so the trial
+// signal isn't masked by the majority of groups that aren't rippling. trialGroupIds
+// echoes the resolved set back from the server (drives the count + empty warning).
+const trialOnly = ref(false)
+const trialGroupIds = ref([])
+
+const COHORT_HEADER = (allLabel) => [
+  'Date',
+  allLabel,
+  { role: 'certainty', type: 'boolean' },
+  'Home-only',
+  { role: 'certainty', type: 'boolean' },
+  'Rippled-out',
+  { role: 'certainty', type: 'boolean' },
+]
 
 const replyRateChart = computed(() => {
   if (!replyRate.value.length) return null
-  const rows = [...replyRate.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.reply_pct])
-  return [['Date', '% with reply in 36h'], ...rows]
+  const rows = [...replyRate.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [new Date(r.day), r.reply_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
+})
+const repliesPerPostChart = computed(() => {
+  if (!repliesPerPost.value.length) return null
+  const rows = [...repliesPerPost.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [
+      new Date(r.day),
+      r.mean_replies,
+      certain,
+      r.home_mean,
+      certain,
+      r.ripple_mean,
+      certain,
+    ]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
 })
 const replySourceChart = computed(() => {
-  if (!replySource.value.length) return null
-  const rows = [...replySource.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.ripple_pct])
+  if (!startDate.value || !endDate.value) return null
+  // Zero-fill the whole filter range. The backend only returns days that had a
+  // rippling-attributed reply, so early in the rollout this was a single lone
+  // point. A day with no rippling reply genuinely has a 0% rippling share, so
+  // filling the gaps draws a continuous line across the same range as the other
+  // charts instead of one dot floating on a one-day axis.
+  const byDay = new Map(replySource.value.map((r) => [r.day, r.ripple_pct]))
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return null
+  const rows = []
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10)
+    rows.push([new Date(d), byDay.has(key) ? byDay.get(key) : 0])
+  }
   return [['Date', '% of replies via rippling'], ...rows]
 })
 const replyDistanceChart = computed(() => {
   if (!replyDistance.value.length) return null
-  const rows = [...replyDistance.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.median_km])
-  return [['Date', 'Median km'], ...rows]
+  const rows = [...replyDistance.value].reverse().map((r) => [
+    new Date(r.day), r.median_km, true, r.home_median_km, true, r.ripple_median_km, true,
+  ])
+  // Distance is a median over replies, not a count of offers, so label the "all" line accordingly.
+  return [COHORT_HEADER('All replies'), ...rows]
 })
 const takenRateChart = computed(() => {
   if (!takenRate.value.length) return null
-  const rows = [...takenRate.value]
-    .reverse()
-    .map((r) => [new Date(r.day), r.taken_pct])
-  return [['Date', '% taken/received'], ...rows]
+  const rows = [...takenRate.value].reverse().map((r) => {
+    const certain = !r.provisional
+    return [new Date(r.day), r.taken_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+  })
+  return [COHORT_HEADER('All offers'), ...rows]
 })
+
+// Shared x-axis so EVERY chart spans the same filter date range with the same
+// date ticks. Without this each chart auto-scaled to its own data: a single-point
+// chart collapsed to one repeated date ("23 Jun" all along) and dense charts
+// dropped their labels entirely. viewWindow pins the range; explicit ticks force
+// a consistent, readable set of date labels (~8 max) across all charts.
+function dateTicks() {
+  if (!startDate.value || !endDate.value) return undefined
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return undefined
+  const days = Math.round((end - start) / 86400000)
+  const step = Math.max(1, Math.ceil((days + 1) / 8))
+  const ticks = []
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + step)) {
+    ticks.push(new Date(d))
+  }
+  return ticks
+}
+function dateHAxis() {
+  const h = { title: 'Date', format: 'dd MMM' }
+  if (startDate.value && endDate.value) {
+    const min = new Date(startDate.value)
+    const max = new Date(endDate.value)
+    if (!isNaN(min) && !isNaN(max) && max >= min) {
+      h.viewWindow = { min, max }
+      const ticks = dateTicks()
+      if (ticks && ticks.length) h.ticks = ticks
+    }
+  }
+  return h
+}
 
 function pctChartOptions(vTitle, color) {
   return {
@@ -256,19 +382,39 @@ function pctChartOptions(vTitle, color) {
     legend: { position: 'none' },
     chartArea: { width: '85%', height: '70%' },
     vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
+    hAxis: dateHAxis(),
     series: { 0: { color } },
     animation: { startup: true, duration: 400, easing: 'out' },
   }
 }
-function kmChartOptions() {
+
+function cohortPctOptions(vTitle) {
   return {
     curveType: 'function',
-    legend: { position: 'none' },
-    chartArea: { width: '85%', height: '70%' },
+    legend: { position: 'bottom' },
+    chartArea: { width: '85%', height: '65%' },
+    vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
+    hAxis: dateHAxis(),
+    series: {
+      0: { color: '#6c757d' }, // All — grey
+      1: { color: '#17a2b8' }, // Home-only — teal
+      2: { color: '#28a745' }, // Rippled-out — green
+    },
+    animation: { startup: true, duration: 400, easing: 'out' },
+  }
+}
+function cohortKmOptions() {
+  return {
+    curveType: 'function',
+    legend: { position: 'bottom' },
+    chartArea: { width: '85%', height: '65%' },
     vAxis: { title: 'Median km', viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { title: 'Date', format: 'dd MMM' },
-    series: { 0: { color: '#fd7e14' } },
+    hAxis: dateHAxis(),
+    series: {
+      0: { color: '#6c757d' },
+      1: { color: '#17a2b8' },
+      2: { color: '#fd7e14' }, // Rippled-out distance — orange
+    },
     animation: { startup: true, duration: 400, easing: 'out' },
   }
 }
@@ -280,15 +426,18 @@ async function fetchMetrics() {
     const result = await apiInstance.rippling.fetchMetrics(
       groupFilter.value,
       startDate.value,
-      endDate.value
+      endDate.value,
+      trialOnly.value
     )
     hotspots.value = result?.hotspots || []
     heldReplySummary.value = result?.held_reply_summary || []
     replyRate.value = result?.reply_rate_36h || []
+    repliesPerPost.value = result?.replies_per_post || []
     replySource.value = result?.reply_source_split || []
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []
     groupOptions.value = result?.groups || []
+    trialGroupIds.value = result?.trial_group_ids || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
@@ -300,6 +449,13 @@ function onGroupChange() {
   fetchMetrics()
 }
 
+function onTrialChange() {
+  // Trial scope and a single-group filter are mutually exclusive (the server lets
+  // groupid win), so clear the group filter when switching to trial-only.
+  groupFilter.value = 0
+  fetchMetrics()
+}
+
 // ModEmailDateFilter fires this on mount and whenever the period changes, so it
 // drives the initial load too (no separate onMounted fetch needed).
 function onFilterFetch({ start, end }) {
@@ -308,5 +464,13 @@ function onFilterFetch({ start, end }) {
   fetchMetrics()
 }
 
-defineExpose({ fetchMetrics, groupFilter, onGroupChange, onFilterFetch })
+defineExpose({
+  fetchMetrics,
+  groupFilter,
+  onGroupChange,
+  onFilterFetch,
+  trialOnly,
+  trialGroupIds,
+  onTrialChange,
+})
 </script>

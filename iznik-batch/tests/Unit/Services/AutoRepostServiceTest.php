@@ -564,6 +564,103 @@ class AutoRepostServiceTest extends TestCase
     }
 
     /**
+     * Rippling-out: a post on its home group plus two rippled-into groups, all in the
+     * warning window, must remind the poster ONCE (from the home posting), not once per
+     * group. The reminder's buttons act on the whole item, so one email is enough.
+     */
+    public function test_warning_sent_once_across_rippled_groups(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $rippledA = $this->createTestGroup();
+        $rippledB = $this->createTestGroup();
+
+        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subHours(1)]);
+        $this->createMembership($user, $home, ['added' => now()->subDays(30)]);
+        $this->createMembership($user, $rippledA, ['added' => now()->subDays(30)]);
+        $this->createMembership($user, $rippledB, ['added' => now()->subDays(30)]);
+
+        // Home posting in the warning window (50h; offer interval 3d => window 48-72h).
+        $message = $this->createTestMessage($user, $home, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)
+            ->update(['arrival' => now()->subHours(50), 'autoreposts' => 0, 'rippled_in' => 0]);
+
+        // Two rippled-in postings, also in the warning window.
+        foreach ([$rippledA, $rippledB] as $g) {
+            DB::table('messages_groups')->insert([
+                'msgid' => $message->id,
+                'groupid' => $g->id,
+                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subHours(50),
+                'autoreposts' => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['warned'], 'rippled item must warn once, not once per group');
+        $this->assertEquals(0, $stats['reposted']);
+
+        // lastautopostwarning stamped on EVERY group so none re-fires next run.
+        $rows = DB::table('messages_groups')->where('msgid', $message->id)->get();
+        $this->assertCount(3, $rows);
+        foreach ($rows as $r) {
+            $this->assertNotNull($r->lastautopostwarning, 'every group of the item must be stamped');
+        }
+    }
+
+    /**
+     * Rippling-out: a rippled-in posting (rippled_in=1) is still reposted on its group to
+     * keep the item fresh there, but it never generates its own repost reminder email.
+     */
+    public function test_rippled_in_row_reposts_without_warning(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+
+        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subHours(1)]);
+        $this->createMembership($user, $home, ['added' => now()->subDays(30)]);
+        $this->createMembership($user, $rippled, ['added' => now()->subDays(30)]);
+
+        // Home posting still fresh (not in any window); rippled posting past the repost window.
+        $message = $this->createTestMessage($user, $home, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)
+            ->update(['arrival' => now()->subHours(1), 'autoreposts' => 0, 'rippled_in' => 0]);
+
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $rippled->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(80), // past the 72h offer interval
+            'autoreposts' => 0,
+            'rippled_in' => 1,
+        ]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['reposted'], 'rippled-in row must still repost');
+        $this->assertEquals(0, $stats['warned'], 'rippled-in row must not generate a reminder');
+
+        $mgRippled = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
+        $this->assertEquals(1, $mgRippled->autoreposts);
+    }
+
+    /**
      * Regression test for Discourse #9481 (posts 502-510): messages 119974515 and 116335125
      * were not auto-reposted even though they were eligible.
      *

@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
-import { DISCOURSE_BASE } from '../discourse.js'
+import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
 import { partitionFailedChecks } from '../coverage-checks.js'
 import {
   getDb,
@@ -190,6 +190,13 @@ export async function postDiscourseReply(
   replyToPostNumber?: number,
   opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
 ): Promise<{ ok: boolean; error?: string }> {
+  // HARD INVARIANT: never post a reply without quoted text. This is the single
+  // chokepoint for the auto-post path, so the check here makes a context-less
+  // post impossible regardless of any upstream bug in how `raw` was built.
+  if (!hasNonEmptyQuote(raw)) {
+    return { ok: false, error: 'refusing to post a Discourse reply with no quoted text' }
+  }
+
   const maxRetries = opts.maxRetries ?? 4
   const sleepFn = opts.sleepFn ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
 
@@ -824,7 +831,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
       // advanced before the live build caught up — deploy_state stays
       // pending_deploy until we confirm the commit is live).
       const bugs = db.prepare(`
-        SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
+        SELECT b.topic, b.post, b.reporter, b.excerpt, b.topic_title, b.pr_number,
                p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
         FROM discourse_bug b
         JOIN pr p ON p.number = b.pr_number
@@ -835,6 +842,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         ORDER BY b.topic, b.post
       `).all() as Array<{
         topic: number; post: number; reporter: string | null; excerpt: string | null
+        topic_title: string | null
         pr_number: number; pr_title: string
         frontend_only: number | null; preview_url: string | null; deploy_state: string | null
       }>
@@ -882,12 +890,19 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const APP_CAVEAT = ' (but app releases may take up to one week)'
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (affectsApp ? APP_CAVEAT : '')
-        const quote = bug.excerpt ?? ''
+        // Fallback chain so there is ALWAYS quoted text: the reporting post's excerpt,
+        // else the topic title (a topic always has one). If both were somehow empty the
+        // posting guard would refuse to post rather than post a context-less reply.
+        const quote = (bug.excerpt || bug.topic_title || '').trim()
         const username = bug.reporter ?? 'there'
 
         // Auto-post (explicitly approved): post the verbatim reply threaded under
         // the specific reporting post, then record it so it dedups + audits.
-        const postRes = await postDiscourseReply(bug.topic, body, bug.post)
+        // formatReplyRaw prepends the [quote] block of the reporting post — the
+        // bare `body` was posted unquoted before, identical to the human-draft
+        // path (dashboard) which has always quoted.
+        const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
+        const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
         if (!postRes.ok) {
           postFailed.push(bug.pr_number)
           outWarn(`queue_deployed_reply_drafts: FAILED to post reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}): ${postRes.error}`)

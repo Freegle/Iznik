@@ -54,7 +54,7 @@ func (d *JobsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 
 func (d *JobsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
 	rows, err := mysqlDB.Query(`
-		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, visible
+		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, visible, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
 		FROM jobs
 		WHERE seenat > ?
 	`, since.UTC())
@@ -67,10 +67,10 @@ func (d *JobsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) e
 	for rows.Next() {
 		var id int64
 		var wkbRaw []byte
-		var title, city string
+		var title, city, company, bodyhash string
 		var cpc float64
 		var visible int
-		if err := rows.Scan(&id, &wkbRaw, &title, &city, &cpc, &visible); err != nil {
+		if err := rows.Scan(&id, &wkbRaw, &title, &city, &cpc, &visible, &company, &bodyhash); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
 		// Remove any row that no longer meets jobsLiveFilter, not just visible=0.
@@ -104,7 +104,7 @@ func (d *JobsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) e
 			MaxLng: max.X,
 			MinLat: min.Y,
 			MaxLat: max.Y,
-			Extra:  map[string]any{"title": title, "city": city, "cpc": cpc},
+			Extra:  map[string]any{"title": title, "city": city, "cpc": cpc, "company": company, "bodyhash": bodyhash},
 		}
 		if err := InsertItems(idx, []Item{item}, nil); err != nil {
 			log.Printf("jobs delta: upsert id=%d: %v", id, err)
@@ -122,7 +122,46 @@ func (d *JobsDataset) Query(idx *Index, params QueryParams) ([]QueryResult, erro
 	if params.Limit <= 0 {
 		params.Limit = 10
 	}
-	return FindNearestPolygon(idx, params.Lng, params.Lat, params.Limit, nil)
+	// WhatJobs posts one recruitment ad to thousands of towns as separate rows
+	// (Discourse 9363), so a plain nearest query returns the same ad over and over
+	// and the caller's display fills with copies. Dedup by (company, title) here so
+	// KNN returns the nearest *distinct* jobs — the buffer expands past the
+	// duplicates to fill the limit with variety. Keyed on the Extra fields seeded
+	// in loadJobs/ApplyDelta.
+	//
+	// Use jobBufferLevels (reach ~64km) rather than the shared 0.32° ceiling: a
+	// rural user has few nearby ads, so the search must widen far enough to fill
+	// the result, matching the pre-spatial expanding-box reach (JOBS_DISTANCE=64).
+	return findNearestPolygonLevels(idx, params.Lng, params.Lat, params.Limit, nil, jobsDedupKey, jobBufferLevels[:])
+}
+
+// jobsDedupKey collapses the many town-copies of one WhatJobs ad to a single
+// entry so KNN returns the nearest distinct jobs (the buffer expands past the
+// copies to fill the limit with variety).
+//
+// Primary key is bodyhash: WhatJobs spams one recruitment ad to thousands of
+// towns as separate rows, and analysis of email_tracking_clicks showed those
+// nationwide copies carry *differing* company/title with an *identical* body, so
+// a (company,title) key let the far copies through — 94% of clicks landing >80km
+// from the user were on these same-body dups when a nearer copy existed. Keying
+// on bodyhash collapses all copies of one ad regardless of company/title, so the
+// nearest is served and the far tail disappears. Different-body roles (a genuine
+// distinct "Delivery Driver" from another employer) hash differently and stay
+// distinct.
+//
+// Falls back to (company,title) when bodyhash is absent (older rows / nulls).
+// Empty only when nothing identifies the row, which disables dedup for it
+// (treated as always-distinct) rather than collapsing all such rows together.
+func jobsDedupKey(extra map[string]any) string {
+	if bodyhash, _ := extra["bodyhash"].(string); bodyhash != "" {
+		return "b\x00" + bodyhash
+	}
+	company, _ := extra["company"].(string)
+	title, _ := extra["title"].(string)
+	if company == "" && title == "" {
+		return ""
+	}
+	return "ct\x00" + company + "\x00" + title
 }
 
 func (d *JobsDataset) Within(idx *Index, params QueryParams) ([]int64, error) {
@@ -141,7 +180,7 @@ func (d *JobsDataset) Within(idx *Index, params QueryParams) ([]int64, error) {
 
 func loadJobs(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
-		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc
+		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
 		FROM jobs
 		WHERE ` + jobsLiveFilter + `
 	` + extraWhere
@@ -157,9 +196,9 @@ func loadJobs(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 	for rows.Next() {
 		var id int64
 		var wkbRaw []byte
-		var title, city string
+		var title, city, company, bodyhash string
 		var cpc float64
-		if err := rows.Scan(&id, &wkbRaw, &title, &city, &cpc); err != nil {
+		if err := rows.Scan(&id, &wkbRaw, &title, &city, &cpc, &company, &bodyhash); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
 		wkb := stripSRIDPrefix(wkbRaw)
@@ -182,7 +221,7 @@ func loadJobs(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 			MaxLng: max.X,
 			MinLat: min.Y,
 			MaxLat: max.Y,
-			Extra:  map[string]any{"title": title, "city": city, "cpc": cpc},
+			Extra:  map[string]any{"title": title, "city": city, "cpc": cpc, "company": company, "bodyhash": bodyhash},
 		})
 	}
 	if err := rows.Err(); err != nil {

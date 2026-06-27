@@ -297,8 +297,8 @@ export const useMessageStore = defineStore({
 
       return messages || []
     },
-    async view(id) {
-      await api(this.config).message.view(id)
+    async view(id, source) {
+      await api(this.config).message.view(id, source)
     },
     // Register the current user's interest in bulk-offer items, then refetch so
     // the per-item interest summary and yourinterest are up to date.

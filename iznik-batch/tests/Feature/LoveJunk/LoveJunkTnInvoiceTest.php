@@ -64,6 +64,25 @@ class LoveJunkTnInvoiceTest extends TestCase
         $this->assertStringNotContainsString('Freegle Limited', $html);
     }
 
+    public function test_preheader_contains_amount_and_period(): void
+    {
+        // The mj-preview should carry the invoice amount and date range so the
+        // inbox preview line is informative rather than generic.
+        $html = view('emails.mjml.lovejunk.tn-invoice', [
+            'tnAmount'      => '375.50',
+            'start'         => '2025-03-01',
+            'end'           => '2025-04-01',
+            'tnPercent'     => 60,
+            'treasurerAddr' => 'treasurer@example.com',
+            'email'         => 'partner@example.com',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Please raise a LoveJunk invoice for £375.50 (2025-03-01 to 2025-04-01)</mj-preview>',
+            $html
+        );
+    }
+
     public function test_dry_run_does_not_send_email(): void
     {
         $msgId = $this->insertMessage('TN-abc123', '2020-01-15 12:00:00');

@@ -162,7 +162,48 @@ class ContentCheckService
             $reasons[] = $r;
         }
 
-        return $reasons;
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * Collapse reasons that flag the SAME keyword more than once.
+     *
+     * Concern keywords and the legacy per-group worry words overlap: a per-group
+     * worry word that has been migrated into concern_keywords (scope=group) is
+     * matched by BOTH checkConcernKeywords and checkPerGroupWorryWords, producing
+     * two reasons ("Matched concern keyword 'x'" and "Matched per-group worry
+     * word 'x'") for the one word. Keep a single reason per keyword, preferring
+     * the richer ConcernKeyword (it carries a category that drives mod guidance).
+     * Reasons without a keyword (Vague, PhoneNumber, …) are never de-duplicated.
+     */
+    private function dedupeReasons(array $reasons): array
+    {
+        $indexByKeyword = [];
+        $out = [];
+
+        foreach ($reasons as $reason) {
+            $keyword = isset($reason['keyword']) ? strtolower(trim((string) $reason['keyword'])) : '';
+
+            if ($keyword === '') {
+                $out[] = $reason;
+                continue;
+            }
+
+            if (!isset($indexByKeyword[$keyword])) {
+                $indexByKeyword[$keyword] = count($out);
+                $out[] = $reason;
+                continue;
+            }
+
+            // Already have a reason for this keyword; prefer ConcernKeyword.
+            $existingIndex = $indexByKeyword[$keyword];
+            if ($reason['check'] === self::CHECK_CONCERN_KEYWORD
+                && $out[$existingIndex]['check'] !== self::CHECK_CONCERN_KEYWORD) {
+                $out[$existingIndex] = $reason;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -696,6 +737,7 @@ class ContentCheckService
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
                 'action'   => $kw->action ?? 'flag',
+                'keyword'  => $word,
                 'detail'   => "Matched concern keyword '{$word}'",
             ];
         }
@@ -1132,6 +1174,7 @@ class ContentCheckService
                     'check'    => self::CHECK_PER_GROUP_WORRY,
                     'category' => null,
                     'action'   => 'flag',
+                    'keyword'  => $word,
                     'detail'   => "Matched per-group worry word '{$word}'",
                 ];
             }
@@ -1366,11 +1409,21 @@ class ContentCheckService
             ];
         }
 
-        // IP used to post to 20+ different groups
+        // IP used to post to 20+ different groups.
+        //
+        // Exclude rippled-in rows (messages_groups.rippled_in = 1). Rippling-out
+        // (ExpandService::rippleIntoNewGroups) inserts one messages_groups row per
+        // nearby intersecting group for the SAME message — a single post can fan
+        // out to 20-30 groups. Those rows share the one origin message's fromip, so
+        // counting them would flag every rippled post as IP abuse (false positive:
+        // one member, one post, many groups). We only want to detect an IP genuinely
+        // used to post to many DIFFERENT groups, i.e. native (non-rippled) postings.
+        // See Discourse https://discourse.ilovefreegle.org/t/not-sure-if-this-is-abuse-or-rippling-out/9833
         $groupCount = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->where('messages.fromip', $fromip)
             ->where('messages.arrival', '>=', $window)
+            ->where('messages_groups.rippled_in', 0)
             ->distinct('messages_groups.groupid')
             ->count();
 
@@ -1379,6 +1432,7 @@ class ContentCheckService
                 ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
                 ->where('messages.fromip', $fromip)
                 ->where('messages.arrival', '>=', $window)
+                ->where('messages_groups.rippled_in', 0)
                 ->select('messages_groups.groupid')
                 ->groupBy('messages_groups.groupid')
                 ->orderByRaw('MAX(messages_groups.arrival) DESC')

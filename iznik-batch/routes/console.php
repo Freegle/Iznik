@@ -203,6 +203,16 @@ Schedule::command('cleanup:sessions')
     ->sendOutputTo(cronLog('cleanup:sessions'))
     ->runInBackground();
 
+// Compress rotated batch log files and prune those older than the retention
+// window (default 7 days). The Monolog 'daily' channel rotates app logs but
+// does not compress them, and supervisor's scheduler/worker/spooler logs are
+// not Monolog-managed at all - this keeps storage/logs bounded.
+Schedule::command('logs:rotate')
+    ->dailyAt('00:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('logs:rotate'))
+    ->runInBackground();
+
 // Remove spam members from groups and clean up their content.
 // V1: cron/check_spammers.php (every 5 minutes)
 Schedule::command('users:remove-spammers')
@@ -493,6 +503,22 @@ foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
     Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards={$immediateShardCount} --max-iterations=60")
         ->everyMinute()
         ->sendOutputTo(cronLog("mail:digest:unified.shard{$shardIndex}"))
+        ->runInBackground();
+}
+
+// Reach mail - rippling reach notifications, decoupled from ExpandService's serial Phase-2
+// loop (which no longer mails inline; see ExpandService::initialiseNew). Mails members newly
+// inside a rippling post's reach, sharded by MOD(msgid, N) exactly as immediate mode shards by
+// MOD(groupid, N) - disjoint partitions, per-shard flock (lockKeySuffix), no locking between
+// shards. Scheduled unconditionally like ripple:release-replies above: sendReachDigests' window
+// query self-idles when no reach rows changed recently, so it costs nothing while rippling is
+// dark AND it covers both the global cron and the scoped group experiment (the old inline mail
+// ran in both paths). Each invocation drains the whole window in one pass, so no --max-iterations.
+$reachMailShardCount = 4;
+foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
+    Schedule::command("mail:digest:unified --mode=reach --shard={$reachShard} --shards={$reachMailShardCount}")
+        ->everyMinute()
+        ->sendOutputTo(cronLog("mail:digest:unified.reach.shard{$reachShard}"))
         ->runInBackground();
 }
 

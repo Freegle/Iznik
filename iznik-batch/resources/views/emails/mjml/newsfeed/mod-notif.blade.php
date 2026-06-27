@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => $count . ' chitchat post' . ($count !== 1 ? 's' : '') . ' from your members'])
+  @include('emails.mjml.partials.head', ['preview' => $count . ' chitchat post' . ($count !== 1 ? 's' : '') . ' from your members - ' . \Illuminate\Support\Str::limit(!empty($posts[0]['preview']) ? $posts[0]['preview'] : (($posts[0]['userName'] ?? 'A freegler') . ' posted'), 60)])
 
   <mj-body background-color="#f4f4f4">
 

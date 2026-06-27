@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Invalid group boundary'])
+  @include('emails.mjml.partials.head', ['preview' => 'Invalid CGA/DPA for ' . $groupName])
 
   <mj-body background-color="#f4f4f4">
 

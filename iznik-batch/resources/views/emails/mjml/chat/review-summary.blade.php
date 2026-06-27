@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Groups with chat messages pending review'])
+  @include('emails.mjml.partials.head', ['preview' => $total . ' message' . ($total !== 1 ? 's' : '') . ' across groups waiting for review'])
 
   <mj-body background-color="#f4f4f4">
 

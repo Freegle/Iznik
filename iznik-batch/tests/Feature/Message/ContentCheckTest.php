@@ -150,6 +150,117 @@ class ContentCheckTest extends TestCase
         $this->assertNull($noMatchGroup2);
     }
 
+    /**
+     * Rippling re-runs the per-group content check on each group a post lands on, so a post that is
+     * clean on its origin group but breaks a rule on a group it RIPPLED INTO is flagged on that
+     * second group only. Guards the rippling x per-group-moderation interaction: a rule violation
+     * that exists on the rippled-into group (but not the origin) must still be caught when the post
+     * rides in. Drives the live processUnprocessed() poll, not just the keyword matcher.
+     */
+    public function test_rippled_post_flagged_on_second_group_whose_rule_it_breaks_not_the_origin(): void
+    {
+        $poster = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippledInto = $this->createTestGroup();
+
+        // A concern keyword scoped to the rippled-into group ONLY - the origin has no such rule.
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testripplekw_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $rippledInto->id,
+        ]);
+
+        // Post made on the origin group, carrying the word that only breaks the rippled-into group's
+        // rule. createTestMessage adds the origin's Approved messages_groups row (still unchecked).
+        $message = $this->createTestMessage($poster, $origin, [
+            'subject' => 'OFFER: testripplekw_cc item (TestLocation)',
+        ]);
+
+        // The post rippling into the second group: an Approved, rippled-in, not-yet-content-checked
+        // row with a fresh arrival - exactly what ExpandService::rippleIntoNewGroups inserts.
+        MessageGroup::create([
+            'msgid'      => $message->id,
+            'groupid'    => $rippledInto->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival'    => now(),
+            'rippled_in' => 1,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $originRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $origin->id)->first();
+        $rippledRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippledInto->id)->first();
+
+        // Both rows were content-checked...
+        $this->assertNotNull($originRow->contentcheck_checked_at, 'origin row was content-checked');
+        $this->assertNotNull($rippledRow->contentcheck_checked_at, 'rippled-into row was content-checked');
+
+        // ...but only the rippled-into group, whose rule the post breaks, is flagged.
+        $this->assertNull($originRow->contentcheck_reasons, 'origin group has no matching rule -> not flagged');
+        $this->assertNotNull($rippledRow->contentcheck_reasons, 'rippled-into group rule is caught -> flagged');
+        $this->assertStringContainsString('testripplekw_cc', $rippledRow->contentcheck_reasons);
+    }
+
+    /**
+     * The reverse: a post a HOME group holds for review (its per-group rule keeps it Pending) is
+     * still auto-approved on a group it ripples INTO that has no such rule. Per-group routing is
+     * independent in both directions - a hold on the origin group does not bleed into the rippled
+     * group, and an approval on the rippled group does not override the origin's hold.
+     */
+    public function test_post_held_pending_on_home_group_rule_is_still_approved_on_rippled_into_group(): void
+    {
+        $poster = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $rippledInto = $this->createTestGroup();
+
+        // A flag rule scoped to the HOME group only - it holds matching posts for review there.
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testpendkw_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $home->id,
+        ]);
+
+        // Post carries the word. createTestMessage adds the home row Approved; make it Pending so the
+        // content check decides its fate (the natural state of a not-yet-approved post on the home group).
+        $message = $this->createTestMessage($poster, $home, [
+            'subject' => 'OFFER: testpendkw_cc item (TestLocation)',
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)
+            ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+
+        // The same post rippling into the second group - Approved, rippled-in, not yet checked.
+        MessageGroup::create([
+            'msgid'      => $message->id,
+            'groupid'    => $rippledInto->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival'    => now(),
+            'rippled_in' => 1,
+        ]);
+
+        $this->service->processUnprocessed();
+
+        $homeRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)->first();
+        $rippledRow = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippledInto->id)->first();
+
+        // The home group's rule holds the post Pending for review there...
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $homeRow->collection, 'home group rule holds the post Pending');
+        $this->assertNotNull($homeRow->contentcheck_reasons, 'held home post carries its reasons');
+        $this->assertStringContainsString('testpendkw_cc', $homeRow->contentcheck_reasons);
+
+        // ...but on the rippled-into group, which has no such rule, it stays Approved and unflagged.
+        $this->assertSame(MessageGroup::COLLECTION_APPROVED, $rippledRow->collection, 'rippled-into group has no such rule -> stays Approved');
+        $this->assertNull($rippledRow->contentcheck_reasons, 'rippled-into group not flagged');
+    }
+
     public function test_allowed_category_keywords_are_not_flagged(): void
     {
         // 'allowed' is a category (whitelist) in concern_keywords, not an action.
@@ -596,6 +707,135 @@ class ContentCheckTest extends TestCase
         $reasons = $this->service->checkMessage($msgid, $group->id);
 
         $this->assertEmpty($reasons);
+    }
+
+    // -------------------------------------------------------------------------
+    // Reason keyword field + de-duplication across concern keywords and the
+    // legacy per-group worry words (which overlap: a per-group worry word that
+    // has also been migrated into concern_keywords would otherwise be flagged
+    // twice — once as ConcernKeyword and once as PerGroupWorryWord).
+    // -------------------------------------------------------------------------
+
+    public function test_concern_keyword_reason_includes_matched_keyword(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testkwfield_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: testkwfield_cc item', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('testkwfield_cc', $result['keyword']);
+    }
+
+    public function test_per_group_worry_reason_includes_matched_keyword(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'pgkwfield_cc']],
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: pgkwfield_cc item', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('pgkwfield_cc', $result['keyword']);
+    }
+
+    public function test_check_message_dedupes_same_keyword_in_concern_and_per_group(): void
+    {
+        // The word lives in BOTH concern_keywords (migrated copy) AND the legacy
+        // per-group settings list — exactly the production "cot mattress" case.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'dupeword_cc']],
+        ]);
+        $user = $this->createTestUser();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'dupeword_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $group->id,
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Wanted',
+            'subject'  => 'WANTED: dupeword_cc please (SW1A)',
+            'textbody' => 'Looking for a dupeword_cc.',
+            'message'  => 'Looking for a dupeword_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $forWord = array_values(array_filter(
+            $reasons,
+            fn ($r) => strtolower($r['keyword'] ?? '') === 'dupeword_cc'
+        ));
+        $this->assertCount(1, $forWord, 'the same keyword must not be flagged twice');
+        $this->assertEquals('ConcernKeyword', $forWord[0]['check'], 'the richer ConcernKeyword reason is kept');
+    }
+
+    public function test_check_message_keeps_per_group_word_not_in_concern_keywords(): void
+    {
+        // A per-group worry word that was never migrated into concern_keywords
+        // (e.g. production group 21486's "venue") must still be flagged.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'venueword_cc']],
+        ]);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: venueword_cc (SW1A)',
+            'textbody' => 'A venueword_cc.',
+            'message'  => 'A venueword_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $checks = array_column($reasons, 'check');
+        $this->assertContains('PerGroupWorryWord', $checks, 'un-migrated per-group word must still flag');
+    }
+
+    public function test_check_message_keeps_distinct_concern_and_per_group_words(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'pgonly_cc']],
+        ]);
+        $user = $this->createTestUser();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'ckonly_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'group',
+            'group_id' => $group->id,
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: ckonly_cc and pgonly_cc (SW1A)',
+            'textbody' => 'Has ckonly_cc and pgonly_cc.',
+            'message'  => 'Has ckonly_cc and pgonly_cc.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $reasons = $this->service->checkMessage($msgid, $group->id);
+
+        $checks = array_column($reasons, 'check');
+        $this->assertContains('ConcernKeyword', $checks);
+        $this->assertContains('PerGroupWorryWord', $checks);
     }
 
     // -------------------------------------------------------------------------
@@ -1842,6 +2082,113 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($result, 'IP used to post to 20 groups (>= 20) should be flagged');
         $this->assertEquals('IpAbuse', $result['check']);
         $this->assertStringContainsString('20', $result['detail']);
+    }
+
+    public function test_ip_abuse_ignores_rippled_in_groups(): void
+    {
+        // A single post rippled out into many groups must NOT be flagged as IP abuse.
+        // Rippling-out inserts messages_groups rows (rippled_in=1) for the SAME message,
+        // so one member's one post can land in 20-30 groups. Only native (rippled_in=0)
+        // postings should count toward the 20-group threshold.
+        // Discourse https://discourse.ilovefreegle.org/t/not-sure-if-this-is-abuse-or-rippling-out/9833
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 1 native origin-group row.
+        $origin = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $origin->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+            'deleted'    => 0,
+            'rippled_in' => 0,
+        ]);
+
+        // 25 rippled-in rows (the same message fanned out by the rippling engine).
+        for ($i = 0; $i < 25; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Approved',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull(
+            $result,
+            'A single post rippled into 25 groups must not trigger IP abuse (rippled_in rows are excluded)'
+        );
+    }
+
+    public function test_ip_abuse_counts_only_native_groups_not_rippled(): void
+    {
+        // When a genuinely multi-posted IP also has rippled-in rows, the count must
+        // reflect only the native postings, so the detail reports the true native total.
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 20 native group rows — genuine multi-group posting, should flag.
+        for ($i = 0; $i < 20; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 0,
+            ]);
+        }
+
+        // 15 rippled-in rows — must NOT inflate the count beyond the 20 native groups.
+        for ($i = 0; $i < 15; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Approved',
+                'arrival'    => now(),
+                'deleted'    => 0,
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, '20 native group postings should still be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
+        $this->assertStringContainsString('20', $result['detail']);
+        $this->assertCount(20, $result['groups'], 'group list must contain only the 20 native groups');
     }
 
     public function test_ip_abuse_ignores_messages_older_than_31_days(): void

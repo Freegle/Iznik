@@ -34,6 +34,10 @@ function mountComponent() {
           template: '<select><slot /></select>',
           props: ['modelValue'],
         },
+        'b-form-checkbox': {
+          template: '<label><slot /></label>',
+          props: ['modelValue'],
+        },
         // Drive the initial fetch deterministically: the real filter fires
         // 'fetch' on mount, so the stub mirrors that with a fixed range.
         ModEmailDateFilter: {
@@ -44,6 +48,7 @@ function mountComponent() {
           },
         },
         GChart: {
+          name: 'GChart',
           template: '<div class="gchart" />',
           props: ['type', 'data', 'options'],
         },
@@ -63,7 +68,40 @@ describe('ModSysAdminRippling', () => {
     const wrapper = mountComponent()
     await flushPromises()
 
-    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23')
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23', false)
+    wrapper.unmount()
+  })
+
+  it('scopes the metrics to the trial groups when "Trial groups only" is on', async () => {
+    mockFetchMetrics.mockResolvedValue({ trial_group_ids: [111, 222] })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+    mockFetchMetrics.mockClear()
+
+    // Turn on the trial scope and refetch via the exposed handler.
+    wrapper.vm.trialOnly = true
+    wrapper.vm.onTrialChange()
+    await flushPromises()
+
+    // The refetch carries trialOnly=true (4th arg) with the group filter reset to 0,
+    // and the resolved trial set is surfaced in the UI.
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23', true)
+    expect(wrapper.html()).toContain('in RIPPLE_WITHIN_GROUPS')
+    wrapper.unmount()
+  })
+
+  it('warns when trial scope is on but no trial groups are configured', async () => {
+    mockFetchMetrics.mockResolvedValue({ trial_group_ids: [] })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    wrapper.vm.trialOnly = true
+    wrapper.vm.onTrialChange()
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('No trial groups configured')
     wrapper.unmount()
   })
 
@@ -148,6 +186,52 @@ describe('ModSysAdminRippling', () => {
       expect(html).toContain('released')
       expect(html).toContain('4.2')
     })
+  })
+
+  it('retitles the reply-source chart and renders cohort series', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      reply_rate_36h: [
+        { day: '2026-06-20', posts: 10, replied: 4, reply_pct: 40,
+          home_posts: 6, home_replied: 2, home_pct: 33.3,
+          ripple_posts: 4, ripple_replied: 2, ripple_pct: 50, provisional: false },
+        { day: '2026-06-23', posts: 5, replied: 1, reply_pct: 20,
+          home_posts: 3, home_replied: 0, home_pct: 0,
+          ripple_posts: 2, ripple_replied: 1, ripple_pct: 50, provisional: true },
+      ],
+      reply_distance_median: [
+        { day: '2026-06-20', replies: 8, median_km: 5,
+          home_replies: 5, home_median_km: 3, ripple_replies: 3, ripple_median_km: 9 },
+      ],
+      taken_rate: [
+        { day: '2026-06-15', posts: 12, taken: 6, taken_pct: 50,
+          home_posts: 8, home_taken: 4, home_pct: 50,
+          ripple_posts: 4, ripple_taken: 2, ripple_pct: 50, provisional: false },
+      ],
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    // Chart 2 retitled.
+    expect(wrapper.html()).toContain('Share of replies from rippling')
+    expect(wrapper.html()).not.toContain('How much of the lift is rippling?')
+
+    const charts = wrapper.findAllComponents({ name: 'GChart' })
+    // charts[0] is the reply-rate chart (reply-source is omitted from this mock, so it doesn't render).
+    const replyHeader = charts[0].props('data')[0]
+    expect(replyHeader).toContain('Home-only')
+    expect(replyHeader).toContain('Rippled-out')
+
+    // The provisional row (2026-06-23) carries certainty=false in every certainty column.
+    const replyRows = charts[0].props('data').slice(1)
+    const provisionalRow = replyRows.find((r) => {
+      const d = r[0]
+      return d instanceof Date && d.toISOString().startsWith('2026-06-23')
+    })
+    // Header: ['Date','All',{certainty},'Home-only',{certainty},'Rippled-out',{certainty}]
+    expect(provisionalRow[2]).toBe(false)
+    expect(provisionalRow[4]).toBe(false)
+    expect(provisionalRow[6]).toBe(false)
   })
 
   it('no longer renders the dropped absolute-number sections', async () => {

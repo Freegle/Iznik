@@ -268,6 +268,17 @@ config.global.stubs = {
     ],
     emits: ['error'],
   },
+
+  // Stub ShowMore (components/ShowMore.vue): render every item via its #item (or
+  // default) slot - a <div> per item in block mode, comma-separated spans in
+  // inline mode - so group-list specs see the names. The real cap / "+N more" /
+  // collapse behaviour is covered by ShowMore.spec.js, which mounts ShowMore
+  // directly (a directly-mounted root is not replaced by a global stub).
+  ShowMore: {
+    props: ['items', 'limit', 'inline', 'keyfield'],
+    template:
+      '<span><component :is="inline ? \'span\' : \'div\'" v-for="(item, i) in (items || [])" :key="i"><span v-if="inline && i > 0">, </span><slot name="item" :item="item" :index="i"><slot :item="item" :index="i" /></slot></component></span>',
+  },
 }
 
 // ============================================

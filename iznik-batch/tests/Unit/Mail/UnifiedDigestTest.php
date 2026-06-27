@@ -162,6 +162,64 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('Sofa', $envelope->subject);
     }
 
+    public function test_subject_drops_count_when_posts_exceed_body_cap(): void
+    {
+        // The body lists at most DIGEST_POST_CAP posts; above that the
+        // parenthetical count would overstate the email's contents, so the
+        // subject drops it and just says "What's New".
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+
+        // One more post than the body cap so the truncation bites.
+        $posts = collect(array_fill(0, $cap + 1, [
+            'message' => $message,
+            'postedToGroups' => [$group->id],
+        ]));
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $envelope = $mail->envelope();
+
+        $this->assertStringStartsWith("What's New", $envelope->subject);
+        $this->assertStringNotContainsString('post)', $envelope->subject);
+        $this->assertStringNotContainsString('posts)', $envelope->subject);
+        // The item-name teaser is still appended.
+        $this->assertStringContainsString('Sofa', $envelope->subject);
+    }
+
+    public function test_subject_keeps_count_at_body_cap(): void
+    {
+        // Exactly at the cap the body shows everything, so the count is accurate
+        // and must be retained.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+
+        $posts = collect(array_fill(0, $cap, [
+            'message' => $message,
+            'postedToGroups' => [$group->id],
+        ]));
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $envelope = $mail->envelope();
+
+        $this->assertStringStartsWith("What's New ({$cap} posts)", $envelope->subject);
+    }
+
     public function test_tracked_urls_contain_post_positions(): void
     {
         $user = $this->createTestUser();
@@ -1037,6 +1095,99 @@ class UnifiedDigestTest extends TestCase
             'First posted',
             $html,
             'A reposted message must render the "First posted" date line'
+        );
+    }
+
+    public function test_daily_preheader_lists_item_names(): void
+    {
+        // Daily-mode preheader: comma-separated item names from the first three
+        // posts so the inbox preview shows what's in the digest rather than a
+        // generic count. Assert the distinct item names appear in the rendered
+        // email (the <mj-preview> content becomes a hidden element in the
+        // compiled HTML).
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Wardrobe (Bristol)']);
+        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'WANTED: Bicycle (Bristol)']);
+        $msg3 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Dining Table (Bristol)']);
+
+        $posts = collect([
+            ['message' => $msg1, 'postedToGroups' => [$group->id]],
+            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+            ['message' => $msg3, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled daily digest HTML should not be empty');
+
+        // The daily preheader lists up to three item names. Each of these
+        // distinctive item names must appear somewhere in the compiled HTML
+        // (within the hidden preheader element).
+        $this->assertStringContainsString(
+            'Wardrobe',
+            $html,
+            'Daily preheader must include the first post item name'
+        );
+        $this->assertStringContainsString(
+            'Bicycle',
+            $html,
+            'Daily preheader must include the second post item name'
+        );
+        $this->assertStringContainsString(
+            'Dining Table',
+            $html,
+            'Daily preheader must include the third post item name'
+        );
+    }
+
+    public function test_immediate_preheader_shows_post_subject(): void
+    {
+        // Immediate-mode preheader: the full post subject so the inbox preview
+        // shows exactly what the post is about (V1 parity: single.mjml used the
+        // post subject as the preheader). The subject is written into the hidden
+        // <mj-preview> element; after MJML compilation it becomes a display:none
+        // span in the compiled HTML.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Rocking Chair (Edinburgh)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled immediate digest HTML should not be empty');
+
+        // The subject "OFFER: Rocking Chair (Edinburgh)" is passed directly as
+        // the preheader. "Rocking Chair" is a distinctive term that only
+        // originates from the preheader (or the card body — both are correct
+        // signals that the subject reached the email).
+        $this->assertStringContainsString(
+            'Rocking Chair',
+            $html,
+            'Immediate-mode preheader must contain the post subject item name'
+        );
+        $this->assertStringContainsString(
+            'Edinburgh',
+            $html,
+            'Immediate-mode preheader must contain the post subject location'
         );
     }
 }

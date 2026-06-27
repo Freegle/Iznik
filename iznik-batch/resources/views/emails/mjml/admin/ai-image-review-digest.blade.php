@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'AI Image Review Daily Digest'])
+  @include('emails.mjml.partials.head', ['preview' => $todayVerdicts . ' verdicts today, ' . $needsImproving . ' need improving'])
 
   <mj-body>
     @include('emails.mjml.partials.header', ['title' => 'AI Image Review Digest'])

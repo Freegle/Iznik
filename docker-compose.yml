@@ -457,6 +457,10 @@ services:
       - dev
     environment:
       - CI=${CI:-false}
+      # Make file-sync.sh and the rebuild monitor worktree-aware: without this the
+      # container has no COMPOSE_PROJECT_NAME, so both fall back to "freegle" and a
+      # worktree's host-scripts syncs/rebuilds into the MAIN instance's containers.
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
@@ -480,10 +484,10 @@ services:
               svc=$$(docker inspect "$$container" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || echo "$$container")
               if [ "$$svc" != "" ] && [ "$$container" != "null" ]; then
                 echo "Rebuilding service: $$svc ($$container)"
-                docker-compose -p freegle stop "$$svc" 2>/dev/null || true
-                docker-compose -p freegle rm -f "$$svc" 2>/dev/null || true
-                if docker-compose -p freegle build "$$svc" &&
-                   docker-compose -p freegle up --no-deps -d "$$svc"; then
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" stop "$$svc" 2>/dev/null || true
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" rm -f "$$svc" 2>/dev/null || true
+                if docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" build "$$svc" &&
+                   docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" up --no-deps -d "$$svc"; then
                   echo "Rebuild completed successfully for $$service"
                 else
                   echo "Rebuild failed for $$service"
@@ -871,6 +875,10 @@ services:
     restart: "no"
     environment:
       - MYSQL_HOST=db-live
+      # Optional read replica for the DB read/write split. Empty = single-host
+      # (all reads use MYSQL_HOST); set LIVE_DB_READ_HOST to route reads to a
+      # replica. Writes always go to MYSQL_HOST.
+      - MYSQL_HOST_READ=${LIVE_DB_READ_HOST:-}
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
       - MYSQL_USER=${LIVE_DB_USER:-root}
       - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
@@ -1640,6 +1648,9 @@ services:
       - ${FIREBASE_HOST_PATH:-/dev/null}:/etc/firebase.json:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
+      # Read replica for the DB read/write split. Falls back to the write host
+      # (DB_HOST_IP) when DB_HOST_READ_IP is not set, giving single-host behaviour.
+      - "db-host-read:${DB_HOST_READ_IP:-${DB_HOST_IP:-127.0.0.1}}"
       - "mail-host:${MAIL_HOST_IP:-127.0.0.1}"
     depends_on:
       loki:
@@ -1661,6 +1672,9 @@ services:
       # Database (production)
       - DB_CONNECTION=mysql
       - DB_HOST=db-host
+      # Reads go to the replica alias; it resolves to the write host unless
+      # DB_HOST_READ_IP is set in .env.background (see extra_hosts above).
+      - DB_HOST_READ=db-host-read
       - DB_PORT=3306
       - DB_DATABASE=iznik
       - DB_USERNAME=root

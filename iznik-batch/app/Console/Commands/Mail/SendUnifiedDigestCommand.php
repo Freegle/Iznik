@@ -93,8 +93,8 @@ class SendUnifiedDigestCommand extends Command
             return Command::FAILURE;
         }
 
-        if (! in_array($mode, [UnifiedDigestService::MODE_DAILY, UnifiedDigestService::MODE_IMMEDIATE])) {
-            $this->error("Invalid mode '{$mode}'. Must be 'daily' or 'immediate'.");
+        if (! in_array($mode, [UnifiedDigestService::MODE_DAILY, UnifiedDigestService::MODE_IMMEDIATE, UnifiedDigestService::MODE_REACH])) {
+            $this->error("Invalid mode '{$mode}'. Must be 'daily', 'immediate' or 'reach'.");
             return Command::FAILURE;
         }
 
@@ -149,7 +149,7 @@ class SendUnifiedDigestCommand extends Command
         // no_new_posts_groups); daily mode reports per-user ones
         // (no_new_posts). Initialise both so either summary table below can
         // read its keys regardless of which mode ran.
-        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'no_new_posts' => 0, 'errors' => 0];
+        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'posts_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'no_new_posts' => 0, 'errors' => 0];
 
         $shouldStop = fn () => $this->shouldStop();
 
@@ -157,7 +157,7 @@ class SendUnifiedDigestCommand extends Command
             $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards, $shouldStop);
 
             // Daily mode returns a different stat shape — match keys best-effort.
-            foreach (['groups_processed', 'users_processed', 'emails_sent', 'no_new_posts_groups', 'no_new_posts', 'errors'] as $k) {
+            foreach (['groups_processed', 'users_processed', 'posts_processed', 'emails_sent', 'no_new_posts_groups', 'no_new_posts', 'errors'] as $k) {
                 if (isset($r[$k])) {
                     $stats[$k] += $r[$k];
                 }
@@ -181,7 +181,16 @@ class SendUnifiedDigestCommand extends Command
 
         $this->newLine();
 
-        if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
+        if ($mode === UnifiedDigestService::MODE_REACH) {
+            $this->table(
+                ['Metric', 'Count'],
+                [
+                    ['Posts Processed', $stats['posts_processed']],
+                    ['Emails Sent', $stats['emails_sent']],
+                    ['Errors', $stats['errors']],
+                ]
+            );
+        } elseif ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
             $this->table(
                 ['Metric', 'Count'],
                 [
