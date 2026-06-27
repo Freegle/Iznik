@@ -16,4 +16,7 @@ type MessageSummary struct {
 	Lat        float64   `json:"lat"`
 	Lng        float64   `json:"lng"`
 	Unseen     bool      `json:"unseen"`
+	// Bulkcount is the number of items in the bulk-offer catalogue, or 0 for
+	// ordinary single-item messages. Non-zero flags this as a bulk offer.
+	Bulkcount int `json:"bulkcount,omitempty" gorm:"column:bulkcount"`
 }

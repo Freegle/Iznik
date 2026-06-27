@@ -328,8 +328,8 @@
             <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
             <BulkItemsInterest
               v-if="isBulk"
-              ref="bulkInterestRef"
               :id="id"
+              ref="bulkInterestRef"
               @can-register="bulkCanRegister = $event"
               @submitted="bulkSubmitted = $event"
             />
@@ -1004,16 +1004,27 @@ onMounted(() => {
   // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
   // chat-style reply pane straight away so they don't need to click Reply
   // again — but NOT when the post is reach-blocked for them (rippling-out #5),
-  // or the deep link would bypass the reply gate. message may still be loading,
-  // so wait for it before deciding. (ChatReplyPane also gates its own composer.)
+  // or the deep link would bypass the reply gate. For bulk offers the action
+  // is registering per-item interest, not free-text chat, so scroll the
+  // BulkItemsInterest catalogue into view instead. message may still be
+  // loading, so wait for it before deciding. (ChatReplyPane also gates its
+  // own composer.)
   if (useRoute().query.reply) {
+    const handleReplyDeepLink = () => {
+      if (reachBlocked.value) return
+      if (isBulk.value) {
+        bulkInterestRef.value?.$el?.scrollIntoView({ behavior: 'smooth' })
+      } else {
+        expandReply()
+      }
+    }
     if (message.value) {
-      if (!reachBlocked.value) expandReply()
+      handleReplyDeepLink()
     } else {
       const stop = watch(message, (m) => {
         if (m) {
           stop()
-          if (!reachBlocked.value) expandReply()
+          handleReplyDeepLink()
         }
       })
     }

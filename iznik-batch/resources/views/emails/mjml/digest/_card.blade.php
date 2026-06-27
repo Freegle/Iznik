@@ -20,6 +20,7 @@
     $isOffer = $post['type'] === 'Offer';
     $showReply = $showReply ?? true;
     $muted = $muted ?? false;
+    $isBulk = !empty($post['bulkItems']);
 
     // Muted ("came and went") uses the greyed palette the V1 $unavailable
     // section used (#777/#999 text on an #e9e9e9 band); live cards keep the
@@ -63,7 +64,7 @@
                      stacking order as the AMP variant's .post-type-row /
                      .post-title block. --}}
                 <div style="margin-bottom: 6px;">
-                    <span style="display: inline-block; background-color: {{ $pillColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 3px; line-height: 1; letter-spacing: 0.3px; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
+                    <span style="display: inline-block; background-color: {{ $pillColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 3px; line-height: 1; letter-spacing: 0.3px; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>@if($isBulk)<span style="display: inline-block; margin-left: 6px; background-color: #eeeeee; color: #555555; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 3px; line-height: 1; white-space: nowrap;">{{ count($post['bulkItems']) }} items</span>@endif
                 </div>
                 <div style="padding-bottom: 4px;">
                     <a href="{{ $post['viewUrl'] }}" style="color: {{ $titleColor }}; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 1.4;">{{ $post['itemName'] }}</a>
@@ -110,7 +111,7 @@
                     @endif
                     @if($showReply && empty($post['isOwnPost']))
                     <div style="margin-top: 10px;">
-                        <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
+                        <a href="{{ $isBulk ? $post['viewUrl'] : $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">{{ $isBulk ? 'Choose items' : 'Reply' }}</a>
                     </div>
                     @endif
                 </div>
@@ -168,7 +169,7 @@
                 @endif
                 @if($showReply)
                 <div style="margin-top: 10px;">
-                    <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
+                    <a href="{{ $isBulk ? $post['viewUrl'] : $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">{{ $isBulk ? 'Choose items' : 'Reply' }}</a>
                 </div>
                 @endif
             </div>

@@ -21,6 +21,7 @@
 @php
     $showReply = $showReply ?? true;
     $muted = $muted ?? false;
+    $isBulk = !empty($post['bulkItems']);
 
     // Meta line, precomputed to avoid an inline @else@if (Blade leaves the
     // nested @if literal but compiles its @endif -> "unexpected endif").
@@ -49,7 +50,7 @@
          AMP4Email environment (something in the runtime/spec
          cascade pinned p to block), span with display: inline-block
          reliably hugs its text. --}}
-    <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span></p>
+    <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span>@if($isBulk)<span class="post-bulk-count">{{ count($post['bulkItems']) }} items</span>@endif</p>
     <p class="post-title">
       <a href="{{ $post['viewUrl'] }}">{{ $post['itemName'] }}</a>
       @if($post['locationName'] ?? null)
@@ -85,6 +86,11 @@
     @endif
     @endif
     @if($showReply && empty($post['isOwnPost']))
+    @if($isBulk)
+    {{-- Bulk offers need a structured per-item reply that an AMP in-email
+         form can't capture; send the replier to the post on the website. --}}
+    <a href="{{ $post['viewUrl'] }}" class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Choose items</a>
+    @else
     {{-- Per-post Reply trigger. Instead of a whole <amp-form> per post (one
          form × 70 posts blows past Gmail's ~102 KB AMP cap → AMP rejected,
          HTML fallback), this is a tiny tap button (~80 bytes) that selects
@@ -95,6 +101,7 @@
          recipient's own posts (you can't reply to yourself). --}}
     <button class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}"
             on="tap:AMP.setState({r:{m:{{ $post['message']->id }}}}),replyPanel.open">Reply</button>
+    @endif
     @endif
   </div>
 </div>

@@ -44,13 +44,15 @@ type ListMessageItem struct {
 	Groups             []MessageGroupInfo  `json:"groups"`
 	Attachments        []MessageAttachment `json:"attachments,omitempty"`
 	Replycount         int                 `json:"replycount"`
+	// Bulkcount is the number of items in the bulk-offer catalogue, or 0 for
+	// ordinary single-item messages. Non-zero flags this as a bulk offer.
+	Bulkcount int `json:"bulkcount,omitempty"`
 }
 
 type ListMessagesResponse struct {
-	Messages []ListMessageItem `json:"messages"`
+	Messages []ListMessageItem  `json:"messages"`
 	Context  *PaginationContext `json:"context,omitempty"`
 }
-
 
 // ListMessages handles GET /messages - list messages with moderation queue support.
 func ListMessages(c *fiber.Ctx) error {
@@ -265,6 +267,16 @@ func ListMessages(c *fiber.Ctx) error {
 
 			msg.Groups = groups
 			msg.Replycount = int(replycount)
+
+			// Populate Bulkcount as a separate query so that the main SELECT
+			// stays compatible with test databases that don't yet have the
+			// messages_bulk_items table (fix #9).
+			if msg.ID != 0 {
+				var bc int
+				if err := db.Raw("SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?", msgID).Scan(&bc).Error; err == nil {
+					msg.Bulkcount = bc
+				}
+			}
 
 			// Compute expiresat from group settings.
 			if len(groups) > 0 {
@@ -614,4 +626,3 @@ func GetMessagesWithHistory(c *fiber.Ctx) error {
 
 	return c.JSON(messages)
 }
-

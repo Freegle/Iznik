@@ -23,8 +23,8 @@ import (
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
-	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -39,10 +39,13 @@ import (
 var emailRegexp = regexp.MustCompile(utils.EMAIL_REGEXP)
 var phoneRegexp = regexp.MustCompile(utils.PHONE_REGEXP)
 var tnRegexp = regexp.MustCompile(utils.TN_REGEXP)
+
 // tnPicPageURLRegexp finds each TN "pics" page link embedded in a textbody.
 var tnPicPageURLRegexp = regexp.MustCompile(`(?m)https://trashnothing\.com/pics/\S+`)
+
 // tnPicHeaderRegexp strips the "Check out the pictures…" intro line.
 var tnPicHeaderRegexp = regexp.MustCompile(`(?m)^Check out the pictures[^\n]*\n?`)
+
 // tnPicURLLineRegexp strips individual trashnothing.com/pics/ URL lines.
 var tnPicURLLineRegexp = regexp.MustCompile(`(?m)^https://trashnothing\.com/pics/[^\n]*\n?`)
 
@@ -224,22 +227,22 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby           *uint64    `json:"heldby"`
-	Source           *string    `json:"source"`
-	Sourceheader     *string    `json:"sourceheader"`
-	Fromaddr         *string    `json:"fromaddr"`
-	Fromip           *string    `json:"fromip"`
-	Fromcountry      *string    `json:"fromcountry"`
+	Heldby             *uint64             `json:"heldby"`
+	Source             *string             `json:"source"`
+	Sourceheader       *string             `json:"sourceheader"`
+	Fromaddr           *string             `json:"fromaddr"`
+	Fromip             *string             `json:"fromip"`
+	Fromcountry        *string             `json:"fromcountry"`
 	Repostat           *time.Time          `json:"repostat"`
-	Canrepost        bool       `json:"canrepost"`
-	Deliverypossible bool       `json:"deliverypossible"`
-	Deadline         *time.Time `json:"deadline"`
-	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
-	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
-	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
-	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
-	Tnpostid         *string          `json:"tnpostid"`
-	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	Canrepost          bool                `json:"canrepost"`
+	Deliverypossible   bool                `json:"deliverypossible"`
+	Deadline           *time.Time          `json:"deadline"`
+	Edits              []MessageEdit       `json:"edits,omitempty" gorm:"-"`
+	RawMessage         *string             `json:"message,omitempty" gorm:"column:message"`
+	Worry              []WorryMatch        `json:"worry,omitempty" gorm:"-"`
+	Postings           []MessagePosting    `json:"postings,omitempty" gorm:"-"`
+	Tnpostid           *string             `json:"tnpostid"`
+	Expiresat          *time.Time          `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -255,6 +258,9 @@ type Message struct {
 	// intercom). Only returned to the offerer or a moderator — never to general
 	// viewers — and sent to a replier only once they're promised an item.
 	Accessinstructions *string `json:"accessinstructions,omitempty" gorm:"-"`
+	// HelperEnabled is 1 when the offerer has opted in to the AI concierge helper.
+	// Read from messages.helper_enabled; only returned to the offerer or a moderator.
+	HelperEnabled *int `json:"helperenabled,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -281,13 +287,13 @@ type WorryWord struct {
 }
 
 type MessageEdit struct {
-	ID              uint64     `json:"id"`
-	Oldsubject      *string    `json:"oldsubject"`
-	Newsubject      *string    `json:"newsubject"`
-	Oldtext         *string    `json:"oldtext"`
-	Newtext         *string    `json:"newtext"`
-	Reviewrequired  int        `json:"reviewrequired"`
-	Timestamp       *time.Time `json:"timestamp"`
+	ID             uint64     `json:"id"`
+	Oldsubject     *string    `json:"oldsubject"`
+	Newsubject     *string    `json:"newsubject"`
+	Oldtext        *string    `json:"oldtext"`
+	Newtext        *string    `json:"newtext"`
+	Reviewrequired int        `json:"reviewrequired"`
+	Timestamp      *time.Time `json:"timestamp"`
 }
 
 // computeExpiresat calculates when a message expires based on group settings.
@@ -454,7 +460,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages "+
 					"LEFT JOIN users ON users.id = messages.fromuser "+
 					"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE messages.id = ? AND messages.deleted IS NULL " + userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
+					"WHERE messages.id = ? AND messages.deleted IS NULL "+userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
 				found = !errors.Is(err, gorm.ErrRecordNotFound)
 			}()
 
@@ -480,9 +486,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			go func() {
 				defer wg.Done()
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
-			// that is no longer active, return an empty externaluid so the frontend shows
-			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, ma.bulkitemid, ma.archived,
+				// that is no longer active, return an empty externaluid so the frontend shows
+				// a placeholder instead of the rejected illustration.
+				db.Raw(`SELECT ma.id, ma.msgid, ma.bulkitemid, ma.archived,
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
@@ -809,13 +815,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				message.Bulkcount = len(message.BulkItems)
 				if message.Bulkcount > 0 {
 					message.Bulkslots = LoadBulkSlots(db, message.ID)
-					// Access instructions are private — only the offerer/mod sees them.
+					// Access instructions and helper_enabled are private — only the offerer/mod sees them.
 					if canSeeInterest {
 						var ai string
 						db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", message.ID).Scan(&ai)
 						if ai != "" {
 							message.Accessinstructions = &ai
 						}
+						var he int
+						db.Raw("SELECT COALESCE(helper_enabled, 0) FROM messages WHERE id = ?", message.ID).Scan(&he)
+						message.HelperEnabled = &he
 					}
 				}
 
@@ -995,7 +1004,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 		if strings.Contains(scan, "\u00a3") {
 			if !found["\u00a3"] {
 				matches = append(matches, WorryMatch{
-					Word: "\u00a3",
+					Word:      "\u00a3",
 					Worryword: WorryWord{Keyword: "\u00a3", Type: "Review"},
 				})
 				found["\u00a3"] = true
@@ -1021,7 +1030,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 			}
 			if strings.Contains(subjectLower, kw) || strings.Contains(textbodyLower, kw) {
 				matches = append(matches, WorryMatch{
-					Word: w.Keyword,
+					Word:      w.Keyword,
 					Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 				})
 				found[kw] = true
@@ -1044,7 +1053,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 				ratio := float64(len(token)) / float64(len(kw))
 				if ratio >= 0.75 && ratio <= 1.25 && strings.EqualFold(token, kw) {
 					matches = append(matches, WorryMatch{
-						Word: w.Keyword,
+						Word:      w.Keyword,
 						Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 					})
 					found[kw] = true
@@ -1072,7 +1081,6 @@ func splitOnWordBoundary(text string) []string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	return re.Split(text, -1)
 }
-
 
 func GetMessagesForUser(c *fiber.Ctx) error {
 	db := database.DBConn
@@ -1145,6 +1153,30 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				msgs = filterExpiredMessages(db, msgs)
 			} else {
 				markExpiredMessages(db, msgs)
+			}
+
+			// Populate Bulkcount for any bulk-offer messages (fix #9).
+			// Done as a separate pass so the main query stays compatible with
+			// test databases that don't yet have messages_bulk_items.
+			if len(msgs) > 0 {
+				msgIDs := make([]uint64, len(msgs))
+				idxByID := make(map[uint64]int, len(msgs))
+				for i, m := range msgs {
+					msgIDs[i] = m.ID
+					idxByID[m.ID] = i
+				}
+				type bulkRow struct {
+					Msgid uint64 `gorm:"column:msgid"`
+					Cnt   int    `gorm:"column:cnt"`
+				}
+				var bulkCounts []bulkRow
+				if err := db.Raw("SELECT msgid, COUNT(*) AS cnt FROM messages_bulk_items WHERE msgid IN (?) GROUP BY msgid", msgIDs).Scan(&bulkCounts).Error; err == nil {
+					for _, b := range bulkCounts {
+						if idx, ok := idxByID[b.Msgid]; ok {
+							msgs[idx].Bulkcount = b.Cnt
+						}
+					}
+				}
 			}
 
 			for ix, r := range msgs {
@@ -2104,8 +2136,8 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
 		var remainingGroups int64
 		// Pin to the write host: this gates the parent-message soft-delete on rows we
-	// just modified, so it must read the source, not a possibly-lagging replica.
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		// just modified, so it must read the source, not a possibly-lagging replica.
+		db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 		if remainingGroups == 0 {
 			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
@@ -3296,10 +3328,19 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// when all items are removed. The textbody summary is rebuilt too unless the
 	// caller supplied their own textbody.
 	if req.Bulkitems != nil {
-		total := upsertBulkItems(db, req.ID, req.Bulkitems)
+		total, err := upsertBulkItems(db, req.ID, req.Bulkitems)
+		if err != nil {
+			return err
+		}
 		db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
-		if req.Textbody == nil {
-			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+		// Always rebuild the textbody summary (fix #11): append it after any
+		// caller-supplied textbody, blank-line separated.
+		summary := buildBulkSummary(req.Bulkitems, req.Bulkslots)
+		if summary != "" {
+			if req.Textbody != nil && strings.TrimSpace(*req.Textbody) != "" {
+				combined := strings.TrimRight(*req.Textbody, "\n") + "\n\n" + summary
+				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", combined, combined, req.ID)
+			} else {
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
 			}
 		}
@@ -3307,6 +3348,57 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
+		// Fix #13: when bulkslots changed but bulkitems was nil (i.e. the offerer
+		// only updated collection times), reload the catalogue and rebuild the
+		// textbody so the collection-times section stays current.
+		if req.Bulkitems == nil {
+			type rawItem struct {
+				ID          uint64  `gorm:"column:id"`
+				Name        string  `gorm:"column:name"`
+				Quantity    int     `gorm:"column:quantity"`
+				Condition   string  `gorm:"column:condition"`
+				Dimensions  *string `gorm:"column:dimensions"`
+				Photourl    *string `gorm:"column:photourl"`
+				Description *string `gorm:"column:description"`
+				Attachments []uint64
+			}
+			var rawItems []rawItem
+			db.Raw("SELECT id, name, quantity, `condition`, dimensions, photourl, description "+
+				"FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", req.ID).Scan(&rawItems)
+			if len(rawItems) > 0 {
+				rebuiltInputs := make([]BulkItemInput, len(rawItems))
+				for i, r := range rawItems {
+					rebuiltInputs[i] = BulkItemInput{
+						ID:          r.ID,
+						Name:        r.Name,
+						Quantity:    r.Quantity,
+						Condition:   r.Condition,
+						Dimensions:  r.Dimensions,
+						Photourl:    r.Photourl,
+						Description: r.Description,
+					}
+				}
+				if summary := buildBulkSummary(rebuiltInputs, req.Bulkslots); summary != "" {
+					// Preserve any non-summary prefix the textbody already has.
+					var existingBody string
+					db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", req.ID).Scan(&existingBody)
+					// Strip the old summary (everything from "Items available" onward) and
+					// re-append fresh. Simple approach: keep only lines before the marker.
+					const summaryMarker = "Items available in this offer:"
+					prefix := existingBody
+					if idx := strings.Index(existingBody, summaryMarker); idx >= 0 {
+						prefix = strings.TrimRight(existingBody[:idx], "\n ")
+					}
+					var combined string
+					if prefix != "" {
+						combined = prefix + "\n\n" + summary
+					} else {
+						combined = summary
+					}
+					db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", combined, combined, req.ID)
+				}
+			}
+		}
 	}
 	if req.Accessinstructions != nil {
 		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", *req.Accessinstructions, req.ID)
@@ -3802,12 +3894,20 @@ func PutMessage(c *fiber.Ctx) error {
 	// availableinitially/availablenow, and the textbody falls back to a
 	// readable summary so non-bulk-aware consumers still show the items.
 	if len(req.Bulkitems) > 0 {
-		total := upsertBulkItems(db, newMsgID, req.Bulkitems)
+		total, upsertErr := upsertBulkItems(db, newMsgID, req.Bulkitems)
+		if upsertErr != nil {
+			return upsertErr
+		}
 		if total > 0 {
 			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, newMsgID)
 		}
-		if strings.TrimSpace(req.Textbody) == "" {
-			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+		// Always rebuild textbody summary (fix #11): append after any offerer description.
+		summary := buildBulkSummary(req.Bulkitems, req.Bulkslots)
+		if summary != "" {
+			if strings.TrimSpace(req.Textbody) != "" {
+				combined := strings.TrimRight(req.Textbody, "\n") + "\n\n" + summary
+				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", combined, combined, newMsgID)
+			} else {
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
 			}
 		}
@@ -3866,21 +3966,21 @@ func PutMessage(c *fiber.Ctx) error {
 
 // PostMessageRequest handles action-based POST to /message.
 type PostMessageRequest struct {
-	ID        uint64  `json:"id"`
-	Action    string  `json:"action"`
-	Userid    *uint64 `json:"userid"`
-	Count     *int    `json:"count"`
-	Outcome   string  `json:"outcome"`
-	Happiness *string `json:"happiness"`
-	Comment   *string `json:"comment"`
-	Message   *string `json:"message"`
-	Subject   *string `json:"subject"`
-	Body      *string `json:"body"`
-	Stdmsgid  *uint64 `json:"stdmsgid"`
-	Groupid   *uint64 `json:"groupid"`
-	Type      string  `json:"type"`
-	Textbody  *string `json:"textbody"`
-	Item      *string `json:"item"`
+	ID               uint64  `json:"id"`
+	Action           string  `json:"action"`
+	Userid           *uint64 `json:"userid"`
+	Count            *int    `json:"count"`
+	Outcome          string  `json:"outcome"`
+	Happiness        *string `json:"happiness"`
+	Comment          *string `json:"comment"`
+	Message          *string `json:"message"`
+	Subject          *string `json:"subject"`
+	Body             *string `json:"body"`
+	Stdmsgid         *uint64 `json:"stdmsgid"`
+	Groupid          *uint64 `json:"groupid"`
+	Type             string  `json:"type"`
+	Textbody         *string `json:"textbody"`
+	Item             *string `json:"item"`
 	Partner          *string `json:"partner"`
 	Deadline         *string `json:"deadline"`
 	Deliverypossible *bool   `json:"deliverypossible"`

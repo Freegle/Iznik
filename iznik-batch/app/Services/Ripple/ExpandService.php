@@ -257,7 +257,8 @@ class ExpandService
             $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
             if ($satStop > 0) {
                 $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
-                                  WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?";
+                                  WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?
+                             AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = ms.msgid)";
                 $params[] = $satStop;
             }
         }
@@ -412,9 +413,14 @@ class ExpandService
 
                 // Reply-saturation stop (extent-governor T1.1): once a post has enough distinct
                 // repliers it already has plenty of interest, so stop expanding - mark it done and
-                // do not fan out further. Type-agnostic; 0 disables.
+                // do not fan out further. Type-agnostic; 0 disables. Bulk-clearance posts are
+                // exempt: a 120-item clearance needs broad reach regardless of early replies.
                 $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
-                if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
+                $isBulk = DB::selectOne(
+                    'SELECT 1 AS x FROM messages_bulk_items WHERE msgid = ? LIMIT 1',
+                    [(int) $row->msgid]
+                ) !== null;
+                if ($satStop > 0 && !$isBulk && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
                     if (!$dryRun) {
                         DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
                             'status' => 'done',

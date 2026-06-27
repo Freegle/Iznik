@@ -54,37 +54,61 @@
           <span v-else>—</span>
         </div>
 
-        <!-- Recipient: labelled toggle + quantity dropdown, inline. -->
+        <!-- Recipient: decision badge when the giver has acted; toggle otherwise. -->
         <div v-else-if="!message.successful" class="bitem__pick">
-          <b-form-checkbox
-            v-model="picks[item.id].checked"
-            switch
-            class="bitem__toggle"
-            :class="{ 'bitem__toggle--on': picks[item.id].checked }"
-            :data-testid="'pick-' + item.id"
-            :aria-label="'I\'d like ' + item.name"
-            @change="onCheck(item)"
+          <!-- Giver allocated this item to the recipient. -->
+          <b-badge
+            v-if="item.yourinterest && item.yourinterest.state === 'Reserved'"
+            variant="success"
+            class="bitem__decision"
+            :data-testid="'decision-reserved-' + item.id"
           >
-            <span class="bitem__picktext">I'd like this</span>
-          </b-form-checkbox>
-          <!-- Quantity only matters when more than one is available. The slot
-               keeps a fixed width so turning the toggle on doesn't shift it. -->
-          <div v-if="item.quantity > 1" class="bitem__qtyslot">
-            <template v-if="picks[item.id].checked">
-              <label :for="'qty-' + item.id" class="bitem__qtylabel"
-                >How many?</label
-              >
-              <b-form-select
-                :id="'qty-' + item.id"
-                v-model="picks[item.id].quantity"
-                :options="qtyOptions(item)"
-                size="sm"
-                class="bitem__qtysel"
-                :aria-label="'How many ' + item.name"
-                :data-testid="'qty-' + item.id"
-              />
-            </template>
-          </div>
+            <v-icon icon="check-circle" class="me-1" />Allocated to you
+          </b-badge>
+
+          <!-- Giver did not select the recipient for this item. -->
+          <span
+            v-else-if="
+              item.yourinterest && item.yourinterest.state === 'Rejected'
+            "
+            class="bitem__decision bitem__decision--rejected"
+            :data-testid="'decision-rejected-' + item.id"
+          >
+            <v-icon icon="times-circle" class="me-1" />Not this time
+          </span>
+
+          <!-- No decision yet — show the normal toggle + quantity controls. -->
+          <template v-else>
+            <b-form-checkbox
+              v-model="picks[item.id].checked"
+              switch
+              class="bitem__toggle"
+              :class="{ 'bitem__toggle--on': picks[item.id].checked }"
+              :data-testid="'pick-' + item.id"
+              :aria-label="'I\'d like ' + item.name"
+              @change="onCheck(item)"
+            >
+              <span class="bitem__picktext">I'd like this</span>
+            </b-form-checkbox>
+            <!-- Quantity only matters when more than one is available. The slot
+                 keeps a fixed width so turning the toggle on doesn't shift it. -->
+            <div v-if="item.quantity > 1" class="bitem__qtyslot">
+              <template v-if="picks[item.id].checked">
+                <label :for="'qty-' + item.id" class="bitem__qtylabel"
+                  >How many?</label
+                >
+                <b-form-select
+                  :id="'qty-' + item.id"
+                  v-model="picks[item.id].quantity"
+                  :options="qtyOptions(item)"
+                  size="sm"
+                  class="bitem__qtysel"
+                  :aria-label="'How many ' + item.name"
+                  :data-testid="'qty-' + item.id"
+                />
+              </template>
+            </div>
+          </template>
         </div>
       </li>
     </ul>
@@ -184,7 +208,12 @@ function seedPicks() {
         checked: !!yi && yi.state !== 'Withdrawn',
         quantity: yi && yi.quantity > 0 ? yi.quantity : 1,
       }
-      if (yi && yi.cancollect && !cancollect.value && !cancollectTimes.value.length) {
+      if (
+        yi &&
+        yi.cancollect &&
+        !cancollect.value &&
+        !cancollectTimes.value.length
+      ) {
         cancollect.value = yi.cancollect
         // Pre-tick the fixed windows the user already chose (stored joined).
         if (slots.value.length) {
@@ -218,7 +247,7 @@ const canRegister = computed(() => {
 // Tells the recipient why the Register button is disabled.
 const registerHint = computed(() => {
   if (!anyPicked.value) {
-    return 'Turn on “I\'d like this” for at least one item above before you can register.'
+    return "Turn on “I'd like this” for at least one item above before you can register."
   }
   if (slots.value.length && !cancollectTimes.value.length) {
     return 'Tick at least one collection time you can make.'
@@ -462,6 +491,19 @@ defineExpose({
 
 .bitem__qtysel {
   width: 4.25rem;
+}
+
+/* Decision badges shown once the giver has allocated or declined an item. */
+.bitem__decision {
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Subdued "not this time" state: muted text, no strong colour. */
+.bitem__decision--rejected {
+  color: $color-gray--dark;
+  font-size: 0.85rem;
 }
 
 /* Give the collection-times block some breathing room from the items list. */

@@ -47,11 +47,16 @@ type ChatMessage struct {
 	// HeldByRippling is true when this message is held by the rippling reply-hold engine
 	// (a non-released row exists in rippling_held_replies). Only populated for moderators;
 	// stripped from responses to normal users along with other review fields.
-	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
-	Addressid      *uint64 `json:"addressid" gorm:"-"`
-	Modnote        bool    `json:"modnote" gorm:"-"`
-	Archived       int     `json:"-" gorm:"-"`
-	Deleted        bool    `json:"-"`
+	HeldByRippling bool `json:"heldbyrippling,omitempty" gorm:"-"`
+	// Fromhelper is 1 when the message was authored by the AI concierge helper.
+	// Read from chat_messages.fromhelper; used for disclosure and mod-review.
+	// The column is added by migration; mark write-only:false so GORM does not
+	// include it in INSERTs before the migration runs.
+	Fromhelper int     `json:"fromhelper,omitempty" gorm:"column:fromhelper;<-:false"`
+	Addressid  *uint64 `json:"addressid" gorm:"-"`
+	Modnote    bool    `json:"modnote" gorm:"-"`
+	Archived   int     `json:"-" gorm:"-"`
+	Deleted    bool    `json:"-"`
 }
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the

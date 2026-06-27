@@ -1,15 +1,18 @@
 package message
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/aiimage"
+	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -46,14 +49,19 @@ func (BulkItem) TableName() string {
 
 // BulkItemInterest is one user's interest in one catalogue item.
 type BulkItemInterest struct {
-	ID         uint64  `json:"id" gorm:"primary_key"`
-	Bulkitemid uint64  `json:"bulkitemid"`
-	Msgid      uint64  `json:"-"`
-	Userid     uint64  `json:"userid"`
-	Quantity   uint    `json:"quantity"`
-	Cancollect *string `json:"cancollect"`
-	State      string  `json:"state"`
-	Chatid     *uint64 `json:"chatid,omitempty"`
+	ID         uint64     `json:"id" gorm:"primary_key"`
+	Bulkitemid uint64     `json:"bulkitemid"`
+	Msgid      uint64     `json:"-"`
+	Userid     uint64     `json:"userid"`
+	Quantity   uint       `json:"quantity"`
+	Cancollect *string    `json:"cancollect"`
+	State      string     `json:"state"`
+	Chatid     *uint64    `json:"chatid,omitempty"`
+	CreatedAt  *time.Time `json:"created_at,omitempty" gorm:"column:created_at"`
+	// Firstname and blurred lat/lng are populated for owner/concierge reads only.
+	Firstname *string  `json:"firstname,omitempty" gorm:"-"`
+	BlurLat   *float64 `json:"lat,omitempty" gorm:"-"`
+	BlurLng   *float64 `json:"lng,omitempty" gorm:"-"`
 }
 
 func (BulkItemInterest) TableName() string {
@@ -81,8 +89,53 @@ func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, 
 	}
 
 	var interest []BulkItemInterest
-	db.Raw("SELECT id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid "+
+	db.Raw("SELECT id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid, created_at "+
 		"FROM messages_bulk_items_interest WHERE msgid = ?", msgid).Scan(&interest)
+
+	// For the offerer/concierge, enrich interest rows with each replier's
+	// firstname and blurred location — the concierge needs them to decide
+	// who to allocate items to without exposing precise coordinates.
+	if canSeeInterest && len(interest) > 0 {
+		// Collect distinct user IDs.
+		userids := make([]uint64, 0, len(interest))
+		seen := map[uint64]bool{}
+		for _, in := range interest {
+			if !seen[in.Userid] {
+				seen[in.Userid] = true
+				userids = append(userids, in.Userid)
+			}
+		}
+
+		type userRow struct {
+			ID        uint64  `gorm:"column:id"`
+			Firstname string  `gorm:"column:firstname"`
+			Lat       float64 `gorm:"column:lat"`
+			Lng       float64 `gorm:"column:lng"`
+		}
+		var users []userRow
+		db.Raw("SELECT u.id, u.firstname, COALESCE(l.lat, 0) AS lat, COALESCE(l.lng, 0) AS lng "+
+			"FROM users u "+
+			"LEFT JOIN locations l ON l.id = u.lastlocation "+
+			"WHERE u.id IN (?)", userids).Scan(&users)
+
+		byUser := make(map[uint64]userRow, len(users))
+		for _, u := range users {
+			byUser[u.ID] = u
+		}
+		for i := range interest {
+			if u, ok := byUser[interest[i].Userid]; ok {
+				if u.Firstname != "" {
+					fn := u.Firstname
+					interest[i].Firstname = &fn
+				}
+				if u.Lat != 0 || u.Lng != 0 {
+					blat, blng := utils.Blur(u.Lat, u.Lng, utils.BLUR_USER)
+					interest[i].BlurLat = &blat
+					interest[i].BlurLng = &blng
+				}
+			}
+		}
+	}
 
 	// Index interest by bulk item id.
 	byItem := map[uint64][]BulkItemInterest{}
@@ -134,6 +187,13 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	db.Raw("SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
+	}
+
+	// Reply-gate: reject if the post is no longer active (has an outcome row).
+	var outcomeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&outcomeCount)
+	if outcomeCount > 0 {
+		return fiber.NewError(fiber.StatusConflict, "This offer is no longer available")
 	}
 
 	// Whose interest are we recording? By default the caller's own. The offerer
@@ -191,11 +251,19 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	var chatid uint64
 	if len(picked) > 0 {
 		// Only now do we need a conversation between the replier and the offerer.
-		chatid = findOrCreateUser2UserRoom(db, target, fromuser)
+		// Use the shared helper so chat_roster is seeded for both participants,
+		// enabling ChatNotificationService email delivery.
+		var chatErr error
+		chatid, chatErr = chat.GetOrCreateUser2UserChat(db, target, fromuser)
+		if chatErr != nil || chatid == 0 {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not create chat room")
+		}
 
 		for _, p := range picked {
 			// Preserve an offerer-set state (Reserved/Collected/Rejected) — a
 			// replier re-expressing interest must not reset their allocation.
+			// On re-express, reset processingrequired=1 and processingsuccessful=0
+			// so the notification pipeline re-fires (fix #7).
 			db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, cancollect, chatid, state) "+
 				"VALUES (?, ?, ?, ?, ?, ?, 'Interested') "+
 				"ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), cancollect = VALUES(cancollect), chatid = VALUES(chatid), "+
@@ -242,7 +310,9 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
 			chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
 		if existingID > 0 {
-			db.Exec("UPDATE chat_messages SET message = ?, date = ? WHERE id = ?", body, time.Now(), existingID)
+			// Re-express: update body and reset processing flags so the notification
+			// pipeline re-fires (fix #7: processingrequired=1, processingsuccessful=0).
+			db.Exec("UPDATE chat_messages SET message = ?, date = ?, processingrequired = 1, processingsuccessful = 0 WHERE id = ?", body, time.Now(), existingID)
 		} else {
 			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
 				chatid, target, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
@@ -283,8 +353,25 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	}
 
 	var priorState string
-	db.Raw("SELECT COALESCE(state, '') FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
-		*req.Bulkitemid, *req.Userid).Scan(&priorState)
+	var priorQuantity uint
+	db.Raw("SELECT COALESCE(state, ''), COALESCE(quantity, 0) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
+		*req.Bulkitemid, *req.Userid).Row().Scan(&priorState, &priorQuantity)
+
+	// Over-allocation guard (fix #4): before reserving, ensure existing Reserved+Collected
+	// quantity for OTHER users plus this candidate's quantity does not exceed the item's total.
+	if *req.State == "Reserved" && priorState != "Reserved" {
+		var itemQty uint
+		db.Raw("SELECT quantity FROM messages_bulk_items WHERE id = ?", *req.Bulkitemid).Scan(&itemQty)
+		if itemQty > 0 {
+			var allocatedByOthers uint
+			db.Raw("SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items_interest "+
+				"WHERE bulkitemid = ? AND userid != ? AND state IN ('Reserved','Collected')",
+				*req.Bulkitemid, *req.Userid).Scan(&allocatedByOthers)
+			if allocatedByOthers+priorQuantity > itemQty {
+				return fiber.NewError(fiber.StatusConflict, "Item is already fully allocated")
+			}
+		}
+	}
 
 	result := db.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
 		*req.State, *req.Bulkitemid, *req.Userid)
@@ -296,6 +383,41 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	// access instructions to that replier — once, via chat.
 	if *req.State == "Reserved" && priorState != "Reserved" {
 		sendAccessInstructions(db, msgid, fromuser, *req.Userid)
+	}
+
+	// Rejection notification (fix #3): when the offerer rejects a replier, send
+	// them a chat message so they know the item went to someone else.
+	if *req.State == "Rejected" && priorState != "Rejected" {
+		chatid, _ := chat.GetOrCreateUser2UserChat(db, fromuser, *req.Userid)
+		if chatid != 0 {
+			var itemName string
+			db.Raw("SELECT name FROM messages_bulk_items WHERE id = ?", *req.Bulkitemid).Scan(&itemName)
+			body := "Unfortunately the item you were interested in"
+			if itemName != "" {
+				body += " (" + itemName + ")"
+			}
+			body += " has gone to someone else. Thank you for your interest!"
+			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
+				chatid, fromuser, utils.CHAT_MESSAGE_DEFAULT, msgid, time.Now(), body)
+			db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+		}
+	}
+
+	// Collected stats (fix #5): decrement messages.availablenow by the interest
+	// quantity when transitioning into Collected; reverse when transitioning away.
+	if *req.State == "Collected" && priorState != "Collected" && priorQuantity > 0 {
+		db.Exec("UPDATE messages SET availablenow = GREATEST(0, CAST(availablenow AS SIGNED) - ?) WHERE id = ?",
+			priorQuantity, msgid)
+		// TODO: upsert messages_by(msgid, userid) — schema has msgid+userid unique; the
+		// existing handleAddBy/handleRemoveBy helpers manage that table via the outcome flow
+		// which already covers single-item messages. For bulk offers the correct approach is
+		// to call those helpers or inline the same INSERT…ON DUPLICATE KEY UPDATE pattern
+		// from handleOutcome. Deferred because the messages_by table is tied to the outcome
+		// flow and bulk offers may have several Collected rows per message; we need to decide
+		// whether messages_by should track per-item or per-message totals first.
+	} else if priorState == "Collected" && *req.State != "Collected" && priorQuantity > 0 {
+		db.Exec("UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
+			priorQuantity, msgid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -312,8 +434,8 @@ func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser u
 	if ai == "" {
 		return
 	}
-	chatid := findOrCreateUser2UserRoom(db, fromuser, touser)
-	if chatid == 0 {
+	chatid, err := chat.GetOrCreateUser2UserChat(db, fromuser, touser)
+	if err != nil || chatid == 0 {
 		return
 	}
 	body := "Access instructions for collection:\n" + ai
@@ -323,7 +445,10 @@ func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser u
 }
 
 // findOrCreateUser2UserRoom returns the id of the User2User chat room between
-// two users, creating it if necessary.
+// two users, creating it (without seeding chat_roster) if necessary. Retained
+// for helper.go and other callers in this package. For new conversations where
+// notification delivery is needed, prefer chat.GetOrCreateUser2UserChat which
+// also seeds chat_roster for both participants.
 func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 	var chatID uint64
 	db.Raw("SELECT id FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) LIMIT 1",
@@ -352,7 +477,12 @@ func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 // Existing items are matched by id; items not present in the input are removed
 // (their interest cascades). Returns the total quantity across all items, used
 // to keep messages.availableinitially in sync.
-func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
+func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) (int, error) {
+	// Item-count cap (fix #10a): prevent unreasonably large catalogues.
+	if len(items) > 200 {
+		return 0, fiber.NewError(fiber.StatusBadRequest, "Too many items (max 200)")
+	}
+
 	keepIDs := []uint64{}
 	total := 0
 
@@ -376,8 +506,13 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		var itemID uint64
 		if in.ID > 0 {
 			itemID = in.ID
-			db.Exec("UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, photourl = ?, description = ? WHERE id = ? AND msgid = ?",
+			res := db.Exec("UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, photourl = ?, description = ? WHERE id = ? AND msgid = ?",
 				pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description, itemID, msgid)
+			// Orphan attachment guard (fix #6): if RowsAffected==0 the supplied id
+			// doesn't belong to this message — skip photo linking for foreign ids.
+			if res.RowsAffected == 0 {
+				itemID = 0
+			}
 		} else {
 			sqlDB, err := db.DB()
 			if err == nil {
@@ -404,14 +539,23 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		}
 	}
 
-	// Remove items no longer present.
+	// Item removal (fix #10b): before CASCADE-deleting items no longer present,
+	// withdraw any active interest rows so repliers aren't left in a dangling state.
+	// Per-user rejection chat is skipped for now — a batch Withdrawn for removed items
+	// is silent. TODO: consider sending a "this item was removed" chat message per
+	// interested user once the rejection notification path (fix #3) is confirmed stable.
 	if len(keepIDs) > 0 {
+		db.Exec("UPDATE messages_bulk_items_interest SET state = 'Withdrawn' "+
+			"WHERE msgid = ? AND bulkitemid NOT IN (?) AND state IN ('Interested','Reserved')",
+			msgid, keepIDs)
 		db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ? AND id NOT IN (?)", msgid, keepIDs)
 	} else {
+		db.Exec("UPDATE messages_bulk_items_interest SET state = 'Withdrawn' "+
+			"WHERE msgid = ? AND state IN ('Interested','Reserved')", msgid)
 		db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ?", msgid)
 	}
 
-	return total
+	return total, nil
 }
 
 // BulkItemInput is the create/edit payload for one catalogue item (PUT/PATCH).
@@ -451,6 +595,13 @@ func buildBulkSummary(items []BulkItemInput, slots []string) string {
 			line += " (" + in.Condition + ")"
 		}
 		lines = append(lines, line)
+		// Description (fix #8): append non-empty descriptions indented under the
+		// item line so textbody/content checks and email consumers see them.
+		if in.Description != nil {
+			if desc := strings.TrimSpace(*in.Description); desc != "" {
+				lines = append(lines, "   "+desc)
+			}
+		}
 	}
 	if len(lines) == 0 {
 		return ""
@@ -470,19 +621,102 @@ func buildBulkSummary(items []BulkItemInput, slots []string) string {
 	return out
 }
 
+// isPrivateIP returns true if addr is a private/loopback/link-local address that
+// must not be reachable from a user-supplied URL (SSRF guard, fix #1).
+func isPrivateIP(addr string) bool {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return true // unparseable → refuse
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	// RFC1918 and IPv6 private ranges.
+	private := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"fc00::/7",
+	}
+	for _, cidr := range private {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network != nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ssrfSafeDialContext returns a DialContext that resolves the destination and
+// rejects any address that falls in a private/loopback/link-local range.
+func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range addrs {
+			if isPrivateIP(a) {
+				return nil, fmt.Errorf("SSRF: resolved address %s is private", a)
+			}
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
+	}
+}
+
+// httpImageClient is the HTTP client used by fetchRemoteImage.  In production
+// it is initialised to an SSRF-safe client (ssrfImageClient below).  Tests that
+// use httptest servers on 127.0.0.1 should swap this for http.DefaultClient for
+// the duration of the test (restore via defer).
+var httpImageClient *http.Client
+
+func init() {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		DialContext: ssrfSafeDialContext(dialer),
+	}
+	httpImageClient = &http.Client{
+		Timeout:   20 * time.Second,
+		Transport: transport,
+		// CheckRedirect re-applies the SSRF check on each redirect target.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			host := req.URL.Hostname()
+			addrs, err := net.LookupHost(host)
+			if err != nil {
+				return err
+			}
+			for _, a := range addrs {
+				if isPrivateIP(a) {
+					return fmt.Errorf("SSRF: redirect to private address %s blocked", a)
+				}
+			}
+			return nil
+		},
+	}
+}
+
 // fetchRemoteImage downloads an image from an http(s) URL, returning its bytes
 // and MIME type. Bounded size/time; verifies the content is an image.
-func fetchRemoteImage(url string) ([]byte, string, error) {
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+// SSRF-safe: resolves DNS and blocks private/loopback/link-local destinations,
+// and re-applies the same check on redirects (fix #1).
+// The HTTP client used is httpImageClient (injectable for tests).
+func fetchRemoteImage(rawURL string) ([]byte, string, error) {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		return nil, "", fmt.Errorf("not an http(s) url")
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
 	req.Header.Set("User-Agent", "Freegle bulk-offer photo fetcher")
-	resp, err := client.Do(req)
+	resp, err := httpImageClient.Do(req)
 	if err != nil {
 		return nil, "", err
 	}

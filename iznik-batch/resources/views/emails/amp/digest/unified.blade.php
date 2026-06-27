@@ -215,6 +215,17 @@
     .post-type-offer { background-color: {{ \App\Mail\Digest\DigestStyle::OFFER_GREEN }}; }
     .post-type-wanted { background-color: {{ \App\Mail\Digest\DigestStyle::WANTED_BLUE }}; }
     .post-type-row { margin: 0 0 6px 0; }
+    .post-bulk-count {
+      display: inline-block;
+      margin-left: 6px;
+      background-color: #eeeeee;
+      color: #555555;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 3px;
+      vertical-align: middle;
+    }
     .post-title {
       font-size: 16px;
       font-weight: 600;
