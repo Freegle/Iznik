@@ -68,7 +68,7 @@ type User struct {
 	Emails             []UserEmail     `json:"emails" gorm:"-"`
 	Memberships        []Membership          `json:"memberships" gorm:"-"`
 	MessageHistory     []UserMessageHistory  `json:"messagehistory,omitempty" gorm:"-"`
-	Systemrole         string          `json:"systemrole""`
+	Systemrole         string          `json:"systemrole"`
 	Settings           json.RawMessage `json:"settings"` // This is JSON stored in the DB as a string.
 	Relevantallowed    bool            `json:"relevantallowed"`
 	Newslettersallowed bool            `json:"newslettersallowed"`

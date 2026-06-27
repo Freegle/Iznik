@@ -49,6 +49,17 @@ class GenerateEmbeddingsCommand extends Command
             // Bulk-clearance messages have many items appended to textbody by
             // buildBulkSummary; use a wider window so more of the catalogue
             // is covered by the embedding. Normal messages keep the 500-char cap.
+            //
+            // TODO (per-item embeddings, deferred): for very large clearances even
+            // 2500 chars truncates the catalogue. The robust follow-up is a
+            // SEPARATE, additive `messages_bulk_items_embeddings` table
+            // (msgid, bulkitemid, item_embedding, model_version; PK (msgid,bulkitemid),
+            // FK bulkitemid -> messages_bulk_items ON DELETE CASCADE) populated by a
+            // second loop here (text = item name + description) and queried by the
+            // vector search. This is kept separate from messages_embeddings on
+            // purpose: that table is msgid-keyed with an ON DUPLICATE KEY upsert, so
+            // adding per-item rows there would change the existing (non-bulk) search
+            // path. The additive table avoids any change to current search behaviour.
             $messages = DB::select('
                 SELECT ms.msgid, m.subject,
                        LEFT(m.textbody,

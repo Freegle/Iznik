@@ -2,15 +2,68 @@ package user
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2"
-	"sync"
-	"time"
+	"github.com/golang-jwt/jwt/v4"
 )
 
 type Config struct{}
+
+// extractBearerToken returns the bearer token from the Authorization header, or "".
+func extractBearerToken(c *fiber.Ctx) string {
+	auth := c.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return ""
+}
+
+// tryParseHelperDelegateToken parses a raw JWT as a concierge helper_delegate
+// token, returning (offerUserid, helpermsgid, true) on success. It lives in the
+// user package (mirroring message/helpertoken.go) to avoid a message->user
+// import cycle; the claim format is kept in sync (string-encoded claims,
+// purpose=helper_delegate, HMAC, JWT_SECRET).
+func tryParseHelperDelegateToken(tokenString string) (offerUserid uint64, helpermsgid uint64, ok bool) {
+	if tokenString == "" {
+		return 0, 0, false
+	}
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return 0, 0, false
+	}
+	tok, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(secret), nil
+	})
+	if err != nil || !tok.Valid {
+		return 0, 0, false
+	}
+	claims, ok2 := tok.Claims.(jwt.MapClaims)
+	if !ok2 {
+		return 0, 0, false
+	}
+	if purpose, _ := claims["purpose"].(string); purpose != "helper_delegate" {
+		return 0, 0, false
+	}
+	uidStr, _ := claims["offeruserid"].(string)
+	midStr, _ := claims["helpermsgid"].(string)
+	var uid, mid uint64
+	fmt.Sscanf(uidStr, "%d", &uid)
+	fmt.Sscanf(midStr, "%d", &mid)
+	if uid == 0 || mid == 0 {
+		return 0, 0, false
+	}
+	return uid, mid, true
+}
 
 func NewAuthMiddleware(config Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -44,6 +97,17 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 				result := db.Raw("SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1;", sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
 				dbQueryErr = result.Error
 			}()
+		} else {
+			// No normal user JWT. If a helper_delegate bearer token is present,
+			// expose the offerer identity + scoped msgid in locals so the bulk-offer
+			// chat handler can act on the offerer's behalf for that one message and
+			// enforce the per-message scope. Normal requests are unaffected.
+			if rawTok := extractBearerToken(c); rawTok != "" {
+				if offerUID, helperMID, hok := tryParseHelperDelegateToken(rawTok); hok {
+					c.Locals("helperUserid", offerUID)
+					c.Locals("helperMsgid", helperMID)
+				}
+			}
 		}
 
 		ret := c.Next()

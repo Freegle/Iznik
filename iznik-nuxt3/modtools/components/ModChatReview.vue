@@ -80,9 +80,9 @@
           data-testid="rippling-held-notice"
         >
           <v-icon icon="pause-circle" class="me-1" />
-          Held: rippling out - this reply arrived before the post's reach grew to
-          cover the sender's location. It will be delivered automatically once the
-          reach expands far enough.
+          Held: rippling out - this reply arrived before the post's reach grew
+          to cover the sender's location. It will be delivered automatically
+          once the reach expands far enough.
         </NoticeMessage>
         <div class="rounded bg-white p-2 fw-bold border border-warning mb-2">
           <ChatMessage
@@ -96,6 +96,11 @@
 
           <!-- OLD ChatMessage :chatid="message.chatroom.id" :chatmessage="message" :otheruser="message.fromuser" last highlight-emails :id="message.id" /-->
           <!-- :chatusers="chatusers" -->
+          <div v-if="message.fromhelper" class="mt-1">
+            <span class="badge bg-info text-dark helper-badge">
+              <v-icon icon="robot" class="me-1" />AI / Helper
+            </span>
+          </div>
         </div>
         <ModSpammer
           v-if="message.touser?.spammer"
@@ -505,10 +510,15 @@ async function redactEmails(callback) {
 }
 </script>
 <style scoped lang="scss">
-//@import 'color-vars';
+/* @import 'color-vars'; */
 
 .highlight {
   color: var(--color-link);
   background-color: initial;
+}
+
+.helper-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 </style>

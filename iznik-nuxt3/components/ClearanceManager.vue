@@ -55,12 +55,34 @@
         :item="item"
         :index="idx"
       />
+
+      <div
+        v-if="allCollected && !message.outcomes?.length"
+        class="clearance-manager__close-cta"
+        data-testid="clearance-close-cta"
+      >
+        <v-icon icon="check-circle" class="text-success me-2" />
+        <strong>All items collected!</strong>
+        <b-button
+          variant="success"
+          class="ms-3"
+          @click="showOutcomeModal = true"
+        >
+          Close this offer
+        </b-button>
+        <OutcomeModal
+          v-if="showOutcomeModal"
+          :id="id"
+          type="Taken"
+          @hidden="showOutcomeModal = false"
+        />
+      </div>
     </template>
   </div>
 </template>
 
 <script setup>
-import { computed, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
@@ -68,8 +90,11 @@ import NoticeMessage from '~/components/NoticeMessage'
 import ClearanceManageItem from '~/components/ClearanceManageItem'
 import {
   allocatedQuantity,
+  collectedQuantity,
   distinctInterestedUsers,
 } from '~/composables/useClearance'
+
+const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
 
 const props = defineProps({
   // The bulk offer's message id.
@@ -107,6 +132,17 @@ const fullyAllocated = computed(
     ).length
 )
 
+const showOutcomeModal = ref(false)
+
+// Every item with stock has its full quantity collected — the clearance is done.
+const allCollected = computed(() => {
+  if (!items.value.length) return false
+  return items.value.every(
+    (it) =>
+      it.quantity > 0 && collectedQuantity(it.interest || []) >= it.quantity
+  )
+})
+
 // Load the full message (with the owner-only interest arrays), then the
 // display names / reputation of everyone who's expressed interest so the
 // candidate rows can show who they are.
@@ -136,6 +172,8 @@ defineExpose({
   canManage,
   peopleInterested,
   fullyAllocated,
+  allCollected,
+  showOutcomeModal,
   load,
 })
 </script>
@@ -160,5 +198,18 @@ defineExpose({
   summary {
     cursor: pointer;
   }
+}
+
+/* Hardcoded hex (not SCSS vars) so an undefined var can't break page load. */
+.clearance-manager__close-cta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #e6f4ea;
+  border: 1px solid #198754;
+  border-radius: 4px;
 }
 </style>

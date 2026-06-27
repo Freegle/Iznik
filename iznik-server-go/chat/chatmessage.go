@@ -349,6 +349,21 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid chat id")
 	}
 
+	// Helper-delegate send: when there is no normal user but the auth middleware
+	// parsed a scoped helper_delegate token, act as the offerer for this send.
+	// The per-message scope + rate limit are enforced below before we persist.
+	isHelperSend := false
+	var helperMsgid uint64
+	if myid == 0 {
+		if huid, ok := c.Locals("helperUserid").(uint64); ok && huid > 0 {
+			myid = huid
+			isHelperSend = true
+			if hmid, ok2 := c.Locals("helperMsgid").(uint64); ok2 {
+				helperMsgid = hmid
+			}
+		}
+	}
+
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
@@ -405,6 +420,22 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	if isHelperSend {
+		// A helper_delegate token is scoped to a single offer message: it may only
+		// post the consolidated interest/allocation reply that references that message.
+		if payload.Refmsgid == nil || *payload.Refmsgid != helperMsgid {
+			return fiber.NewError(fiber.StatusForbidden, "helper token not valid for this message")
+		}
+		// Circuit-break runaway concierge sends: cap helper-authored messages per
+		// chat over a rolling 24h window.
+		const helperRateLimit = 20
+		var helperCount int64
+		db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND fromhelper = 1 AND date > NOW() - INTERVAL 24 HOUR", id).Scan(&helperCount)
+		if helperCount >= helperRateLimit {
+			return fiber.NewError(fiber.StatusTooManyRequests, "helper message rate limit reached for this chat")
+		}
+	}
+
 	// Rippling-out reply gate (#5): an in-app reply to a post (CHAT_MESSAGE_INTERESTED) the
 	// viewer can see but whose reach has not yet reached them (replyeligible=false in the read
 	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
@@ -435,6 +466,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	if newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
+
+	if isHelperSend && newid > 0 {
+		// Flag the message as AI-authored for disclosure / moderator review. The
+		// struct field is read-only (gorm:"<-:false"), so write the column directly.
+		db.Exec("UPDATE chat_messages SET fromhelper = 1 WHERE id = ?", newid)
 	}
 
 	// Rippling reply attribution (sysadmin KPI): for an Interested reply, snapshot whether the

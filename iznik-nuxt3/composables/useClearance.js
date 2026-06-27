@@ -57,6 +57,14 @@ export function allocatedQuantity(interest = []) {
     .reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
 }
 
+// Quantity actually collected for an item: only Collected rows count.
+// Used to decide whether every item in a clearance has been picked up.
+export function collectedQuantity(interest = []) {
+  return interest
+    .filter((i) => i.state === 'Collected')
+    .reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
+}
+
 // The number of distinct people with live interest across a set of items.
 export function distinctInterestedUsers(items = []) {
   const ids = new Set()
