@@ -135,11 +135,12 @@ const fullyAllocated = computed(
 const showOutcomeModal = ref(false)
 
 // Every item with stock has its full quantity collected — the clearance is done.
+// Items with quantity 0 are skipped (placeholders), not treated as uncollected.
 const allCollected = computed(() => {
-  if (!items.value.length) return false
-  return items.value.every(
-    (it) =>
-      it.quantity > 0 && collectedQuantity(it.interest || []) >= it.quantity
+  const stocked = items.value.filter((it) => it.quantity > 0)
+  if (!stocked.length) return false
+  return stocked.every(
+    (it) => collectedQuantity(it.interest || []) >= it.quantity
   )
 })
 

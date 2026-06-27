@@ -50,9 +50,10 @@ type ChatMessage struct {
 	HeldByRippling bool `json:"heldbyrippling,omitempty" gorm:"-"`
 	// Fromhelper is 1 when the message was authored by the AI concierge helper.
 	// Read from chat_messages.fromhelper; used for disclosure and mod-review.
-	// The column is added by migration; mark write-only:false so GORM does not
-	// include it in INSERTs before the migration runs.
-	Fromhelper int     `json:"fromhelper,omitempty" gorm:"column:fromhelper;<-:false"`
+	// Writable so CreateChatMessage can set it atomically with the insert; the
+	// handler always sets it explicitly (never from the request body) so it can't
+	// be forged by a normal client.
+	Fromhelper int     `json:"fromhelper,omitempty" gorm:"column:fromhelper"`
 	Addressid  *uint64 `json:"addressid" gorm:"-"`
 	Modnote    bool    `json:"modnote" gorm:"-"`
 	Archived   int     `json:"-" gorm:"-"`
@@ -421,13 +422,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	}
 
 	if isHelperSend {
-		// A helper_delegate token is scoped to a single offer message: it may only
-		// post the consolidated interest/allocation reply that references that message.
+		// A helper_delegate token may only send a normal or interested reply —
+		// never a ModMail or other privileged message type.
+		if chattype != utils.CHAT_MESSAGE_INTERESTED && chattype != utils.CHAT_MESSAGE_DEFAULT {
+			return fiber.NewError(fiber.StatusForbidden, "helper token may only send Default or Interested messages")
+		}
+		// Scope to the delegated offer: the reply must reference helperMsgid AND the
+		// target chat must already be a conversation about that offer (someone replied
+		// to it here). Without the second check, a token for one offer could be used to
+		// post into the offerer's other, unrelated chats with a forged refmsgid.
 		if payload.Refmsgid == nil || *payload.Refmsgid != helperMsgid {
 			return fiber.NewError(fiber.StatusForbidden, "helper token not valid for this message")
 		}
+		var linked int64
+		db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND refmsgid = ? LIMIT 1", id, helperMsgid).Scan(&linked)
+		if linked == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "chat is not about the delegated offer")
+		}
 		// Circuit-break runaway concierge sends: cap helper-authored messages per
-		// chat over a rolling 24h window.
+		// chat over a rolling 24h window. Best-effort (the concierge runs sequentially).
 		const helperRateLimit = 20
 		var helperCount int64
 		db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND fromhelper = 1 AND date > NOW() - INTERVAL 24 HOUR", id).Scan(&helperCount)
@@ -441,7 +454,10 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
 	// or modified client, or a ?reply= deep link. Mirror the read-path reply-eligibility check:
 	// a rippling_reach row exists for the post and does NOT contain the replier's location.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+	// Skip for helper sends: the gate stops a *requester* replying outside their reach;
+	// it is meaningless (and wrong — it would test the offerer's own location against
+	// the rippled-to polygon) when the offerer's concierge is the sender.
+	if !isHelperSend && chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
 		latlng := user.GetLatLng(myid)
 		if latlng.Lat != 0 || latlng.Lng != 0 {
 			var blocked int
@@ -461,17 +477,20 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
+	// AI-disclosure flag, written atomically with the insert so it can never be
+	// lost to a failed follow-up UPDATE and is visible to the rate-limit count
+	// immediately. Always set explicitly (never from the request body) so a normal
+	// client cannot forge fromhelper.
+	if isHelperSend {
+		payload.Fromhelper = 1
+	} else {
+		payload.Fromhelper = 0
+	}
 	db.Create(&payload)
 	newid := payload.ID
 
 	if newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
-	}
-
-	if isHelperSend && newid > 0 {
-		// Flag the message as AI-authored for disclosure / moderator review. The
-		// struct field is read-only (gorm:"<-:false"), so write the column directly.
-		db.Exec("UPDATE chat_messages SET fromhelper = 1 WHERE id = ?", newid)
 	}
 
 	// Rippling reply attribution (sysadmin KPI): for an Interested reply, snapshot whether the
@@ -481,8 +500,9 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// (non-rippled-in) group of the post that predates this reply by more than the join grace
 	// (300s). A join made to reply (added ~ now) is therefore excluded and counts as rippling.
 	// Frozen here so a later leave can't erase the signal. INSERT IGNORE = first reply only.
-	// Best-effort: never blocks the reply.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+	// Best-effort: never blocks the reply. Skip helper sends — the sender is the offerer,
+	// not a genuine replier, so attributing a reply to them would corrupt the KPI.
+	if !isHelperSend && chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
 		var wasHome int
 		db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
@@ -979,6 +999,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		Date            *time.Time      `json:"date"`
 		Refmsgid        *uint64         `json:"refmsgid"`
 		Reportreason    *string         `json:"reportreason"`
+		Fromhelper      int             `json:"fromhelper"`
 		Imageid         *uint64         `json:"-"`
 		ImageArchived   int             `json:"-"`
 		Imageuid        string          `json:"-"`
@@ -1000,7 +1021,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	// Base query: messages from mod's own groups.
 	baseQuery := "SELECT DISTINCT cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, " +
-		"cm.refmsgid, cm.reportreason, " +
+		"cm.refmsgid, cm.reportreason, cm.fromhelper, " +
 		"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, " +
 		"COALESCE(ci.externaluid, '') AS imageuid, ci.externalmods AS imagemods, " +
 		"cr.chattype AS room_chattype, cr.user1 AS room_user1, cr.user2 AS room_user2, " +
@@ -1132,6 +1153,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"date":            m.Date,
 			"refmsgid":        m.Refmsgid,
 			"reviewreason":    enrichReviewReason(db, m.Message, m.Reportreason),
+			"fromhelper":      m.Fromhelper,
 			"widerchatreview": m.Widerchatreview > 0,
 			"groupid":         m.Groupid,
 			"groupidfrom":     m.Groupidfrom,
