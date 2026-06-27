@@ -1058,7 +1058,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		recipientExpr := "(CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)"
 		widerQuery := " UNION " +
 			"SELECT DISTINCT cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, " +
-			"cm.refmsgid, cm.reportreason, " +
+			"cm.refmsgid, cm.reportreason, cm.fromhelper, " +
 			"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, " +
 			"COALESCE(ci.externaluid, '') AS imageuid, ci.externalmods AS imagemods, " +
 			"cr.chattype AS room_chattype, cr.user1 AS room_user1, cr.user2 AS room_user2, " +
