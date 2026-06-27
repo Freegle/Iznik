@@ -160,7 +160,7 @@
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
             <div v-if="otherGroups.length > 0" class="small text-muted">
-              Also on:
+              May also be shown to some members in
               <ShowMore
                 :items="otherGroups"
                 :limit="3"
@@ -943,7 +943,7 @@ const contextGroup = computed(() => {
 })
 
 // The origin group: the earliest arrival across the post's groups (shown as "First
-// posted on ..."). Excluded from "Also on" so it isn't listed twice.
+// posted on ..."). Excluded from the "may also be shown" list so it isn't listed twice.
 const originGroupid = computed(() => {
   const groups = message.value?.groups || []
   let earliest = null
@@ -955,8 +955,9 @@ const originGroupid = computed(() => {
   return earliest ? parseInt(earliest.groupid) : null
 })
 
-// Other groups this message is on (for the "Also on" indicator): everything except the
-// group being administered (context) and the origin/first-posted group.
+// Other groups this message is on (for the "may also be shown to some members in"
+// indicator): everything except the group being administered (context) and the
+// origin/first-posted group.
 const otherGroups = computed(() => {
   if (!message.value?.groups) return []
   const gid = currentGroupid.value
