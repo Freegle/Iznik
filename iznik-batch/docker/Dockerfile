@@ -60,8 +60,17 @@ WORKDIR /var/www/html
 # Copy application files
 COPY . .
 
-# Install PHP dependencies including dev dependencies for testing
-RUN composer install --no-interaction --prefer-dist --optimize-autoloader
+# Install PHP dependencies including dev dependencies for testing.
+# Retry composer install: codeload.github.com (composer's `dist` source)
+# intermittently returns HTTP 400 for a random subset of packages. Composer
+# caches what it fetched, so retries only re-download the failures. Mirrors the
+# --fetch-retries convention used for npm installs elsewhere in this repo.
+RUN n=0; until composer install --no-interaction --prefer-dist --optimize-autoloader; do \
+      n=$((n+1)); \
+      [ "$n" -ge 5 ] && { echo "composer install failed after $n attempts" >&2; exit 1; }; \
+      echo "composer install attempt $n hit a transient network error; retrying in 15s..."; \
+      sleep 15; \
+    done
 
 # Create .env file from example for Laravel to find (testing uses phpunit.xml env vars)
 RUN cp .env.example .env || touch .env
