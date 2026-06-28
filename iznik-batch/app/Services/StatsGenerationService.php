@@ -136,6 +136,7 @@ class StatsGenerationService
         $count = (int) DB::table('messages_outcomes')
             ->join('messages_groups', 'messages_outcomes.msgid', '=', 'messages_groups.msgid')
             ->where('messages_groups.groupid', $groupId)
+            ->where('messages_groups.rippled_in', 0) // native posts only — exclude rippling-out copies
             ->where('messages_outcomes.timestamp', '>=', $date)
             ->whereRaw('DATE(messages_outcomes.timestamp) = ?', [$date])
             ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
@@ -147,6 +148,7 @@ class StatsGenerationService
         $count = (int) DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->where('messages_groups.groupid', $groupId)
+            ->where('messages_groups.rippled_in', 0) // native posts only — exclude rippling-out copies
             ->where('messages.arrival', '>=', $date)
             ->whereRaw('DATE(messages.arrival) = ?', [$date])
             ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
@@ -206,7 +208,8 @@ class StatsGenerationService
                 ->join('messages', 'messages_outcomes.msgid', '=', 'messages.id')
                 ->join('messages_groups', function ($j) use ($groupId) {
                     $j->on('messages_groups.msgid', '=', 'messages.id')
-                        ->where('messages_groups.groupid', '=', $groupId);
+                        ->where('messages_groups.groupid', '=', $groupId)
+                        ->where('messages_groups.rippled_in', '=', 0); // native posts only
                 })
                 ->where('messages_outcomes.timestamp', '>=', $date)
                 ->whereRaw('DATE(messages_outcomes.timestamp) = ?', [$date])
@@ -227,6 +230,7 @@ class StatsGenerationService
             ->where('messages.arrival', '<', $windowEnd)
             ->where('messages_groups.groupid', $groupId)
             ->where('messages_groups.collection', 'Approved')
+            ->where('messages_groups.rippled_in', 0) // native posts only — exclude rippling-out copies
             ->whereNotNull('messages.sourceheader')
             ->groupBy('messages.sourceheader')
             ->selectRaw('messages.sourceheader AS source, COUNT(*) AS count')
@@ -241,7 +245,8 @@ class StatsGenerationService
         $types = DB::table('messages')
             ->join('messages_groups', function ($j) {
                 $j->on('messages.id', '=', 'messages_groups.msgid')
-                    ->where('messages_groups.collection', '=', 'Approved');
+                    ->where('messages_groups.collection', '=', 'Approved')
+                    ->where('messages_groups.rippled_in', '=', 0); // native posts only
             })
             ->where('messages.arrival', '>=', $windowStart)
             ->where('messages.arrival', '<', $windowEnd)
@@ -284,6 +289,7 @@ class StatsGenerationService
             ->whereRaw('DATE(chat_messages.date) = ?', [$date])
             ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
             ->where('messages_groups.groupid', $groupId)
+            ->where('messages_groups.rippled_in', 0) // native posts only — exclude rippling-out copies
             ->count();
         $activity += $replies;
         $rows += $this->writeCount($date, $groupId, self::TYPE_REPLIES, $replies, $dryRun);
@@ -300,6 +306,7 @@ class StatsGenerationService
             ->where('messages_outcomes.timestamp', '>=', $date)
             ->whereRaw('DATE(messages_outcomes.timestamp) = ?', [$date])
             ->where('messages_groups.groupid', $groupId)
+            ->where('messages_groups.rippled_in', 0) // native posts only — exclude rippling-out copies
             ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
             ->distinct()
             ->select(['messages_outcomes.msgid', 'items.weight'])
@@ -378,7 +385,7 @@ class StatsGenerationService
                 . '  SELECT DISTINCT mo.msgid, mg.groupid, '
                 . '    COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight '
                 . '  FROM messages_outcomes mo '
-                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid '
+                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 '
                 . '  INNER JOIN messages_items mi ON mi.msgid = mo.msgid '
                 . '  LEFT JOIN items i ON i.id = mi.itemid '
                 . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
