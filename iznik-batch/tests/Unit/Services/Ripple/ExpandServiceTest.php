@@ -1668,9 +1668,27 @@ class ExpandServiceTest extends TestCase
     /** An over-reached post is shrunk to the capped schedule, with updated_at preserved (no re-mail). */
     public function test_recompute_reach_shrinks_over_reached_post_preserving_updated_at(): void
     {
-        config(['freegle.ripple.extent.enabled' => true]);
-        config(['freegle.ripple.extent.target_users' => 50]);
-        $this->fakeRouting(3); // total_freeglers = 90, cumulative 30/60/90
+        // A SINGLE request-aware fake that mimics the routing server: it spreads the
+        // curve over min(pool, target_users) when target_users is sent. (Two separate
+        // Http::fake() calls would NOT work — Laravel accumulates stubs and the first
+        // registered match wins, so a later "capped" stub never overrides the first.)
+        Http::fake(function ($request) {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
+            $total = 90;
+            $cap = (int) ($q['target_users'] ?? 0);
+            $eff = ($cap > 0 && $cap < $total) ? $cap : $total;
+            $poly = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]]];
+            $sched = [];
+            foreach ([1, 2, 3] as $k) {
+                $sched[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => (int) round($eff * $k / 3), 'polygon' => $poly];
+            }
+            return Http::response(['total_freeglers' => $total, 'max_drive_min' => 30, 'schedule' => $sched], 200);
+        });
+
+        // 1) Create reach with the cap OFF -> stored uncapped (pool 90, cumulative 30/60/90).
+        config(['freegle.ripple.extent.enabled' => false]);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // 0.5h -> tick 1
         $this->service()->process(false, 500);
 
@@ -1678,17 +1696,10 @@ class ExpandServiceTest extends TestCase
         // Pin updated_at to a known past value to prove the recompute preserves it.
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => '2020-01-01 00:00:00']);
 
-        // Routing now returns a capped schedule: real pool still 90, but reach tops at 50.
-        $poly = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[
-            [-0.12, 51.52], [-0.16, 51.52], [-0.16, 51.56], [-0.12, 51.56], [-0.12, 51.52],
-        ]]]];
-        $capped = [];
-        foreach ([1 => 20, 2 => 35, 3 => 50] as $k => $cum) {
-            $capped[] = ['tick' => $k, 'drive_min' => 3.0 * $k, 'cumulative_users' => $cum, 'polygon' => $poly];
-        }
-        Http::fake(['*ripple-schedule*' => Http::response([
-            'total_freeglers' => 90, 'max_drive_min' => 9, 'schedule' => $capped,
-        ], 200)]);
+        // 2) Turn the cap ON and recompute -> the fake now returns a capped schedule
+        //    (target_users=50 -> cumulative 17/33/50), so the reach shrinks.
+        config(['freegle.ripple.extent.enabled' => true]);
+        config(['freegle.ripple.extent.target_users' => 50]);
 
         $r = $this->service()->recomputeReach(false, 500);
 
