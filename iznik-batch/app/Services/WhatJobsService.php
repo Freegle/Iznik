@@ -776,6 +776,14 @@ class WhatJobsService
     // ISO 3166-2 two/three-letter subdivision codes used by some feeds
     private const STATE_ISO_CODES = ['eng', 'wls', 'sct', 'nir', 'gb'];
 
+    /**
+     * When true, geocodeCityState skips the jobs-table geocode cache and
+     * re-resolves each tuple from postcode/Photon. Set for a one-time
+     * --refresh-geocode sync to retro-correct tuples mis-cached by the old
+     * inverted-extent bug; off in normal hourly runs (which keep the cache).
+     */
+    public bool $forceRegeocode = false;
+
     public function geocodeCityState(
         string $city,
         string $state,
@@ -825,18 +833,24 @@ class WhatJobsService
             }
         }
 
-        // Check DB cache first (existing geocoded job with same city/state/country)
-        $geo = DB::select(
-            "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
-             WHERE city = ? AND state = ? AND country = ? LIMIT 1",
-            [$city, $state, $country]
-        );
+        // Check DB cache first (existing geocoded job with same city/state/country).
+        // Skipped during a one-time --refresh-geocode run so previously mis-cached
+        // tuples (e.g. the inverted-extent London placements) re-geocode fresh
+        // instead of inheriting their own wrong point. The per-run in-memory cache
+        // above still dedupes, so each tuple is geocoded at most once per run.
+        if (!$this->forceRegeocode) {
+            $geo = DB::select(
+                "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
+                 WHERE city = ? AND state = ? AND country = ? LIMIT 1",
+                [$city, $state, $country]
+            );
 
-        if (count($geo) && $geo[0]->geom) {
-            $bbox = $this->bboxFromWkt($geo[0]->geom);
-            if ($bbox) {
-                $cache[$cacheKey] = $bbox;
-                return $bbox;
+            if (count($geo) && $geo[0]->geom) {
+                $bbox = $this->bboxFromWkt($geo[0]->geom);
+                if ($bbox) {
+                    $cache[$cacheKey] = $bbox;
+                    return $bbox;
+                }
             }
         }
 
