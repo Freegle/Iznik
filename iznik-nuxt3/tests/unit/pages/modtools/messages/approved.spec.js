@@ -555,6 +555,49 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         )
       })
 
+      it('scopes member search to the selected group (avoids all-groups hang)', async () => {
+        // Regression (Discourse 9518/366): omitting groupid made the backend run a
+        // leading-wildcard fullname LIKE across all the mod's groups (20-45s, stuck
+        // spinner). When a group is selected the search must be scoped to it.
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockGroupid.value = 21467
+        mockMemberTerm.value = 'Smith'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalledWith(
+          expect.objectContaining({
+            subaction: 'searchmemb',
+            search: 'Smith',
+            groupid: 21467,
+          })
+        )
+      })
+
+      it('clears the spinner when the fetch fails (no eternal whirling circle)', async () => {
+        // Regression (Discourse 9518/366): a slow/failed member-name search left
+        // busy/loaded stuck, so the spinner and "Please wait..." never cleared.
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockMemberTerm.value = 'Smith'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        mockMessageStore.fetchMessagesMT.mockRejectedValueOnce(
+          new Error('timeout')
+        )
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockState.complete).toHaveBeenCalled()
+        expect(mockBusy.value).toBe(false)
+        expect(wrapper.vm.loaded).toBe(true)
+      })
+
       it('completes when no more messages returned', async () => {
         mockMessages.value = []
         mockShow.value = 0
