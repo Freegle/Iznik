@@ -1163,8 +1163,12 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
+				// rippled_in = 0: an edit belongs to the post's origin group only;
+				// without this the Edit badge counts rippled-in copies that the Edit
+				// list (filtered rippled_in=0) never shows — a ghost count (Discourse
+				// 9839). Matches ListMessagesMT and groupWork's per-group Editreview.
 				db.Raw("SELECT COUNT(DISTINCT me.msgid) FROM messages_edits me "+
-					"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 "+
+					"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 "+
 					"WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
 					activeGroupIDs).Scan(&editreview)
 			}
