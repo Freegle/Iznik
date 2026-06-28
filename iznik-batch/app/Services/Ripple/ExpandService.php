@@ -113,7 +113,7 @@ class ExpandService
      */
     public function recomputeReach(bool $dryRun = false, int $limit = 1000, ?int $onlyMsgid = null): array
     {
-        $stats = ['candidates' => 0, 'shrunk' => 0, 'skipped' => 0];
+        $stats = ['candidates' => 0, 'shrunk' => 0, 'skipped' => 0, 'groups_before' => 0, 'groups_after' => 0];
 
         $target = (int) config('freegle.ripple.extent.target_users', 0);
         if (!config('freegle.ripple.extent.enabled') || $target <= 0) {
@@ -121,8 +121,10 @@ class ExpandService
         }
 
         $q = DB::table('rippling_reach')
-            ->where('status', '!=', 'rejected')        // active reach rows only
-            ->where('total_freeglers', '>', $target);  // only rows that can exceed the cap
+            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'])
+            ->selectRaw('ST_AsText(polygon) AS cur_wkt')   // current footprint, for the crosspost-breadth stat
+            ->where('status', '!=', 'rejected')            // active reach rows only
+            ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
         if ($onlyMsgid !== null) {
             $q->where('msgid', $onlyMsgid);
         }
@@ -155,12 +157,20 @@ class ExpandService
                 continue;
             }
 
+            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+
+            // Cross-post breadth: how many groups the post hits under its CURRENT reach
+            // vs under the CAPPED reach, counted with the SAME selection the live ripple
+            // uses (rippleIntoNewGroups). Accumulated for both dry-run and live so a
+            // dry-run reports the cap's headline impact on crossposting before any write.
+            $stats['groups_before'] += $this->countCrosspostGroups((string) $row->cur_wkt);
+            $stats['groups_after'] += $this->countCrosspostGroups($storeWkt);
+
             if ($dryRun) {
                 $stats['shrunk']++;
                 continue;
             }
 
-            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
             // `updated_at = updated_at` preserves the timestamp (suppresses the ON
             // UPDATE auto-bump) so the reach mailer never reconsiders this row.
             DB::statement(
@@ -185,6 +195,33 @@ class ExpandService
         }
 
         return $stats;
+    }
+
+    /**
+     * Count the Freegle groups a reach polygon would crosspost into — the same
+     * publish/type/onhere/playground/polyindex + ST_Intersects selection
+     * rippleIntoNewGroups uses (minus the per-poster re-ripple guards, which are
+     * post-specific and not part of a breadth measure). Used by recomputeReach to
+     * report how the audience cap narrows cross-posting.
+     */
+    private function countCrosspostGroups(string $wkt): int
+    {
+        if ($wkt === '') {
+            return 0;
+        }
+        $row = DB::selectOne(
+            "SELECT COUNT(*) AS c
+             FROM `groups` g
+             WHERE g.publish = 1
+               AND g.type = 'Freegle'
+               AND g.onhere = 1
+               AND g.nameshort NOT LIKE '%playground%'
+               AND g.polyindex IS NOT NULL
+               AND ST_GeometryType(g.polyindex) <> 'POINT'
+               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))",
+            [$wkt]
+        );
+        return (int) ($row->c ?? 0);
     }
 
     /**

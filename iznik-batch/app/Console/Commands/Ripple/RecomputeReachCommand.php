@@ -49,6 +49,19 @@ class RecomputeReachCommand extends Command
             $r['skipped'],
         ));
 
+        $before = (int) ($r['groups_before'] ?? 0);
+        $after = (int) ($r['groups_after'] ?? 0);
+        $n = max(1, (int) $r['shrunk']);
+        $pct = $before > 0 ? round(100 * ($before - $after) / $before, 1) : 0.0;
+        $this->info(sprintf(
+            'Crossposts across those posts: %d -> %d group-memberships (-%s%%); avg per post %.1f -> %.1f groups.',
+            $before,
+            $after,
+            $pct,
+            $before / $n,
+            $after / $n,
+        ));
+
         return Command::SUCCESS;
     }
 }

@@ -1699,5 +1699,10 @@ class ExpandServiceTest extends TestCase
         $last = end($sched);
         $this->assertSame(50, (int) $last['cumulative_users'], 'stored schedule now caps at 50');
         $this->assertSame('2020-01-01 00:00:00', (string) $after->updated_at, 'updated_at preserved (no reach-mail trigger)');
+
+        // Crosspost-breadth stat is reported and the cap never widens reach.
+        $this->assertArrayHasKey('groups_before', $r);
+        $this->assertArrayHasKey('groups_after', $r);
+        $this->assertGreaterThanOrEqual($r['groups_after'], $r['groups_before']);
     }
 }
