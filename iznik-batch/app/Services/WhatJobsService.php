@@ -1090,7 +1090,16 @@ class WhatJobsService
             // the geocoder name exactly matched (e.g. 'London' → 'London') to return
             // null, preventing state-constrained city searches for those regions.
             if (isset($props['extent'])) {
-                [$swlng, $swlat, $nelng, $nelat] = array_map('floatval', $props['extent']);
+                // Photon extent order is [minLon, maxLat, maxLon, minLat]
+                // (west, NORTH, east, SOUTH). Previously this was destructured as
+                // [swlng, swlat, nelng, nelat], which put the NORTH edge into swlat
+                // and the SOUTH edge into nelat — an upside-down bbox. That made the
+                // area check go negative (so large regions like "East of England"
+                // were treated as a tiny "specific location" and used directly,
+                // skipping the city search) AND placed jobs at the wrong latitude —
+                // e.g. East-of-England jobs landed at ~lat 51.5 (London). Map the
+                // extent to the right corners.
+                [$swlng, $nelat, $nelng, $swlat] = array_map('floatval', $props['extent']);
                 return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
