@@ -387,6 +387,101 @@ async function checkPrDeployed(prNumber: number): Promise<{
   }
 }
 
+// Live-deploy gate for a RAW commit SHA (a direct-to-master fix has no PR).
+// Mirrors checkPrDeployed's per-area logic but sources the touched areas from the
+// commit's own file list: Go gated on /api/version.commit, Laravel on
+// laravel_commit, frontend on the Netlify published deploy. Used by
+// reconcile_direct_master_fixes so we only reply once the fix is actually live.
+const MONITOR_REPO_DIR = '/home/edward/FreegleDockerWSL'
+async function checkCommitLive(sha: string): Promise<{ deployed: boolean; touchesFrontend: boolean; reason: string }> {
+  const statRes = await sh('git', ['show', sha, '--name-only', '--format='], MONITOR_REPO_DIR)
+  const paths = statRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+  const touchesGo = paths.some((p) => p.startsWith('iznik-server-go/'))
+  const touchesPhp = paths.some((p) => p.startsWith('iznik-batch/') || p.startsWith('iznik-server/'))
+  const touchesFrontend = paths.some((p) => p.startsWith('iznik-nuxt3/'))
+
+  let goSha: string | null = null
+  let laravelSha: string | null = null
+  const verRes = await sh('curl', ['-s', '--max-time', '12', 'https://api.ilovefreegle.org/api/version'])
+  if (verRes.code === 0) {
+    try {
+      const v = JSON.parse(verRes.stdout) as { commit?: string; laravel_commit?: string }
+      goSha = v.commit && v.commit !== 'unknown' ? v.commit : null
+      laravelSha = v.laravel_commit && v.laravel_commit !== 'unknown' ? v.laravel_commit : null
+    } catch { /* /api/version returned non-JSON */ }
+  }
+  const parts: string[] = []
+  let backendDeployed = true
+  if (touchesGo) {
+    if (goSha) { const ok = (await githubBehindBy(sha, goSha)) === 0; backendDeployed = backendDeployed && ok; parts.push(`Go ${ok ? 'live' : 'pending'}`) }
+    else { backendDeployed = false; parts.push('Go commit unknown') }
+  }
+  if (touchesPhp) {
+    if (laravelSha) { const ok = (await githubBehindBy(sha, laravelSha)) === 0; backendDeployed = backendDeployed && ok; parts.push(`Laravel ${ok ? 'live' : 'pending'}`) }
+    else { backendDeployed = false; parts.push('Laravel commit unknown') }
+  }
+  let frontendDeployed: boolean | null = null
+  if (touchesFrontend) {
+    frontendDeployed = false
+    try {
+      const n = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+      if (n.code === 0) {
+        const netlify = JSON.parse(n.stdout)
+        const ref = netlify?.published_deploy?.commit_ref ?? null
+        if (ref) { frontendDeployed = (await githubBehindBy(sha, ref)) === 0; parts.push(`Netlify ${frontendDeployed ? 'live' : 'pending'}`) }
+        else parts.push('Netlify no published commit')
+      } else parts.push('Netlify unavailable')
+    } catch { parts.push('Netlify error') }
+  }
+  const checks: boolean[] = []
+  if (touchesGo || touchesPhp) checks.push(backendDeployed)
+  if (touchesFrontend) checks.push(frontendDeployed === true)
+  if (checks.length === 0) parts.push('no deployable files touched')
+  const deployed = checks.length === 0 ? true : checks.every(Boolean)
+  return { deployed, touchesFrontend, reason: parts.join('; ') }
+}
+
+// Match recent master commits to tracked-but-unfixed bugs by EXPLICIT Discourse
+// reference only — a deliberate human-written link in the commit message, never
+// keyword overlap (the bag-of-words checkGitAlreadyFixed was disabled at ~75% FP).
+// Precision rules:
+//   - `topic/post` (or `topic#post`) → match that exact bug (highest precision).
+//   - bare `topic` → match ONLY when the topic has exactly one unfixed bug
+//     (unambiguous); otherwise skipped.
+//   - test/chore/docs/build/ci/revert/merge commits are excluded entirely, so a
+//     non-fix commit that merely contains a 4-digit number can't match.
+// Pure + exported for unit testing.
+export function matchDirectMasterFixCommits(
+  commits: Array<{ sha: string; subj: string; body?: string }>,
+  bugs: Array<{ topic: number; post: number }>,
+): Array<{ topic: number; post: number; sha: string; subj: string }> {
+  const NON_FIX = /^(test|chore|docs|build|ci|revert|merge)\b|\((test|ci|docs)\)/i
+  const tpRefs = new Map<string, { sha: string; subj: string }>()
+  const topicRefs = new Map<number, { sha: string; subj: string }>()
+  for (const c of commits) {
+    if (!c.sha || !c.subj || NON_FIX.test(c.subj)) continue
+    const msg = `${c.subj} ${c.body || ''}`
+    for (const m of msg.matchAll(/\b(9\d{3})\s*[/#]\s*(\d{1,4})\b/g)) {
+      const key = `${m[1]}/${m[2]}`
+      if (!tpRefs.has(key)) tpRefs.set(key, { sha: c.sha, subj: c.subj })
+    }
+    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b/gi)) {
+      const t = Number(m[1])
+      if (!topicRefs.has(t)) topicRefs.set(t, { sha: c.sha, subj: c.subj })
+    }
+  }
+  const unfixedPerTopic = new Map<number, number>()
+  for (const b of bugs) unfixedPerTopic.set(b.topic, (unfixedPerTopic.get(b.topic) ?? 0) + 1)
+
+  const out: Array<{ topic: number; post: number; sha: string; subj: string }> = []
+  for (const b of bugs) {
+    let ref = tpRefs.get(`${b.topic}/${b.post}`)
+    if (!ref && (unfixedPerTopic.get(b.topic) ?? 0) === 1) ref = topicRefs.get(b.topic)
+    if (ref) out.push({ topic: b.topic, post: b.post, sha: ref.sha, subj: ref.subj })
+  }
+  return out
+}
+
 const STOP_WORDS = new Set([
   'that', 'this', 'when', 'with', 'from', 'after', 'before', 'have', 'does',
   'should', 'would', 'could', 'member', 'user', 'page', 'click', 'show', 'list',
@@ -927,6 +1022,83 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
       if (posted.length > 0) await renderAllViews(db)
 
       return { posted, pendingDeploy, alreadyPosted, postFailed }
+    },
+  },
+
+  {
+    name: 'reconcile_direct_master_fixes',
+    description: 'Called automatically during LOAD_STATE. Closes the blind spot where a fix pushed DIRECT TO MASTER (no PR — CI fixes, small fixes) never marks its Discourse bug fixed, so no "please retest" reply is ever sent (sync_pr_states + queue_deployed_reply_drafts only handle bugs with a pr_number). Scans recent origin/master commits for an EXPLICIT Discourse reference — `topic/post` (or `topic` alone when the topic has exactly one unfixed bug) — i.e. a deliberate human-written link in the commit message, NOT keyword overlap (the bag-of-words checkGitAlreadyFixed heuristic was disabled at ~75% false positive). For each matched open/deferred/investigating bug with NO pr_number whose fixing commit is confirmed LIVE (same per-area deploy gate as PRs), marks it fixed and auto-posts the hedged "AI Edward: possible fix applied, please retest" reply (quoted, deduped, app caveat when frontend-touched). Returns {reconciled, posted, pendingDeploy, skipped}.',
+    handler: async () => {
+      const db = getDb()
+      // Only PR-LESS unfixed bugs: PR-tracked ones flow through sync_pr_states /
+      // queue_deployed_reply_drafts already.
+      const bugs = db.prepare(`
+        SELECT topic, post, reporter, excerpt, topic_title
+        FROM discourse_bug
+        WHERE state IN ('open','deferred','investigating') AND pr_number IS NULL
+      `).all() as Array<{ topic: number; post: number; reporter: string | null; excerpt: string | null; topic_title: string | null }>
+      if (bugs.length === 0) return { reconciled: [], posted: [], pendingDeploy: [], skipped: [] }
+
+      // Refresh origin/master (remote-tracking ref only — never touches the work tree),
+      // then read recent non-merge commits.
+      await sh('git', ['fetch', 'origin', 'master', '--quiet'], MONITOR_REPO_DIR)
+      const logRes = await sh('git', ['log', 'origin/master', '--no-merges', '-n', '500', '--format=%H%x1f%s%x1f%b%x1e'], MONITOR_REPO_DIR)
+      if (logRes.code !== 0) return { reconciled: [], posted: [], pendingDeploy: [], skipped: ['git log failed'] }
+
+      // Parse commits and match to bugs by explicit Discourse reference. The
+      // matching (the precision-critical step) is a pure, unit-tested function.
+      const commits = logRes.stdout.split('\x1e').map((rec) => {
+        const [sha, subj, body] = rec.trim().split('\x1f')
+        return { sha, subj, body: body || '' }
+      })
+      const matches = matchDirectMasterFixCommits(commits, bugs)
+      const bugByKey = new Map(bugs.map((b) => [`${b.topic}/${b.post}`, b]))
+
+      const reconciled: string[] = []
+      const posted: number[] = []
+      const pendingDeploy: string[] = []
+      const skipped: string[] = []
+
+      for (const match of matches) {
+        const bug = bugByKey.get(`${match.topic}/${match.post}`)!
+        const live = await checkCommitLive(match.sha)
+        const tag = `${match.topic}/${match.post} ${match.sha.slice(0, 8)}`
+        if (!live.deployed) {
+          pendingDeploy.push(tag)
+          out(`reconcile_direct_master_fixes: ${tag} matched but not live yet (${live.reason})`)
+          continue
+        }
+
+        db.prepare(`UPDATE discourse_bug SET state='fixed', fixed_at=datetime('now'), deployed_at=datetime('now'), reason=? WHERE topic=? AND post=?`)
+          .run(`direct-master ${match.sha.slice(0, 8)}: ${match.subj}`, bug.topic, bug.post)
+        reconciled.push(tag)
+
+        // One reply per reporting post (dedup, same guard as queue_deployed_reply_drafts).
+        const existing = db.prepare(`SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`).get(bug.topic, bug.post)
+        if (existing) { skipped.push(`${tag} (reply already exists)`); continue }
+
+        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        if (!quote) { skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
+        const body = 'AI Edward: possible fix applied, please retest and report back'
+          + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
+        const username = bug.reporter ?? 'there'
+        const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
+        const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
+        if (!postRes.ok) {
+          skipped.push(`${tag} (post failed: ${postRes.error})`)
+          outWarn(`reconcile_direct_master_fixes: post failed for ${tag}: ${postRes.error}`)
+          continue
+        }
+        recordPostedReply(db, {
+          topic: bug.topic, post: bug.post, username, quote, body,
+          prUrl: `https://github.com/${PROD_REPO}/commit/${match.sha}`,
+        })
+        out(`reconcile_direct_master_fixes: marked ${tag} fixed + posted reply`)
+        posted.push(bug.topic)
+      }
+
+      if (posted.length > 0) await renderAllViews(db)
+      return { reconciled, posted, pendingDeploy, skipped }
     },
   },
 
