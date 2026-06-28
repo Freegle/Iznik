@@ -85,6 +85,42 @@ class ReachServiceTest extends TestCase
         $this->assertStringEndsWith('-0.1 51.5))', $result['ticks'][0]['wkt']);
     }
 
+    public function test_schedule_omits_target_users_when_extent_disabled(): void
+    {
+        // Default / dark: the audience cap must not touch the request at all,
+        // so the routing schedule is identical to the pre-feature behaviour.
+        config(['freegle.ripple.extent.enabled' => false]);
+        config(['freegle.ripple.extent.target_users' => 4000]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => !str_contains($request->url(), 'target_users'));
+    }
+
+    public function test_schedule_sends_target_users_when_extent_enabled(): void
+    {
+        config(['freegle.ripple.extent.enabled' => true]);
+        config(['freegle.ripple.extent.target_users' => 4000]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'target_users=4000'));
+    }
+
+    public function test_schedule_omits_target_users_when_enabled_but_zero(): void
+    {
+        // enabled but target 0 = no cap configured -> still nothing sent.
+        config(['freegle.ripple.extent.enabled' => true]);
+        config(['freegle.ripple.extent.target_users' => 0]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => !str_contains($request->url(), 'target_users'));
+    }
+
     public function test_compute_schedule_returns_null_on_empty_schedule(): void
     {
         $s = $this->service();
