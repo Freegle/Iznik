@@ -351,4 +351,158 @@ class StatsGenerationServiceTest extends TestCase
 
         $this->assertEquals($rowsBefore, $rowsAfter, 'dry-run must not write');
     }
+
+    // ── Rippling-out: rippled-in copies must not inflate a group's stats ──────
+    //
+    // Rippling inserts an extra messages_groups row (rippled_in=1, collection
+    // 'Approved') for each group a post is spread into. Those copies are not
+    // native activity for the receiving group, and when the dashboard SUMs the
+    // per-group rows for a systemwide figure one post is otherwise counted once
+    // per group it reached (avg fan-out ~7). Every count/breakdown that joins
+    // messages_groups must therefore exclude rippled_in=1 rows.
+
+    /**
+     * Add a rippled-in messages_groups copy of an existing message to a group.
+     */
+    private function rippleMessageInto(int $msgId, int $groupId, string $arrival): void
+    {
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $groupId,
+            'collection' => Membership::COLLECTION_APPROVED,
+            'arrival' => $arrival,
+            'rippled_in' => 1,
+        ]);
+    }
+
+    public function test_approved_message_count_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        // One native post on B (counts) plus a post native on A rippled into B (must not count).
+        $this->createTestMessage($user, $groupB, ['arrival' => $this->date.' 09:00:00']);
+        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 10:00:00']);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 10:00:00');
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertStat($groupB->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 1);
+    }
+
+    public function test_outcomes_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $native = $this->createTestMessage($user, $groupB);
+        $rippled = $this->createTestMessage($user, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        DB::table('messages_outcomes')->insert([
+            ['msgid' => $native->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 10:00:00'],
+            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 11:00:00'],
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertStat($groupB->id, StatsGenerationService::TYPE_OUTCOMES, 1);
+    }
+
+    public function test_replies_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $u1 = $this->createTestUser();
+        $u2 = $this->createTestUser();
+
+        $native = $this->createTestMessage($u1, $groupB);
+        $rippled = $this->createTestMessage($u1, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        $room = $this->createTestChatRoom($u1, $u2);
+        $this->createTestChatMessage($room, $u2, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $native->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+        $this->createTestChatMessage($room, $u2, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $rippled->id,
+            'date' => $this->date.' 11:00:00',
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertStat($groupB->id, StatsGenerationService::TYPE_REPLIES, 1);
+    }
+
+    public function test_feedback_happiness_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        // Only a rippled-in copy with happy feedback — B has no native feedback.
+        $rippled = $this->createTestMessage($user, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+        DB::table('messages_outcomes')->insert([
+            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'happiness' => 'Happy', 'timestamp' => $this->date.' 10:00:00'],
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertNoStat($groupB->id, StatsGenerationService::TYPE_FEEDBACK_HAPPY);
+    }
+
+    public function test_weight_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        // A taken item native on A, rippled into B. Its weight must not be attributed to B.
+        $rippled = $this->createTestMessage($user, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+        $itemId = DB::table('items')->insertGetId(['name' => 'TestItem_'.uniqid(), 'weight' => 25.0, 'popularity' => 1.0]);
+        DB::table('messages_items')->insert(['msgid' => $rippled->id, 'itemid' => $itemId]);
+        DB::table('messages_outcomes')->insert([
+            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 10:00:00'],
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertNoStat($groupB->id, StatsGenerationService::TYPE_WEIGHT);
+    }
+
+    public function test_message_breakdown_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 09:00:00', 'type' => Message::TYPE_OFFER]);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        $this->service->generate($groupB->id, $this->date);
+
+        // The rippled-in copy must not appear in B's type histogram.
+        $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_MESSAGE_BREAKDOWN, []);
+    }
+
+    public function test_post_method_breakdown_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 09:00:00', 'sourceheader' => 'Web']);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_POST_METHOD_BREAKDOWN, []);
+    }
 }
