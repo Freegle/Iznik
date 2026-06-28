@@ -309,49 +309,125 @@ class ExpandService
             ->pluck('groupid');
 
         foreach ($groupids as $groupid) {
-            $n = DB::affectingStatement(
-                'UPDATE messages_groups SET deleted = 1
-                 WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-                [$msgid, $groupid]
+            $this->retractRippledCopyInGroup(
+                $msgid,
+                (int) $groupid,
+                $posterId,
+                'Rippling: removed on origin removal',
+                'pulled_on_removal',
+                $stats
             );
-            if ($n < 1) {
-                continue;
-            }
-            $stats['pulled_on_removal']++;
-            DB::table('logs')->insert([
-                'timestamp' => now(),
-                'type' => 'Message',
-                'subtype' => 'Deleted',
-                'user' => $posterId,
-                'byuser' => null,
-                'groupid' => $groupid,
-                'msgid' => $msgid,
-                'text' => 'Rippling: removed on origin removal',
-            ]);
+        }
+    }
 
-            if (!$posterId) {
-                continue;
+    /**
+     * Reach-scoped retraction (cap-backlog cleanup): for an ACTIVE rippled post,
+     * soft-delete its rippled-in copies in the groups whose polygon no longer
+     * intersects the post's (capped) reach polygon, while leaving the post live on
+     * the origin group and every still-reached group. The underlying message row is
+     * untouched, so existing chats/replies (keyed on msgid) keep working and still
+     * link to the open post — removing a copy only takes it out of that group's
+     * browse. Skips posts with a terminal outcome (taken/promised/received): those
+     * are complete and must not be disturbed. Galera-safe (one row per statement).
+     *
+     * @return int groups retracted for this post (also accumulates into $stats)
+     */
+    public function retractOutOfReachCopies(int $msgid, bool $dryRun, array &$stats): int
+    {
+        if ($this->hasTerminalOutcome($msgid)) {
+            $stats['skipped_terminal'] = ($stats['skipped_terminal'] ?? 0) + 1;
+            return 0;
+        }
+
+        // Rippled-in groups whose polyindex no longer intersects the post's current
+        // (capped) reach polygon — i.e. groups we would NOT ripple into now.
+        $rows = DB::select(
+            "SELECT g.id
+               FROM messages_groups mg
+               JOIN `groups` g ON g.id = mg.groupid
+               JOIN rippling_reach rr ON rr.msgid = mg.msgid
+              WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
+                AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
+                AND NOT ST_Intersects(g.polyindex, rr.polygon)",
+            [$msgid]
+        );
+
+        if ($dryRun) {
+            $n = count($rows);
+            $stats['would_retract_groups'] = ($stats['would_retract_groups'] ?? 0) + $n;
+            return $n;
+        }
+
+        $posterId = DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $retracted = 0;
+        foreach ($rows as $r) {
+            $before = $stats['pulled_out_of_reach'] ?? 0;
+            $this->retractRippledCopyInGroup(
+                $msgid,
+                (int) $r->id,
+                $posterId,
+                'Rippling: out of capped reach',
+                'pulled_out_of_reach',
+                $stats
+            );
+            if (($stats['pulled_out_of_reach'] ?? 0) > $before) {
+                $retracted++;
             }
-            // Only remove the membership when this poster has no OTHER live post on the group
-            // (the copy we just pulled is now deleted=1, so it is excluded by deleted=0).
-            $hasOtherPost = DB::table('messages_groups as mg')
-                ->join('messages as m', 'm.id', '=', 'mg.msgid')
-                ->where('m.fromuser', $posterId)
-                ->where('mg.groupid', $groupid)
-                ->where('mg.deleted', 0)
-                ->exists();
-            if ($hasOtherPost) {
-                continue;
-            }
-            // Only a ripple-join (rippled=1) is removed; an organic membership is never touched.
-            $removed = DB::table('memberships')
-                ->where('userid', $posterId)
-                ->where('groupid', $groupid)
-                ->where('rippled', 1)
-                ->delete();
-            if ($removed > 0) {
-                $stats['memberships_removed']++;
-            }
+        }
+        return $retracted;
+    }
+
+    /**
+     * Soft-delete one rippled-in copy and, when the poster has no OTHER live post on
+     * the group, remove the ripple-join membership (rippled=1; an organic membership
+     * is never touched). Writes a Message/Deleted log but deliberately NO Group/Left
+     * log, so a later ripple can re-add the membership. Shared by the origin-removal
+     * and out-of-reach retraction paths. Galera-safe: one row per statement.
+     */
+    private function retractRippledCopyInGroup(int $msgid, int $groupid, $posterId, string $reason, string $statKey, array &$stats): void
+    {
+        $n = DB::affectingStatement(
+            'UPDATE messages_groups SET deleted = 1
+             WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
+            [$msgid, $groupid]
+        );
+        if ($n < 1) {
+            return;
+        }
+        $stats[$statKey] = ($stats[$statKey] ?? 0) + 1;
+        DB::table('logs')->insert([
+            'timestamp' => now(),
+            'type' => 'Message',
+            'subtype' => 'Deleted',
+            'user' => $posterId,
+            'byuser' => null,
+            'groupid' => $groupid,
+            'msgid' => $msgid,
+            'text' => $reason,
+        ]);
+
+        if (!$posterId) {
+            return;
+        }
+        // Only remove the membership when this poster has no OTHER live post on the group
+        // (the copy we just pulled is now deleted=1, so it is excluded by deleted=0).
+        $hasOtherPost = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->where('m.fromuser', $posterId)
+            ->where('mg.groupid', $groupid)
+            ->where('mg.deleted', 0)
+            ->exists();
+        if ($hasOtherPost) {
+            return;
+        }
+        // Only a ripple-join (rippled=1) is removed; an organic membership is never touched.
+        $removed = DB::table('memberships')
+            ->where('userid', $posterId)
+            ->where('groupid', $groupid)
+            ->where('rippled', 1)
+            ->delete();
+        if ($removed > 0) {
+            $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
         }
     }
 
