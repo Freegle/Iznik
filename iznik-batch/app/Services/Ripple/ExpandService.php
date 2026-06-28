@@ -92,6 +92,102 @@ class ExpandService
     }
 
     /**
+     * Backfill: shrink the stored reach of EXISTING active posts whose reach was
+     * computed before the audience-budget cap (config freegle.ripple.extent) was
+     * turned on, so already-over-reached posts stop covering more than
+     * ~target_users members for the rest of their life.
+     *
+     * Pure reach-geometry shrink: it re-fetches the now-capped schedule for each
+     * post and overwrites the stored polygon + schedule at the post's CURRENT
+     * tick. It deliberately does NOT ripple into/out of groups, touch
+     * memberships, or bump updated_at — so it generates no mail (sendReachDigests
+     * only scans recently-updated rows, and the rippling_reach_notified ledger
+     * blocks re-notification regardless) and never retracts copies already
+     * delivered to far groups (we shrink future reach, we don't claw back).
+     *
+     * No-op unless the cap is active. Only rows whose pool (total_freeglers)
+     * exceeds the cap are candidates — nothing else can be over it. Galera-safe:
+     * one row per UPDATE.
+     *
+     * @return array{candidates:int, shrunk:int, skipped:int}
+     */
+    public function recomputeReach(bool $dryRun = false, int $limit = 1000, ?int $onlyMsgid = null): array
+    {
+        $stats = ['candidates' => 0, 'shrunk' => 0, 'skipped' => 0];
+
+        $target = (int) config('freegle.ripple.extent.target_users', 0);
+        if (!config('freegle.ripple.extent.enabled') || $target <= 0) {
+            return $stats; // cap not active — there is nothing smaller to shrink to
+        }
+
+        $q = DB::table('rippling_reach')
+            ->where('status', '!=', 'rejected')        // active reach rows only
+            ->where('total_freeglers', '>', $target);  // only rows that can exceed the cap
+        if ($onlyMsgid !== null) {
+            $q->where('msgid', $onlyMsgid);
+        }
+        $rows = $q->orderBy('msgid')->limit($limit)->get();
+
+        foreach ($rows as $row) {
+            $stats['candidates']++;
+
+            // Re-fetch the schedule from the stored (already-blurred) origin. With
+            // the cap now configured ReachService sends target_users, so this comes
+            // back capped to the nearest ~target_users freeglers.
+            $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+            if ($schedule === null || empty($schedule['ticks'])) {
+                $stats['skipped']++;
+                continue; // routing unreachable this run — safe to retry later
+            }
+
+            $ticks = $schedule['ticks'];
+            $newMax = (int) ($ticks[count($ticks) - 1]['cumulative_users'] ?? 0);
+            // Only proceed if the recomputed reach really is smaller than the pool
+            // (i.e. the cap actually bound for this origin).
+            if ($newMax <= 0 || $newMax >= (int) $row->total_freeglers) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            $entry = $this->entryForTick($ticks, (int) $row->tick);
+            if ($entry === null || empty($entry['wkt'])) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            if ($dryRun) {
+                $stats['shrunk']++;
+                continue;
+            }
+
+            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+            // `updated_at = updated_at` preserves the timestamp (suppresses the ON
+            // UPDATE auto-bump) so the reach mailer never reconsiders this row.
+            DB::statement(
+                'UPDATE rippling_reach
+                    SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                        schedule = ?, total_freeglers = ?, max_drive_min = ?,
+                        updated_at = updated_at
+                  WHERE msgid = ?',
+                [
+                    $storeWkt,
+                    json_encode($ticks),
+                    (int) $schedule['total_freeglers'],
+                    $schedule['max_drive_min'],
+                    $row->msgid,
+                ]
+            );
+            // Preserve any secondary-group "out of area" rejection clips.
+            $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+
+            $stats['shrunk']++;
+            $this->logEvent((int) $row->msgid, 'reach_shrunk', (int) $row->tick, $entry);
+        }
+
+        return $stats;
+    }
+
+    /**
      * Stop-and-retract for every post that has left messages_spatial — rejected/removed on its
      * origin group, withdrawn, expired or deleted (Taken/Received stay in messages_spatial and
      * are intentionally excluded). For each such post we drop its rippling_reach row (which both

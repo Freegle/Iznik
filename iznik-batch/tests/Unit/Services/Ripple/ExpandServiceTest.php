@@ -1645,4 +1645,59 @@ class ExpandServiceTest extends TestCase
         );
         $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
     }
+
+    /** recomputeReach is a no-op unless the audience cap is actually enabled. */
+    public function test_recompute_reach_is_noop_when_cap_disabled(): void
+    {
+        config(['freegle.ripple.extent.enabled' => false]);
+        config(['freegle.ripple.extent.target_users' => 50]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->service()->process(false, 500); // creates reach (total_freeglers = 90)
+
+        $r = $this->service()->recomputeReach(false, 500);
+
+        $this->assertSame(0, $r['candidates'], 'cap disabled -> nothing considered');
+        $this->assertSame(
+            90,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('total_freeglers'),
+            'reach left untouched'
+        );
+    }
+
+    /** An over-reached post is shrunk to the capped schedule, with updated_at preserved (no re-mail). */
+    public function test_recompute_reach_shrinks_over_reached_post_preserving_updated_at(): void
+    {
+        config(['freegle.ripple.extent.enabled' => true]);
+        config(['freegle.ripple.extent.target_users' => 50]);
+        $this->fakeRouting(3); // total_freeglers = 90, cumulative 30/60/90
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // 0.5h -> tick 1
+        $this->service()->process(false, 500);
+
+        $this->assertSame(90, (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('total_freeglers'));
+        // Pin updated_at to a known past value to prove the recompute preserves it.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => '2020-01-01 00:00:00']);
+
+        // Routing now returns a capped schedule: real pool still 90, but reach tops at 50.
+        $poly = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+            [-0.12, 51.52], [-0.16, 51.52], [-0.16, 51.56], [-0.12, 51.56], [-0.12, 51.52],
+        ]]]];
+        $capped = [];
+        foreach ([1 => 20, 2 => 35, 3 => 50] as $k => $cum) {
+            $capped[] = ['tick' => $k, 'drive_min' => 3.0 * $k, 'cumulative_users' => $cum, 'polygon' => $poly];
+        }
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 90, 'max_drive_min' => 9, 'schedule' => $capped,
+        ], 200)]);
+
+        $r = $this->service()->recomputeReach(false, 500);
+
+        $this->assertSame(1, $r['candidates']);
+        $this->assertSame(1, $r['shrunk']);
+        $after = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $sched = json_decode($after->schedule, true);
+        $last = end($sched);
+        $this->assertSame(50, (int) $last['cumulative_users'], 'stored schedule now caps at 50');
+        $this->assertSame('2020-01-01 00:00:00', (string) $after->updated_at, 'updated_at preserved (no reach-mail trigger)');
+    }
 }
