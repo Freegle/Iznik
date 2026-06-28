@@ -1927,6 +1927,12 @@ export async function setupRipplingExplorer({
   // ---------------------------------------------------------------------------
   const RIPPLE_FRAMES = 30 // 30 keyframes = 1 per drive-minute
   const RIPPLE_STEP_MINS = 1
+  // Audience-budget cap mirrored from batch config freegle.ripple.extent.target_users
+  // (env RIPPLE_EXTENT_TARGET_USERS). Passed to /v1/ripple-schedule so the explorer's
+  // reach preview matches the CAPPED reach a post actually gets, instead of drawing the
+  // uncapped 30-min isochrone (which over-states reached groups in dense areas). Keep in
+  // sync with the batch env; 0 = show uncapped.
+  const RIPPLE_TARGET_USERS = 4000
   const N_ANGLES = 360 // resolution of the radial parameterisation
 
   let rippleFrames = []
@@ -2134,7 +2140,9 @@ export async function setupRipplingExplorer({
         6
       )}&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${
         RIPPLE_FRAMES * RIPPLE_STEP_MINS
-      }&curve=${curveShape}`
+      }&curve=${curveShape}${
+        RIPPLE_TARGET_USERS > 0 ? `&target_users=${RIPPLE_TARGET_USERS}` : ''
+      }`
     )
     try {
       return await fetch(scheduleURL).then((r) => r.json())
