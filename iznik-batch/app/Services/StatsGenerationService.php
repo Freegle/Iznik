@@ -69,11 +69,16 @@ class StatsGenerationService
     }
 
     /**
-     * Build the per-day shared values: average item weight + search counts
-     * keyed by groupid. Both are functions of the date alone, so we compute
-     * them once and pass them into each per-group `generate()` call.
+     * Build the per-day shared values, all functions of the date alone, so we
+     * compute them once and pass them into each per-group `generate()` call:
+     * average item weight, search counts, and the 30-day-window
+     * sourceheader/message-type breakdowns and active-user counts. The last
+     * three were previously computed once PER GROUP inside generate(), so each
+     * of the ~500 groups re-scanned the same site-wide window; hoisting them
+     * here makes it one windowed scan per date (~500× fewer), with identical
+     * per-group results and no new index.
      *
-     * @return array{avgWeight: float, searchCounts: array<int,int>}
+     * @return array{avgWeight: float, searchCounts: array<int,int>, postMethod: array<int,array<string,int>>, messageTypes: array<int,array<string,int>>, activeUsers: array<int,int>}
      */
     private function buildDailyContext(string $date): array
     {
@@ -105,9 +110,67 @@ class StatsGenerationService
                 }
             });
 
+        // 30-day rolling window shared by the breakdown + active-user stats.
+        $windowStart = date('Y-m-d', strtotime('30 days ago', strtotime($date)));
+        $windowEnd = date('Y-m-d', strtotime('tomorrow', strtotime($date)));
+
+        // POST_METHOD_BREAKDOWN: sourceheader histogram for approved native
+        // messages in the window, bucketed by group in one scan.
+        $postMethod = [];
+        foreach (
+            DB::table('messages')
+                ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+                ->where('messages.arrival', '>=', $windowStart)
+                ->where('messages.arrival', '<', $windowEnd)
+                ->where('messages_groups.collection', 'Approved')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->whereNotNull('messages.sourceheader')
+                ->groupBy('messages_groups.groupid', 'messages.sourceheader')
+                ->selectRaw('messages_groups.groupid AS gid, messages.sourceheader AS source, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $postMethod[(int) $row->gid][$row->source] = (int) $row->cnt;
+        }
+
+        // MESSAGE_BREAKDOWN: message-type histogram for approved native
+        // messages in the window, bucketed by group in one scan.
+        $messageTypes = [];
+        foreach (
+            DB::table('messages')
+                ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+                ->where('messages.arrival', '>=', $windowStart)
+                ->where('messages.arrival', '<', $windowEnd)
+                ->where('messages_groups.collection', 'Approved')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->whereNotNull('messages.type')
+                ->groupBy('messages_groups.groupid', 'messages.type')
+                ->selectRaw('messages_groups.groupid AS gid, messages.type AS type, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $messageTypes[(int) $row->gid][$row->type] = (int) $row->cnt;
+        }
+
+        // ACTIVE_USERS: distinct members active in the window, per group, in
+        // one scan grouped by groupid.
+        $activeUsers = [];
+        foreach (
+            DB::table('users_active')
+                ->join('memberships', 'memberships.userid', '=', 'users_active.userid')
+                ->where('users_active.timestamp', '>=', $windowStart)
+                ->where('users_active.timestamp', '<', $windowEnd)
+                ->groupBy('memberships.groupid')
+                ->selectRaw('memberships.groupid AS gid, COUNT(DISTINCT users_active.userid) AS cnt')
+                ->get() as $row
+        ) {
+            $activeUsers[(int) $row->gid] = (int) $row->cnt;
+        }
+
         return [
             'avgWeight' => $avg,
             'searchCounts' => $searchCounts,
+            'postMethod' => $postMethod,
+            'messageTypes' => $messageTypes,
+            'activeUsers' => $activeUsers,
         ];
     }
 
@@ -219,47 +282,13 @@ class StatsGenerationService
             $rows += $this->writeCount($date, $groupId, $happiness, $count, $dryRun);
         }
 
-        // 30-day rolling window used by POST_METHOD_BREAKDOWN and MESSAGE_BREAKDOWN.
-        $windowStart = date('Y-m-d', strtotime('30 days ago', strtotime($date)));
-        $windowEnd = date('Y-m-d', strtotime('tomorrow', strtotime($date)));
-
-        // POST_METHOD_BREAKDOWN: sourceheader histogram for approved messages in the 30-day window.
-        $sources = DB::table('messages')
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages.arrival', '>=', $windowStart)
-            ->where('messages.arrival', '<', $windowEnd)
-            ->where('messages_groups.groupid', $groupId)
-            ->where('messages_groups.collection', 'Approved')
-            ->where('messages_groups.rippled_in', 0) // native posts only — exclude rippling-out copies
-            ->whereNotNull('messages.sourceheader')
-            ->groupBy('messages.sourceheader')
-            ->selectRaw('messages.sourceheader AS source, COUNT(*) AS count')
-            ->get();
-        $srcMap = [];
-        foreach ($sources as $row) {
-            $srcMap[$row->source] = (int) $row->count;
-        }
-        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_POST_METHOD_BREAKDOWN, $srcMap, $dryRun);
-
-        // MESSAGE_BREAKDOWN: message-type histogram for approved messages in the 30-day window.
-        $types = DB::table('messages')
-            ->join('messages_groups', function ($j) {
-                $j->on('messages.id', '=', 'messages_groups.msgid')
-                    ->where('messages_groups.collection', '=', 'Approved')
-                    ->where('messages_groups.rippled_in', '=', 0); // native posts only
-            })
-            ->where('messages.arrival', '>=', $windowStart)
-            ->where('messages.arrival', '<', $windowEnd)
-            ->where('messages_groups.groupid', $groupId)
-            ->whereNotNull('messages.type')
-            ->groupBy('messages.type')
-            ->selectRaw('messages.type AS type, COUNT(*) AS count')
-            ->get();
-        $typeMap = [];
-        foreach ($types as $row) {
-            $typeMap[$row->type] = (int) $row->count;
-        }
-        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_MESSAGE_BREAKDOWN, $typeMap, $dryRun);
+        // POST_METHOD_BREAKDOWN + MESSAGE_BREAKDOWN: sourceheader / message-type
+        // histograms for approved native messages in the 30-day window. These
+        // are precomputed once per date in buildDailyContext() (one windowed
+        // scan bucketed by groupid) instead of re-scanning the whole window
+        // once per group — same results, ~500× fewer scans, no new index.
+        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_POST_METHOD_BREAKDOWN, $context['postMethod'][$groupId] ?? [], $dryRun);
+        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_MESSAGE_BREAKDOWN, $context['messageTypes'][$groupId] ?? [], $dryRun);
 
         // OUR_POSTING_BREAKDOWN: per-member ourPostingStatus histogram (point-in-time, not date-windowed).
         $statuses = DB::table('memberships')
@@ -317,14 +346,10 @@ class StatsGenerationService
         }
         $rows += $this->writeCount($date, $groupId, self::TYPE_WEIGHT, (int) round($weight), $dryRun);
 
-        // ACTIVE_USERS: distinct members of this group active in the 30 days ending tomorrow-of-$date.
-        $active = (int) DB::table('users_active')
-            ->join('memberships', 'memberships.userid', '=', 'users_active.userid')
-            ->where('users_active.timestamp', '>=', $windowStart)
-            ->where('users_active.timestamp', '<', $windowEnd)
-            ->where('memberships.groupid', $groupId)
-            ->distinct()
-            ->count('users_active.userid');
+        // ACTIVE_USERS: distinct members of this group active in the 30 days
+        // ending tomorrow-of-$date. Precomputed once per date in
+        // buildDailyContext() (one windowed scan grouped by groupid).
+        $active = $context['activeUsers'][$groupId] ?? 0;
         $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVE_USERS, $active, $dryRun);
 
         // ACTIVITY: rolled-up "things happened today" — approved-messages + replies (V1 formula).
