@@ -21,8 +21,10 @@ func TestBuildMTUnionAllMsgIDQuery_SingleGroup(t *testing.T) {
 
 	sql, args := buildMTUnionAllMsgIDQuery(testBranchSQL, branchArgs, groupIDs, limit)
 
-	// Outer structure must wrap a UNION ALL in a subquery.
-	assert.Contains(t, sql, "SELECT msgid FROM (")
+	// Outer structure must wrap a UNION ALL in a subquery, with the
+	// MAX_EXECUTION_TIME cap that stops a runaway member-name search hanging.
+	assert.Contains(t, sql, "MAX_EXECUTION_TIME(20000)")
+	assert.Contains(t, sql, "msgid FROM (")
 	assert.Contains(t, sql, "GROUP BY msgid")
 	assert.Contains(t, sql, "ORDER BY arrival DESC, msgid DESC LIMIT ?")
 
@@ -141,8 +143,8 @@ func TestBuildMTUnionAllMsgIDQuery_OuterQueryStructure(t *testing.T) {
 	branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg WHERE mg.groupid = %GID% ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 	sql, _ := buildMTUnionAllMsgIDQuery(branchSQL, branchArgs, groupIDs, limit)
 
-	// The outermost query selects msgid from the inner.
-	assert.True(t, strings.HasPrefix(sql, "SELECT msgid FROM ("))
+	// The outermost query selects msgid from the inner (with the execution-time cap).
+	assert.True(t, strings.HasPrefix(sql, "SELECT /*+ MAX_EXECUTION_TIME(20000) */ msgid FROM ("))
 	// Final clause: ORDER BY arrival, then limit placeholder.
 	assert.True(t, strings.HasSuffix(strings.TrimSpace(sql), "LIMIT ?"))
 }

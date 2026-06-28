@@ -194,8 +194,13 @@ onMounted(() => {
     // Clear existing messages and reset state for fresh search.
     // Without this, the store may have old messages that get shown
     // instead of searching for the specific message from the URL.
+    // listingIds must be reset too (not just the store) — it is the filter the
+    // listing renders through, so a stale entry survives a store-only clear and
+    // paints the wrong post (Discourse 9518/366). Matches searchedMessage().
     show.value = 0
     context.value = null
+    modMessages.listingIds.value = new Set()
+    modMessages.listingIdOrder.value = []
     messageStore.clear()
     bump.value++
   }
@@ -247,6 +252,11 @@ function searchedMember(term) {
   messageTerm.value = null
   memberTerm.value = term?.trim()
   context.value = null
+  // Reset the listing filter too, like searchedMessage(): otherwise a previous
+  // search's ids survive in listingIds and get painted alongside/over the member
+  // results (Discourse 9518/366).
+  modMessages.listingIds.value = new Set()
+  modMessages.listingIdOrder.value = []
   messageStore.clear()
 
   // Need to rerender the infinite scroll
@@ -299,13 +309,16 @@ async function loadMore($state) {
       }
     } else if (memberTerm.value) {
       params = {
-        // TODO: Need to keep fetching as first found batch may not contain
         subaction: 'searchmemb',
         search: memberTerm.value,
-        // groupid: groupid.value // TODO: First fetch without this and then second with, with context
       }
-      if (context.value) {
-        // To get it to work for this case, only set groupid if already got a context!
+      // Scope to the selected group when one is chosen. Omitting groupid makes the
+      // backend run the name search across ALL the mod's groups via a leading-wildcard
+      // fullname LIKE joined per group, which for a mod of many groups takes 20-45s and
+      // leaves the spinner stuck ("whirling circle of doom", Discourse 9518/366). Scoped
+      // to a single group it is ~0.2s. When "All" is selected (groupid=0) the cross-group
+      // search is intentional and is bounded by the error handling below.
+      if (groupid.value) {
         params.groupid = groupid.value
       }
     } else {
@@ -320,7 +333,35 @@ async function loadMore($state) {
     params.context = context.value
     params.limit = messages.value.length + distance.value
 
-    const fetchedIds = await messageStore.fetchMessagesMT(params)
+    // Snapshot the search generation. Every search/reset (searchedMessage,
+    // searchedMember, the vector-search toggle, a term arriving via the URL)
+    // increments bump. If bump changes while this request is in flight, the user
+    // has moved on and this response is stale.
+    const gen = bump.value
+    let fetchedIds
+    try {
+      fetchedIds = await messageStore.fetchMessagesMT(params)
+    } catch (e) {
+      // A slow or failed fetch (notably an all-groups member-name search the
+      // backend can take 20s+ on) must not leave the infinite-scroll spinner and
+      // "Please wait..." banner up forever (Discourse 9518/366). Surface
+      // "Nothing found" instead of an eternal "whirling circle of doom".
+      console.log('fetchMessagesMT failed', e?.message)
+      $state.complete()
+      busy.value = false
+      loaded.value = true
+      return
+    }
+    if (bump.value !== gen) {
+      // A newer search superseded this request while it was in flight — e.g. a
+      // slow all-groups member search landing ~90s late, or a prior deep-scroll
+      // page load. Discard its ids so the stale response does not re-populate
+      // listingIds and paint an unrelated post (the "wrong post shown" symptom,
+      // Discourse 9518/366) over the current search result.
+      busy.value = false
+      loaded.value = true
+      return
+    }
     if (fetchedIds) {
       fetchedIds.forEach((id) => modMessages.listingIds.value.add(id))
     }

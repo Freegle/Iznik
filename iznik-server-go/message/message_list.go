@@ -350,7 +350,15 @@ func buildMTUnionAllMsgIDQuery(branchSQL string, branchArgs []interface{}, group
 	// The outer GROUP BY deduplicates messages that appear in multiple queried
 	// groups (e.g. a cross-posted Pending message).  MAX(arrival) picks the
 	// most-recent arrival across all branches for ordering.
-	sb.WriteString("SELECT msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
+	//
+	// MAX_EXECUTION_TIME caps the whole statement at 20s. The member-name search
+	// fallback (leading-wildcard fullname LIKE joined per group) can run 90s+ for
+	// a moderator of many groups when no groupid scopes it (Discourse 9518/366) —
+	// long enough to exceed the proxy read timeout, so the client never gets a
+	// response and the spinner hangs forever. The cap guarantees the query returns
+	// (empty, surfaced as "Nothing found") instead of hanging. Well-scoped queries
+	// run in well under a second, so the cap never bites them.
+	sb.WriteString("SELECT /*+ MAX_EXECUTION_TIME(20000) */ msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
 
 	args := make([]interface{}, 0, (len(branchArgs)+1)*len(groupIDs)+1)
 	for i, gid := range groupIDs {
