@@ -49,7 +49,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 $bbox = ($this->geocodeLookup)($addr);
                 if ($bbox === null) {
@@ -158,7 +159,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 $this->log[] = $addr;
                 if ($addr === 'Leeds') {
@@ -231,7 +233,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 if ($addr === 'Cornwall') {
                     // State bbox — Cornwall
@@ -267,7 +270,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 return null; // Photon knows nothing
             }
@@ -297,7 +301,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 if ($addr === 'Leeds') {
                     return [53.8, -1.6, 53.9, -1.5, WhatJobsService::boxPoly(53.8, -1.6, 53.9, -1.5)];
@@ -337,7 +342,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 // Simulate the bad behaviour: "Conington" matches a London point.
                 if (stripos($addr, 'Conington') !== false) {
@@ -389,7 +395,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 if (stripos($addr, 'Conington') !== false) {
                     return [51.510, -0.095, 51.520, -0.085,
@@ -485,7 +492,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 // Huge bbox (e.g. entire England)
                 return [-7.5, 49.9, 1.7, 58.6, WhatJobsService::boxPoly(-7.5, 49.9, 1.7, 58.6)];
