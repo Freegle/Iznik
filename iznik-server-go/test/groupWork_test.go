@@ -465,6 +465,58 @@ func TestGetGroupWork_EditReview(t *testing.T) {
 	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 }
 
+// Regression (Discourse 9839): an edit on a post that rippled INTO a group must
+// NOT inflate that group's Edit work count. The rippled-in copy is Approved with
+// rippled_in=1; the Edit list filters rippled_in=0, so a count that ignored that
+// showed a "ghost" badge against a group whose Edit list is empty. The count must
+// match the list — edits belong to the post's ORIGIN group only.
+func TestGetGroupWork_EditReviewExcludesRippledIn(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gweditrip")
+
+	originGroup := CreateTestGroup(t, prefix+"_orig")
+	rippledGroup := CreateTestGroup(t, prefix+"_rip")
+	originMod := CreateTestUser(t, prefix+"_omod", "User")
+	rippledMod := CreateTestUser(t, prefix+"_rmod", "User")
+	CreateTestMembership(t, originMod, originGroup, "Moderator")
+	CreateTestMembership(t, rippledMod, rippledGroup, "Moderator")
+	_, originToken := CreateTestSession(t, originMod)
+	_, rippledToken := CreateTestSession(t, rippledMod)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Rippled edit count', 'b', 'b')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	// Origin row (rippled_in=0) plus a rippled-in copy (rippled_in=1).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, rippled_in) VALUES (?, ?, 'Approved', 0, 0)", msgID, originGroup)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, rippled_in) VALUES (?, ?, 'Approved', 0, 1)", msgID, rippledGroup)
+	db.Exec("INSERT INTO messages_edits (msgid, timestamp, reviewrequired, oldtext, newtext) VALUES (?, NOW(), 1, 'old', 'new')", msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	editCountFor := func(token string, gid uint64) int64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result []group.GroupWork
+		json2.Unmarshal(rsp(resp), &result)
+		for i := range result {
+			if result[i].Groupid == gid {
+				return result[i].Editreview
+			}
+		}
+		return 0
+	}
+
+	assert.GreaterOrEqual(t, editCountFor(originToken, originGroup), int64(1),
+		"origin group's Edit count should include the edit")
+	assert.Equal(t, int64(0), editCountFor(rippledToken, rippledGroup),
+		"rippled-into group's Edit count must NOT include the rippled-in copy's edit (Discourse 9839)")
+}
+
 func TestGetGroupWork_OwnerRole(t *testing.T) {
 	// Owners should also see work counts.
 	prefix := uniquePrefix("gwowner")
