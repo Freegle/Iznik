@@ -576,7 +576,12 @@ export async function setupRipplingExplorer({
       })
   }
 
-  map.on('click', (e) => setLocation(e.latlng.lat, e.latlng.lng, false))
+  // Click-to-place is only for the full explorer. The per-post reach modal
+  // (minimal) seeds the origin from the post's location and is read-only — a map
+  // click there must NOT move the origin and regenerate the reach polygon.
+  if (!props.minimal) {
+    map.on('click', (e) => setLocation(e.latlng.lat, e.latlng.lng, false))
+  }
 
   // ── URL parameter handling ───────────────────────────────────────
   //   ?view=inbound|outbound   — preselect a mode on load
