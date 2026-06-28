@@ -341,6 +341,20 @@ return [
         // exclusive end. Outside this window, due expansions wait.
         'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
         'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+        // Audience-budget extent governor — Stage A (feed-forward). Caps reach at
+        // the ~target_users NEAREST freeglers instead of letting a fixed drive-time
+        // sweep density-blind: in dense areas (London) the cap binds at a small
+        // radius; where the reachable pool is already below target_users it never
+        // binds (rural unchanged). The cap is applied in the routing server
+        // (/v1/ripple-schedule target_users), so ExpandService is untouched. Ships
+        // DARK: with enabled=false ReachService sends no target_users and reach is
+        // identical to before. See plans/2026-06-28-ripple-extent-governor-mvp.md.
+        // (Per-RU-class stratification — target_by_ru — is the planned Stage-A
+        // refinement and is not yet wired; this first cut is a single global cap.)
+        'extent' => [
+            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', false),
+            'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
+        ],
         // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
         // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
         'score' => [

@@ -27,6 +27,9 @@ class ReachService
     private float $maxMinutes;
     private int $requestTimeout;
 
+    /** Stage-A audience cap: nearest-freegler ceiling per post, 0 = off. */
+    private int $targetUsers;
+
     /** @var int[] hours-since-arrival thresholds, one per expansion tick */
     private array $hazardHours;
 
@@ -37,6 +40,12 @@ class ReachService
         $this->mode = config('freegle.ripple.mode', 'drive');
         $this->maxMinutes = (float) config('freegle.ripple.max_minutes', 30);
         $this->requestTimeout = (int) config('freegle.ripple.request_timeout', 60);
+        // Audience-budget extent cap (Stage A). Only sent to the routing server
+        // when the feature is enabled AND a positive target is set, so the
+        // schedule (and thus reach) is unchanged until both are configured.
+        $this->targetUsers = config('freegle.ripple.extent.enabled')
+            ? max(0, (int) config('freegle.ripple.extent.target_users', 0))
+            : 0;
         $this->hazardHours = config('freegle.ripple.hazard_hours', [1, 3, 6, 12, 24, 48, 72, 120, 168]);
     }
 
@@ -136,7 +145,7 @@ class ReachService
     /** Query parameters for a /v1/ripple-schedule request at the given origin. */
     private function scheduleParams(float $lat, float $lng): array
     {
-        return [
+        $params = [
             'lat' => $lat,
             'lng' => $lng,
             'mode' => $this->mode,
@@ -144,6 +153,12 @@ class ReachService
             'max_minutes' => $this->maxMinutes,
             'curve' => $this->curve,
         ];
+        // Only included when the audience cap is on, so the routing server's
+        // schedule is byte-identical to the old behaviour otherwise.
+        if ($this->targetUsers > 0) {
+            $params['target_users'] = $this->targetUsers;
+        }
+        return $params;
     }
 
     /**

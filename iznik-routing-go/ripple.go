@@ -243,7 +243,18 @@ type rippleScheduleResponse struct {
 // are encapsulated. The drive-time delta between consecutive ticks is small in
 // dense regions and large (one big jump) across empty voids.
 //
-// GET /v1/ripple-schedule?lat=...&lng=...&mode=drive&ticks=30&max_minutes=30
+// effectiveScheduleTotal applies the Stage-A audience-budget cap: the schedule
+// curve is spread over at most targetUsers nearest freeglers when a positive cap
+// is set and binds below the reachable pool; otherwise the full pool. Pure so
+// the cap logic is unit-testable without a routing graph.
+func effectiveScheduleTotal(total, targetUsers int) int {
+	if targetUsers > 0 && targetUsers < total {
+		return targetUsers
+	}
+	return total
+}
+
+// GET /v1/ripple-schedule?lat=...&lng=...&mode=drive&ticks=30&max_minutes=30&target_users=0
 func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		latS := c.Query("lat")
@@ -265,6 +276,19 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		maxMinutes, _ := strconv.ParseFloat(c.Query("max_minutes", "30"), 64)
 		if maxMinutes <= 0 || maxMinutes > 120 {
 			maxMinutes = 30
+		}
+
+		// Audience-budget cap (Stage-A extent governor, Discourse #9808): when
+		// target_users > 0 the curve is spread over at most that many NEAREST
+		// freeglers, so the schedule and every tick polygon top out at
+		// ~target_users members. In dense areas (London) this binds far below
+		// the reachable pool, keeping reach tight; where the pool is already
+		// smaller it never binds (rural unchanged). 0 / absent (the default)
+		// leaves the schedule identical to before — the feature is off unless
+		// the batch sends a non-zero value.
+		targetUsers, _ := strconv.Atoi(c.Query("target_users", "0"))
+		if targetUsers < 0 {
+			targetUsers = 0
 		}
 
 		// Curve shape determines how cumulative-user targets are spaced
@@ -368,21 +392,27 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		sort.Slice(fwt, func(i, j int) bool { return fwt[i].seconds < fwt[j].seconds })
 		total := len(fwt)
 
+		// The curve is spread over effectiveTotal, not the full pool: the
+		// audience cap (above) binds the schedule to the target_users nearest
+		// freeglers when set and smaller than the pool. effectiveTotal ==
+		// total when uncapped, so the schedule is unchanged in that case.
+		effectiveTotal := effectiveScheduleTotal(total, targetUsers)
+
 		// --- Step 4: build the schedule ---
-		// For tick k in 1..ticks, target cumulative = ceil(k * total / ticks).
+		// For tick k in 1..ticks, target cumulative = ceil(k * effectiveTotal / ticks).
 		// Drive-time for tick k = fwt[target-1].seconds.
 		schedule := make([]rippleScheduleEntry, 0, ticks)
 		for k := 1; k <= ticks; k++ {
 			// Curve maps "elapsed fraction" (k/ticks) → "notified fraction"
-			// (∈ [0,1]); multiply by total to get the target cumulative count.
+			// (∈ [0,1]); multiply by effectiveTotal to get the target cumulative count.
 			x := float64(k) / float64(ticks)
 			frac := curveFraction(curve, x, ticks)
-			target := int(math.Round(frac * float64(total)))
+			target := int(math.Round(frac * float64(effectiveTotal)))
 			if target < 1 {
 				target = 1
 			}
-			if target > total {
-				target = total
+			if target > effectiveTotal {
+				target = effectiveTotal
 			}
 			driveSecs := fwt[target-1].seconds
 
@@ -403,9 +433,19 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			})
 		}
 
+		// MaxDriveMin is the actual outer reach. When the audience cap binds it
+		// is the drive-time to the target_users-th nearest freegler (the schedule
+		// never grows past it); uncapped it is the requested ceiling, as before.
+		// TotalFreeglers stays the real reachable pool so callers can see how far
+		// below the pool the cap bound (for dark-compute measurement).
+		maxDriveMin := maxMinutes
+		if effectiveTotal < total {
+			maxDriveMin = float64(fwt[effectiveTotal-1].seconds) / 60.0
+		}
+
 		return c.JSON(rippleScheduleResponse{
 			TotalFreeglers: total,
-			MaxDriveMin:    maxMinutes,
+			MaxDriveMin:    maxDriveMin,
 			Schedule:       schedule,
 		})
 	}
