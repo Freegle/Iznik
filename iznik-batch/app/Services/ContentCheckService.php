@@ -1517,12 +1517,21 @@ class ContentCheckService
             return null;
         }
 
-        // Count distinct groups with same subject in the past N days
+        // Count distinct groups with same subject in the past N days.
+        // Exclude rippled-in rows (messages_groups.rippled_in = 1): rippling-out
+        // (ExpandService::rippleIntoNewGroups) inserts one messages_groups row
+        // per nearby group for the SAME message, so a single post fans out to
+        // 20-30 groups sharing one subject — which otherwise trips this check
+        // as if it were mass-submission spam (Discourse #9808/250). Only native
+        // (rippled_in = 0) postings count; genuine cross-group spam still has
+        // rippled_in = 0 rows and is unaffected. Mirrors the same exclusion in
+        // checkIpAbuse.
         $distinctGroupCount = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->where('m.subject', $subject)
             ->where('mg.arrival', '>=', now()->subDays(self::SUBJECT_REPEAT_WINDOW))
             ->where('mg.deleted', 0)
+            ->where('mg.rippled_in', 0)
             ->distinct('mg.groupid')
             ->count();
 
