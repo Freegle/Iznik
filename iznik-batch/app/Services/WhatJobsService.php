@@ -958,7 +958,10 @@ class WhatJobsService
                 continue;
             }
 
-            $result = $this->geocodeAddress($seg, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+            // Town/settlement layers only — keeps a town name off waterways,
+            // counties and landmarks (see geocodeAddress).
+            $cityLayers = ['city', 'locality', 'district'];
+            $result = $this->geocodeAddress($seg, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng, $cityLayers);
             if ($result) {
                 return $result;
             }
@@ -966,7 +969,7 @@ class WhatJobsService
             // Try title-cased variant (feed often sends all-lowercase cities)
             $titled = ucwords(mb_strtolower($seg));
             if ($titled !== $seg) {
-                $result = $this->geocodeAddress($titled, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+                $result = $this->geocodeAddress($titled, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng, $cityLayers);
                 if ($result) {
                     return $result;
                 }
@@ -1053,7 +1056,8 @@ class WhatJobsService
         float $bbswlat = self::UK_SWLAT,
         float $bbswlng = self::UK_SWLNG,
         float $bbnelat = self::UK_NELAT,
-        float $bbnelng = self::UK_NELNG
+        float $bbnelng = self::UK_NELNG,
+        array $layers = []
     ): ?array {
         $addr = self::ADDRESS_FIXES[$addr] ?? $addr;
 
@@ -1064,6 +1068,15 @@ class WhatJobsService
 
         $url = rtrim($geocoderBase, '/') . '/api?q=' . urlencode($addr)
             . "&bbox=$bbswlng%2C$bbswlat%2C$bbnelng%2C$bbnelat";
+
+        // Restrict to specific Photon layers (city/locality/district for a town
+        // lookup) so a town name can't fuzzy-match a waterway ("Thame" → River
+        // Thames, a 190km extent through London), a county ("Ham" → Hampshire) or
+        // a landmark/company ("Bourne End" → Optoma Europe Ltd). Empty = no
+        // restriction (state/region lookups, which Photon often types as "other").
+        foreach ($layers as $layer) {
+            $url .= '&layer=' . urlencode($layer);
+        }
 
         // Photon rate-limits us with HTTP 429. Without the backoff retry,
         // a single burst poisons hundreds of (city,state,country) tuples
