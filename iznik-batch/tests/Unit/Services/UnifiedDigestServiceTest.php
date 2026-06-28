@@ -2010,7 +2010,7 @@ class UnifiedDigestServiceTest extends TestCase
     // Task 5: scoreAndSortAvailable (haversine distance + DigestPostScorer)
     // -----------------------------------------------------------------------
 
-    public function test_available_posts_sorted_by_score_descending_not_arrival(): void
+    public function test_available_posts_pin_two_nearest_then_score_for_the_rest(): void
     {
         config(['freegle.ripple.score.default_reach_metres' => 40000.0]);
         $latlng = [0.0, 0.0]; // recipient [lat, lng]
@@ -2026,18 +2026,22 @@ class UnifiedDigestServiceTest extends TestCase
             return $p;
         };
 
-        // ~0.0009deg ~= 100m; ~0.0027deg ~= 300m near origin. Distances are well within
-        // the 40km default radius so closeness differences are small but ordered; the
-        // dominating differentiator is the budget term (views).
-        $near = $mk(1, 0.0009, 0.0, 20, 0);   // nearest, unseen (oldest arrival)
-        $far  = $mk(2, 0.0027, 0.0, 1,  0);   // farther, unseen, newest
-        $busy = $mk(3, 0.0009, 0.0, 1,  500); // nearest but heavily viewed -> low budget
+        // First two posts are ALWAYS the two nearest (nearest first), regardless of
+        // score; the rest then follow the score order. id1 ~55m, id2 ~110m are the two
+        // nearest. id3/id4 are both ~1.1km, so the rest are ordered by the budget term:
+        // id3 unseen (higher score) before id4 heavily viewed (lower score).
+        $nearest  = $mk(1, 0.0005, 0.0, 1, 0);   // ~55m   -> pinned #1
+        $second   = $mk(2, 0.0010, 0.0, 1, 0);   // ~110m  -> pinned #2
+        $farFresh = $mk(3, 0.0100, 0.0, 1, 0);   // ~1.1km, unseen      -> rest, higher score
+        $farBusy  = $mk(4, 0.0100, 0.0, 1, 500); // ~1.1km, 500 views   -> rest, lower score
 
         $sorted = $this->callPrivate(
-            $this->service, 'scoreAndSortAvailable', [collect([$busy, $far, $near]), $latlng]
+            $this->service,
+            'scoreAndSortAvailable',
+            [collect([$farBusy, $farFresh, $second, $nearest]), $latlng]
         );
 
-        $this->assertSame([1, 2, 3], $sorted->pluck('id')->all());
+        $this->assertSame([1, 2, 3, 4], $sorted->pluck('id')->all());
     }
 
     // -----------------------------------------------------------------------
