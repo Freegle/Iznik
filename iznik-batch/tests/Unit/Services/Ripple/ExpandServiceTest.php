@@ -1716,4 +1716,53 @@ class ExpandServiceTest extends TestCase
         $this->assertArrayHasKey('groups_after', $r);
         $this->assertGreaterThanOrEqual($r['groups_after'], $r['groups_before']);
     }
+
+    /** Out-of-reach retraction pulls only the far copy; the post + near copy + organic stay. */
+    public function test_retract_out_of_reach_pulls_only_far_copies(): void
+    {
+        $srid = 3857;
+        $poster = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $near = $this->createTestGroup();
+        $far = $this->createTestGroup();
+
+        // near overlaps the reach square (0 0,1 1); far is disjoint.
+        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.5 0.5,0.5 1.5,1.5 1.5,1.5 0.5,0.5 0.5))', $srid) WHERE id = ?", [$near->id]);
+        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((10 10,10 11,11 11,11 10,10 10))', $srid) WHERE id = ?", [$far->id]);
+
+        $msg = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $poster->id,
+            'subject' => 'OFFER: chair', 'textbody' => 'a chair', 'source' => 'Platform',
+            'date' => now(), 'arrival' => now(),
+        ]);
+        foreach ([[$origin->id, 0], [$near->id, 1], [$far->id, 1]] as [$gid, $ri]) {
+            DB::table('messages_groups')->insert([
+                'msgid' => $msg->id, 'groupid' => $gid, 'collection' => 'Approved',
+                'arrival' => now(), 'rippled_in' => $ri, 'deleted' => 0,
+            ]);
+        }
+        foreach ([$near->id, $far->id] as $gid) {
+            DB::table('memberships')->insert([
+                'userid' => $poster->id, 'groupid' => $gid, 'role' => 'Member',
+                'collection' => 'Approved', 'rippled' => 1,
+            ]);
+        }
+        // Capped reach polygon = unit square at origin (overlaps near, not far).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid,lat,lng,polygon,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
+             VALUES (?,?,?,ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
+            [$msg->id, 0.5, 0.5, now(), 'drive', 1, 1, 5000, 10, json_encode([]), null, 'expanding']
+        );
+
+        $stats = [];
+        $n = $this->service()->retractOutOfReachCopies($msg->id, false, $stats);
+
+        $this->assertSame(1, $n, 'exactly the one far copy is retracted');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $near->id)->value('deleted'), 'near (in-reach) copy kept');
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $far->id)->value('deleted'), 'far (out-of-reach) copy retracted');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $origin->id)->value('deleted'), 'native copy untouched');
+        $this->assertDatabaseHas('messages', ['id' => $msg->id]); // the message itself stays
+        $this->assertSame(1, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $near->id)->count(), 'near ripple-membership kept');
+        $this->assertSame(0, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $far->id)->count(), 'far ripple-membership removed');
+    }
 }
