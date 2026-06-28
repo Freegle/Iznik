@@ -1407,9 +1407,29 @@ class UnifiedDigestService
                 $env
             );
             $post->_score = $s['total'];
+            $post->_dist = $dist;
         }
 
-        return $posts->sortByDesc('_score')->values();
+        // Pin the two posts nearest the recipient to the top, then the rest by score.
+        // Reduces "I keep seeing posts far away" complaints while keeping the scored
+        // order for everything below the top two.
+        return $this->pinClosestTwo($posts->sortByDesc('_score')->values());
+    }
+
+    /**
+     * Move the two nearest posts (smallest recipient->post distance) to the front,
+     * nearest first, preserving the scored order of the rest. Each post must carry
+     * the _dist set in scoreAndSortAvailable. No-op for two or fewer posts.
+     */
+    private function pinClosestTwo(Collection $sorted): Collection
+    {
+        if ($sorted->count() <= 2) {
+            return $sorted;
+        }
+        $closest = $sorted->sortBy('_dist')->take(2)->values();
+        $closestIds = $closest->pluck('id')->all();
+        $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
+        return $closest->concat($rest)->values();
     }
 
     /**

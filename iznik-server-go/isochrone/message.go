@@ -2,6 +2,8 @@ package isochrone
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -133,12 +135,53 @@ func Messages(c *fiber.Ctx) error {
 		// yet. Inert until the reach engine populates rippling_reach.
 		res = FilterReachBlocked(db, res, float64(latlng.Lat), float64(latlng.Lng))
 
+		// Pin the two posts nearest the viewer to the top of the feed, then leave the
+		// rest of the order unchanged. Reduces "I keep seeing posts far away" complaints
+		// while preserving the existing ordering for everything below the top two.
+		// Computed on the real coords, before they are blurred below.
+		res = pinClosestTwo(res, float64(latlng.Lat), float64(latlng.Lng))
+
 		for ix, r := range res {
 			res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
 		}
 	}
 
 	return c.JSON(res)
+}
+
+// pinClosestTwo moves the two posts nearest the viewer to the front (nearest first)
+// and keeps every other post in its existing relative order. No-op when the viewer
+// has no location or there are two or fewer posts. Posts without coordinates sort to
+// the back so they are never pinned. Pure (does not mutate the input order in place
+// beyond producing a reordered copy) so it is straightforward to unit-test.
+func pinClosestTwo(res []message.MessageSummary, lat, lng float64) []message.MessageSummary {
+	if len(res) <= 2 || (lat == 0 && lng == 0) {
+		return res
+	}
+
+	type distIdx struct {
+		idx  int
+		dist float64
+	}
+	dists := make([]distIdx, len(res))
+	for i, m := range res {
+		d := math.MaxFloat64
+		if m.Lat != 0 || m.Lng != 0 {
+			d = utils.Haversine(lat, lng, m.Lat, m.Lng)
+		}
+		dists[i] = distIdx{idx: i, dist: d}
+	}
+	sort.SliceStable(dists, func(a, b int) bool { return dists[a].dist < dists[b].dist })
+
+	first, second := dists[0].idx, dists[1].idx
+	out := make([]message.MessageSummary, 0, len(res))
+	out = append(out, res[first], res[second])
+	for i, m := range res {
+		if i != first && i != second {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // effectiveBrowseView resolves the browse view for this request: an explicit ?browseView= wins,
