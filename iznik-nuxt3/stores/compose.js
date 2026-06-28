@@ -609,20 +609,25 @@ export const useComposeStore = defineStore({
           )
           // A purely-numeric description ("24") is no more use than a blank one,
           // so it doesn't count as having a description.
-          const hasDescription =
-            message.description &&
-            message.description.trim() &&
-            !isNumericOnlyBody(message.description)
+          const desc = (message.description || '').trim()
+          const hasDescription = desc !== '' && !isNumericOnlyBody(desc)
           const hasRealPhotos = realPhotos.length > 0
+
+          // With no real photo the description must actually say something:
+          // require at least 3 characters, so a bare "I"/"hi" no-photo post is
+          // rejected (post 120808114 had a 1-char body "I"). A real photo carries
+          // the post, so no description minimum applies then.
+          const meaningfulDescription = hasDescription && desc.length >= 3
 
           // A message is valid if there is an item, the item isn't just a number
           // or a content-free catch-all ("anything"), and there is either a real
-          // description or real photos. AI-only photos require a description.
+          // photo or a meaningful description. AI-only photos don't count as a
+          // real photo, so they still require the 3-char-min description.
           if (
             !message.item ||
             !message.item.trim() ||
             isUnpostableItem(message.item) ||
-            (!hasDescription && !hasRealPhotos)
+            (!hasRealPhotos && !meaningfulDescription)
           ) {
             valid = false
           }
