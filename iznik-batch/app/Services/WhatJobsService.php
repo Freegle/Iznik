@@ -788,7 +788,15 @@ class WhatJobsService
             return null;
         }
 
-        $cacheKey = "$city,$state,$country";
+        // Resolve the UK outward postcode up front, if the feed gave us one.
+        // It is used two ways below:
+        //  (a) it keys the in-memory cache, so a job WITH a postcode never
+        //      inherits a (possibly wrong) city/state geocode that an earlier
+        //      same-(city,state,country) job WITHOUT a postcode cached; and
+        //  (b) it is tried FIRST, before the self-poisoning jobs-table cache
+        //      and the ambiguous Photon city/state lookups.
+        $outward  = $zip !== '' ? $this->extractOutwardCode($zip) : '';
+        $cacheKey = $outward !== '' ? "$city,$state,$country|$outward" : "$city,$state,$country";
 
         // array_key_exists (not isset) so cached negative results (null)
         // are reused — Photon currently rate-limits us with HTTP 429, so
@@ -798,6 +806,23 @@ class WhatJobsService
         // turns ~225k Photon calls into ~60k.
         if (array_key_exists($cacheKey, $cache)) {
             return $cache[$cacheKey];
+        }
+
+        // POSTCODE-FIRST. A UK outward code pins the job to the right district
+        // deterministically, so prefer it over both the self-poisoning
+        // jobs-table cache and the ambiguous Photon city/state lookups. This is
+        // the primary fix for "jobs in the wrong place" (Discourse #9692/#24):
+        // e.g. "Conington, East of England" with zip PE29 3TN lands in
+        // Cambridgeshire, not a same-named place Photon returns near London.
+        // Sampling the live feed, jobs that DO carry a postcode previously had a
+        // stored geometry a mean ~80km (max ~1400km) from their own postcode
+        // centroid, with 56% over 50km out; this removes that error for them.
+        if ($outward !== '') {
+            $postcodeResult = $this->geocodePostcode($outward);
+            if ($postcodeResult) {
+                $cache[$cacheKey] = $postcodeResult;
+                return $postcodeResult;
+            }
         }
 
         // Check DB cache first (existing geocoded job with same city/state/country)
@@ -867,13 +892,7 @@ class WhatJobsService
             }
         }
 
-        // Postcode fallback: try outward code via dedicated lookup
-        if (!$result && $zip) {
-            $outward = $this->extractOutwardCode($zip);
-            if ($outward) {
-                $result = $this->geocodePostcode($outward);
-            }
-        }
+        // (The postcode is resolved FIRST, above — no trailing fallback needed.)
 
         if (!$result) {
             // Categorise the failure for observability.
