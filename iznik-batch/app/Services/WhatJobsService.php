@@ -776,6 +776,14 @@ class WhatJobsService
     // ISO 3166-2 two/three-letter subdivision codes used by some feeds
     private const STATE_ISO_CODES = ['eng', 'wls', 'sct', 'nir', 'gb'];
 
+    /**
+     * When true, geocodeCityState skips the jobs-table geocode cache and
+     * re-resolves each tuple from postcode/Photon. Set for a one-time
+     * --refresh-geocode sync to retro-correct tuples mis-cached by the old
+     * inverted-extent bug; off in normal hourly runs (which keep the cache).
+     */
+    public bool $forceRegeocode = false;
+
     public function geocodeCityState(
         string $city,
         string $state,
@@ -788,7 +796,15 @@ class WhatJobsService
             return null;
         }
 
-        $cacheKey = "$city,$state,$country";
+        // Resolve the UK outward postcode up front, if the feed gave us one.
+        // It is used two ways below:
+        //  (a) it keys the in-memory cache, so a job WITH a postcode never
+        //      inherits a (possibly wrong) city/state geocode that an earlier
+        //      same-(city,state,country) job WITHOUT a postcode cached; and
+        //  (b) it is tried FIRST, before the self-poisoning jobs-table cache
+        //      and the ambiguous Photon city/state lookups.
+        $outward  = $zip !== '' ? $this->extractOutwardCode($zip) : '';
+        $cacheKey = $outward !== '' ? "$city,$state,$country|$outward" : "$city,$state,$country";
 
         // array_key_exists (not isset) so cached negative results (null)
         // are reused — Photon currently rate-limits us with HTTP 429, so
@@ -800,18 +816,41 @@ class WhatJobsService
             return $cache[$cacheKey];
         }
 
-        // Check DB cache first (existing geocoded job with same city/state/country)
-        $geo = DB::select(
-            "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
-             WHERE city = ? AND state = ? AND country = ? LIMIT 1",
-            [$city, $state, $country]
-        );
+        // POSTCODE-FIRST. A UK outward code pins the job to the right district
+        // deterministically, so prefer it over both the self-poisoning
+        // jobs-table cache and the ambiguous Photon city/state lookups. This is
+        // the primary fix for "jobs in the wrong place" (Discourse #9692/#24):
+        // e.g. "Conington, East of England" with zip PE29 3TN lands in
+        // Cambridgeshire, not a same-named place Photon returns near London.
+        // Sampling the live feed, jobs that DO carry a postcode previously had a
+        // stored geometry a mean ~80km (max ~1400km) from their own postcode
+        // centroid, with 56% over 50km out; this removes that error for them.
+        if ($outward !== '') {
+            $postcodeResult = $this->geocodePostcode($outward);
+            if ($postcodeResult) {
+                $cache[$cacheKey] = $postcodeResult;
+                return $postcodeResult;
+            }
+        }
 
-        if (count($geo) && $geo[0]->geom) {
-            $bbox = $this->bboxFromWkt($geo[0]->geom);
-            if ($bbox) {
-                $cache[$cacheKey] = $bbox;
-                return $bbox;
+        // Check DB cache first (existing geocoded job with same city/state/country).
+        // Skipped during a one-time --refresh-geocode run so previously mis-cached
+        // tuples (e.g. the inverted-extent London placements) re-geocode fresh
+        // instead of inheriting their own wrong point. The per-run in-memory cache
+        // above still dedupes, so each tuple is geocoded at most once per run.
+        if (!$this->forceRegeocode) {
+            $geo = DB::select(
+                "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
+                 WHERE city = ? AND state = ? AND country = ? LIMIT 1",
+                [$city, $state, $country]
+            );
+
+            if (count($geo) && $geo[0]->geom) {
+                $bbox = $this->bboxFromWkt($geo[0]->geom);
+                if ($bbox) {
+                    $cache[$cacheKey] = $bbox;
+                    return $bbox;
+                }
             }
         }
 
@@ -867,13 +906,7 @@ class WhatJobsService
             }
         }
 
-        // Postcode fallback: try outward code via dedicated lookup
-        if (!$result && $zip) {
-            $outward = $this->extractOutwardCode($zip);
-            if ($outward) {
-                $result = $this->geocodePostcode($outward);
-            }
-        }
+        // (The postcode is resolved FIRST, above — no trailing fallback needed.)
 
         if (!$result) {
             // Categorise the failure for observability.
@@ -1071,7 +1104,16 @@ class WhatJobsService
             // the geocoder name exactly matched (e.g. 'London' → 'London') to return
             // null, preventing state-constrained city searches for those regions.
             if (isset($props['extent'])) {
-                [$swlng, $swlat, $nelng, $nelat] = array_map('floatval', $props['extent']);
+                // Photon extent order is [minLon, maxLat, maxLon, minLat]
+                // (west, NORTH, east, SOUTH). Previously this was destructured as
+                // [swlng, swlat, nelng, nelat], which put the NORTH edge into swlat
+                // and the SOUTH edge into nelat — an upside-down bbox. That made the
+                // area check go negative (so large regions like "East of England"
+                // were treated as a tiny "specific location" and used directly,
+                // skipping the city search) AND placed jobs at the wrong latitude —
+                // e.g. East-of-England jobs landed at ~lat 51.5 (London). Map the
+                // extent to the right corners.
+                [$swlng, $nelat, $nelng, $swlat] = array_map('floatval', $props['extent']);
                 return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
