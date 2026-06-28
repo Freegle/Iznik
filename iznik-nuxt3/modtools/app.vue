@@ -38,6 +38,7 @@ import { useUserStore } from '~/stores/user'
 import { useIsochroneStore } from '~/stores/isochrone'
 import { useComposeStore } from '~/stores/compose'
 import { useChatStore } from '~/stores/chat'
+import { useReactiveTabBadge } from '~/composables/useTitleBadge'
 import { useAddressStore } from '~/stores/address'
 import { useTrystStore } from '~/stores/tryst'
 import { useNotificationStore } from '~/stores/notification'
@@ -239,6 +240,12 @@ if (process.client) {
       }
     },
   })
+
+  // useHead's titleTemplate is not reactive to the count refs read inside it, and
+  // the work poll only refreshes the title every 30s, so the badge lagged behind
+  // incoming chats (Discourse 9806/9). Watch the count and update document.title
+  // directly so it stays live.
+  useReactiveTabBadge(() => menuCount.value + chatCount.value)
 }
 </script>
 

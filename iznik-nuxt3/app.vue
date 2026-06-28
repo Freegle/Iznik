@@ -145,7 +145,7 @@ import { computed, onMounted, useRoute } from '#imports'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 import { useConfigStore } from '~/stores/config'
-import { badgeTitle } from '~/composables/useTitleBadge'
+import { badgeTitle, useReactiveTabBadge } from '~/composables/useTitleBadge'
 
 const route = useRoute()
 const loadingIndicatorThrottle = ref(5000)
@@ -377,6 +377,11 @@ if (process.client) {
       return badgeTitle(titleChunk, totalCount)
     },
   })
+
+  // useHead's titleTemplate above is NOT reactive to the count refs read inside it,
+  // so the badge only refreshed on navigation (Discourse 9806/9). Watch the count
+  // and update document.title directly so it stays live as chats/notifications arrive.
+  useReactiveTabBadge(() => notificationCount.value + chatCount.value)
 }
 ready = true
 </script>
