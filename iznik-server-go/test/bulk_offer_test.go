@@ -29,6 +29,13 @@ func addBulkItem(t *testing.T, msgid uint64, name string, qty int, condition str
 	return id
 }
 
+// grantClearance gives a user the Clearance permission, which the message API
+// requires before it will accept a bulkitems catalogue on PUT/PATCH.
+func grantClearance(t *testing.T, userID uint64) {
+	res := database.DBConn.Exec("UPDATE users SET permissions = ? WHERE id = ?", auth.PERM_CLEARANCE, userID)
+	require.NoError(t, res.Error)
+}
+
 // TestBulkOfferPutCreatesCatalogue checks PUT /message with a bulkitems array
 // creates the catalogue, sets availableinitially to the total quantity, and
 // falls back to a readable textbody summary.
@@ -38,7 +45,7 @@ func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET permissions = ? WHERE id = ?", auth.PERM_CLEARANCE, userID)
+	grantClearance(t, userID)
 	token := getToken(t, userID)
 
 	var locationID uint64
@@ -433,6 +440,7 @@ func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
@@ -476,6 +484,7 @@ func TestBulkOfferSlots(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
 	var locationID uint64
@@ -640,6 +649,7 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 
 	var locationID uint64
