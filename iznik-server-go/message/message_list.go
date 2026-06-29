@@ -470,8 +470,13 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	if collection == "Edit" {
 		// Edit review uses messages_edits table, not messages_groups collection.
+		// Restrict to ORIGIN messages_groups rows (rippled_in = 0). A post rippled INTO a
+		// group gets an Approved row there (rippled_in = 1); without this filter an edit on a
+		// rippled-in post surfaces in every receiving group's Edit queue (and to active mods
+		// there via the all-groups path), but an edit belongs to the post's origin group(s)
+		// only. Same bug class as the IP-abuse fix (WHERE rippled_in=0). See master 6f56ac259.
 		db.Raw("SELECT DISTINCT me.msgid FROM messages_edits me "+
-			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 "+
+			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 "+
 			"WHERE mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
 			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) "+
 			"ORDER BY me.timestamp DESC LIMIT ?",

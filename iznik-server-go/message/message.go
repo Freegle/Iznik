@@ -3344,7 +3344,6 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
 			}
 		}
-		go ingestBulkItemPhotos(db, req.ID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
@@ -3911,8 +3910,6 @@ func PutMessage(c *fiber.Ctx) error {
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
 			}
 		}
-		// Download any spreadsheet-supplied photo URLs into real attachments.
-		go ingestBulkItemPhotos(db, newMsgID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, newMsgID, req.Bulkslots)

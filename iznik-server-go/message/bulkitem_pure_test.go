@@ -1,14 +1,11 @@
 package message
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
 // Pure unit tests for the bulk-offer helpers that need no database: the
-// interest-active predicate, the plain-text catalogue summary, and the remote
-// image fetcher (exercised against an httptest server, no real network).
+// interest-active predicate and the plain-text catalogue summary.
 
 func TestInterestIsActive(t *testing.T) {
 	cases := map[string]bool{
@@ -61,66 +58,5 @@ func TestBuildBulkSummary_NoNamedItemsReturnsEmpty(t *testing.T) {
 	got := buildBulkSummary([]BulkItemInput{{Name: " "}, {Name: ""}}, []string{"Mon"})
 	if got != "" {
 		t.Fatalf("expected empty summary, got %q", got)
-	}
-}
-
-func TestFetchRemoteImage_RejectsNonHTTPURL(t *testing.T) {
-	if _, _, err := fetchRemoteImage("ftp://example.com/x.png"); err == nil {
-		t.Fatal("expected error for non-http(s) url, got nil")
-	}
-}
-
-// useDefaultHTTPClient swaps httpImageClient to http.DefaultClient for the
-// duration of a test (to allow httptest servers on 127.0.0.1).
-// Call it at the top of any test that uses httptest, then defer the restore.
-func useDefaultHTTPClient(t *testing.T) {
-	t.Helper()
-	orig := httpImageClient
-	httpImageClient = http.DefaultClient
-	t.Cleanup(func() { httpImageClient = orig })
-}
-
-func TestFetchRemoteImage_Non200IsError(t *testing.T) {
-	useDefaultHTTPClient(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	if _, _, err := fetchRemoteImage(srv.URL); err == nil {
-		t.Fatal("expected error for non-200 response, got nil")
-	}
-}
-
-func TestFetchRemoteImage_NonImageContentIsError(t *testing.T) {
-	useDefaultHTTPClient(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte("this is definitely not an image, just some plain text body"))
-	}))
-	defer srv.Close()
-	if _, _, err := fetchRemoteImage(srv.URL); err == nil {
-		t.Fatal("expected error for non-image content, got nil")
-	}
-}
-
-func TestFetchRemoteImage_DetectsImageWhenContentTypeMissing(t *testing.T) {
-	useDefaultHTTPClient(t)
-	// PNG signature; with no Content-Type header the fetcher must sniff the bytes.
-	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header()["Content-Type"] = nil // force empty so DetectContentType runs
-		_, _ = w.Write(png)
-	}))
-	defer srv.Close()
-
-	data, mime, err := fetchRemoteImage(srv.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(data) != len(png) {
-		t.Fatalf("got %d bytes, want %d", len(data), len(png))
-	}
-	if mime != "image/png" {
-		t.Fatalf("got mime %q, want image/png", mime)
 	}
 }

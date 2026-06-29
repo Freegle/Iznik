@@ -612,8 +612,13 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 // two users (either ordering). The unique key (user1, user2, chattype)
 // makes INSERT ... ON DUPLICATE KEY UPDATE safe under concurrent requests:
 // LAST_INSERT_ID(id) returns the existing row's ID on conflict so two
-// callers always collapse to the same chat. Roster rows for both
-// participants are seeded so notifications reach everyone.
+// callers always collapse to the same chat.
+//
+// It does NOT seed chat_roster: roster rows are created on the first reply by
+// the normal notification pipeline (the caller inserts a chat_message with
+// processingrequired=1), exactly as for any other chat. Pre-seeding both
+// participants here marked the recipient ONLINE before they had engaged and is
+// not how the rest of the system works.
 func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) {
 	if userA == 0 || userB == 0 || userA == userB {
 		return 0, fmt.Errorf("invalid user pair: %d, %d", userA, userB)
@@ -647,12 +652,6 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 		}
 		chatID = uint64(lastID)
 	}
-
-	// Seed roster entries for both participants so notifications fire.
-	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
-		chatID, userA, utils.CHAT_STATUS_ONLINE)
-	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
-		chatID, userB, utils.CHAT_STATUS_ONLINE)
 
 	return chatID, nil
 }

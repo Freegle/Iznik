@@ -1,17 +1,11 @@
 package message
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"log"
-	"net"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
@@ -868,159 +862,11 @@ func buildBulkSummary(items []BulkItemInput, slots []string) string {
 	return out
 }
 
-// isPrivateIP returns true if addr is a private/loopback/link-local address that
-// must not be reachable from a user-supplied URL (SSRF guard, fix #1).
-func isPrivateIP(addr string) bool {
-	ip := net.ParseIP(addr)
-	if ip == nil {
-		return true // unparseable → refuse
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return true
-	}
-	// RFC1918 and IPv6 private ranges.
-	private := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"fc00::/7",
-	}
-	for _, cidr := range private {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network != nil && network.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// ssrfSafeDialContext returns a DialContext that resolves the destination and
-// rejects any address that falls in a private/loopback/link-local range.
-func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-		addrs, err := net.DefaultResolver.LookupHost(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, a := range addrs {
-			if isPrivateIP(a) {
-				return nil, fmt.Errorf("SSRF: resolved address %s is private", a)
-			}
-		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
-	}
-}
-
-// httpImageClient is the HTTP client used by fetchRemoteImage.  In production
-// it is initialised to an SSRF-safe client (ssrfImageClient below).  Tests that
-// use httptest servers on 127.0.0.1 should swap this for http.DefaultClient for
-// the duration of the test (restore via defer).
-var httpImageClient *http.Client
-
-func init() {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transport := &http.Transport{
-		DialContext: ssrfSafeDialContext(dialer),
-	}
-	httpImageClient = &http.Client{
-		Timeout:   20 * time.Second,
-		Transport: transport,
-		// CheckRedirect re-applies the SSRF check on each redirect target.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("too many redirects")
-			}
-			host := req.URL.Hostname()
-			addrs, err := net.LookupHost(host)
-			if err != nil {
-				return err
-			}
-			for _, a := range addrs {
-				if isPrivateIP(a) {
-					return fmt.Errorf("SSRF: redirect to private address %s blocked", a)
-				}
-			}
-			return nil
-		},
-	}
-}
-
-// fetchRemoteImage downloads an image from an http(s) URL, returning its bytes
-// and MIME type. Bounded size/time; verifies the content is an image.
-// SSRF-safe: resolves DNS and blocks private/loopback/link-local destinations,
-// and re-applies the same check on redirects (fix #1).
-// The HTTP client used is httpImageClient (injectable for tests).
-func fetchRemoteImage(rawURL string) ([]byte, string, error) {
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		return nil, "", fmt.Errorf("not an http(s) url")
-	}
-	req, err := http.NewRequest("GET", rawURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("User-Agent", "Freegle bulk-offer photo fetcher")
-	resp, err := httpImageClient.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 25<<20)) // 25 MB cap
-	if err != nil {
-		return nil, "", err
-	}
-	mime := resp.Header.Get("Content-Type")
-	if mime == "" || !strings.HasPrefix(mime, "image/") {
-		mime = http.DetectContentType(data)
-	}
-	if !strings.HasPrefix(mime, "image/") {
-		return nil, "", fmt.Errorf("not an image: %s", mime)
-	}
-	return data, mime, nil
-}
-
-// BulkPhotoFetcher is injectable for tests.
-var BulkPhotoFetcher = fetchRemoteImage
-
-// ingestBulkItemPhotos downloads any per-item photo URLs that don't yet have an
-// uploaded attachment, stores them in image storage (TUS) and links them to the
-// item. This is how a spreadsheet's "photo" links become real Freegle photos.
-// Run in a goroutine — downloads are slow; the photourl stays as an immediate
-// fallback until the attachment lands. Errors are logged only.
-func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
-	type prow struct {
-		ID       uint64
-		Photourl string
-	}
-	var rows []prow
-	db.Raw("SELECT bi.id, bi.photourl FROM messages_bulk_items bi "+
-		"WHERE bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' "+
-		"AND NOT EXISTS (SELECT 1 FROM messages_attachments a WHERE a.bulkitemid = bi.id)", msgid).Scan(&rows)
-
-	for _, r := range rows {
-		data, mime, err := BulkPhotoFetcher(r.Photourl)
-		if err != nil {
-			log.Printf("bulk photo ingest: download %s failed: %v", r.Photourl, err)
-			continue
-		}
-		uid, err := aiimage.ImageUploader(data, mime)
-		if err != nil {
-			log.Printf("bulk photo ingest: upload failed for %s: %v", r.Photourl, err)
-			continue
-		}
-		db.Exec("INSERT INTO messages_attachments (msgid, bulkitemid, externaluid) VALUES (?, ?, ?)",
-			msgid, r.ID, uid)
-	}
-}
-
-// IngestBulkItemPhotosSync is the synchronous variant, exposed for tests.
-var IngestBulkItemPhotosSync = ingestBulkItemPhotos
+// Note: a spreadsheet's per-item `photourl` is stored as-is and shown by the
+// frontend as a hotlinked preview image. The server does NOT fetch these URLs:
+// fetching user-supplied URLs server-side is an SSRF surface that is not specific
+// to bulk offers, so it has been removed. Photos uploaded the normal way (the
+// per-item picker or the batch tray) still become real Freegle attachments.
 
 // LoadBulkSlots returns the offerer's collection date/time windows for a message,
 // in display order. Returns nil when none are set.

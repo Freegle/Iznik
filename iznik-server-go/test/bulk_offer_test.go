@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/misc"
@@ -517,57 +516,6 @@ func TestBulkOfferSlots(t *testing.T) {
 	var msg message.Message
 	json.Unmarshal(rsp(gresp), &msg)
 	assert.Equal(t, []string{"Tue 7 Apr, 10am-4pm", "Wed 8 Apr, 10am-4pm"}, msg.Bulkslots)
-}
-
-// TestBulkItemPhotoIngestion checks that a per-item photo URL (e.g. supplied via
-// a spreadsheet) is downloaded and turned into a real Freegle attachment linked
-// to the item. The remote fetch and TUS upload are stubbed so the test makes no
-// network calls.
-func TestBulkItemPhotoIngestion(t *testing.T) {
-	db := database.DBConn
-	prefix := uniquePrefix("bulkphoto")
-	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
-	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
-	db.Exec("UPDATE messages_bulk_items SET photourl = ? WHERE id = ?", "https://example.com/desk.jpg", deskID)
-
-	// Stub the remote download and the TUS upload so no network is hit.
-	origFetch := message.BulkPhotoFetcher
-	origUpload := aiimage.ImageUploader
-	defer func() {
-		message.BulkPhotoFetcher = origFetch
-		aiimage.ImageUploader = origUpload
-	}()
-
-	var fetchedURL string
-	message.BulkPhotoFetcher = func(url string) ([]byte, string, error) {
-		fetchedURL = url
-		return []byte{0xFF, 0xD8, 0xFF, 0xE0}, "image/jpeg", nil
-	}
-	const stubUID = "bulkphoto-stub-uid-123"
-	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
-		return stubUID, nil
-	}
-
-	message.IngestBulkItemPhotosSync(db, msgID)
-
-	assert.Equal(t, "https://example.com/desk.jpg", fetchedURL, "the item's photo URL should be fetched")
-
-	var externaluid string
-	var bulkitemid uint64
-	db.Raw("SELECT COALESCE(externaluid,''), COALESCE(bulkitemid,0) FROM messages_attachments WHERE msgid = ? AND bulkitemid = ?", msgID, deskID).
-		Row().Scan(&externaluid, &bulkitemid)
-	assert.Equal(t, stubUID, externaluid, "an attachment with the uploaded uid should be created")
-	assert.Equal(t, deskID, bulkitemid, "the attachment should be linked to the item")
-
-	// Running again must not create a duplicate — the item already has an attachment.
-	message.IngestBulkItemPhotosSync(db, msgID)
-	var count int64
-	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE bulkitemid = ?", deskID).Scan(&count)
-	assert.Equal(t, int64(1), count, "ingestion is idempotent — no duplicate attachment")
 }
 
 // TestBulkItemUploadedPhotoDeliveryURL checks that an uploaded per-item photo
