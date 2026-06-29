@@ -1008,6 +1008,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->values();
         $postedToText = $groupNames->count() > 1 ? $groupNames->implode(', ') : null;
 
+        $bulkItems = $this->prepareBulkItems($message);
+
         return [
             'message' => $message,
             // True when this post is the recipient's own — used by both the
@@ -1047,7 +1049,110 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // went cards override this to "Taken/Received · <date>" (see
             // prepareCompletedPosts()). Defaulted here so every card carries it.
             'metaText' => null,
+            'bulkItems' => $bulkItems,
+            // Short one-line summary for the compact daily cards, precomputed so the
+            // templates stay logic-free (avoids fragile inline blade loops).
+            'bulkSummary' => $this->bulkSummaryLine($bulkItems),
         ];
+    }
+
+    /**
+     * One-line clearance summary for compact (daily) digest cards, e.g.
+     * "12 items to choose from: 2× Desk; 1× Chair; 4× Lamp and 9 more". Null for
+     * ordinary single-item posts.
+     */
+    protected function bulkSummaryLine(array $items): ?string
+    {
+        if (empty($items)) {
+            return null;
+        }
+        $count = count($items);
+        $parts = array_map(
+            fn ($bi) => $bi['quantity'] . "\u{00d7} " . $bi['name'],
+            array_slice($items, 0, 3)
+        );
+        $line = $count . ' items to choose from: ' . implode('; ', $parts);
+        if ($count > 3) {
+            $line .= ' and ' . ($count - 3) . ' more';
+        }
+
+        return $line;
+    }
+
+    /**
+     * Build the catalogue for a bulk offer ("clearance") for rendering in the
+     * digest. Returns [] for ordinary single-item posts. Each entry has a name,
+     * quantity, human-readable condition and (where available) a thumbnail URL.
+     */
+    protected function prepareBulkItems($message): array
+    {
+        $rows = \Illuminate\Support\Facades\DB::table('messages_bulk_items')
+            ->where('msgid', $message->id)
+            ->orderBy('position')
+            ->orderBy('id')
+            ->get(['id', 'name', 'quantity', 'condition', 'dimensions', 'photourl', 'description']);
+
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        // First photo per item (the catalogue photos carry a bulkitemid).
+        $firstByItem = [];
+        $atts = \Illuminate\Support\Facades\DB::table('messages_attachments')
+            ->where('msgid', $message->id)
+            ->whereNotNull('bulkitemid')
+            ->orderBy('id')
+            ->get(['id', 'bulkitemid', 'externaluid', 'externalurl', 'archived']);
+        foreach ($atts as $a) {
+            if (!isset($firstByItem[$a->bulkitemid])) {
+                $firstByItem[$a->bulkitemid] = $a;
+            }
+        }
+
+        $items = [];
+        foreach ($rows as $row) {
+            $thumb = isset($firstByItem[$row->id])
+                ? $this->getAttachmentImageUrl($firstByItem[$row->id], 80, 80)
+                : null;
+            // Fall back to a spreadsheet-supplied photo link (run through the
+            // delivery proxy for sizing, like other email images).
+            if (!$thumb && !empty($row->photourl)) {
+                $thumb = $this->getDeliveryUrl($row->photourl, 80, 80);
+            }
+            $condition = $row->condition && $row->condition !== 'Unknown'
+                ? ($row->condition === 'LikeNew' ? 'Like new' : $row->condition)
+                : null;
+            $items[] = [
+                'name' => $row->name,
+                'quantity' => (int) $row->quantity,
+                'condition' => $condition,
+                'dimensions' => $row->dimensions,
+                'description' => $row->description ?? null,
+                'thumbUrl' => $thumb,
+            ];
+        }
+
+        return $items;
+    }
+
+    /**
+     * Build a delivery URL for a specific attachment row (mirrors
+     * getMessageImageUrl but for an arbitrary attachment).
+     */
+    protected function getAttachmentImageUrl($attachment, int $width = 80, ?int $height = null): ?string
+    {
+        if (!$attachment) {
+            return null;
+        }
+        if (!empty($attachment->externalurl)) {
+            return $this->getDeliveryUrl($attachment->externalurl, $width, $height);
+        }
+        if (!empty($attachment->externaluid) || (int) ($attachment->archived ?? 0) === 1) {
+            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+            return $this->getDeliveryUrl("{$imagesDomain}/timg_{$attachment->id}.jpg", $width, $height);
+        }
+
+        return null;
     }
 
     /**

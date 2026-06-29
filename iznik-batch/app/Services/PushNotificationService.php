@@ -1292,7 +1292,7 @@ class PushNotificationService
         $moreCount = max(0, $count - count($lines));
 
         // ---- Single-line fallback message ----
-        $allNames = array_map(fn ($item) => $this->extractItemName($item['message']), $posts);
+        $allNames = array_map(fn ($item) => $this->nameWithBulk($item['message']), $posts);
         $previewNames = array_slice($allNames, 0, $maxLines);
         $message = implode(', ', $previewNames);
         if ($moreCount > 0) {
@@ -1302,7 +1302,7 @@ class PushNotificationService
         // ---- Title ----
         if ($count === 1) {
             // Single post: title is the item name itself (BigPictureStyle).
-            $title = $this->extractItemName($posts[0]['message']);
+            $title = $this->nameWithBulk($posts[0]['message']);
         } else {
             $title = $count . ' new freegles near you';
         }
@@ -1378,7 +1378,7 @@ class PushNotificationService
     private function formatPostLine(\App\Models\Message $msg): string
     {
         $type = ucfirst(strtolower((string) ($msg->type ?? 'Offer')));
-        $name = $this->extractItemName($msg);
+        $name = $this->nameWithBulk($msg);
         $location = $this->extractLocationName($msg);
 
         if ($location !== '') {
@@ -1407,6 +1407,28 @@ class PushNotificationService
         $name = preg_replace('/\s*\([^)]+\)\s*$/', '', (string) $name);
 
         return trim((string) $name) ?: $subject;
+    }
+
+    /**
+     * Number of catalogue items if this is a bulk offer ("clearance"), else 0.
+     */
+    private function bulkItemCount(\App\Models\Message $msg): int
+    {
+        return (int) \Illuminate\Support\Facades\DB::table('messages_bulk_items')
+            ->where('msgid', $msg->id)
+            ->count();
+    }
+
+    /**
+     * Item name, decorated for a clearance so the push makes clear it's a
+     * multi-item offer: "Office clearance — 12 items".
+     */
+    private function nameWithBulk(\App\Models\Message $msg): string
+    {
+        $name = $this->extractItemName($msg);
+        $count = $this->bulkItemCount($msg);
+
+        return $count > 0 ? "{$name} — {$count} items" : $name;
     }
 
     /**

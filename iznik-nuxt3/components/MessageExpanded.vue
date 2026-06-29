@@ -314,6 +314,7 @@
                 </div>
               </div>
               <div
+                v-if="!hideGeneratedBulkBody"
                 class="description-content"
                 :class="{
                   'description-content--promised':
@@ -323,6 +324,15 @@
                 <MessageTextBody :id="id" />
               </div>
             </div>
+
+            <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
+            <BulkItemsInterest
+              v-if="isBulk"
+              ref="bulkInterestRef"
+              :id="id"
+              @can-register="bulkCanRegister = $event"
+              @submitted="bulkSubmitted = $event"
+            />
 
             <!-- Posted by divider and section (shown on taller screens, after description) -->
             <client-only>
@@ -448,9 +458,17 @@
                   variant="primary"
                   size="lg"
                   class="reply-button"
-                  @click="expandReply"
+                  :disabled="isBulk && !bulkCanRegister"
+                  :data-testid="isBulk ? 'register-interest' : undefined"
+                  @click="isBulk ? registerBulkInterest() : expandReply()"
                 >
-                  Reply
+                  {{
+                    isBulk
+                      ? bulkSubmitted
+                        ? 'Update my interest'
+                        : 'Register interest'
+                      : 'Reply'
+                  }}
                 </b-button>
               </div>
               <b-alert
@@ -508,9 +526,17 @@
             variant="primary"
             size="lg"
             class="reply-button"
-            @click="expandReply"
+            :disabled="isBulk && !bulkCanRegister"
+            :data-testid="isBulk ? 'register-interest' : undefined"
+            @click="isBulk ? registerBulkInterest() : expandReply()"
           >
-            Reply
+            {{
+              isBulk
+                ? bulkSubmitted
+                  ? 'Update my interest'
+                  : 'Register interest'
+                : 'Reply'
+            }}
           </b-button>
         </div>
         <b-alert
@@ -608,6 +634,7 @@ import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
+import BulkItemsInterest from '~/components/BulkItemsInterest'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -699,6 +726,30 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
 )
+
+// For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
+// collection times structurally. The server also stores a plain-text summary as
+// the body (so digests/search/non-bulk clients still have something), but on the
+// web page that just duplicates the catalogue — so suppress it. A giver's own
+// free-text description doesn't start with this generated marker, so it still
+// shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
+const isBulk = computed(
+  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
+)
+const hideGeneratedBulkBody = computed(() => {
+  const body = message.value?.textbody || ''
+  return isBulk.value && body.startsWith('Items available in this offer:')
+})
+
+// A bulk offer is replied to by registering per-item interest, not by opening a
+// reply box — so the main reply button becomes "Register interest". These mirror
+// the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+const bulkInterestRef = ref(null)
+const bulkCanRegister = ref(false)
+const bulkSubmitted = ref(false)
+function registerBulkInterest() {
+  bulkInterestRef.value?.submit()
+}
 
 // State
 const replied = ref(false)

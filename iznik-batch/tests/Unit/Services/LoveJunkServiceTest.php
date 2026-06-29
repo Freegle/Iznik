@@ -19,6 +19,7 @@ class LoveJunkServiceTest extends TestCase
         DB::table('messages_items')->delete();
         DB::table('messages_attachments')->delete();
         DB::table('messages_edits')->delete();
+        DB::table('messages_bulk_items')->delete();
         DB::table('messages')->delete();
         DB::table('chat_rooms')->delete();
         DB::table('items')->delete();
@@ -140,6 +141,34 @@ class LoveJunkServiceTest extends TestCase
 
         $this->assertEquals(0, $result['sent']);
         Http::assertNothingSent();
+    }
+
+    public function test_skips_bulk_offer_message(): void
+    {
+        // Bulk "clearance" offers (a message with messages_bulk_items rows) must
+        // never be sent to LoveJunk — its draft model is one item per post and
+        // can't represent a multi-item catalogue.
+        Http::fake();
+
+        $userId = $this->createUser();
+        $groupId = $this->createGroup();
+        $locationId = $this->createLocation();
+        $msgId = $this->createMessage($userId, $groupId, $locationId);
+
+        // Mark it as a bulk offer by giving it catalogue items.
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgId, 'position' => 0, 'name' => 'Office chairs', 'quantity' => 10],
+            ['msgid' => $msgId, 'position' => 1, 'name' => 'Desks', 'quantity' => 4],
+        ]);
+
+        $service = new LoveJunkService();
+        $result = $service->sync();
+
+        $this->assertEquals(0, $result['sent']);
+        Http::assertNothingSent();
+
+        // And it must not have been recorded in the lovejunk table.
+        $this->assertNull(DB::table('lovejunk')->where('msgid', $msgId)->first());
     }
 
     public function test_skips_message_from_non_lovejunk_group(): void

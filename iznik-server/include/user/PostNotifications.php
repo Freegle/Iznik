@@ -135,7 +135,8 @@ class PostNotifications
         }
 
         $sql = "SELECT messages.id, messages.subject, messages.type, messages.fromuser,
-                       messages_groups.arrival, messages.availablenow
+                       messages_groups.arrival, messages.availablenow,
+                       (SELECT COUNT(*) FROM messages_bulk_items WHERE messages_bulk_items.msgid = messages.id) AS bulkcount
                 FROM messages_groups
                 INNER JOIN messages ON messages.id = messages_groups.msgid
                 INNER JOIN users ON users.id = messages.fromuser
@@ -213,7 +214,12 @@ class PostNotifications
             // Single post - show details
             $post = $filteredPosts[0];
             $title = $post['subject'];
-            $message = "New " . strtolower($post['type']) . " on $groupName";
+            if (!empty($post['bulkcount'])) {
+                // Bulk offer ("clearance"): make clear it's multi-item.
+                $message = "New clearance with " . $post['bulkcount'] . " items on $groupName";
+            } else {
+                $message = "New " . strtolower($post['type']) . " on $groupName";
+            }
             $route = "/message/" . $post['id'];
             $threadId = 'post_' . $post['id'];
         } else {
@@ -238,10 +244,15 @@ class PostNotifications
             $itemNames = array_map(function($p) {
                 // Extract item name from subject (format: "TYPE: Item (Location)")
                 $subject = $p['subject'];
+                $name = $subject;
                 if (preg_match('/^(?:OFFER|WANTED):\s*(.+?)(?:\s*\(.*\))?$/i', $subject, $matches)) {
-                    return trim($matches[1]);
+                    $name = trim($matches[1]);
                 }
-                return $subject;
+                // Flag clearances so the summary shows they're multi-item.
+                if (!empty($p['bulkcount'])) {
+                    $name .= " ({$p['bulkcount']} items)";
+                }
+                return $name;
             }, $items);
 
             $message = implode(", ", $itemNames);
