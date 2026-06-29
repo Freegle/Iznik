@@ -390,6 +390,122 @@ describe('AutoComplete', () => {
     })
   })
 
+  describe('choose placeholder (please choose)', () => {
+    it('does not render placeholder row when chooseLabel is not set', async () => {
+      const wrapper = createWrapper()
+      wrapper.vm.showList = true
+      wrapper.vm.json = [{ id: 1, name: 'Apple' }]
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.autocomplete-choose').exists()).toBe(false)
+    })
+
+    it('renders placeholder row at top when chooseLabel set and list has items', async () => {
+      const wrapper = createWrapper({
+        chooseLabel: 'Please choose your postcode',
+      })
+      wrapper.vm.showList = true
+      wrapper.vm.json = [
+        { id: 1, name: 'Apple' },
+        { id: 2, name: 'Apricot' },
+      ]
+      await wrapper.vm.$nextTick()
+      const choose = wrapper.find('.autocomplete-choose')
+      expect(choose.exists()).toBe(true)
+      expect(choose.text()).toContain('Please choose your postcode')
+      // It must be the first item in the list.
+      const items = wrapper.findAll('ul li')
+      expect(items[0].classes()).toContain('autocomplete-choose')
+    })
+
+    it('does not render placeholder when list is empty even if chooseLabel set', async () => {
+      const wrapper = createWrapper({ chooseLabel: 'Please choose' })
+      wrapper.vm.showList = true
+      wrapper.vm.json = []
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.autocomplete-choose').exists()).toBe(false)
+    })
+
+    it('placeholder row is not selectable (has no anchor link)', async () => {
+      const wrapper = createWrapper({ chooseLabel: 'Please choose' })
+      wrapper.vm.showList = true
+      wrapper.vm.json = [{ id: 1, name: 'Apple' }]
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.autocomplete-choose a').exists()).toBe(false)
+    })
+
+    it('pre-highlights nothing (focusList -1) on focus when chooseLabel set', async () => {
+      const wrapper = createWrapper({ chooseLabel: 'Please choose' })
+      await wrapper.find('input').trigger('focus')
+      expect(wrapper.vm.focusList).toBe(-1)
+    })
+
+    it('pre-highlights first item (focusList 0) on focus when chooseLabel not set', async () => {
+      const wrapper = createWrapper()
+      await wrapper.find('input').trigger('focus')
+      expect(wrapper.vm.focusList).toBe(0)
+    })
+
+    it('resets highlight to placeholder on input when chooseLabel set', async () => {
+      const wrapper = createWrapper({ chooseLabel: 'Please choose' })
+      wrapper.vm.focusList = 1
+      await wrapper.find('input').setValue('ap')
+      expect(wrapper.vm.focusList).toBe(-1)
+    })
+  })
+
+  describe('choose placeholder keyboard', () => {
+    beforeEach(() => {
+      vi.useRealTimers()
+    })
+
+    afterEach(() => {
+      vi.useFakeTimers()
+    })
+
+    it('does not select a real item on Enter while placeholder is highlighted', async () => {
+      const onSelect = vi.fn()
+      const wrapper = createWrapper({ chooseLabel: 'Please choose', onSelect })
+      wrapper.vm.showList = true
+      wrapper.vm.json = [
+        { id: 1, name: 'Apple' },
+        { id: 2, name: 'Apricot' },
+      ]
+      wrapper.vm.focusList = -1
+      await wrapper.vm.$nextTick()
+      await wrapper.find('input').trigger('keydown', { keyCode: 13 })
+      expect(onSelect).not.toHaveBeenCalled()
+      expect(wrapper.vm.showList).toBe(true)
+    })
+
+    it('selects the highlighted item on Enter after arrowing down', async () => {
+      const onSelect = vi.fn()
+      const wrapper = createWrapper({ chooseLabel: 'Please choose', onSelect })
+      wrapper.vm.showList = true
+      wrapper.vm.json = [
+        { id: 1, name: 'Apple' },
+        { id: 2, name: 'Apricot' },
+      ]
+      wrapper.vm.focusList = -1
+      await wrapper.vm.$nextTick()
+      await wrapper.find('input').trigger('keydown', { keyCode: 40 })
+      expect(wrapper.vm.focusList).toBe(0)
+      await wrapper.find('input').trigger('keydown', { keyCode: 13 })
+      expect(onSelect).toHaveBeenCalledWith({ id: 1, name: 'Apple' })
+    })
+
+    it('arrowing up from first item returns to the placeholder (focusList -1)', async () => {
+      const wrapper = createWrapper({ chooseLabel: 'Please choose' })
+      wrapper.vm.showList = true
+      wrapper.vm.json = [
+        { id: 1, name: 'Apple' },
+        { id: 2, name: 'Apricot' },
+      ]
+      wrapper.vm.focusList = 0
+      await wrapper.find('input').trigger('keydown', { keyCode: 38 })
+      expect(wrapper.vm.focusList).toBe(-1)
+    })
+  })
+
   describe('exposed methods', () => {
     it('setValue sets the type value', () => {
       const wrapper = createWrapper()

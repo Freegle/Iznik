@@ -60,7 +60,7 @@ describe('PostCode', () => {
         stubs: {
           AutoComplete: {
             template:
-              '<div class="autocomplete"><input ref="input" class="autocomplete-input" :id="id" :placeholder="placeholder" @input="$emit(\'input\', $event.target.value)" /></div>',
+              '<div class="autocomplete" :data-choose-label="chooseLabel"><input ref="input" class="autocomplete-input" :id="id" :placeholder="placeholder" @input="$emit(\'input\', $event.target.value)" /></div>',
             props: [
               'id',
               'initValue',
@@ -70,6 +70,7 @@ describe('PostCode', () => {
               'anchor',
               'label',
               'placeholder',
+              'chooseLabel',
               'classes',
               'min',
               'debounce',
@@ -168,6 +169,22 @@ describe('PostCode', () => {
       const wrapper = createWrapper({ pconly: false })
       const input = wrapper.find('.autocomplete-input')
       expect(input.attributes('placeholder')).toBe('Type location')
+    })
+  })
+
+  describe('choose label', () => {
+    it('passes a postcode choose-label to AutoComplete when pconly', () => {
+      const wrapper = createWrapper({ pconly: true })
+      expect(
+        wrapper.find('.autocomplete').attributes('data-choose-label')
+      ).toContain('postcode')
+    })
+
+    it('passes a location choose-label to AutoComplete when not pconly', () => {
+      const wrapper = createWrapper({ pconly: false })
+      expect(
+        wrapper.find('.autocomplete').attributes('data-choose-label')
+      ).toContain('location')
     })
   })
 
