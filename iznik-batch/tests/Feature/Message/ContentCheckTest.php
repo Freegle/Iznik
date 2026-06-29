@@ -3311,4 +3311,51 @@ class ContentCheckTest extends TestCase
         $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
             'An old approved post (outside the recent-arrival window) must not be rescanned');
     }
+
+    public function test_freebiealerts_task_not_queued_for_bulk_offer(): void
+    {
+        // A clearance (bulk-offer) Offer must not receive a freebie_alerts_add task even
+        // when auto-approved — the concierge manages those posts directly.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Office Clearance (EC1A)',
+            'textbody' => 'Full office clearance — desks, chairs, monitors.',
+            'message'  => 'Full office clearance — desks, chairs, monitors.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+        // Mark as a clearance post.
+        DB::table('messages_bulk_items')->insert([
+            'msgid'     => $msgid,
+            'position'  => 0,
+            'name'      => 'Office desk',
+            'quantity'  => 4,
+            'condition' => 'Good',
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(0, $stats['errors'], 'processUnprocessed had errors');
+        $this->assertEquals(1, $stats['approved'], 'Clearance message should still be approved');
+
+        $count = DB::table('background_tasks')
+            ->where('task_type', 'freebie_alerts_add')
+            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->count();
+
+        $this->assertEquals(0, $count, 'freebie_alerts_add must not be queued for a clearance/bulk-offer post');
+    }
 }

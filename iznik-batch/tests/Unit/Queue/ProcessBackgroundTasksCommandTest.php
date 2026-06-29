@@ -2478,6 +2478,62 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
+    public function test_freebie_alerts_add_skips_clearance_posts(): void
+    {
+        // Defense-in-depth: even if a freebie_alerts_add task was somehow enqueued for a
+        // clearance/bulk-offer post, the handler must not call freebiealerts.app.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject'  => 'OFFER: Office Clearance',
+            'textbody' => 'Desks and chairs available.',
+            'type'     => 'Offer',
+            'lat'      => 52.5,
+            'lng'      => -1.8,
+            'date'     => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+        ]);
+        // Mark as a clearance post.
+        DB::table('messages_bulk_items')->insert([
+            'msgid'     => $msgId,
+            'position'  => 0,
+            'name'      => 'Office desk',
+            'quantity'  => 2,
+            'condition' => 'Good',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep'          => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // No HTTP call should be made for clearance posts.
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
     public function test_freebie_alerts_remove_calls_api(): void
     {
         $msgId = 99999;

@@ -4643,6 +4643,47 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	assert.Equal(t, int64(1), taskCount, "freebie_alerts_add task should be queued when Offer is approved")
 }
 
+func TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd(t *testing.T) {
+	// Approving a clearance (bulk-offer) Offer must NOT queue a freebie_alerts_add task —
+	// the concierge manages those posts and freebiealerts.app is not the right channel.
+	prefix := uniquePrefix("msgw_fa_clr")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Add mod as moderator of the group.
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
+
+	// Create a pending Offer and mark it as a clearance via messages_bulk_items.
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance offer", 52.5, -1.8)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	db.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`) VALUES (?, 0, 'Office desk', 1, 'Good')", msgID)
+	defer db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ?", msgID)
+
+	// Clean any pre-existing freebie_alerts_add tasks for this message.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "freebie_alerts_add must NOT be queued when the approved Offer is a clearance")
+}
+
 func TestDeleteMessageQueuesFreebieAlertsRemove(t *testing.T) {
 	// User-deleting a message should queue freebie_alerts_remove.
 	prefix := uniquePrefix("msgw_fa_del")

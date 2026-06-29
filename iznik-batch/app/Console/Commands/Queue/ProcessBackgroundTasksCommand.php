@@ -1323,6 +1323,13 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
+        // Defense-in-depth: skip clearance/bulk-offer posts even if somehow enqueued.
+        $isClearance = DB::table('messages_bulk_items')->where('msgid', $msgId)->exists();
+        if ($isClearance) {
+            Log::info('Skipping freebie_alerts_add for clearance post', ['msgid' => $msgId]);
+            return;
+        }
+
         // Skip TrashNothing messages — TN syncs to freebiealerts directly.
         if ($msg->sourceheader && str_starts_with($msg->sourceheader, 'TN-')) {
             return;

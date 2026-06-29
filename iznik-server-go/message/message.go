@@ -1994,9 +1994,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Notify freebiealerts.app about newly approved Offer posts.
+	// Clearance/bulk-offer posts are excluded — the concierge manages their
+	// fulfilment directly and freebiealerts.app is not the right channel for them.
 	var approvedMsgType string
 	db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&approvedMsgType)
-	if approvedMsgType == "Offer" {
+	var isClearance int64
+	db.Raw("SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?", req.ID).Scan(&isClearance)
+	if approvedMsgType == "Offer" && isClearance == 0 {
 		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
 			"msgid": req.ID,
 		}); err != nil {

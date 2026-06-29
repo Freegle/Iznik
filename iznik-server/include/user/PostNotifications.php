@@ -147,6 +147,7 @@ class PostNotifications
                   AND users.deleted IS NULL
                   AND messages.type IN (?, ?)
                   AND messages_outcomes.msgid IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE messages_bulk_items.msgid = messages.id)
                   $msgDateCondition
                 ORDER BY messages_groups.arrival ASC;";
 
