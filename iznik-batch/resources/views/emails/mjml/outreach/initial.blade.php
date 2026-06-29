@@ -88,7 +88,7 @@
         <mj-text font-size="12px" color="#666666" line-height="1.6">
           You're receiving this because we found {{ $orgName ?? 'your organisation' }}'s contact
           details published online{{ !empty($area) ? ' for '.$area : '' }}, and the items above are
-          local to you. If they're not useful, no problem -
+          local to you. If you don't want to receive this kind of email,
           <a href="{{ $unsubscribeUrl }}" style="color:#338808;font-weight:bold;text-decoration:none;">click here to stop receiving these emails</a>
           and we won't contact you again.
         </mj-text>

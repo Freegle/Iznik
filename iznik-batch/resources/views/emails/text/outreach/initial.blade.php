@@ -19,6 +19,6 @@ Thanks,
 @endforeach
 
 ---
-You're receiving this because we found {{ $orgName ?? 'your organisation' }}'s contact details published online{{ !empty($area) ? ' for '.$area : '' }}, and the items above are local to you. If they're not useful, reply with the word UNSUBSCRIBE or email {{ $unsubscribeMailto }} and we won't contact you again.
+You're receiving this because we found {{ $orgName ?? 'your organisation' }}'s contact details published online{{ !empty($area) ? ' for '.$area : '' }}, and the items above are local to you. If you don't want to receive this kind of email, reply with the word UNSUBSCRIBE or email {{ $unsubscribeMailto }} and we won't contact you again.
 
 {{ config('freegle.branding.name') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice. Registered address: {{ config('freegle.branding.registered_address') }}
