@@ -2509,8 +2509,14 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		ctx.Groupid = *req.Groupid
 	}
 
-	// Queue email+log via background task.
-	// The batch processor will also create the mod log entry.
+	// Write the mod log entry synchronously, exactly once, like the other mod actions
+	// (hold/release/repost/edit). Previously the log was written by the batch processor,
+	// but that INSERT is unconditional and runs again whenever the task is retried (e.g.
+	// after a transient email-spool failure), producing duplicate "Replied" rows in the
+	// mod history (Discourse 9672/6). The batch now skips the log for this action.
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Groupid, ctx.Fromuser, myid, req.ID, stdmsgid, subject)
+
+	// Queue the email via background task (the log is already written above).
 	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
 		"email_message_reply", req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message")
 
