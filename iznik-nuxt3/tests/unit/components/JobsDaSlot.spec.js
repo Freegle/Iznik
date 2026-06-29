@@ -91,7 +91,7 @@ describe('JobsDaSlot', () => {
         stubs: {
           JobOne: {
             template:
-              '<div class="job-one" :data-id="id" :data-summary="summary" />',
+              '<div class="job-one" :data-id="id" :data-summary="summary" :data-context="context" />',
             props: [
               'id',
               'summary',
@@ -130,6 +130,24 @@ describe('JobsDaSlot', () => {
       const wrapper = await createWrapper()
 
       expect(wrapper.find('.jobs-slot').exists()).toBe(false)
+    })
+  })
+
+  describe('placement tagging', () => {
+    it('tags each JobOne with its placement as context (not the hardcoded daslot)', async () => {
+      const wrapper = await createWrapper({ placement: 'sidebar_left' })
+      const tiles = wrapper.findAll('.job-one')
+      expect(tiles.length).toBeGreaterThan(0)
+      tiles.forEach((t) =>
+        expect(t.attributes('data-context')).toBe('sidebar_left')
+      )
+    })
+
+    it('defaults placement to daslot when none is supplied', async () => {
+      const wrapper = await createWrapper()
+      const first = wrapper.find('.job-one')
+      expect(first.exists()).toBe(true)
+      expect(first.attributes('data-context')).toBe('daslot')
     })
   })
 
