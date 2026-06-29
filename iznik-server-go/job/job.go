@@ -221,14 +221,45 @@ func RecordJobClick(c *fiber.Ctx) error {
 		link = c.FormValue("link")
 	}
 
+	// placement = which ad slot the click came from (sticky_footer_mobile/desktop,
+	// sidebar_left/right, jobs_page, email_redirect, modal_more_jobs); source =
+	// website|email. Both optional and nullable, so legacy callers still work.
+	placement := c.Query("placement")
+	if placement == "" {
+		placement = c.FormValue("placement")
+	}
+	source := c.Query("source")
+	if source == "" {
+		source = c.FormValue("source")
+	}
+	// page = the Nuxt route name the click came from (jobs, browse-term, message-id, ...),
+	// orthogonal to placement: the same slot appears on every page, so this is what lets
+	// us tell which page earns the most. Optional/nullable like placement and source.
+	page := c.Query("page")
+	if page == "" {
+		page = c.FormValue("page")
+	}
+
 	if jobID == "" && link == "" {
 		var body struct {
-			ID   json.Number `json:"id"`
-			Link string      `json:"link"`
+			ID        json.Number `json:"id"`
+			Link      string      `json:"link"`
+			Placement string      `json:"placement"`
+			Source    string      `json:"source"`
+			Page      string      `json:"page"`
 		}
 		if err := c.BodyParser(&body); err == nil {
 			jobID = body.ID.String()
 			link = body.Link
+			if placement == "" {
+				placement = body.Placement
+			}
+			if source == "" {
+				source = body.Source
+			}
+			if page == "" {
+				page = body.Page
+			}
 		}
 	}
 
@@ -259,13 +290,26 @@ func RecordJobClick(c *fiber.Ctx) error {
 	// The INSERT IGNORE handles missing/invalid IDs gracefully
 	db := database.DBConn
 
+	// Store NULL (not '') for an absent placement/source/page so legacy rows and bot
+	// hits stay distinguishable from genuinely-tagged clicks.
+	var placementVal, sourceVal, pageVal interface{}
+	if placement != "" {
+		placementVal = placement
+	}
+	if source != "" {
+		sourceVal = source
+	}
+	if page != "" {
+		pageVal = page
+	}
+
 	// Use IGNORE to handle clicks for purged jobs gracefully
 	if userID != nil {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link) VALUES (?, ?, ?)",
-			*userID, jobID, link)
+		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link, placement, source, page) VALUES (?, ?, ?, ?, ?, ?)",
+			*userID, jobID, link, placementVal, sourceVal, pageVal)
 	} else {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link) VALUES (NULL, ?, ?)",
-			jobID, link)
+		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link, placement, source, page) VALUES (NULL, ?, ?, ?, ?, ?)",
+			jobID, link, placementVal, sourceVal, pageVal)
 	}
 
 	return c.JSON(fiber.Map{
