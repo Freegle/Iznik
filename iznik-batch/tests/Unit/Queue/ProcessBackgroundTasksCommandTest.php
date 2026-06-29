@@ -1844,12 +1844,13 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNotNull($emailRow->validatekey);
     }
 
-    public function test_email_verify_skips_existing_email(): void
+    public function test_email_verify_skips_existing_validated_email(): void
     {
         Mail::fake();
 
         $user = $this->createTestUser();
-        $userEmail = $this->createTestUserEmail($user, ['preferred' => 1]);
+        // Already on the account AND already validated -> no need to re-verify.
+        $userEmail = $this->createTestUserEmail($user, ['preferred' => 1, 'validated' => now()]);
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_verify',
@@ -1870,11 +1871,57 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // Flush the spool so Mail::fake intercepts the actual SMTP send.
         $this->artisan('mail:spool:process')->assertSuccessful();
 
-        // Should not send verification email for existing email.
+        // Should NOT re-send verification for an already-validated email.
         Mail::assertNothingSent();
 
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
+    }
+
+    /**
+     * REGRESSION: an address already on the account but UNVALIDATED (validated IS NULL) must still
+     * get a (re)sent verification. The handler previously short-circuited on ANY existing address and
+     * returned without sending, so an unconfirmed address could never be verified and the user was
+     * stuck re-clicking "verify" with no mail arriving.
+     */
+    public function test_email_verify_resends_for_existing_unvalidated_email(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        // Already on the account, but never validated - the stuck state.
+        $userEmail = $this->createTestUserEmail($user, ['preferred' => 0]);
+        $this->assertNull($userEmail->validated, 'precondition: the existing email is unvalidated');
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_verify',
+            'data' => json_encode([
+                'user_id' => $user->id,
+                'email' => $userEmail->email,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The verification mail MUST go out despite the address already being on the account.
+        Mail::assertSent(VerifyEmailMail::class, function (VerifyEmailMail $mail) use ($user, $userEmail) {
+            return $mail->userId === $user->id
+                && $mail->email === $userEmail->email
+                && ! empty($mail->confirmUrl);
+        });
+
+        // And a fresh validatekey must have been written so the confirm link works.
+        $emailRow = DB::table('users_emails')->where('email', $userEmail->email)->first();
+        $this->assertNotNull($emailRow->validatekey, 'validatekey should be set for the re-sent verification');
     }
 
     public function test_email_merge_sends_to_both_users(): void
