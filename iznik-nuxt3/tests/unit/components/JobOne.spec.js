@@ -215,12 +215,15 @@ describe('JobOne', () => {
   })
 
   describe('click handling', () => {
-    it('logs click to jobStore', async () => {
-      const wrapper = createWrapper()
+    it('logs click to jobStore with the placement (from context) and source', async () => {
+      // placement = the slot the ad was in, so per-placement CTR is measurable.
+      const wrapper = createWrapper({ context: 'sticky_footer_mobile' })
       await wrapper.find('.job-item').trigger('click')
       expect(mockJobStore.log).toHaveBeenCalledWith({
         id: 123,
         link: 'https://jobs.example.com/123',
+        placement: 'sticky_footer_mobile',
+        source: 'website',
       })
     })
 

@@ -278,10 +278,14 @@ function handleMouseEnter() {
 }
 
 function clicked() {
-  // Log to server for revenue tracking.
+  // Log to server for revenue tracking. context carries the placement slot
+  // (sticky_footer_*, sidebar_*, jobs_page, modal_more_jobs) so per-placement
+  // click-through is measurable; source distinguishes website from email.
   jobStore.log({
     id: job.value.id,
     link: job.value.url,
+    placement: props.context,
+    source: 'website',
   })
 
   // Log click to client log for analytics.
