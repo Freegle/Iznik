@@ -66,6 +66,29 @@ func interestIsActive(state string) bool {
 	return state != "Withdrawn" && state != "Rejected"
 }
 
+// linkBulkItemAttachment maps an existing message attachment to a bulk-offer
+// catalogue item. This replaces the former messages_attachments.bulkitemid
+// column with a separate join table so the core attachments table is untouched.
+// One attachment belongs to at most one item (unique attachmentid).
+func linkBulkItemAttachment(db *gorm.DB, bulkitemid uint64, attachmentid uint64) {
+	db.Exec("INSERT INTO messages_bulk_item_attachments (bulkitemid, attachmentid) VALUES (?, ?) "+
+		"ON DUPLICATE KEY UPDATE bulkitemid = VALUES(bulkitemid)", bulkitemid, attachmentid)
+}
+
+// loadAccessInstructions / saveAccessInstructions replace the former
+// messages.accessinstructions column with a separate per-offer table, keeping the
+// core messages table untouched.
+func loadAccessInstructions(db *gorm.DB, msgid uint64) string {
+	var ai string
+	db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages_bulk_access WHERE msgid = ?", msgid).Scan(&ai)
+	return ai
+}
+
+func saveAccessInstructions(db *gorm.DB, msgid uint64, instructions string) {
+	db.Exec("INSERT INTO messages_bulk_access (msgid, accessinstructions) VALUES (?, ?) "+
+		"ON DUPLICATE KEY UPDATE accessinstructions = VALUES(accessinstructions)", msgid, instructions)
+}
+
 // LoadBulkItems returns the catalogue for a message, grouping the supplied
 // (already path-resolved) attachments by bulkitemid and computing per-item
 // interest. The full per-user interest list is only included when
@@ -306,9 +329,7 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 // a no-op when the offer has no instructions set. Exposed (via the var below)
 // for tests.
 func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser uint64) {
-	var ai string
-	db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", msgid).Scan(&ai)
-	ai = strings.TrimSpace(ai)
+	ai := strings.TrimSpace(loadAccessInstructions(db, msgid))
 	if ai == "" {
 		return
 	}
@@ -393,13 +414,16 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 
 		if itemID > 0 {
 			keepIDs = append(keepIDs, itemID)
-			// Link this item's photos to both the message and the item. Freshly
-			// uploaded attachments have no msgid yet, so set it here too. The
-			// (msgid IS NULL OR msgid = ?) guard prevents stealing an attachment
-			// that already belongs to a different message.
+			// Claim this item's photos for the message (freshly uploaded
+			// attachments have no msgid yet; msgid is an existing core column).
+			// The (msgid IS NULL OR msgid = ?) guard prevents stealing an
+			// attachment that already belongs to a different message. The
+			// item linkage lives in the separate messages_bulk_item_attachments
+			// table (no schema change to messages_attachments).
 			for _, attID := range in.Attachments {
-				db.Exec("UPDATE messages_attachments SET bulkitemid = ?, msgid = ? WHERE id = ? AND (msgid IS NULL OR msgid = ?)",
-					itemID, msgid, attID, msgid)
+				db.Exec("UPDATE messages_attachments SET msgid = ? WHERE id = ? AND (msgid IS NULL OR msgid = ?)",
+					msgid, attID, msgid)
+				linkBulkItemAttachment(db, itemID, attID)
 			}
 		}
 	}
@@ -520,7 +544,7 @@ func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
 	var rows []prow
 	db.Raw("SELECT bi.id, bi.photourl FROM messages_bulk_items bi "+
 		"WHERE bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' "+
-		"AND NOT EXISTS (SELECT 1 FROM messages_attachments a WHERE a.bulkitemid = bi.id)", msgid).Scan(&rows)
+		"AND NOT EXISTS (SELECT 1 FROM messages_bulk_item_attachments x WHERE x.bulkitemid = bi.id)", msgid).Scan(&rows)
 
 	for _, r := range rows {
 		data, mime, err := BulkPhotoFetcher(r.Photourl)
@@ -533,8 +557,18 @@ func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
 			log.Printf("bulk photo ingest: upload failed for %s: %v", r.Photourl, err)
 			continue
 		}
-		db.Exec("INSERT INTO messages_attachments (msgid, bulkitemid, externaluid) VALUES (?, ?, ?)",
-			msgid, r.ID, uid)
+		sqlDB, dberr := db.DB()
+		if dberr != nil {
+			continue
+		}
+		res, dberr := sqlDB.Exec("INSERT INTO messages_attachments (msgid, externaluid) VALUES (?, ?)", msgid, uid)
+		if dberr != nil {
+			log.Printf("bulk photo ingest: attachment insert failed for %s: %v", r.Photourl, dberr)
+			continue
+		}
+		if attID, idErr := res.LastInsertId(); idErr == nil {
+			linkBulkItemAttachment(db, r.ID, uint64(attID))
+		}
 	}
 }
 

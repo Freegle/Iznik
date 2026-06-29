@@ -104,7 +104,7 @@ func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
 
 	// A photo belongs to the desk item.
 	attID := CreateTestAttachment(t, msgID)
-	db.Exec("UPDATE messages_attachments SET bulkitemid = ? WHERE id = ?", deskID, attID)
+	db.Exec("INSERT INTO messages_bulk_item_attachments (bulkitemid, attachmentid) VALUES (?, ?)", deskID, attID)
 
 	// viewer wants 2 desks; other wants 6 chairs.
 	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 2, 'Interested')", deskID, msgID, viewerID)
@@ -558,7 +558,9 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 
 	var externaluid string
 	var bulkitemid uint64
-	db.Raw("SELECT COALESCE(externaluid,''), COALESCE(bulkitemid,0) FROM messages_attachments WHERE msgid = ? AND bulkitemid = ?", msgID, deskID).
+	db.Raw("SELECT COALESCE(ma.externaluid,''), COALESCE(bia.bulkitemid,0) FROM messages_attachments ma "+
+		"INNER JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id "+
+		"WHERE ma.msgid = ? AND bia.bulkitemid = ?", msgID, deskID).
 		Row().Scan(&externaluid, &bulkitemid)
 	assert.Equal(t, stubUID, externaluid, "an attachment with the uploaded uid should be created")
 	assert.Equal(t, deskID, bulkitemid, "the attachment should be linked to the item")
@@ -566,7 +568,7 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 	// Running again must not create a duplicate — the item already has an attachment.
 	message.IngestBulkItemPhotosSync(db, msgID)
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE bulkitemid = ?", deskID).Scan(&count)
+	db.Raw("SELECT COUNT(*) FROM messages_bulk_item_attachments WHERE bulkitemid = ?", deskID).Scan(&count)
 	assert.Equal(t, int64(1), count, "ingestion is idempotent — no duplicate attachment")
 }
 
@@ -591,7 +593,11 @@ func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
 	// Mirror the real upload flow: an attachment carrying the uploaded uid (in the
 	// tusd "freegletusd-<hash>" form), linked to the bulk item.
 	const uid = "freegletusd-deadbeefcafe1234"
-	res := db.Exec("INSERT INTO messages_attachments (msgid, externaluid, bulkitemid, `primary`) VALUES (?, ?, ?, 1)", msgID, uid, deskID)
+	res := db.Exec("INSERT INTO messages_attachments (msgid, externaluid, `primary`) VALUES (?, ?, 1)", msgID, uid)
+	require.NoError(t, res.Error)
+	var linkAttID uint64
+	db.Raw("SELECT id FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, uid).Scan(&linkAttID)
+	res = db.Exec("INSERT INTO messages_bulk_item_attachments (bulkitemid, attachmentid) VALUES (?, ?)", deskID, linkAttID)
 	require.NoError(t, res.Error)
 
 	// GET as an ordinary viewer — the recipient who needs to see the photo.
@@ -662,7 +668,7 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 
 	// Stored on the message.
 	var stored string
-	db.Raw("SELECT COALESCE(accessinstructions,'') FROM messages WHERE id = ?", msgID).Scan(&stored)
+	db.Raw("SELECT COALESCE(accessinstructions,'') FROM messages_bulk_access WHERE msgid = ?", msgID).Scan(&stored)
 	assert.Equal(t, instructions, stored)
 
 	// Make the draft visible so GET returns it.

@@ -215,7 +215,7 @@ func TestHelperProposalAndResolveAllocation(t *testing.T) {
 	_ = ownerID
 	db := database.DBConn
 	// Give the offer access instructions so a Reserve triggers their delivery.
-	db.Exec("UPDATE messages SET accessinstructions = 'Round the back, code 1234' WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_bulk_access (msgid, accessinstructions) VALUES (?, 'Round the back, code 1234')", msgID)
 
 	// Driver records the replier + item then proposes an allocation.
 	_, ro := postHelper(t, ownerToken, map[string]interface{}{"action": "UpsertReplier", "msgid": msgID, "userid": replierUserID, "state": "QUALIFIED"})

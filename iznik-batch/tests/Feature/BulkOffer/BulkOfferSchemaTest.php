@@ -9,8 +9,9 @@ use Tests\TestCase;
 
 /**
  * Schema + integrity coverage for the bulk-offer (clearance) tables:
- *   messages_bulk_items, messages_bulk_items_interest, and the
- *   messages_attachments.bulkitemid column.
+ *   messages_bulk_items, messages_bulk_items_interest, and the separate
+ *   messages_bulk_item_attachments + messages_bulk_access tables. The feature is
+ *   fully additive - it adds NO column to any core table.
  */
 class BulkOfferSchemaTest extends TestCase
 {
@@ -26,7 +27,16 @@ class BulkOfferSchemaTest extends TestCase
             'id', 'bulkitemid', 'msgid', 'userid', 'quantity', 'cancollect', 'state', 'chatid',
         ]));
 
-        $this->assertTrue(Schema::hasColumn('messages_attachments', 'bulkitemid'));
+        // Item photos and access instructions live in their own bulk-only
+        // tables; the feature adds NO column to core tables.
+        $this->assertTrue(Schema::hasTable('messages_bulk_item_attachments'));
+        $this->assertTrue(Schema::hasColumns('messages_bulk_item_attachments', ['id', 'bulkitemid', 'attachmentid']));
+        $this->assertTrue(Schema::hasTable('messages_bulk_access'));
+        $this->assertTrue(Schema::hasColumns('messages_bulk_access', ['id', 'msgid', 'accessinstructions']));
+        $this->assertFalse(
+            Schema::hasColumn('messages_attachments', 'bulkitemid'),
+            'bulk-offer must not add a column to the core messages_attachments table'
+        );
     }
 
     public function test_defaults_applied(): void
@@ -78,21 +88,27 @@ class BulkOfferSchemaTest extends TestCase
         $this->assertDatabaseMissing('messages_bulk_items_interest', ['bulkitemid' => $itemId]);
     }
 
-    public function test_deleting_item_nulls_attachment_bulkitemid_but_keeps_attachment(): void
+    public function test_deleting_item_removes_attachment_link_but_keeps_attachment(): void
     {
         [$msgid] = $this->makeBulkOffer();
         $itemId = DB::table('messages_bulk_items')->insertGetId([
             'msgid' => $msgid, 'name' => 'Lamp',
         ]);
         $attId = DB::table('messages_attachments')->insertGetId([
-            'msgid' => $msgid, 'bulkitemid' => $itemId,
+            'msgid' => $msgid,
+        ]);
+        DB::table('messages_bulk_item_attachments')->insert([
+            'bulkitemid' => $itemId, 'attachmentid' => $attId,
         ]);
 
         DB::table('messages_bulk_items')->where('id', $itemId)->delete();
 
-        $att = DB::table('messages_attachments')->find($attId);
-        $this->assertNotNull($att, 'attachment should survive item deletion');
-        $this->assertNull($att->bulkitemid, 'bulkitemid should be set to NULL');
+        // The link cascades away with the item; the core attachment is untouched.
+        $this->assertDatabaseMissing('messages_bulk_item_attachments', ['attachmentid' => $attId]);
+        $this->assertNotNull(
+            DB::table('messages_attachments')->find($attId),
+            'attachment should survive item deletion'
+        );
     }
 
     /**

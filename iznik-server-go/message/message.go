@@ -482,11 +482,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
 			// that is no longer active, return an empty externaluid so the frontend shows
 			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, ma.bulkitemid, ma.archived,
+			db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
 				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')
+				LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id
 				WHERE ma.msgid = ?
 				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
 			}()
@@ -811,8 +812,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Bulkslots = LoadBulkSlots(db, message.ID)
 					// Access instructions are private — only the offerer/mod sees them.
 					if canSeeInterest {
-						var ai string
-						db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", message.ID).Scan(&ai)
+						ai := loadAccessInstructions(db, message.ID)
 						if ai != "" {
 							message.Accessinstructions = &ai
 						}
@@ -3309,7 +3309,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
 	}
 	if req.Accessinstructions != nil {
-		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", *req.Accessinstructions, req.ID)
+		saveAccessInstructions(db, req.ID, *req.Accessinstructions)
 	}
 
 	return nil
@@ -3818,7 +3818,7 @@ func PutMessage(c *fiber.Ctx) error {
 		upsertBulkSlots(db, newMsgID, req.Bulkslots)
 	}
 	if strings.TrimSpace(req.Accessinstructions) != "" {
-		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", req.Accessinstructions, newMsgID)
+		saveAccessInstructions(db, newMsgID, req.Accessinstructions)
 	}
 
 	// Add spatial data if locationid is provided, and update the user's last known location
