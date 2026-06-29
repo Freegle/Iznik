@@ -277,6 +277,18 @@ async function registerInterest(page, msgId, indices, takeScreenshot, who) {
   }
   console.log(`${who}: ${photoCount} item photo(s) rendered and loaded`)
 
+  // Registering with nothing chosen must show a clear error, not silently fail.
+  if (who === 'r1') {
+    const reg = page.getByTestId('register-interest')
+    await reg.scrollIntoViewIfNeeded()
+    await reg.click()
+    await expect(page.getByTestId('register-error')).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await takeScreenshot('bulk-empty-submit-error')
+    console.log(`${who}: empty-submit error shown as expected`)
+  }
+
   for (const idx of indices) {
     const toggle = toggles.nth(idx)
     await toggle.scrollIntoViewIfNeeded()

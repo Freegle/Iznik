@@ -32,16 +32,25 @@
         <div class="bitem__detail">
           <span class="bitem__ref">#{{ idx + 1 }}</span>
           <span class="bitem__name">{{ item.name }}</span>
-          <b-badge variant="light">{{ item.quantity }} available</b-badge>
-          <b-badge
-            v-if="item.condition && item.condition !== 'Unknown'"
-            variant="info"
-          >
-            {{ conditionLabel(item.condition) }}
-          </b-badge>
           <span v-if="item.dimensions" class="text-muted small">{{
             item.dimensions
           }}</span>
+        </div>
+
+        <!-- Quantity + condition as fixed columns, so they line up across rows
+             just to the left of the choice buttons. -->
+        <div class="bitem__meta">
+          <span class="bitem__avail">
+            <b-badge variant="light">{{ item.quantity }} available</b-badge>
+          </span>
+          <span class="bitem__cond">
+            <b-badge
+              v-if="item.condition && item.condition !== 'Unknown'"
+              variant="info"
+            >
+              {{ conditionLabel(item.condition) }}
+            </b-badge>
+          </span>
         </div>
 
         <!-- Owner: compact interest summary. -->
@@ -158,7 +167,7 @@ const props = defineProps({
 
 // The page's main reply button drives the actual "Register interest" action, so
 // it needs to know whether we're ready, and whether interest is already in.
-const emit = defineEmits(['can-register', 'submitted'])
+const emit = defineEmits(['can-register', 'submitted', 'validation'])
 
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
@@ -248,6 +257,21 @@ function onCheck(item) {
   }
 }
 
+// Why the user can't register yet (empty string when they can). Emitted up so
+// the page's reply button can show a clear error when a click can't go through —
+// e.g. they pressed "Register interest" without choosing any item. Kept reactive
+// so the message always reflects the current state (and clears when resolved).
+const validationError = computed(() => {
+  if (!anyPicked.value) {
+    return "Please choose at least one item — tap 'Yes please' on the ones you'd like."
+  }
+  if (slots.value.length && !cancollectTimes.value.length) {
+    return 'Please tick at least one collection time you can make.'
+  }
+  return ''
+})
+watch(validationError, (v) => emit('validation', v), { immediate: true })
+
 // "Yes please" / "No thanks" toggle: set the choice and apply the qty default.
 function setPick(item, val) {
   picks[item.id].checked = val
@@ -330,6 +354,7 @@ async function submit(callback) {
 
 defineExpose({
   submit,
+  validationError,
   buildPayload,
   picks,
   canRegister,
@@ -418,7 +443,7 @@ defineExpose({
   color: $color-gray--normal;
 }
 
-/* Name + badges share one line; the name truncates if the row is tight. */
+/* Name (+ dimensions) share one line; the name truncates if the row is tight. */
 .bitem__detail {
   flex: 1 1 auto;
   min-width: 0;
@@ -427,10 +452,21 @@ defineExpose({
   gap: 0.4rem;
   white-space: nowrap;
   overflow: hidden;
+}
 
-  .badge {
-    flex: 0 0 auto;
-  }
+/* Quantity + condition: fixed-width columns so they line up across rows, just
+   to the left of the choice buttons. */
+.bitem__meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.bitem__avail {
+  flex: 0 0 6.75rem;
+}
+.bitem__cond {
+  flex: 0 0 5rem;
 }
 
 .bitem__name {
@@ -493,6 +529,7 @@ defineExpose({
     flex-wrap: wrap;
   }
 
+  .bitem__meta,
   .bitem__pick,
   .bitem__interest {
     flex-basis: 100%;
@@ -500,6 +537,12 @@ defineExpose({
        on top of 100% and re-introduce overflow). */
     padding-left: calc(40px + 0.5rem);
     margin-top: 0.25rem;
+  }
+
+  /* Pack the badges to their content rather than the desktop fixed columns. */
+  .bitem__avail,
+  .bitem__cond {
+    flex: 0 0 auto;
   }
 
   /* Left-align the stacked toggle + quantity under the item name on mobile. */

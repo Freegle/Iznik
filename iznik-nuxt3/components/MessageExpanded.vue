@@ -332,6 +332,7 @@
               :id="id"
               @can-register="bulkCanRegister = $event"
               @submitted="bulkSubmitted = $event"
+              @validation="bulkPickError = $event"
             />
 
             <!-- Posted by divider and section (shown on taller screens, after description) -->
@@ -444,6 +445,14 @@
                 v-else-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
+                <NoticeMessage
+                  v-if="isBulk && bulkTriedRegister && bulkPickError"
+                  variant="danger"
+                  class="register-error mb-0"
+                  data-testid="register-error"
+                >
+                  {{ bulkPickError }}
+                </NoticeMessage>
                 <b-button
                   v-if="inModal || fullscreenOverlay"
                   variant="secondary"
@@ -458,7 +467,6 @@
                   variant="primary"
                   size="lg"
                   class="reply-button"
-                  :disabled="isBulk && !bulkCanRegister"
                   :data-testid="isBulk ? 'register-interest' : undefined"
                   @click="isBulk ? registerBulkInterest() : expandReply()"
                 >
@@ -512,6 +520,14 @@
           v-else-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
+          <NoticeMessage
+            v-if="isBulk && bulkTriedRegister && bulkPickError"
+            variant="danger"
+            class="register-error mb-0"
+            data-testid="register-error"
+          >
+            {{ bulkPickError }}
+          </NoticeMessage>
           <b-button
             v-if="inModal || fullscreenOverlay"
             variant="secondary"
@@ -526,7 +542,6 @@
             variant="primary"
             size="lg"
             class="reply-button"
-            :disabled="isBulk && !bulkCanRegister"
             :data-testid="isBulk ? 'register-interest' : undefined"
             @click="isBulk ? registerBulkInterest() : expandReply()"
           >
@@ -747,7 +762,17 @@ const hideGeneratedBulkBody = computed(() => {
 const bulkInterestRef = ref(null)
 const bulkCanRegister = ref(false)
 const bulkSubmitted = ref(false)
+// Red error shown above the reply button when a "Register interest" click can't
+// go through yet (e.g. no item chosen) — otherwise the click silently no-ops.
+// The child's live "why you can't register yet" message ('' once ready), and
+// whether the user has actually pressed the button. We only show the red error
+// after a try, so an empty "Register interest" click gives feedback instead of
+// silently no-opping — and it clears itself the moment the reply becomes valid.
+const bulkPickError = ref('')
+const bulkTriedRegister = ref(false)
 function registerBulkInterest() {
+  bulkTriedRegister.value = true
+  if (bulkPickError.value) return
   bulkInterestRef.value?.submit()
 }
 
@@ -2260,10 +2285,16 @@ onUnmounted(() => {
 
 .footer-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   width: 100%;
   max-width: 600px;
   margin: 0 auto;
+
+  /* The empty-submit error spans the full width and sits above the buttons. */
+  .register-error {
+    flex: 0 0 100%;
+  }
 
   .cancel-button,
   .reply-button {

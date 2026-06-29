@@ -62,10 +62,13 @@ const mountOpts = {
   global: {
     stubs: {
       'b-badge': true,
+      'b-button': true,
+      'b-button-group': true,
       'b-form-checkbox': true,
       'b-form-checkbox-group': true,
       'b-form-group': true,
       'b-form-input': true,
+      'b-form-select': true,
     },
   },
 }
@@ -131,10 +134,14 @@ describe('BulkItemsInterest', () => {
     w.vm.picks[11].checked = false // nothing on
     await nextTick()
     expect(w.vm.canRegister).toBe(false)
-    expect(w.vm.registerHint).toContain('at least one item')
+    // The validation message (shown as a red error above the reply button when
+    // the user presses Register interest) names the missing step, and clears
+    // once it's resolved.
+    expect(w.vm.validationError).toContain('at least one item')
     w.vm.picks[11].checked = true
     await nextTick()
     expect(w.vm.canRegister).toBe(true)
+    expect(w.vm.validationError).toBe('')
   })
 
   it('with fixed windows, needs at least one ticked and joins them all', async () => {
@@ -146,6 +153,7 @@ describe('BulkItemsInterest', () => {
     // An item is on, but no collection time chosen yet → blocked.
     expect(w.vm.canRegister).toBe(false)
     expect(w.vm.registerHint).toContain('collection time')
+    expect(w.vm.validationError).toContain('collection time')
     // Tick all the times they can make.
     w.vm.cancollectTimes = ['Tue 10–4', 'Wed 10–4']
     await nextTick()
