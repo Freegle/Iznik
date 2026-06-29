@@ -491,18 +491,26 @@ class ProcessBackgroundTasksCommand extends Command
             default => 'Approved',
         };
 
-        // Always create the mod log entry (even if no stdmsg content).
-        DB::table('logs')->insert([
-            'timestamp' => now(),
-            'type' => 'Message',
-            'subtype' => $subtype,
-            'msgid' => $msgId,
-            'user' => $posterId ?: null,
-            'byuser' => $byUser,
-            'groupid' => $groupId ?: null,
-            'stdmsgid' => $stdmsgId ?: null,
-            'text' => $subject,
-        ]);
+        // Create the mod log entry (even if no stdmsg content).
+        //
+        // The Go reply handler (handleReply) now writes the "Replied" log synchronously,
+        // exactly once. This INSERT is unconditional and re-runs whenever the task is
+        // retried (e.g. after a transient email-spool failure), so leaving it in place for
+        // replies produced duplicate "Replied" rows in the mod history (Discourse 9672/6).
+        // Skip it for replies; approve/reject/delete still log here as before.
+        if ($taskType !== BackgroundTask::TASK_EMAIL_MESSAGE_REPLY) {
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => $subtype,
+                'msgid' => $msgId,
+                'user' => $posterId ?: null,
+                'byuser' => $byUser,
+                'groupid' => $groupId ?: null,
+                'stdmsgid' => $stdmsgId ?: null,
+                'text' => $subject,
+            ]);
+        }
 
         // Queue push notifications to group moderators.
         if ($groupId > 0) {

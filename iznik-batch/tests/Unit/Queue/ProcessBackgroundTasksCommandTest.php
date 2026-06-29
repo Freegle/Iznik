@@ -773,13 +773,16 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             return TRUE;
         });
 
-        // Verify reply log entry was created.
+        // The "Replied" mod-log entry is now written synchronously by the Go handleReply
+        // handler, NOT by the batch. The batch INSERT was unconditional and re-ran on task
+        // retry, duplicating the log row (Discourse 9672/6). In this batch-only test the Go
+        // handler did not run, so there must be NO Replied log row from the batch.
         $log = DB::table('logs')
             ->where('msgid', $msgId)
             ->where('type', 'Message')
             ->where('subtype', 'Replied')
             ->first();
-        $this->assertNotNull($log, 'Replied log entry should be created');
+        $this->assertNull($log, 'Batch must not create the Replied log (Go writes it synchronously)');
 
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);

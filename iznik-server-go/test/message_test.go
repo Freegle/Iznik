@@ -1346,6 +1346,50 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	// Log creation is now handled by the batch processor (not synchronously in the Go API).
 }
 
+// A mod reply must write its "Replied" log synchronously, exactly once. Previously the log
+// was written only by the batch, whose unconditional INSERT re-ran on task retry and
+// duplicated the row in the mod history (Discourse 9672/6). The batch now skips it.
+func TestPostMessageReplyCreatesLogSynchronously(t *testing.T) {
+	prefix := uniquePrefix("msgmod_reply_log")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reply",
+		"groupid": groupID,
+		"subject": "Re: your post",
+		"body":    "Thanks for posting!",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Exactly one Replied log, written synchronously by the Go handler.
+	var logCount int
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Message' AND subtype = 'Replied' AND msgid = ? AND byuser = ?",
+		msgID, modID).Scan(&logCount)
+	assert.Equal(t, 1, logCount, "Reply should create exactly one Replied log synchronously")
+
+	// The reply email is still queued via the background task.
+	var taskCount int
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_reply' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.GreaterOrEqual(t, taskCount, 1, "Reply should still queue the email task")
+}
+
 // A reject that lands on a message which is no longer Pending (e.g. it was
 // re-approved/promoted to live before the mod's click arrived) must NOT silently
 // queue a rejection email/log nor claim success - otherwise the mod and the poster
