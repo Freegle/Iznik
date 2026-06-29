@@ -109,8 +109,11 @@
                       >
                         {{ closedCount }}
                       </b-badge>
-                      <span v-if="showClosed">Return to chats that are not hidden</span>
-                      <span v-else>Show {{ closedChats.length }} hidden/blocked chat<span
+                      <span v-if="showClosed"
+                        >Return to chats that are not hidden</span
+                      >
+                      <span v-else
+                        >Show {{ closedChats.length }} hidden/blocked chat<span
                           v-if="closedChats.length > 1"
                           >s</span
                         ></span
@@ -198,6 +201,7 @@
                   max-width="300px"
                   div-id="div-gpt-ad-1691925773522-0"
                   class="mt-2"
+                  placement="chat_list"
                 />
               </VisibleWhen>
             </div>

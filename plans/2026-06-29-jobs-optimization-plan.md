@@ -24,9 +24,18 @@ Everything else in this plan depends on fixing those two gaps first. Without imp
 
 ---
 
-### Phase 1a - Placement tagging (prerequisite, effort S)
+### Phase 1a - Placement + page tagging (prerequisite, effort S) - SHIPPED (PR #916)
 
-**What it does:** Every job click in `logs_jobs` records which slot it came from. Every Loki event carries the same placement string. Metric moved: makes existing click data segment-able by slot immediately; no impression table needed yet.
+**What it does:** Every job click in `logs_jobs` records which slot (`placement`) AND which page (`page` = Nuxt route name) it came from, plus `source` (website/email). Every Loki event carries the same strings. Metric moved: makes existing click data segment-able by slot and page immediately; no impression table needed yet.
+
+**Implementation notes (as shipped, may differ from the original sketch below):**
+- Migrations `2026_06_29_000001_add_placement_to_logs_jobs.php` (placement + source) and `2026_06_29_000002_add_page_to_logs_jobs.php` (page). Separate file for page because 000001 was already applied.
+- `page` is AUTO-DERIVED in `JobOne.clicked()` from `router.currentRoute.value.name` (fallback `'unknown'`), NOT threaded as a prop - it is dynamic global state, unlike placement which is a static property of the mount site.
+- Email-redirect: `pages/job/[id].vue` hardcodes `placement='email_redirect'` and leaves `page` NULL (the redirect stub has no meaningful browsing page). To isolate email clicks: `WHERE page IS NULL AND placement='email_redirect'` (legacy rows are `page IS NULL AND placement IS NULL`).
+- Two previously-untagged job-capable slots tagged: `message_sidebar` (`pages/message/[id].vue`) and `chat_list` (`pages/chats/[[id]].vue`).
+- Go `RecordJobClick` parses placement/source/page from query, form, and JSON body with identical three-tier fallback; NULL when absent. Tests: `TestJobClick_Placement`, `TestJobClick_Page` (Go); `JobOne.spec.js`, `JobsDaSlot.spec.js` (vitest).
+
+Original sketch follows.
 
 **The gap:** `ExternalDa` mounts two sticky-footer `JobsDaSlot` instances in `LayoutCommon.vue` and one each in `SidebarLeft.vue` and `SidebarRight.vue`. All four pass no placement identifier, so `JobsDaSlot` hardcodes `context='daslot'` on every `JobOne`. The click goes to `logs_jobs` with no placement column at all.
 
@@ -86,20 +95,28 @@ New file `database/migrations/2026_XX_create_logs_job_impressions.php`:
 CREATE TABLE logs_job_impressions (
   id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   session    VARCHAR(64) NOT NULL COMMENT 'freegle_session_id from sessionStorage',
-  jobid      BIGINT UNSIGNED NOT NULL,
+  jobid      BIGINT UNSIGNED NULL COMMENT 'NULL for non-job fills (Playwire/AdSense/Prebid), set for job fills',
+  type       VARCHAR(16) NOT NULL DEFAULT 'job' COMMENT 'what filled the slot: job | playwire | adsense | prebid | fallback',
   placement  VARCHAR(32) NOT NULL DEFAULT '',
+  page       VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Nuxt route name where the slot rendered (jobs, browse-term, ...)',
   variant    VARCHAR(50) NOT NULL DEFAULT '' COMMENT 'bandit variant or empty',
   position   TINYINT UNSIGNED NOT NULL DEFAULT 0,
   userid     BIGINT UNSIGNED NULL,
   timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY session_job_placement (session, jobid, placement),
+  UNIQUE KEY session_job_placement (session, jobid, type, placement, page),
   INDEX idx_jobid (jobid),
   INDEX idx_timestamp (timestamp),
-  INDEX idx_placement (placement)
+  INDEX idx_placement (placement),
+  INDEX idx_type (type)
 );
 ```
 
 The `UNIQUE KEY` means repeated scroll-backs in the same tab collapse to one row, keeping the table lean. This mirrors `browse_scroll_depth` exactly (`iznik-server-go/browse/scroll.go`).
+
+**Why `type` and `page` (the user's two questions answered at the impression level):**
+
+- **job vs Playwire (`type`).** A single `ExternalDa` slot is shared: it renders `JobsDaSlot` first, then swaps to `OurPlaywireDa` (or AdSense/Prebid) once `boredWithJobs` fires (a 30s timer, or any later page load - see `ExternalDa.vue`). Job clicks land in `logs_jobs`; Playwire clicks/revenue are programmatic and never reach our DB. So the only way to compare the two head-to-head is at the **impression** level: log an impression with `type` whenever a fill renders (`JobsDaSlot`/`OurPlaywireDa` each already emit `@rendered`). Then per placement+page: job RPI = SUM(job cpc clicks)/COUNT(type='job' impressions), compared against Playwire's reported revenue / COUNT(type='playwire' impressions). `jobid` is NULL for non-job fills.
+- **page.** The same slot appears on every page, so placement alone can't say which page earns most. `page` (the Nuxt route name, low cardinality) is captured for both clicks (shipped in `logs_jobs.page`, PR #916) and impressions. No ad currently renders inside a modal (`ExternalDa` suppresses ads when `document.body` has `modal-open` unless its `inModal` prop is set, which no call site does), so there is no separate modal dimension; if a future modal embeds an ad via `inModal=true`, the route name still correctly attributes it (the route does not change when a modal opens).
 
 **Go changes (iznik-server-go):**
 
@@ -107,17 +124,20 @@ New handler `RecordJobImpression` in `job/job.go`:
 
 ```go
 type jobImpressionBody struct {
-    JobID     int64  `json:"jobid"`
+    JobID     int64  `json:"jobid"`     // 0/omitted for non-job fills (Playwire etc.)
+    Type      string `json:"type"`      // job | playwire | adsense | prebid | fallback; default 'job'
     Session   string `json:"session"`
     Placement string `json:"placement"`
+    Page      string `json:"page"`      // Nuxt route name, parity with logs_jobs.page
     Variant   string `json:"variant"`
     Position  int    `json:"position"`
     ListLength int   `json:"list_length"`
 }
 ```
 
-- Validate: drop if `session` empty and `jobid` zero (bot filter, mirrors `RecordJobClick`)
-- Normalise placement to allowlist: `sticky_footer_mobile`, `sticky_footer_desktop`, `sidebar_left`, `sidebar_right`, `jobs_page`, `email_redirect`, `modal_more_jobs`; default `'unknown'`
+- Validate: drop if `session` empty and `jobid` zero AND `type='job'` (bot filter, mirrors `RecordJobClick`); for non-job fills `jobid` is legitimately absent, so gate the bot filter on `type='job'`
+- Normalise `type` to allowlist `job|playwire|adsense|prebid|fallback`, default `'job'`; store `jobid` as NULL when zero
+- Normalise placement to allowlist: `sticky_footer_mobile`, `sticky_footer_desktop`, `sidebar_left`, `sidebar_right`, `jobs_page`, `message_sidebar`, `chat_list`, `email_redirect`, `modal_more_jobs`; default `'unknown'`
 - Optional userid from JWT (`auth.WhoAmI(c)` - already used in `RecordJobClick`)
 - `INSERT INTO logs_job_impressions ... ON DUPLICATE KEY UPDATE userid=COALESCE(VALUES(userid), userid), timestamp=VALUES(timestamp)`
 - Return `{ret:0,status:"Success"}` immediately; fire-and-forget
@@ -160,6 +180,10 @@ const intersectionObserver = new IntersectionObserver((entries) => {
 The 1000ms filter drops scroll-throughs. The `hasBeenVisible` ref already prevents re-firing within a page load; the DB UNIQUE key prevents double-counting across refreshes in the same tab.
 
 Add props to `JobOne.vue`: `abVariant` (String, default `''`) and keep existing `context` prop.
+
+**Non-job (Playwire) impressions - the comparison denominator:**
+
+`ExternalDa.vue` already routes `@rendered(true)` from each fill (`JobsDaSlot`, `OurPlaywireDa`, `OurGoogleDa`, `OurPrebidDa`) through `rippleRendered()`. In `ExternalDa`, when a NON-job fill reports rendered, fire the same `/apiv2/job/impression` beacon with `type` set to the fill kind (`playwire`/`adsense`/`prebid`), `jobid` omitted, and `placement`/`page` from the slot's props + router. The job fill already logs its impression from `JobOne` (`type='job'`). This gives matched denominators: for each (placement, page) we now have job-impression and playwire-impression counts in the same table, so job RPI vs Playwire RPM is a single GROUP BY. Dwell-confirm Playwire the same way (`checkStillVisible` already enforces a 100ms viewable delay, so the impression is only logged for genuinely-viewable fills).
 
 **Email impression denominator:**
 

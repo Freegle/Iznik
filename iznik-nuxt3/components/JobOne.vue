@@ -278,6 +278,13 @@ function handleMouseEnter() {
 }
 
 function clicked() {
+  // page = the route NAME we're on at click time (jobs, browse-term, message-id, ...),
+  // derived from the router that's already in scope. It's orthogonal to placement: the same
+  // slot appears on every page, so this is what tells us which page earns the most. Route
+  // name (not path) keeps cardinality low - /explore/123 and /explore/456 both collapse to
+  // 'explore-id'. Fallback 'unknown' (never 'path') so cardinality stays bounded if name is absent.
+  const page = router?.currentRoute?.value?.name ?? 'unknown'
+
   // Log to server for revenue tracking. context carries the placement slot
   // (sticky_footer_*, sidebar_*, jobs_page, modal_more_jobs) so per-placement
   // click-through is measurable; source distinguishes website from email.
@@ -286,6 +293,7 @@ function clicked() {
     link: job.value.url,
     placement: props.context,
     source: 'website',
+    page,
   })
 
   // Log click to client log for analytics.
@@ -298,6 +306,7 @@ function clicked() {
     list_length: props.listLength,
     context: props.context,
     source: 'website',
+    page,
   })
 
   // Route to jobs page to encourage viewing of more jobs.
