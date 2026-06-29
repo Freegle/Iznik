@@ -36,7 +36,7 @@ async function dragFirstTrayPhotoToRow(page, rowIdx) {
 
 test.describe('Bulk offer (clearance) end-to-end', () => {
   // Video is recorded via the context fixture (recordVideo) for the whole flow.
-  test('offerer lists items with photos; two repliers pick items', async ({
+  test('offerer posts a clearance; two repliers pick items; offerer allocates and completes', async ({
     page,
     testEnv,
     takeScreenshot,
@@ -185,6 +185,62 @@ test.describe('Bulk offer (clearance) end-to-end', () => {
     expect(await loginViaHomepage(page, replier2.email, 'freegle')).toBeTruthy()
     console.log(`Logged in as replier2 ${replier2.email}`)
     await registerInterest(page, msgId, [1, 2], takeScreenshot, 'r2')
+
+    // ---------------------------------------------------------------
+    // OFFERER: see the replies, allocate an item, and complete collection
+    // ---------------------------------------------------------------
+    await logoutIfLoggedIn(page)
+    expect(await loginViaHomepage(page, offerer.email, 'freegle')).toBeTruthy()
+    console.log(`Logged back in as offerer ${offerer.email}`)
+
+    // Reach the management page from My Posts.
+    await page.gotoAndVerify('/myposts', {
+      timeout: timeouts.navigation.default,
+    })
+    const manageLink = page.getByTestId('manage-' + msgId)
+    await manageLink.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await manageLink.click()
+    await page.waitForURL(new RegExp('/clearance/' + msgId), {
+      timeout: timeouts.navigation.default,
+    })
+
+    // The manager lists each item and the people who replied to it.
+    await page
+      .getByTestId('clearance-manager')
+      .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await page
+      .locator('[data-testid^="candidate-"]')
+      .first()
+      .waitFor({ state: 'visible', timeout: timeouts.api.default })
+    await takeScreenshot('bulk-manage-replies')
+
+    // Allocate: reserve an item to the first candidate (promises it to them).
+    const reserveBtn = page
+      .locator('[data-testid^="action-"][data-testid$="-Reserved"]')
+      .first()
+    await reserveBtn.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await reserveBtn.click()
+    await page.waitForTimeout(1000)
+    await takeScreenshot('bulk-manage-allocated')
+
+    // Complete: mark it collected.
+    const collectBtn = page
+      .locator('[data-testid^="action-"][data-testid$="-Collected"]')
+      .first()
+    await collectBtn.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await collectBtn.click()
+    await page.waitForTimeout(1000)
+    await takeScreenshot('bulk-manage-collected')
+    console.log('Offerer allocated and completed an item')
 
     console.log('Bulk offer end-to-end flow complete')
   })
