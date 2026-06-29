@@ -55,36 +55,30 @@
 
         <!-- Recipient: labelled toggle + quantity dropdown, inline. -->
         <div v-else-if="!message.successful" class="bitem__pick">
-          <div
+          <b-button-group
+            size="sm"
             class="bitem__choice"
-            role="group"
             :aria-label="'Do you want ' + item.name + '?'"
           >
             <b-button
-              size="sm"
               class="bitem__choicebtn"
-              :variant="picks[item.id].checked ? 'success' : 'outline-secondary'"
+              :variant="picks[item.id].checked ? 'primary' : 'outline-primary'"
               :pressed="picks[item.id].checked"
               :data-testid="'pick-' + item.id"
               @click="setPick(item, true)"
             >
-              <v-icon
-                v-if="picks[item.id].checked"
-                icon="check"
-                class="me-1"
-              />Yes please
+              Yes please
             </b-button>
             <b-button
-              size="sm"
               class="bitem__choicebtn"
-              :variant="!picks[item.id].checked ? 'dark' : 'outline-secondary'"
+              :variant="!picks[item.id].checked ? 'primary' : 'outline-primary'"
               :pressed="!picks[item.id].checked"
               :data-testid="'unpick-' + item.id"
               @click="setPick(item, false)"
             >
               No thanks
             </b-button>
-          </div>
+          </b-button-group>
           <!-- Quantity only matters when more than one is available. The slot
                keeps a fixed width so turning the toggle on doesn't shift it. -->
           <div v-if="item.quantity > 1" class="bitem__qtyslot">
@@ -368,13 +362,9 @@ defineExpose({
   font-size: 0.95rem;
 }
 
-/* "Yes please" / "No thanks" choice — a clear, deliberate pair of buttons
-   (default off) rather than a subtle switch. */
-.bitem__choice {
-  display: flex;
-  gap: 0.35rem;
-}
-
+/* "Yes please" / "No thanks" choice — a standard connected button group
+   (default off) rather than a subtle switch. b-button-group handles the
+   connected layout; we only set equal widths so the pair looks balanced. */
 .bitem__choicebtn {
   min-width: 5.5rem;
   font-weight: 600;
