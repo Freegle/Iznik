@@ -320,6 +320,10 @@ defineExpose({
 }
 .cand__name {
   font-weight: 600;
+  /* Long names / unbroken tokens (e.g. org names) wrap within the cell
+     instead of overflowing into the quantity column. */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .cand__rep {
   white-space: nowrap;
