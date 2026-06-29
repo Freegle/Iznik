@@ -2,7 +2,35 @@
   <client-only>
     <div v-if="!unloading" class="d-flex justify-content-around">
       <NoticeMessage
-        v-if="showError"
+        v-if="appOutOfDate"
+        variant="danger"
+        class="posit text-center"
+        show
+      >
+        <p class="font-weight-bold mb-2">
+          {{
+            appOutOfDateMessage ||
+            'Freegle is out of date - please update to the latest version.'
+          }}
+        </p>
+        <div v-if="mobileStore.isApp">
+          <p class="mb-0">
+            Please update the Freegle app from your app store to get the latest
+            version, or
+            <a
+              href="https://www.ilovefreegle.org"
+              target="_blank"
+              rel="noopener"
+              >use the website</a
+            >.
+          </p>
+        </div>
+        <div v-else class="d-flex justify-content-around">
+          <b-button variant="primary" @click="reload"> Reload now </b-button>
+        </div>
+      </NoticeMessage>
+      <NoticeMessage
+        v-else-if="showError"
         variant="danger"
         class="posit text-center"
         show
@@ -100,6 +128,7 @@ import { storeToRefs } from 'pinia'
 import NoticeMessage from './NoticeMessage'
 import { ref, watch, onBeforeUnmount } from '#imports'
 import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 import SupportLink from '~/components/SupportLink'
 import { HARD_RELOAD_COUNTDOWN_SECS, TYPING_TIME_INVERVAL } from '~/constants'
 
@@ -111,6 +140,7 @@ const hardCountdown = ref(HARD_RELOAD_COUNTDOWN_SECS)
 const hardReloadTimer = ref(null)
 
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
 const {
   somethingWentWrong,
   needToReload,
@@ -119,6 +149,8 @@ const {
   unloading,
   errorDetails,
   lastTyping,
+  appOutOfDate,
+  appOutOfDateMessage,
 } = storeToRefs(miscStore)
 
 const showStackTrace = ref(false)

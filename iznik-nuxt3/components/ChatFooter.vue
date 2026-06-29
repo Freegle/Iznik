@@ -79,6 +79,14 @@
             multiple
           />
         </div>
+        <ChatNotice
+          v-if="sendError"
+          variant="warning"
+          dismissible
+          @dismiss="sendError = null"
+        >
+          {{ sendError }}
+        </ChatNotice>
         <label for="chatmessage" class="visually-hidden">Chat message</label>
         <div class="textarea-wrapper">
           <div v-if="!sendmessage && !isFocused" class="textarea-placeholder">
@@ -437,6 +445,7 @@ const showPromiseMaybe = ref(false)
 const showProfileModal = ref(false)
 const showAddress = ref(false)
 const sendmessage = ref(null)
+const sendError = ref(null)
 const RSVP = ref(false)
 const likelymsg = ref(null)
 const ouroffers = ref([])
@@ -786,8 +795,27 @@ const send = async (callback) => {
       // Encode up any emojis.
       msg = untwem(msg)
 
-      // Send it
-      await chatStore.send(props.id, msg)
+      // Send it. A failed send (e.g. a rippled post that hasn't reached us yet -> 403, or a post
+      // that's since been purged -> 404) must not throw to the global error.vue page: catch it,
+      // keep the typed text so they don't lose it, and show an inline explanation instead.
+      try {
+        sendError.value = null
+        await chatStore.send(props.id, msg)
+      } catch (e) {
+        sending.value = false
+        const status = e?.response?.status
+        if (status === 403) {
+          sendError.value =
+            "We're showing this post to people closest to it first — you'll be able to reply once it reaches your area."
+        } else if (status === 404) {
+          sendError.value =
+            "Sorry, this post is no longer available, so your message couldn't be sent."
+        } else {
+          sendError.value =
+            "Sorry, your message couldn't be sent just now. Please try again."
+        }
+        return
+      }
 
       // Clear the message now it's sent.
       sendmessage.value = ''

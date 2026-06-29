@@ -400,6 +400,21 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to
+	// messages.id, and prod purges deleted/rejected/expired posts quickly. If the client replies
+	// to a post that has since been purged, the INSERT below would violate the FK and fail with a
+	// swallowed 500 ("Error creating chat message") — surfacing as the fatal "Oh Dear" page with no
+	// trace anywhere (the access log drops 500s). Detect it up front and return a clean status so
+	// the client can show "this post is no longer available" instead. (CreateChatMessageLoveJunk
+	// already does the equivalent check; the in-app path never had it.)
+	if payload.Refmsgid != nil {
+		var refExists int
+		db.Raw("SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND deleted IS NULL)", *payload.Refmsgid).Scan(&refExists)
+		if refExists == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "refmsg_gone")
+		}
+	}
+
 	// Rippling-out reply gate (#5): an in-app reply to a post (CHAT_MESSAGE_INTERESTED) the
 	// viewer can see but whose reach has not yet reached them (replyeligible=false in the read
 	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
@@ -425,7 +440,14 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
-	db.Create(&payload)
+	if result := db.Create(&payload); result.Error != nil {
+		// Don't swallow the underlying DB error: without this, FK violations (e.g. a purged
+		// refmsgid/chatid) and any other insert failure vanish — the access log drops 500s and
+		// nothing reaches Sentry, leaving the user's "Oh Dear" undiagnosable.
+		stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
+			id, myid, payload.Refmsgid, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
 	newid := payload.ID
 
 	if newid == 0 {

@@ -536,7 +536,23 @@ class ExpandService
 
                 $schedule = $scheduleByKey[$blurredByRow[$i]['key']] ?? null;
                 if ($schedule === null) {
-                    // Routing unreachable or origin off-graph — retry next run.
+                    // The blurred origin can snap to a DISCONNECTED routing node (a driveway stub
+                    // or isolated segment) whose drive-isochrone reaches almost nothing, so the
+                    // schedule comes back empty -> the post is skipped on EVERY run and never
+                    // ripples. Because blurOrigin is deterministic this is permanent: ~16% of live
+                    // candidates were stranded this way. Fall back to the post's RAW origin, which
+                    // is geocoded onto the connected road network. A ~400m blur is imperceptible
+                    // against a 30-min drive isochrone (the innermost tick is already km-scale), so
+                    // this does not meaningfully reduce origin privacy - it only rescues the posts
+                    // the blur would otherwise lose. Costs one extra routing call per stranded post.
+                    $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                    if ($schedule !== null) {
+                        $lat = (float) $row->lat;
+                        $lng = (float) $row->lng;
+                    }
+                }
+                if ($schedule === null) {
+                    // Genuinely unreachable (raw origin off-graph too) — retry next run.
                     $stats['skipped']++;
                     continue;
                 }

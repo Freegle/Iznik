@@ -26,6 +26,8 @@ describe('misc store', () => {
       expect(store.vals).toEqual({})
       expect(store.somethingWentWrong).toBe(false)
       expect(store.errorDetails).toBeNull()
+      expect(store.appOutOfDate).toBe(false)
+      expect(store.appOutOfDateMessage).toBe('')
       expect(store.needToReload).toBe(false)
       expect(store.visible).toBe(true)
       expect(store.apiCount).toBe(0)
@@ -139,6 +141,28 @@ describe('misc store', () => {
     })
   })
 
+  describe('setAppOutOfDate', () => {
+    it('sets appOutOfDate flag and stores the server message', () => {
+      const store = useMiscStore()
+      store.setAppOutOfDate(
+        'App is out of date - please upgrade or use the website'
+      )
+
+      expect(store.appOutOfDate).toBe(true)
+      expect(store.appOutOfDateMessage).toBe(
+        'App is out of date - please upgrade or use the website'
+      )
+    })
+
+    it('falls back to an empty message when none is supplied', () => {
+      const store = useMiscStore()
+      store.setAppOutOfDate()
+
+      expect(store.appOutOfDate).toBe(true)
+      expect(store.appOutOfDateMessage).toBe('')
+    })
+  })
+
   describe('api counter', () => {
     it('increments api count', () => {
       const store = useMiscStore()
@@ -176,7 +200,11 @@ describe('misc store', () => {
       const mockResponse = { status: 200 }
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse))
 
-      const result = await store.fetchWithTimeout('http://test/online', null, 5000)
+      const result = await store.fetchWithTimeout(
+        'http://test/online',
+        null,
+        5000
+      )
       expect(result).toBe(mockResponse)
     })
 
@@ -253,10 +281,7 @@ describe('misc store', () => {
 
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({ status: 500 })
-      )
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 500 }))
 
       await store.checkOnline()
 

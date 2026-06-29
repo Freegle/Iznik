@@ -147,6 +147,53 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    /**
+     * BUG FIX: blurOrigin can snap a post's origin onto a DISCONNECTED routing node (a driveway
+     * stub / isolated segment) whose drive-isochrone reaches almost nothing, so the blurred origin
+     * returns an EMPTY schedule and the post is skipped on EVERY run. Because the blur is
+     * deterministic this is permanent - ~16% of live candidates were stranded this way. initialiseNew
+     * must fall back to the post's RAW origin (geocoded onto the connected network) so it still ripples.
+     */
+    public function test_blurred_origin_off_graph_falls_back_to_raw_origin(): void
+    {
+        $rawLat = 51.5;
+        $rawLng = -0.1;
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30), $rawLat, $rawLng);
+
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $validSchedule = [['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 30, 'polygon' => $polygon]];
+
+        // Routing returns an EMPTY schedule for the (off-graph) blurred origin but a valid one for
+        // the raw coordinates. initialiseNew hits the blurred origin first, gets nothing, and must
+        // retry with the raw origin (which differs by ~0.0006 lat / ~0.006 lng for this point).
+        Http::fake(function ($request) use ($rawLat, $rawLng, $validSchedule) {
+            if (! str_contains($request->url(), 'ripple-schedule')) {
+                return Http::response([], 200);
+            }
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
+            $isRaw = abs((float) ($q['lat'] ?? 0) - $rawLat) < 3e-4 && abs((float) ($q['lng'] ?? 0) - $rawLng) < 3e-4;
+
+            return Http::response($isRaw
+                ? ['total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $validSchedule]
+                : ['total_freeglers' => 0, 'max_drive_min' => 30, 'schedule' => []], 200);
+        });
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'post ripples via raw-origin fallback when the blurred origin is off-graph');
+        $this->assertSame(0, $stats['skipped'], 'not skipped once the raw origin is tried');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row, 'a reach row is written');
+        // The stored origin is the RAW location (the fallback path), not the off-graph blurred point.
+        $this->assertEqualsWithDelta($rawLat, (float) $row->lat, 3e-4);
+        $this->assertEqualsWithDelta($rawLng, (float) $row->lng, 3e-4);
+    }
+
     public function test_enabled_at_cutoff_excludes_posts_that_arrived_before_it(): void
     {
         $this->fakeRouting(3);
