@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/aiimage"
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/misc"
@@ -37,6 +38,7 @@ func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
+	db.Exec("UPDATE users SET permissions = ? WHERE id = ?", auth.PERM_CLEARANCE, userID)
 	token := getToken(t, userID)
 
 	var locationID uint64

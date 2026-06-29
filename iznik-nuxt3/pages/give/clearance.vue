@@ -17,6 +17,7 @@
             <a href="mailto:geeks@ilovefreegle.org">geeks@ilovefreegle.org</a>.
           </p>
 
+          <template v-if="hasClearance">
           <!-- Where (postcode) first: it picks the community. -->
           <h2 class="bulk-section">Where are you?</h2>
           <PostCode
@@ -136,6 +137,14 @@
               Something went wrong posting your items. Please try again.
             </NoticeMessage>
           </div>
+          </template>
+          <NoticeMessage
+            v-else-if="loggedIn"
+            variant="warning"
+            class="mt-3"
+          >
+            This feature isn't available on your account yet.
+          </NoticeMessage>
         </b-col>
       </b-row>
     </client-only>
@@ -165,6 +174,14 @@ const router = useRouter()
 
 const { email, loggedIn, initialPostcode, postcode, postcodeValid, noGroups } =
   await setup('Offer')
+
+// The clearance feature is gated on the Clearance permission. (The email-outreach
+// sub-feature is gated further, to users whose primary email is @ilovefreegle.org,
+// where the outreach option is offered.)
+const me = computed(() => authStore.user)
+const hasClearance = computed(() =>
+  (me.value?.permissions || []).includes('Clearance')
+)
 
 const title = ref('')
 const description = ref('')

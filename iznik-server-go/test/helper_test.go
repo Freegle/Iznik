@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,7 @@ func helperFixture(t *testing.T, prefix string) (ownerID, replierID, msgID, item
 	itemID = addBulkItem(t, msgID, "Office desk", 4, "Good")
 	db := database.DBConn
 	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 2, 'Interested')", itemID, msgID, replierID)
+	db.Exec("UPDATE users SET permissions = ? WHERE id = ?", auth.PERM_CLEARANCE, ownerID)
 	ownerToken = getToken(t, ownerID)
 	return
 }

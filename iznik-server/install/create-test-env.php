@@ -186,6 +186,10 @@ function findOrCreateUser($dbhr, $dbhm, $email, $firstname, $lastname, $systemro
         error_log("User $email already exists (ID: $uid)");
     }
 
+    # The bulk-offer / clearance feature is gated on the Clearance permission;
+    # grant it to the test users so the clearance e2e flows work (idempotent).
+    $u->setPrivate('permissions', 'Clearance');
+
     # Ensure membership (idempotent).
     $u->addMembership($gid, $role);
     $u->setMembershipAtt($gid, 'ourPostingStatus',

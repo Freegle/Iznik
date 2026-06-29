@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -128,7 +129,9 @@ func helperAuthForMsg(db *gorm.DB, myid uint64, msgid uint64) (offerer uint64, a
 	if offerer == 0 {
 		return 0, false, false
 	}
-	return offerer, offerer == myid || isModForMessage(db, myid, msgid), true
+	// The Helper / clearance feature is gated on the Clearance permission.
+	allowed := auth.HasPermission(myid, auth.PERM_CLEARANCE) && (offerer == myid || isModForMessage(db, myid, msgid))
+	return offerer, allowed, true
 }
 
 // msgidForBatch / msgidForReplier / msgidForProposal resolve the owning message id

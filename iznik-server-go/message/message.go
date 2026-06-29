@@ -2893,6 +2893,11 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	db := database.DBConn
 
+	// Editing a clearance (bulk offer) is gated on the Clearance permission.
+	if req.Bulkitems != nil && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to edit a clearance")
+	}
+
 	// Check ownership or mod permission.
 	var fromuser uint64
 	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&fromuser)
@@ -3645,6 +3650,11 @@ func PutMessage(c *fiber.Ctx) error {
 	var req PutMessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	// Posting a clearance (bulk offer) is gated on the Clearance permission.
+	if len(req.Bulkitems) > 0 && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to post a clearance")
 	}
 
 	// Handle messagetype alias from client.
