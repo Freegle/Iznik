@@ -281,10 +281,16 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
+		// rippled_in = 0: an edit belongs to the post's ORIGIN group only. A post
+		// rippled INTO a group has an Approved messages_groups row (rippled_in=1)
+		// there, so without this filter its edit is counted in every receiving
+		// group's Edit badge while the Edit list (which filters rippled_in=0) shows
+		// nothing — a "ghost" count (Discourse 9839). Matches the ListMessagesMT
+		// Edit query and the session editreview count.
 		db.Raw("SELECT mg.groupid, COUNT(DISTINCT me.msgid) as count FROM messages_edits me "+
 			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid "+
 			"WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
-			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 "+
+			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 AND mg.rippled_in = 0 "+
 			"GROUP BY mg.groupid", activeGroupIDs).Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {

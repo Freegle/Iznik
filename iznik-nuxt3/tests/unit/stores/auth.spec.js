@@ -13,6 +13,7 @@ const mockRelated = vi.fn()
 const mockLostPassword = vi.fn()
 const mockUnsubscribe = vi.fn()
 const mockSave = vi.fn()
+const mockSetAppOutOfDate = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -61,7 +62,11 @@ vi.mock('~/stores/mobile', () => ({
 }))
 
 vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({ modtools: false, source: null }),
+  useMiscStore: () => ({
+    modtools: false,
+    source: null,
+    setAppOutOfDate: mockSetAppOutOfDate,
+  }),
 }))
 
 describe('auth store', () => {
@@ -382,6 +387,41 @@ describe('auth store', () => {
 
       expect(store.auth.jwt).toBe('valid-jwt')
       expect(store.user.id).toBe(42)
+    })
+  })
+
+  describe('fetchUser app out of date (ret:123)', () => {
+    it('flags the app as out of date and preserves auth when session returns ret:123', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+
+      // Server kill switch: GET /session returns HTTP 200 with ret:123 when the
+      // client build is older than app_min_webversion.
+      mockFetchv2.mockResolvedValue({
+        ret: 123,
+        status: 'App is out of date - please upgrade or use the website',
+      })
+
+      await store.fetchUser()
+
+      // Auth must NOT be wiped (otherwise the user is silently bounced to the
+      // login screen, which looks like a generic failure).
+      expect(store.auth.jwt).toBe('valid-jwt')
+      expect(store.auth.persistent).toBe('valid-persistent')
+      expect(store.user).toBeNull()
+      // ...and the message must be surfaced clearly.
+      expect(mockSetAppOutOfDate).toHaveBeenCalledWith(
+        'App is out of date - please upgrade or use the website'
+      )
+    })
+
+    it('does not flag out of date on a normal successful session', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+
+      await store.fetchUser()
+
+      expect(mockSetAppOutOfDate).not.toHaveBeenCalled()
+      expect(store.user.id).toBe(5)
     })
   })
 

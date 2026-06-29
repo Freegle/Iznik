@@ -350,7 +350,15 @@ func buildMTUnionAllMsgIDQuery(branchSQL string, branchArgs []interface{}, group
 	// The outer GROUP BY deduplicates messages that appear in multiple queried
 	// groups (e.g. a cross-posted Pending message).  MAX(arrival) picks the
 	// most-recent arrival across all branches for ordering.
-	sb.WriteString("SELECT msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
+	//
+	// MAX_EXECUTION_TIME caps the whole statement at 20s. The member-name search
+	// fallback (leading-wildcard fullname LIKE joined per group) can run 90s+ for
+	// a moderator of many groups when no groupid scopes it (Discourse 9518/366) —
+	// long enough to exceed the proxy read timeout, so the client never gets a
+	// response and the spinner hangs forever. The cap guarantees the query returns
+	// (empty, surfaced as "Nothing found") instead of hanging. Well-scoped queries
+	// run in well under a second, so the cap never bites them.
+	sb.WriteString("SELECT /*+ MAX_EXECUTION_TIME(20000) */ msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
 
 	args := make([]interface{}, 0, (len(branchArgs)+1)*len(groupIDs)+1)
 	for i, gid := range groupIDs {
@@ -453,8 +461,13 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	if collection == "Edit" {
 		// Edit review uses messages_edits table, not messages_groups collection.
+		// Restrict to ORIGIN messages_groups rows (rippled_in = 0). A post rippled INTO a
+		// group gets an Approved row there (rippled_in = 1); without this filter an edit on a
+		// rippled-in post surfaces in every receiving group's Edit queue (and to active mods
+		// there via the all-groups path), but an edit belongs to the post's origin group(s)
+		// only. Same bug class as the IP-abuse fix (WHERE rippled_in=0).
 		db.Raw("SELECT DISTINCT me.msgid FROM messages_edits me "+
-			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 "+
+			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 "+
 			"WHERE mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
 			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) "+
 			"ORDER BY me.timestamp DESC LIMIT ?",

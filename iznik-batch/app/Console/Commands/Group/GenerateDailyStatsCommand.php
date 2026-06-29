@@ -7,6 +7,28 @@ use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * BACKFILL (one-off, post-deploy):
+ *
+ * Stats rows written before the rippled_in fix in StatsGenerationService
+ * counted rippling-out copies (messages_groups.rippled_in = 1) as native
+ * activity. Because the dashboard SUMs the per-group rows for the systemwide
+ * figure, one post was counted once per group it reached (avg fan-out ~7),
+ * inflating ApprovedMessageCount / Replies / Outcomes / Weight and the derived
+ * Activity. The distortion grew with the rollout and was ~40-50% of the daily
+ * Activity total on the heavy-rippling days (late June 2026).
+ *
+ * After deploying the fix, regenerate the affected window so the historical
+ * series matches the new native-only definition:
+ *
+ *     php artisan stats:generate-daily --from=2026-05-14 --to=<yesterday>
+ *
+ * 2026-05-14 is the first day rippled-in rows appear in production. REPLACE
+ * semantics make this idempotent. It MUST run with the fixed code, or it just
+ * rewrites the same inflated numbers. Note: writeCount() skips zero-valued
+ * rows (it does not delete them), so a stat that drops to exactly 0 keeps its
+ * old inflated row — not a concern for active groups, whose counts stay > 0.
+ */
 class GenerateDailyStatsCommand extends Command
 {
     protected $signature = 'stats:generate-daily

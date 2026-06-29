@@ -362,11 +362,18 @@ class UnifiedDigestService
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    // Gated by the master activation switch: this reach-coordination ledger is only
-                    // meaningful once rippling is on (the expander mailer that reads it is inert while
-                    // off), so we don't touch the new table at all in the dark state. The immediate
-                    // mail itself is unaffected - it still sends.
-                    if ($spooled && config('freegle.ripple.enabled')) {
+                    // Record this send in the reach-coordination ledger whenever rippling is active
+                    // in EITHER mode — the global master switch OR the scoped within-group experiment.
+                    // The reach mailer (mailNewlyReachedForPost) excludes anyone already in this ledger;
+                    // if the immediate (cursor) path doesn't record here, a rippled post gets mailed
+                    // twice — immediate-on-arrival AND again by the reach mailer. Gating on
+                    // ripple.enabled alone missed the scoped experiment (within_groups), which ran with
+                    // the global flag off and double-mailed members (~8k dup emails/day; Edinburgh
+                    // "Bird cherry sapling", 2026-06-27). When rippling is fully dark (no global flag
+                    // and no within_groups) the reach mailer self-idles, so we skip the write then.
+                    $ripplingActive = config('freegle.ripple.enabled')
+                        || !empty(config('freegle.ripple.within_groups'));
+                    if ($spooled && $ripplingActive) {
                         // Coordinate with the expander-driven reach mailer: record this send so
                         // mailNewlyReachedForPost never re-mails the same member once the post's
                         // reach row appears (the post is cursor-mailed on arrival, before the reach
@@ -1400,9 +1407,29 @@ class UnifiedDigestService
                 $env
             );
             $post->_score = $s['total'];
+            $post->_dist = $dist;
         }
 
-        return $posts->sortByDesc('_score')->values();
+        // Pin the two posts nearest the recipient to the top, then the rest by score.
+        // Reduces "I keep seeing posts far away" complaints while keeping the scored
+        // order for everything below the top two.
+        return $this->pinClosestTwo($posts->sortByDesc('_score')->values());
+    }
+
+    /**
+     * Move the two nearest posts (smallest recipient->post distance) to the front,
+     * nearest first, preserving the scored order of the rest. Each post must carry
+     * the _dist set in scoreAndSortAvailable. No-op for two or fewer posts.
+     */
+    private function pinClosestTwo(Collection $sorted): Collection
+    {
+        if ($sorted->count() <= 2) {
+            return $sorted;
+        }
+        $closest = $sorted->sortBy('_dist')->take(2)->values();
+        $closestIds = $closest->pluck('id')->all();
+        $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
+        return $closest->concat($rest)->values();
     }
 
     /**
@@ -1556,12 +1583,16 @@ class UnifiedDigestService
      */
     protected function getDeduplicationKey(Message $message): string
     {
-        // If we have a TrashNothing post ID, use it - it's definitive.
-        if ($message->tnpostid) {
-            return "tn:{$message->tnpostid}";
-        }
-
-        // Otherwise, combine fromuser + normalized subject + location.
+        // Always key on CONTENT (fromuser + normalized subject + location), never
+        // tnpostid. A TrashNothing item re-posted / re-crossposted on different days
+        // gets a NEW tnpostid each time, so a "tn:{id}" key produced a distinct key
+        // per posting and the daily digest showed the same item N times while the
+        // website (which dedups by content) showed one (Neville Reid, Discourse
+        // 9808/#233 — "Small lamp" 4x; 27 such items in 4 days). bodiesMatch() still
+        // treats an equal tnpostid as a definitive duplicate and otherwise compares
+        // normalized bodies, so genuine cross-posts (same tnpostid) AND same-item
+        // reposts (different tnpostid, same body) both merge, while two different
+        // items that merely share subject+location stay separate (bodies differ).
         $normalizedSubject = $this->normalizeSubject($message->subject);
 
         return implode('|', [

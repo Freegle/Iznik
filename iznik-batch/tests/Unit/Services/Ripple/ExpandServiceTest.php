@@ -147,6 +147,53 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    /**
+     * BUG FIX: blurOrigin can snap a post's origin onto a DISCONNECTED routing node (a driveway
+     * stub / isolated segment) whose drive-isochrone reaches almost nothing, so the blurred origin
+     * returns an EMPTY schedule and the post is skipped on EVERY run. Because the blur is
+     * deterministic this is permanent - ~16% of live candidates were stranded this way. initialiseNew
+     * must fall back to the post's RAW origin (geocoded onto the connected network) so it still ripples.
+     */
+    public function test_blurred_origin_off_graph_falls_back_to_raw_origin(): void
+    {
+        $rawLat = 51.5;
+        $rawLng = -0.1;
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30), $rawLat, $rawLng);
+
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $validSchedule = [['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 30, 'polygon' => $polygon]];
+
+        // Routing returns an EMPTY schedule for the (off-graph) blurred origin but a valid one for
+        // the raw coordinates. initialiseNew hits the blurred origin first, gets nothing, and must
+        // retry with the raw origin (which differs by ~0.0006 lat / ~0.006 lng for this point).
+        Http::fake(function ($request) use ($rawLat, $rawLng, $validSchedule) {
+            if (! str_contains($request->url(), 'ripple-schedule')) {
+                return Http::response([], 200);
+            }
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
+            $isRaw = abs((float) ($q['lat'] ?? 0) - $rawLat) < 3e-4 && abs((float) ($q['lng'] ?? 0) - $rawLng) < 3e-4;
+
+            return Http::response($isRaw
+                ? ['total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $validSchedule]
+                : ['total_freeglers' => 0, 'max_drive_min' => 30, 'schedule' => []], 200);
+        });
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'post ripples via raw-origin fallback when the blurred origin is off-graph');
+        $this->assertSame(0, $stats['skipped'], 'not skipped once the raw origin is tried');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row, 'a reach row is written');
+        // The stored origin is the RAW location (the fallback path), not the off-graph blurred point.
+        $this->assertEqualsWithDelta($rawLat, (float) $row->lat, 3e-4);
+        $this->assertEqualsWithDelta($rawLng, (float) $row->lng, 3e-4);
+    }
+
     public function test_enabled_at_cutoff_excludes_posts_that_arrived_before_it(): void
     {
         $this->fakeRouting(3);
@@ -1644,5 +1691,125 @@ class ExpandServiceTest extends TestCase
             'leave-pull runs under a scoped run'
         );
         $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
+    }
+
+    /** recomputeReach is a no-op unless the audience cap is actually enabled. */
+    public function test_recompute_reach_is_noop_when_cap_disabled(): void
+    {
+        config(['freegle.ripple.extent.enabled' => false]);
+        config(['freegle.ripple.extent.target_users' => 50]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->service()->process(false, 500); // creates reach (total_freeglers = 90)
+
+        $r = $this->service()->recomputeReach(false, 500);
+
+        $this->assertSame(0, $r['candidates'], 'cap disabled -> nothing considered');
+        $this->assertSame(
+            90,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('total_freeglers'),
+            'reach left untouched'
+        );
+    }
+
+    /** An over-reached post is shrunk to the capped schedule, with updated_at preserved (no re-mail). */
+    public function test_recompute_reach_shrinks_over_reached_post_preserving_updated_at(): void
+    {
+        // A SINGLE request-aware fake that mimics the routing server: it spreads the
+        // curve over min(pool, target_users) when target_users is sent. (Two separate
+        // Http::fake() calls would NOT work — Laravel accumulates stubs and the first
+        // registered match wins, so a later "capped" stub never overrides the first.)
+        Http::fake(function ($request) {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
+            $total = 90;
+            $cap = (int) ($q['target_users'] ?? 0);
+            $eff = ($cap > 0 && $cap < $total) ? $cap : $total;
+            $poly = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]]];
+            $sched = [];
+            foreach ([1, 2, 3] as $k) {
+                $sched[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => (int) round($eff * $k / 3), 'polygon' => $poly];
+            }
+            return Http::response(['total_freeglers' => $total, 'max_drive_min' => 30, 'schedule' => $sched], 200);
+        });
+
+        // 1) Create reach with the cap OFF -> stored uncapped (pool 90, cumulative 30/60/90).
+        config(['freegle.ripple.extent.enabled' => false]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // 0.5h -> tick 1
+        $this->service()->process(false, 500);
+
+        $this->assertSame(90, (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('total_freeglers'));
+        // Pin updated_at to a known past value to prove the recompute preserves it.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => '2020-01-01 00:00:00']);
+
+        // 2) Turn the cap ON and recompute -> the fake now returns a capped schedule
+        //    (target_users=50 -> cumulative 17/33/50), so the reach shrinks.
+        config(['freegle.ripple.extent.enabled' => true]);
+        config(['freegle.ripple.extent.target_users' => 50]);
+
+        $r = $this->service()->recomputeReach(false, 500);
+
+        $this->assertSame(1, $r['candidates']);
+        $this->assertSame(1, $r['shrunk']);
+        $after = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $sched = json_decode($after->schedule, true);
+        $last = end($sched);
+        $this->assertSame(50, (int) $last['cumulative_users'], 'stored schedule now caps at 50');
+        $this->assertSame('2020-01-01 00:00:00', (string) $after->updated_at, 'updated_at preserved (no reach-mail trigger)');
+
+        // Crosspost-breadth stat is reported and the cap never widens reach.
+        $this->assertArrayHasKey('groups_before', $r);
+        $this->assertArrayHasKey('groups_after', $r);
+        $this->assertGreaterThanOrEqual($r['groups_after'], $r['groups_before']);
+    }
+
+    /** Out-of-reach retraction pulls only the far copy; the post + near copy + organic stay. */
+    public function test_retract_out_of_reach_pulls_only_far_copies(): void
+    {
+        $srid = 3857;
+        $poster = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $near = $this->createTestGroup();
+        $far = $this->createTestGroup();
+
+        // near overlaps the reach square (0 0,1 1); far is disjoint.
+        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.5 0.5,0.5 1.5,1.5 1.5,1.5 0.5,0.5 0.5))', $srid) WHERE id = ?", [$near->id]);
+        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((10 10,10 11,11 11,11 10,10 10))', $srid) WHERE id = ?", [$far->id]);
+
+        $msg = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $poster->id,
+            'subject' => 'OFFER: chair', 'textbody' => 'a chair', 'source' => 'Platform',
+            'date' => now(), 'arrival' => now(),
+        ]);
+        foreach ([[$origin->id, 0], [$near->id, 1], [$far->id, 1]] as [$gid, $ri]) {
+            DB::table('messages_groups')->insert([
+                'msgid' => $msg->id, 'groupid' => $gid, 'collection' => 'Approved',
+                'arrival' => now(), 'rippled_in' => $ri, 'deleted' => 0,
+            ]);
+        }
+        foreach ([$near->id, $far->id] as $gid) {
+            DB::table('memberships')->insert([
+                'userid' => $poster->id, 'groupid' => $gid, 'role' => 'Member',
+                'collection' => 'Approved', 'rippled' => 1,
+            ]);
+        }
+        // Capped reach polygon = unit square at origin (overlaps near, not far).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid,lat,lng,polygon,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
+             VALUES (?,?,?,ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
+            [$msg->id, 0.5, 0.5, now(), 'drive', 1, 1, 5000, 10, json_encode([]), null, 'expanding']
+        );
+
+        $stats = [];
+        $n = $this->service()->retractOutOfReachCopies($msg->id, false, $stats);
+
+        $this->assertSame(1, $n, 'exactly the one far copy is retracted');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $near->id)->value('deleted'), 'near (in-reach) copy kept');
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $far->id)->value('deleted'), 'far (out-of-reach) copy retracted');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $origin->id)->value('deleted'), 'native copy untouched');
+        $this->assertDatabaseHas('messages', ['id' => $msg->id]); // the message itself stays
+        $this->assertSame(1, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $near->id)->count(), 'near ripple-membership kept');
+        $this->assertSame(0, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $far->id)->count(), 'far ripple-membership removed');
     }
 }

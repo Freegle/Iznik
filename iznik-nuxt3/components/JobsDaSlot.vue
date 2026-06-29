@@ -33,7 +33,7 @@
           bg-colour="dark green"
           :position="index"
           :list-length="displayedJobs.length"
-          context="daslot"
+          :context="placement"
         />
       </div>
     </div>
@@ -48,6 +48,14 @@ const NoticeMessage = defineAsyncComponent(() => import('./NoticeMessage'))
 const DonationButton = defineAsyncComponent(() => import('./DonationButton'))
 
 const props = defineProps({
+  // Which slot this instance is mounted in (sticky_footer_mobile/desktop,
+  // sidebar_left/right, ...). Threaded onto each job's click/impression so
+  // per-placement performance is measurable. Defaults to the legacy 'daslot'.
+  placement: {
+    type: String,
+    required: false,
+    default: 'daslot',
+  },
   minWidth: {
     type: String,
     required: false,

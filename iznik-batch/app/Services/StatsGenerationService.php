@@ -69,14 +69,34 @@ class StatsGenerationService
     }
 
     /**
-     * Build the per-day shared values: average item weight + search counts
-     * keyed by groupid. Both are functions of the date alone, so we compute
-     * them once and pass them into each per-group `generate()` call.
+     * Build the per-day shared values so we compute them ONCE per date and pass
+     * them into each per-group `generate()` call, instead of running ~17
+     * aggregations per group (~6,600 queries per date for ~506 groups). Every
+     * value here is a pure function of the date, computed as a single query
+     * that aggregates `GROUP BY groupid`; generate() then just reads
+     * `$context[...][$groupId]` with a safe default. Each grouped query
+     * preserves the EXACT WHERE clauses / DISTINCT semantics of the original
+     * per-group query it replaces, so per-group results are identical with no
+     * new index.
      *
-     * @return array{avgWeight: float, searchCounts: array<int,int>}
+     * Keys:
+     *  - avgWeight: float — popularity-weighted population mean item weight.
+     *  - searchCounts/postMethod/messageTypes/activeUsers — search tally and
+     *    30-day-window breakdowns/active-users (date-window stats).
+     *  - outcomes/approvedMessages/approvedMembers/spamMessages/spamMembers/
+     *    supportQueries/replies/weight — per-day per-group counts.
+     *  - feedback — per-group happiness histogram (Happy/Fine/Unhappy).
+     *  - ourPosting — per-group ourPostingStatus histogram (point-in-time).
+     *
+     * @return array{avgWeight: float, searchCounts: array<int,int>, postMethod: array<int,array<string,int>>, messageTypes: array<int,array<string,int>>, activeUsers: array<int,int>, outcomes: array<int,int>, approvedMessages: array<int,int>, approvedMembers: array<int,int>, spamMessages: array<int,int>, spamMembers: array<int,int>, supportQueries: array<int,int>, replies: array<int,int>, weight: array<int,int>, feedback: array<int,array<string,int>>, ourPosting: array<int,array<string,int>>}
      */
     private function buildDailyContext(string $date): array
     {
+        // Half-open day range [$date, $next) — exactly equivalent to the
+        // original DATE(col) = $date predicate for datetime columns, but
+        // sargable. $next is also reused by the cumulative member count.
+        $next = CarbonImmutable::parse($date)->addDay()->toDateString();
+
         $avg = (float) (DB::table('items')
             ->whereNotNull('weight')
             ->where('weight', '!=', 0)
@@ -105,9 +125,256 @@ class StatsGenerationService
                 }
             });
 
+        // 30-day rolling window shared by the breakdown + active-user stats.
+        $windowStart = date('Y-m-d', strtotime('30 days ago', strtotime($date)));
+        $windowEnd = date('Y-m-d', strtotime('tomorrow', strtotime($date)));
+
+        // POST_METHOD_BREAKDOWN: sourceheader histogram for approved native
+        // messages in the window, bucketed by group in one scan.
+        $postMethod = [];
+        foreach (
+            DB::table('messages')
+                ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+                ->where('messages.arrival', '>=', $windowStart)
+                ->where('messages.arrival', '<', $windowEnd)
+                ->where('messages_groups.collection', 'Approved')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->whereNotNull('messages.sourceheader')
+                ->groupBy('messages_groups.groupid', 'messages.sourceheader')
+                ->selectRaw('messages_groups.groupid AS gid, messages.sourceheader AS source, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $postMethod[(int) $row->gid][$row->source] = (int) $row->cnt;
+        }
+
+        // MESSAGE_BREAKDOWN: message-type histogram for approved native
+        // messages in the window, bucketed by group in one scan.
+        $messageTypes = [];
+        foreach (
+            DB::table('messages')
+                ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+                ->where('messages.arrival', '>=', $windowStart)
+                ->where('messages.arrival', '<', $windowEnd)
+                ->where('messages_groups.collection', 'Approved')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->whereNotNull('messages.type')
+                ->groupBy('messages_groups.groupid', 'messages.type')
+                ->selectRaw('messages_groups.groupid AS gid, messages.type AS type, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $messageTypes[(int) $row->gid][$row->type] = (int) $row->cnt;
+        }
+
+        // ACTIVE_USERS: distinct members active in the window, per group, in
+        // one scan grouped by groupid.
+        $activeUsers = [];
+        foreach (
+            DB::table('users_active')
+                ->join('memberships', 'memberships.userid', '=', 'users_active.userid')
+                ->where('users_active.timestamp', '>=', $windowStart)
+                ->where('users_active.timestamp', '<', $windowEnd)
+                ->groupBy('memberships.groupid')
+                ->selectRaw('memberships.groupid AS gid, COUNT(DISTINCT users_active.userid) AS cnt')
+                ->get() as $row
+        ) {
+            $activeUsers[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // OUTCOMES: distinct messages with a Taken/Received outcome dated $date,
+        // per native group. (Replaces the per-group distinct count.)
+        $outcomes = [];
+        foreach (
+            DB::table('messages_outcomes')
+                ->join('messages_groups', 'messages_outcomes.msgid', '=', 'messages_groups.msgid')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->where('messages_outcomes.timestamp', '>=', $date)
+                ->where('messages_outcomes.timestamp', '<', $next)
+                ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
+                ->get() as $row
+        ) {
+            $outcomes[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // APPROVED_MESSAGE_COUNT: distinct approved native messages arriving $date.
+        $approvedMessages = [];
+        foreach (
+            DB::table('messages_groups')
+                ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->where('messages.arrival', '>=', $date)
+                ->where('messages.arrival', '<', $next)
+                ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_groups.msgid) AS cnt')
+                ->get() as $row
+        ) {
+            $approvedMessages[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // APPROVED_MEMBER_COUNT: cumulative approved members as of $date
+        // (DATE(added) <= $date ⇔ added < $next).
+        $approvedMembers = [];
+        foreach (
+            DB::table('memberships')
+                ->where('added', '<', $next)
+                ->where('collection', Membership::COLLECTION_APPROVED)
+                ->groupBy('groupid')
+                ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $approvedMembers[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // SPAM_MESSAGE_COUNT: ClassifiedSpam Message log entries on $date.
+        $spamMessages = [];
+        foreach (
+            DB::table('logs')
+                ->where('timestamp', '>=', $date)
+                ->where('timestamp', '<', $next)
+                ->where('type', 'Message')
+                ->where('subtype', 'ClassifiedSpam')
+                ->whereNotNull('groupid')
+                ->groupBy('groupid')
+                ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $spamMessages[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // SPAM_MEMBER_COUNT: known spammers who left a group on $date.
+        $spamMembers = [];
+        foreach (
+            DB::table('logs')
+                ->join('spam_users', function ($j) {
+                    $j->on('logs.user', '=', 'spam_users.userid')
+                        ->where('spam_users.collection', '=', 'Spammer');
+                })
+                ->where('logs.timestamp', '>=', $date)
+                ->where('logs.timestamp', '<', $next)
+                ->where('logs.type', 'Group')
+                ->where('logs.subtype', 'Left')
+                ->whereNotNull('logs.groupid')
+                ->groupBy('logs.groupid')
+                ->selectRaw('logs.groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $spamMembers[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // SUPPORTQUERIES_COUNT: User2Mod chats created on $date.
+        $supportQueries = [];
+        foreach (
+            DB::table('chat_rooms')
+                ->where('created', '>=', $date)
+                ->where('created', '<', $next)
+                ->where('chattype', ChatRoom::TYPE_USER2MOD)
+                ->whereNotNull('groupid')
+                ->groupBy('groupid')
+                ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $supportQueries[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // FEEDBACK: per-group happiness histogram (Happy/Fine/Unhappy) for
+        // outcomes dated $date on native posts — one grouped query covering all
+        // three buckets (replaces the three per-group distinct counts).
+        $feedback = [];
+        foreach (
+            DB::table('messages_outcomes')
+                ->join('messages', 'messages_outcomes.msgid', '=', 'messages.id')
+                ->join('messages_groups', function ($j) {
+                    $j->on('messages_groups.msgid', '=', 'messages.id')
+                        ->where('messages_groups.rippled_in', '=', 0); // native posts only
+                })
+                ->where('messages_outcomes.timestamp', '>=', $date)
+                ->where('messages_outcomes.timestamp', '<', $next)
+                ->whereIn('messages_outcomes.happiness', [
+                    self::TYPE_FEEDBACK_HAPPY,
+                    self::TYPE_FEEDBACK_FINE,
+                    self::TYPE_FEEDBACK_UNHAPPY,
+                ])
+                ->groupBy('messages_groups.groupid', 'messages_outcomes.happiness')
+                ->selectRaw('messages_groups.groupid AS gid, messages_outcomes.happiness AS happiness, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
+                ->get() as $row
+        ) {
+            $feedback[(int) $row->gid][$row->happiness] = (int) $row->cnt;
+        }
+
+        // OUR_POSTING_BREAKDOWN: per-member ourPostingStatus histogram
+        // (point-in-time, not date-windowed). A null status maps to the ""
+        // key exactly as the original per-group $statusMap did.
+        $ourPosting = [];
+        foreach (
+            DB::table('memberships')
+                ->groupBy('groupid', 'ourPostingStatus')
+                ->selectRaw('groupid AS gid, ourPostingStatus, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $ourPosting[(int) $row->gid][$row->ourPostingStatus] = (int) $row->cnt;
+        }
+
+        // REPLIES: "Interested" chat messages referring to approved native
+        // posts on $date, per group.
+        $replies = [];
+        foreach (
+            DB::table('chat_messages')
+                ->join('messages_groups', 'chat_messages.refmsgid', '=', 'messages_groups.msgid')
+                ->where('chat_messages.date', '>=', $date)
+                ->where('chat_messages.date', '<', $next)
+                ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $replies[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // WEIGHT: estimated kg moved on $date per group, using the same
+        // grouped subquery as regenerateWeightForRange() — DISTINCT
+        // (msgid, groupid, eff_weight) with items.weight when known/non-zero,
+        // else the popularity-weighted population mean. Equivalent to the old
+        // per-group distinct()+foreach.
+        $weight = [];
+        foreach (
+            DB::select(
+                'SELECT sub.groupid AS gid, ROUND(SUM(sub.eff_weight)) AS total_weight '
+                . 'FROM ('
+                . '  SELECT DISTINCT mo.msgid, mg.groupid, '
+                . '    COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight '
+                . '  FROM messages_outcomes mo '
+                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 '
+                . '  INNER JOIN messages_items mi ON mi.msgid = mo.msgid '
+                . '  LEFT JOIN items i ON i.id = mi.itemid '
+                . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
+                . '    AND mo.outcome IN (?, ?)'
+                . ') sub '
+                . 'GROUP BY sub.groupid',
+                [$avg, $date, $next, Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]
+            ) as $row
+        ) {
+            $weight[(int) $row->gid] = (int) $row->total_weight;
+        }
+
         return [
             'avgWeight' => $avg,
             'searchCounts' => $searchCounts,
+            'postMethod' => $postMethod,
+            'messageTypes' => $messageTypes,
+            'activeUsers' => $activeUsers,
+            'outcomes' => $outcomes,
+            'approvedMessages' => $approvedMessages,
+            'approvedMembers' => $approvedMembers,
+            'spamMessages' => $spamMessages,
+            'spamMembers' => $spamMembers,
+            'supportQueries' => $supportQueries,
+            'replies' => $replies,
+            'weight' => $weight,
+            'feedback' => $feedback,
+            'ourPosting' => $ourPosting,
         ];
     }
 
@@ -130,198 +397,66 @@ class StatsGenerationService
     {
         $context ??= $this->buildDailyContext($date);
         $rows = 0;
-        $activity = 0;
+
+        // Every per-group value below is precomputed once per date in
+        // buildDailyContext() (one grouped query per stat, bucketed by
+        // groupid) with identical WHERE/DISTINCT semantics to the original
+        // per-group queries. generate() therefore issues NO per-group DB
+        // queries — only context lookups + writeCount/writeBreakdown.
 
         // OUTCOMES: distinct messages on this group with a Taken/Received outcome dated $date.
-        $count = (int) DB::table('messages_outcomes')
-            ->join('messages_groups', 'messages_outcomes.msgid', '=', 'messages_groups.msgid')
-            ->where('messages_groups.groupid', $groupId)
-            ->where('messages_outcomes.timestamp', '>=', $date)
-            ->whereRaw('DATE(messages_outcomes.timestamp) = ?', [$date])
-            ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
-            ->distinct()
-            ->count('messages_outcomes.msgid');
-        $rows += $this->writeCount($date, $groupId, self::TYPE_OUTCOMES, $count, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_OUTCOMES, $context['outcomes'][$groupId] ?? 0, $dryRun);
 
-        // APPROVED_MESSAGE_COUNT: distinct approved messages whose arrival is $date.
-        $count = (int) DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages_groups.groupid', $groupId)
-            ->where('messages.arrival', '>=', $date)
-            ->whereRaw('DATE(messages.arrival) = ?', [$date])
-            ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
-            ->distinct()
-            ->count('messages_groups.msgid');
-        $activity += $count;
-        $rows += $this->writeCount($date, $groupId, self::TYPE_APPROVED_MESSAGE_COUNT, $count, $dryRun);
+        // APPROVED_MESSAGE_COUNT: distinct approved messages whose arrival is $date. Also feeds ACTIVITY.
+        $approvedMessages = $context['approvedMessages'][$groupId] ?? 0;
+        $rows += $this->writeCount($date, $groupId, self::TYPE_APPROVED_MESSAGE_COUNT, $approvedMessages, $dryRun);
 
         // APPROVED_MEMBER_COUNT: cumulative approved members as of $date.
-        $count = (int) DB::table('memberships')
-            ->where('groupid', $groupId)
-            ->whereRaw('DATE(added) <= ?', [$date])
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->count();
-        $rows += $this->writeCount($date, $groupId, self::TYPE_APPROVED_MEMBER_COUNT, $count, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_APPROVED_MEMBER_COUNT, $context['approvedMembers'][$groupId] ?? 0, $dryRun);
 
         // SPAM_MESSAGE_COUNT: ClassifiedSpam log entries for messages on this group on $date.
-        $count = (int) DB::table('logs')
-            ->where('timestamp', '>=', $date)
-            ->whereRaw('DATE(timestamp) = ?', [$date])
-            ->where('groupid', $groupId)
-            ->where('type', 'Message')
-            ->where('subtype', 'ClassifiedSpam')
-            ->count();
-        $rows += $this->writeCount($date, $groupId, self::TYPE_SPAM_MESSAGE_COUNT, $count, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_SPAM_MESSAGE_COUNT, $context['spamMessages'][$groupId] ?? 0, $dryRun);
 
         // SPAM_MEMBER_COUNT: known spammers who left this group on $date.
-        $count = (int) DB::table('logs')
-            ->join('spam_users', function ($j) {
-                $j->on('logs.user', '=', 'spam_users.userid')
-                    ->where('spam_users.collection', '=', 'Spammer');
-            })
-            ->where('logs.groupid', $groupId)
-            ->where('logs.timestamp', '>=', $date)
-            ->whereRaw('DATE(logs.timestamp) = ?', [$date])
-            ->where('logs.type', 'Group')
-            ->where('logs.subtype', 'Left')
-            ->count();
-        $rows += $this->writeCount($date, $groupId, self::TYPE_SPAM_MEMBER_COUNT, $count, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_SPAM_MEMBER_COUNT, $context['spamMembers'][$groupId] ?? 0, $dryRun);
 
         // SUPPORTQUERIES_COUNT: User2Mod chats created on $date for this group.
-        $count = (int) DB::table('chat_rooms')
-            ->where('created', '>=', $date)
-            ->whereRaw('DATE(created) = ?', [$date])
-            ->where('groupid', $groupId)
-            ->where('chattype', ChatRoom::TYPE_USER2MOD)
-            ->count();
-        $rows += $this->writeCount($date, $groupId, self::TYPE_SUPPORTQUERIES_COUNT, $count, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_SUPPORTQUERIES_COUNT, $context['supportQueries'][$groupId] ?? 0, $dryRun);
 
-        // Feedback breakdown (happy/fine/unhappy) — same query shape for each.
+        // Feedback breakdown (happy/fine/unhappy) — read each bucket from the
+        // precomputed per-group happiness histogram.
         foreach ([
             self::TYPE_FEEDBACK_HAPPY,
             self::TYPE_FEEDBACK_FINE,
             self::TYPE_FEEDBACK_UNHAPPY,
         ] as $happiness) {
-            $count = (int) DB::table('messages_outcomes')
-                ->join('messages', 'messages_outcomes.msgid', '=', 'messages.id')
-                ->join('messages_groups', function ($j) use ($groupId) {
-                    $j->on('messages_groups.msgid', '=', 'messages.id')
-                        ->where('messages_groups.groupid', '=', $groupId);
-                })
-                ->where('messages_outcomes.timestamp', '>=', $date)
-                ->whereRaw('DATE(messages_outcomes.timestamp) = ?', [$date])
-                ->where('messages_outcomes.happiness', $happiness)
-                ->distinct()
-                ->count('messages_outcomes.msgid');
-            $rows += $this->writeCount($date, $groupId, $happiness, $count, $dryRun);
+            $rows += $this->writeCount($date, $groupId, $happiness, $context['feedback'][$groupId][$happiness] ?? 0, $dryRun);
         }
 
-        // 30-day rolling window used by POST_METHOD_BREAKDOWN and MESSAGE_BREAKDOWN.
-        $windowStart = date('Y-m-d', strtotime('30 days ago', strtotime($date)));
-        $windowEnd = date('Y-m-d', strtotime('tomorrow', strtotime($date)));
-
-        // POST_METHOD_BREAKDOWN: sourceheader histogram for approved messages in the 30-day window.
-        $sources = DB::table('messages')
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages.arrival', '>=', $windowStart)
-            ->where('messages.arrival', '<', $windowEnd)
-            ->where('messages_groups.groupid', $groupId)
-            ->where('messages_groups.collection', 'Approved')
-            ->whereNotNull('messages.sourceheader')
-            ->groupBy('messages.sourceheader')
-            ->selectRaw('messages.sourceheader AS source, COUNT(*) AS count')
-            ->get();
-        $srcMap = [];
-        foreach ($sources as $row) {
-            $srcMap[$row->source] = (int) $row->count;
-        }
-        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_POST_METHOD_BREAKDOWN, $srcMap, $dryRun);
-
-        // MESSAGE_BREAKDOWN: message-type histogram for approved messages in the 30-day window.
-        $types = DB::table('messages')
-            ->join('messages_groups', function ($j) {
-                $j->on('messages.id', '=', 'messages_groups.msgid')
-                    ->where('messages_groups.collection', '=', 'Approved');
-            })
-            ->where('messages.arrival', '>=', $windowStart)
-            ->where('messages.arrival', '<', $windowEnd)
-            ->where('messages_groups.groupid', $groupId)
-            ->whereNotNull('messages.type')
-            ->groupBy('messages.type')
-            ->selectRaw('messages.type AS type, COUNT(*) AS count')
-            ->get();
-        $typeMap = [];
-        foreach ($types as $row) {
-            $typeMap[$row->type] = (int) $row->count;
-        }
-        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_MESSAGE_BREAKDOWN, $typeMap, $dryRun);
+        // POST_METHOD_BREAKDOWN + MESSAGE_BREAKDOWN: sourceheader / message-type
+        // histograms for approved native messages in the 30-day window.
+        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_POST_METHOD_BREAKDOWN, $context['postMethod'][$groupId] ?? [], $dryRun);
+        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_MESSAGE_BREAKDOWN, $context['messageTypes'][$groupId] ?? [], $dryRun);
 
         // OUR_POSTING_BREAKDOWN: per-member ourPostingStatus histogram (point-in-time, not date-windowed).
-        $statuses = DB::table('memberships')
-            ->where('groupid', $groupId)
-            ->groupBy('ourPostingStatus')
-            ->selectRaw('ourPostingStatus, COUNT(*) AS count')
-            ->get();
-        $statusMap = [];
-        foreach ($statuses as $row) {
-            $statusMap[$row->ourPostingStatus] = (int) $row->count;
-        }
-        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_OUR_POSTING_BREAKDOWN, $statusMap, $dryRun);
+        $rows += $this->writeBreakdown($date, $groupId, self::TYPE_OUR_POSTING_BREAKDOWN, $context['ourPosting'][$groupId] ?? [], $dryRun);
 
         // SEARCHES: per-group tally pre-computed once per day from search_history.
-        $rows += $this->writeCount(
-            $date,
-            $groupId,
-            self::TYPE_SEARCHES,
-            $context['searchCounts'][$groupId] ?? 0,
-            $dryRun,
-        );
+        $rows += $this->writeCount($date, $groupId, self::TYPE_SEARCHES, $context['searchCounts'][$groupId] ?? 0, $dryRun);
 
-        // REPLIES: "Interested" chat messages referring to approved posts on this group on $date.
-        $replies = (int) DB::table('chat_messages')
-            ->join('messages_groups', 'chat_messages.refmsgid', '=', 'messages_groups.msgid')
-            ->where('chat_messages.date', '>=', $date)
-            ->whereRaw('DATE(chat_messages.date) = ?', [$date])
-            ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
-            ->where('messages_groups.groupid', $groupId)
-            ->count();
-        $activity += $replies;
+        // REPLIES: "Interested" chat messages referring to approved posts on this group on $date. Also feeds ACTIVITY.
+        $replies = $context['replies'][$groupId] ?? 0;
         $rows += $this->writeCount($date, $groupId, self::TYPE_REPLIES, $replies, $dryRun);
 
         // WEIGHT: estimated kg of items moved on $date. Uses items.weight when known,
         // otherwise the popularity-weighted population mean (V1 logic).
-        $avg = $context['avgWeight'];
-
-        $weightRows = DB::table('messages_outcomes')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_outcomes.msgid')
-            ->join('messages', 'messages.id', '=', 'messages_outcomes.msgid')
-            ->join('messages_items', 'messages_outcomes.msgid', '=', 'messages_items.msgid')
-            ->leftJoin('items', 'items.id', '=', 'messages_items.itemid')
-            ->where('messages_outcomes.timestamp', '>=', $date)
-            ->whereRaw('DATE(messages_outcomes.timestamp) = ?', [$date])
-            ->where('messages_groups.groupid', $groupId)
-            ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
-            ->distinct()
-            ->select(['messages_outcomes.msgid', 'items.weight'])
-            ->get();
-        $weight = 0;
-        foreach ($weightRows as $row) {
-            $weight += $row->weight !== null && (float) $row->weight !== 0.0 ? (float) $row->weight : $avg;
-        }
-        $rows += $this->writeCount($date, $groupId, self::TYPE_WEIGHT, (int) round($weight), $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_WEIGHT, $context['weight'][$groupId] ?? 0, $dryRun);
 
         // ACTIVE_USERS: distinct members of this group active in the 30 days ending tomorrow-of-$date.
-        $active = (int) DB::table('users_active')
-            ->join('memberships', 'memberships.userid', '=', 'users_active.userid')
-            ->where('users_active.timestamp', '>=', $windowStart)
-            ->where('users_active.timestamp', '<', $windowEnd)
-            ->where('memberships.groupid', $groupId)
-            ->distinct()
-            ->count('users_active.userid');
-        $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVE_USERS, $active, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVE_USERS, $context['activeUsers'][$groupId] ?? 0, $dryRun);
 
         // ACTIVITY: rolled-up "things happened today" — approved-messages + replies (V1 formula).
-        $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVITY, $activity, $dryRun);
+        $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVITY, $approvedMessages + $replies, $dryRun);
 
         return $rows;
     }
@@ -378,7 +513,7 @@ class StatsGenerationService
                 . '  SELECT DISTINCT mo.msgid, mg.groupid, '
                 . '    COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight '
                 . '  FROM messages_outcomes mo '
-                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid '
+                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 '
                 . '  INNER JOIN messages_items mi ON mi.msgid = mo.msgid '
                 . '  LEFT JOIN items i ON i.id = mi.itemid '
                 . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '

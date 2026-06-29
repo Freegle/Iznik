@@ -92,6 +92,139 @@ class ExpandService
     }
 
     /**
+     * Backfill: shrink the stored reach of EXISTING active posts whose reach was
+     * computed before the audience-budget cap (config freegle.ripple.extent) was
+     * turned on, so already-over-reached posts stop covering more than
+     * ~target_users members for the rest of their life.
+     *
+     * Pure reach-geometry shrink: it re-fetches the now-capped schedule for each
+     * post and overwrites the stored polygon + schedule at the post's CURRENT
+     * tick. It deliberately does NOT ripple into/out of groups, touch
+     * memberships, or bump updated_at — so it generates no mail (sendReachDigests
+     * only scans recently-updated rows, and the rippling_reach_notified ledger
+     * blocks re-notification regardless) and never retracts copies already
+     * delivered to far groups (we shrink future reach, we don't claw back).
+     *
+     * No-op unless the cap is active. Only rows whose pool (total_freeglers)
+     * exceeds the cap are candidates — nothing else can be over it. Galera-safe:
+     * one row per UPDATE.
+     *
+     * @return array{candidates:int, shrunk:int, skipped:int}
+     */
+    public function recomputeReach(bool $dryRun = false, int $limit = 1000, ?int $onlyMsgid = null): array
+    {
+        $stats = ['candidates' => 0, 'shrunk' => 0, 'skipped' => 0, 'groups_before' => 0, 'groups_after' => 0];
+
+        $target = (int) config('freegle.ripple.extent.target_users', 0);
+        if (!config('freegle.ripple.extent.enabled') || $target <= 0) {
+            return $stats; // cap not active — there is nothing smaller to shrink to
+        }
+
+        $q = DB::table('rippling_reach')
+            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'])
+            ->selectRaw('ST_AsText(polygon) AS cur_wkt')   // current footprint, for the crosspost-breadth stat
+            ->where('status', '!=', 'rejected')            // active reach rows only
+            ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
+        if ($onlyMsgid !== null) {
+            $q->where('msgid', $onlyMsgid);
+        }
+        $rows = $q->orderBy('msgid')->limit($limit)->get();
+
+        foreach ($rows as $row) {
+            $stats['candidates']++;
+
+            // Re-fetch the schedule from the stored (already-blurred) origin. With
+            // the cap now configured ReachService sends target_users, so this comes
+            // back capped to the nearest ~target_users freeglers.
+            $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+            if ($schedule === null || empty($schedule['ticks'])) {
+                $stats['skipped']++;
+                continue; // routing unreachable this run — safe to retry later
+            }
+
+            $ticks = $schedule['ticks'];
+            $newMax = (int) ($ticks[count($ticks) - 1]['cumulative_users'] ?? 0);
+            // Only proceed if the recomputed reach really is smaller than the pool
+            // (i.e. the cap actually bound for this origin).
+            if ($newMax <= 0 || $newMax >= (int) $row->total_freeglers) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            $entry = $this->entryForTick($ticks, (int) $row->tick);
+            if ($entry === null || empty($entry['wkt'])) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+
+            // Cross-post breadth: how many groups the post hits under its CURRENT reach
+            // vs under the CAPPED reach, counted with the SAME selection the live ripple
+            // uses (rippleIntoNewGroups). Accumulated for both dry-run and live so a
+            // dry-run reports the cap's headline impact on crossposting before any write.
+            $stats['groups_before'] += $this->countCrosspostGroups((string) $row->cur_wkt);
+            $stats['groups_after'] += $this->countCrosspostGroups($storeWkt);
+
+            if ($dryRun) {
+                $stats['shrunk']++;
+                continue;
+            }
+
+            // `updated_at = updated_at` preserves the timestamp (suppresses the ON
+            // UPDATE auto-bump) so the reach mailer never reconsiders this row.
+            DB::statement(
+                'UPDATE rippling_reach
+                    SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                        schedule = ?, total_freeglers = ?, max_drive_min = ?,
+                        updated_at = updated_at
+                  WHERE msgid = ?',
+                [
+                    $storeWkt,
+                    json_encode($ticks),
+                    (int) $schedule['total_freeglers'],
+                    $schedule['max_drive_min'],
+                    $row->msgid,
+                ]
+            );
+            // Preserve any secondary-group "out of area" rejection clips.
+            $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+
+            $stats['shrunk']++;
+            $this->logEvent((int) $row->msgid, 'reach_shrunk', (int) $row->tick, $entry);
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Count the Freegle groups a reach polygon would crosspost into — the same
+     * publish/type/onhere/playground/polyindex + ST_Intersects selection
+     * rippleIntoNewGroups uses (minus the per-poster re-ripple guards, which are
+     * post-specific and not part of a breadth measure). Used by recomputeReach to
+     * report how the audience cap narrows cross-posting.
+     */
+    private function countCrosspostGroups(string $wkt): int
+    {
+        if ($wkt === '') {
+            return 0;
+        }
+        $row = DB::selectOne(
+            "SELECT COUNT(*) AS c
+             FROM `groups` g
+             WHERE g.publish = 1
+               AND g.type = 'Freegle'
+               AND g.onhere = 1
+               AND g.nameshort NOT LIKE '%playground%'
+               AND g.polyindex IS NOT NULL
+               AND ST_GeometryType(g.polyindex) <> 'POINT'
+               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))",
+            [$wkt]
+        );
+        return (int) ($row->c ?? 0);
+    }
+
+    /**
      * Stop-and-retract for every post that has left messages_spatial — rejected/removed on its
      * origin group, withdrawn, expired or deleted (Taken/Received stay in messages_spatial and
      * are intentionally excluded). For each such post we drop its rippling_reach row (which both
@@ -176,49 +309,125 @@ class ExpandService
             ->pluck('groupid');
 
         foreach ($groupids as $groupid) {
-            $n = DB::affectingStatement(
-                'UPDATE messages_groups SET deleted = 1
-                 WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-                [$msgid, $groupid]
+            $this->retractRippledCopyInGroup(
+                $msgid,
+                (int) $groupid,
+                $posterId,
+                'Rippling: removed on origin removal',
+                'pulled_on_removal',
+                $stats
             );
-            if ($n < 1) {
-                continue;
-            }
-            $stats['pulled_on_removal']++;
-            DB::table('logs')->insert([
-                'timestamp' => now(),
-                'type' => 'Message',
-                'subtype' => 'Deleted',
-                'user' => $posterId,
-                'byuser' => null,
-                'groupid' => $groupid,
-                'msgid' => $msgid,
-                'text' => 'Rippling: removed on origin removal',
-            ]);
+        }
+    }
 
-            if (!$posterId) {
-                continue;
+    /**
+     * Reach-scoped retraction (cap-backlog cleanup): for an ACTIVE rippled post,
+     * soft-delete its rippled-in copies in the groups whose polygon no longer
+     * intersects the post's (capped) reach polygon, while leaving the post live on
+     * the origin group and every still-reached group. The underlying message row is
+     * untouched, so existing chats/replies (keyed on msgid) keep working and still
+     * link to the open post — removing a copy only takes it out of that group's
+     * browse. Skips posts with a terminal outcome (taken/promised/received): those
+     * are complete and must not be disturbed. Galera-safe (one row per statement).
+     *
+     * @return int groups retracted for this post (also accumulates into $stats)
+     */
+    public function retractOutOfReachCopies(int $msgid, bool $dryRun, array &$stats): int
+    {
+        if ($this->hasTerminalOutcome($msgid)) {
+            $stats['skipped_terminal'] = ($stats['skipped_terminal'] ?? 0) + 1;
+            return 0;
+        }
+
+        // Rippled-in groups whose polyindex no longer intersects the post's current
+        // (capped) reach polygon — i.e. groups we would NOT ripple into now.
+        $rows = DB::select(
+            "SELECT g.id
+               FROM messages_groups mg
+               JOIN `groups` g ON g.id = mg.groupid
+               JOIN rippling_reach rr ON rr.msgid = mg.msgid
+              WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
+                AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
+                AND NOT ST_Intersects(g.polyindex, rr.polygon)",
+            [$msgid]
+        );
+
+        if ($dryRun) {
+            $n = count($rows);
+            $stats['would_retract_groups'] = ($stats['would_retract_groups'] ?? 0) + $n;
+            return $n;
+        }
+
+        $posterId = DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $retracted = 0;
+        foreach ($rows as $r) {
+            $before = $stats['pulled_out_of_reach'] ?? 0;
+            $this->retractRippledCopyInGroup(
+                $msgid,
+                (int) $r->id,
+                $posterId,
+                'Rippling: out of capped reach',
+                'pulled_out_of_reach',
+                $stats
+            );
+            if (($stats['pulled_out_of_reach'] ?? 0) > $before) {
+                $retracted++;
             }
-            // Only remove the membership when this poster has no OTHER live post on the group
-            // (the copy we just pulled is now deleted=1, so it is excluded by deleted=0).
-            $hasOtherPost = DB::table('messages_groups as mg')
-                ->join('messages as m', 'm.id', '=', 'mg.msgid')
-                ->where('m.fromuser', $posterId)
-                ->where('mg.groupid', $groupid)
-                ->where('mg.deleted', 0)
-                ->exists();
-            if ($hasOtherPost) {
-                continue;
-            }
-            // Only a ripple-join (rippled=1) is removed; an organic membership is never touched.
-            $removed = DB::table('memberships')
-                ->where('userid', $posterId)
-                ->where('groupid', $groupid)
-                ->where('rippled', 1)
-                ->delete();
-            if ($removed > 0) {
-                $stats['memberships_removed']++;
-            }
+        }
+        return $retracted;
+    }
+
+    /**
+     * Soft-delete one rippled-in copy and, when the poster has no OTHER live post on
+     * the group, remove the ripple-join membership (rippled=1; an organic membership
+     * is never touched). Writes a Message/Deleted log but deliberately NO Group/Left
+     * log, so a later ripple can re-add the membership. Shared by the origin-removal
+     * and out-of-reach retraction paths. Galera-safe: one row per statement.
+     */
+    private function retractRippledCopyInGroup(int $msgid, int $groupid, $posterId, string $reason, string $statKey, array &$stats): void
+    {
+        $n = DB::affectingStatement(
+            'UPDATE messages_groups SET deleted = 1
+             WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
+            [$msgid, $groupid]
+        );
+        if ($n < 1) {
+            return;
+        }
+        $stats[$statKey] = ($stats[$statKey] ?? 0) + 1;
+        DB::table('logs')->insert([
+            'timestamp' => now(),
+            'type' => 'Message',
+            'subtype' => 'Deleted',
+            'user' => $posterId,
+            'byuser' => null,
+            'groupid' => $groupid,
+            'msgid' => $msgid,
+            'text' => $reason,
+        ]);
+
+        if (!$posterId) {
+            return;
+        }
+        // Only remove the membership when this poster has no OTHER live post on the group
+        // (the copy we just pulled is now deleted=1, so it is excluded by deleted=0).
+        $hasOtherPost = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->where('m.fromuser', $posterId)
+            ->where('mg.groupid', $groupid)
+            ->where('mg.deleted', 0)
+            ->exists();
+        if ($hasOtherPost) {
+            return;
+        }
+        // Only a ripple-join (rippled=1) is removed; an organic membership is never touched.
+        $removed = DB::table('memberships')
+            ->where('userid', $posterId)
+            ->where('groupid', $groupid)
+            ->where('rippled', 1)
+            ->delete();
+        if ($removed > 0) {
+            $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
         }
     }
 
@@ -327,7 +536,23 @@ class ExpandService
 
                 $schedule = $scheduleByKey[$blurredByRow[$i]['key']] ?? null;
                 if ($schedule === null) {
-                    // Routing unreachable or origin off-graph — retry next run.
+                    // The blurred origin can snap to a DISCONNECTED routing node (a driveway stub
+                    // or isolated segment) whose drive-isochrone reaches almost nothing, so the
+                    // schedule comes back empty -> the post is skipped on EVERY run and never
+                    // ripples. Because blurOrigin is deterministic this is permanent: ~16% of live
+                    // candidates were stranded this way. Fall back to the post's RAW origin, which
+                    // is geocoded onto the connected road network. A ~400m blur is imperceptible
+                    // against a 30-min drive isochrone (the innermost tick is already km-scale), so
+                    // this does not meaningfully reduce origin privacy - it only rescues the posts
+                    // the blur would otherwise lose. Costs one extra routing call per stranded post.
+                    $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                    if ($schedule !== null) {
+                        $lat = (float) $row->lat;
+                        $lng = (float) $row->lng;
+                    }
+                }
+                if ($schedule === null) {
+                    // Genuinely unreachable (raw origin off-graph too) — retry next run.
                     $stats['skipped']++;
                     continue;
                 }
@@ -837,36 +1062,43 @@ class ExpandService
             // area-scoped - a poster who left a rippled-into group must have their post pulled even
             // after the post's origin group leaves the trial (its origin then falls outside the
             // current area), otherwise the copy is stranded in a group they explicitly opted out of.
+            // Drive from RECENT Group/Left events, not from every rippled copy. The old
+            // shape scanned all rippled_in=1 rows (10k+ and growing daily) and ran the
+            // nested logs subquery per row — O(all rippled copies ever), which crept past
+            // 80s and hung every tick once the experiment had rippled enough. Leaves are
+            // the trigger and are rare, so we start from the (index-supported, via
+            // logs.timestamp_2) recent Left logs and only touch a rippled copy when its
+            // poster actually left that group. Cost is now bounded by leave volume, not by
+            // the rippled-copy population. This per-tick run only needs to cover leaves
+            // since the last successful run (seconds ago); a 2-day window is a generous
+            // safety margin covering brief stalls while keeping the scan fast (~3s vs the
+            // unbounded original's 80s+, which hung every tick). Idempotent — a copy
+            // already pulled (deleted=1) is simply skipped.
             $scopeSql = '';
-            $params = [];
+            $params = [now()->subDays(2)->toDateTimeString()];
             if ($onlyMsgid !== null) {
                 $scopeSql = ' AND mg.msgid = ?';
                 $params[] = $onlyMsgid;
             }
 
             $rows = DB::select(
-                "SELECT mg.msgid, mg.groupid, m.fromuser
-                 FROM messages_groups mg
-                 JOIN messages m ON m.id = mg.msgid
-                 WHERE mg.rippled_in = 1 AND mg.deleted = 0" . $scopeSql . "
+                "SELECT DISTINCT mg.msgid, mg.groupid, m.fromuser
+                 FROM logs ll
+                 JOIN messages_groups mg ON mg.groupid = ll.groupid AND mg.rippled_in = 1 AND mg.deleted = 0
+                 JOIN messages m ON m.id = mg.msgid AND m.fromuser = ll.user
+                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?" . $scopeSql . "
                    AND EXISTS (
                        SELECT 1 FROM logs lj
-                       WHERE lj.user = m.fromuser AND lj.groupid = mg.groupid
+                       WHERE lj.user = ll.user AND lj.groupid = ll.groupid
                          AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
+                         AND lj.id < ll.id
                          AND NOT EXISTS (
                              SELECT 1 FROM logs lj2
                              WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
                                AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
                                AND lj2.id > lj.id
                          )
-                         AND EXISTS (
-                             SELECT 1 FROM logs ll
-                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                               AND ll.type = 'Group' AND ll.subtype = 'Left'
-                               AND ll.id > lj.id
-                         )
-                   )
-                 GROUP BY mg.msgid, mg.groupid, m.fromuser",
+                   )",
                 $params
             );
 

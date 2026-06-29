@@ -555,6 +555,74 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         )
       })
 
+      it('scopes member search to the selected group (avoids all-groups hang)', async () => {
+        // Regression (Discourse 9518/366): omitting groupid made the backend run a
+        // leading-wildcard fullname LIKE across all the mod's groups (20-45s, stuck
+        // spinner). When a group is selected the search must be scoped to it.
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockGroupid.value = 21467
+        mockMemberTerm.value = 'Smith'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalledWith(
+          expect.objectContaining({
+            subaction: 'searchmemb',
+            search: 'Smith',
+            groupid: 21467,
+          })
+        )
+      })
+
+      it('clears the spinner when the fetch fails (no eternal whirling circle)', async () => {
+        // Regression (Discourse 9518/366): a slow/failed member-name search left
+        // busy/loaded stuck, so the spinner and "Please wait..." never cleared.
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockMemberTerm.value = 'Smith'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        mockMessageStore.fetchMessagesMT.mockRejectedValueOnce(
+          new Error('timeout')
+        )
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockState.complete).toHaveBeenCalled()
+        expect(mockBusy.value).toBe(false)
+        expect(wrapper.vm.loaded).toBe(true)
+      })
+
+      it('discards a stale fetch whose search was superseded (no wrong post)', async () => {
+        // Regression (Discourse 9518/366): a slow response (e.g. a 90s all-groups
+        // member search) landing after the user starts a new search must NOT
+        // re-populate listingIds — otherwise an unrelated post is painted over the
+        // current search result. bump is the search generation; if it changed
+        // while the fetch was in flight, the response is stale and dropped.
+        mockMessageTerm.value = '119776391'
+        mockMessages.value = []
+        mockShow.value = 0
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockListingIds.value = new Set()
+        mockMessageStore.fetchMessagesMT.mockClear()
+        // Simulate a newer search bumping the generation while this fetch is in flight,
+        // then the stale response resolving with an unrelated id (the typewriter).
+        mockMessageStore.fetchMessagesMT.mockImplementationOnce(() => {
+          wrapper.vm.bump = wrapper.vm.bump + 1
+          return Promise.resolve([120490457])
+        })
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockListingIds.value.has(120490457)).toBe(false)
+        expect(mockBusy.value).toBe(false)
+      })
+
       it('completes when no more messages returned', async () => {
         mockMessages.value = []
         mockShow.value = 0
