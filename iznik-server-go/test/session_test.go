@@ -670,6 +670,33 @@ func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
 	}
 }
 
+// TestGetSessionViaAuth2ReturnsJWT verifies that GET /session with an
+// Authorization2 header carrying the persistent-token JSON object returns
+// HTTP 200, ret=0, and a non-empty jwt.  This is the flow used by
+// helper/run-loop.sh when no JWT is supplied but PERSISTENT_TOKEN is set.
+func TestGetSessionViaAuth2ReturnsJWT(t *testing.T) {
+	prefix := uniquePrefix("sess_auth2_jwt")
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, _ := CreateTestSession(t, userID)
+	db := database.DBConn
+
+	var series uint64
+	var token string
+	db.Raw("SELECT series, token FROM sessions WHERE id = ?", sessionID).Row().Scan(&series, &token)
+
+	persistentJSON := fmt.Sprintf(`{"id":%d,"series":%d,"token":"%s"}`, sessionID, series, token)
+
+	req := httptest.NewRequest("GET", "/api/session", nil)
+	req.Header.Set("Authorization2", persistentJSON)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.NotEmpty(t, result["jwt"], "GET /session with Authorization2 must return a jwt")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Email/Password Login
 // ---------------------------------------------------------------------------

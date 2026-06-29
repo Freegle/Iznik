@@ -26,8 +26,7 @@ export HELPER_MODEL="${HELPER_MODEL:-claude-opus-4-8}"
 
 # Exchange a persistent token for a JWT if no JWT was supplied.
 if [ -z "${JWT:-}" ] && [ -n "${PERSISTENT_TOKEN:-}" ]; then
-  JWT=$(curl -s --max-time 20 -X POST "$APIV2/session" -H 'Content-Type: application/json' \
-    -d "{\"persistent\":\"$PERSISTENT_TOKEN\"}" 2>/dev/null \
+  JWT=$(curl -s --max-time 20 "$APIV2/session" -H "Authorization2: $PERSISTENT_TOKEN" 2>/dev/null \
     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("jwt",""))' 2>/dev/null || true)
 fi
 : "${JWT:?set JWT (or PERSISTENT_TOKEN) in config.env}"
