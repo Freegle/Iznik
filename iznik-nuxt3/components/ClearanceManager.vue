@@ -76,6 +76,33 @@
         </details>
       </div>
 
+      <!-- Private access instructions — only the offerer edits and sees these
+           on this page. They are delivered to a collector automatically once
+           the offerer allocates (Reserves) them an item. -->
+      <div class="clearance-manager__access mt-3 mb-3" data-testid="clearance-access-section">
+        <label class="form-label fw-semibold" for="clearance-access-edit">
+          Access instructions
+        </label>
+        <p class="small text-muted mb-1">
+          Shared with someone only once you allocate them an item.
+        </p>
+        <b-form-textarea
+          id="clearance-access-edit"
+          v-model="localAccessInstructions"
+          data-testid="clearance-access-edit"
+          rows="3"
+          placeholder="e.g. 12 High St, side gate, buzz flat 3"
+        />
+        <b-button
+          class="mt-2"
+          variant="success"
+          size="sm"
+          @click="saveAccessInstructions"
+        >
+          Save
+        </b-button>
+      </div>
+
       <ClearanceManageItem
         v-for="(item, idx) in items"
         :key="item.id"
@@ -90,7 +117,7 @@
 </template>
 
 <script setup>
-import { computed, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
@@ -113,6 +140,17 @@ const userStore = useUserStore()
 const { myid } = useMe()
 
 const message = computed(() => messageStore.byId(props.id))
+
+// Local copy of the access instructions so the textarea is editable without
+// mutating the store directly. Synced whenever the message (re)loads.
+const localAccessInstructions = ref('')
+watch(
+  () => message.value?.accessinstructions,
+  (v) => {
+    localAccessInstructions.value = v || ''
+  },
+  { immediate: true }
+)
 
 const items = computed(() =>
   (message.value?.bulkitems || [])
@@ -174,6 +212,14 @@ async function onResolve({ id, decision, text }) {
     await messageStore.helperResolveProposal(props.id, id, decision, text)
   } catch (e) {
     console.error('Failed to resolve proposal', e)
+  }
+}
+
+async function saveAccessInstructions() {
+  try {
+    await messageStore.patch({ id: props.id, accessinstructions: localAccessInstructions.value })
+  } catch (e) {
+    console.error('Failed to save access instructions', e)
   }
 }
 
@@ -251,6 +297,8 @@ defineExpose({
   sentUsers,
   setStatus,
   onResolve,
+  localAccessInstructions,
+  saveAccessInstructions,
 })
 </script>
 

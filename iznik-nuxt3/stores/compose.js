@@ -223,7 +223,8 @@ export const useComposeStore = defineStore({
       textbody,
       attachments,
       availablenow,
-      groupid
+      groupid,
+      accessinstructions = null
     ) {
       const data = {
         id,
@@ -234,6 +235,9 @@ export const useComposeStore = defineStore({
         attachments,
         groupid,
         availablenow,
+      }
+      if (accessinstructions) {
+        data.accessinstructions = accessinstructions
       }
 
       const messageStore = useMessageStore()
@@ -485,7 +489,8 @@ export const useComposeStore = defineStore({
               message.description,
               attids,
               'availablenow' in message ? message.availablenow : 1,
-              this.group
+              this.group,
+              message.accessinstructions || null
             )
 
             const { groupid, newuser, newpassword } = await this.submitDraft(

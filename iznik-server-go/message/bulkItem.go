@@ -321,6 +321,23 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		sendAccessInstructions(db, msgid, fromuser, *req.Userid)
 	}
 
+	// Collected: record who collected the item (messages_by) and reduce the
+	// post's available count. This is the per-item equivalent of the messages_by
+	// insert in handleOutcome for a single-item post. ON DUPLICATE KEY UPDATE
+	// accumulates quantities when one collector takes several items from the same
+	// bulk post, so their profile "collected" count stays accurate.
+	if *req.State == "Collected" && priorState != "Collected" {
+		var qty int
+		db.Raw("SELECT COALESCE(quantity, 1) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
+			*req.Bulkitemid, *req.Userid).Scan(&qty)
+		if qty < 1 {
+			qty = 1
+		}
+		db.Exec("INSERT INTO messages_by (msgid, userid, count) VALUES (?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE count = count + VALUES(count)", msgid, *req.Userid, qty)
+		db.Exec("UPDATE messages SET availablenow = GREATEST(0, availablenow - ?) WHERE id = ?", qty, msgid)
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 

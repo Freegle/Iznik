@@ -736,6 +736,194 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 	assert.Equal(t, int64(1), sent, "access instructions sent once, not on every re-reserve")
 }
 
+// TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow checks
+// that moving an interest row to Collected writes a messages_by row for the
+// collector and decrements messages.availablenow by the collected quantity.
+func TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkcollected1")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
+
+	// Seed available count and an interest row at quantity=2 state=Reserved.
+	db.Exec("UPDATE messages SET availablenow = 4 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 2, 'Reserved')", deskID, msgID, wanterID)
+
+	ownerToken := getToken(t, ownerID)
+	body := map[string]interface{}{
+		"action": "BulkInterestState", "id": msgID,
+		"bulkitemid": deskID, "userid": wanterID, "state": "Collected",
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Interest row must have transitioned.
+	var state string
+	db.Raw("SELECT state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", deskID, wanterID).Scan(&state)
+	assert.Equal(t, "Collected", state)
+
+	// messages_by must record the collector's quantity.
+	var count int
+	db.Raw("SELECT COALESCE(count, 0) FROM messages_by WHERE msgid = ? AND userid = ?", msgID, wanterID).Scan(&count)
+	assert.Equal(t, 2, count, "messages_by count should equal the collected quantity")
+
+	// availablenow must be decremented by the collected quantity.
+	var avail int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&avail)
+	assert.Equal(t, 2, avail, "availablenow should drop from 4 to 2")
+}
+
+// TestBulkInterestStateCollectedAccumulatesMultipleItems checks that Collecting
+// two items from the same post accumulates the quantities in messages_by
+// (ON DUPLICATE KEY UPDATE) and correctly decrements availablenow.
+func TestBulkInterestStateCollectedAccumulatesMultipleItems(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkcollected2")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
+	chairID := addBulkItem(t, msgID, "Chair", 6, "Used")
+
+	// Total available = 10; wanter wants desk qty=2 and chair qty=3.
+	db.Exec("UPDATE messages SET availablenow = 10 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 2, 'Reserved')", deskID, msgID, wanterID)
+	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 3, 'Reserved')", chairID, msgID, wanterID)
+
+	ownerToken := getToken(t, ownerID)
+	doCollect := func(itemID uint64) {
+		body := map[string]interface{}{
+			"action": "BulkInterestState", "id": msgID,
+			"bulkitemid": itemID, "userid": wanterID, "state": "Collected",
+		}
+		bb, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, 10000)
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+	}
+
+	doCollect(deskID)
+	doCollect(chairID)
+
+	// messages_by count should accumulate to 2+3=5.
+	var count int
+	db.Raw("SELECT COALESCE(count, 0) FROM messages_by WHERE msgid = ? AND userid = ?", msgID, wanterID).Scan(&count)
+	assert.Equal(t, 5, count, "messages_by count should accumulate across two collected items")
+
+	// availablenow should drop from 10 to 10-2-3=5.
+	var avail int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&avail)
+	assert.Equal(t, 5, avail, "availablenow should drop by the total collected quantity")
+}
+
+// TestBulkOfferPatchAccessInstructions checks that access instructions can be
+// updated via PATCH after the post is created, are returned only to the
+// offerer (not a plain viewer), and can be cleared with an empty string.
+func TestBulkOfferPatchAccessInstructions(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkpatchaccess")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	grantClearance(t, ownerID)
+	ownerToken := getToken(t, ownerID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	// PUT with initial access instructions.
+	putBody := map[string]interface{}{
+		"messagetype":        "Offer",
+		"item":               "Office Clearance",
+		"collection":         "Draft",
+		"groupid":            groupID,
+		"locationid":         locationID,
+		"accessinstructions": "original",
+		"bulkitems": []map[string]interface{}{
+			{"name": "Desk", "quantity": 2, "condition": "Good"},
+		},
+	}
+	bb, _ := json.Marshal(putBody)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgID := uint64(result["id"].(float64))
+	require.NotZero(t, msgID)
+
+	// Make the draft visible so GET returns it.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
+
+	// PATCH with updated instructions.
+	patchBody := map[string]interface{}{
+		"id":                 msgID,
+		"accessinstructions": "updated",
+	}
+	bb, _ = json.Marshal(patchBody)
+	req = httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// DB row should hold the new value.
+	var stored string
+	db.Raw("SELECT COALESCE(accessinstructions,'') FROM messages_bulk_access WHERE msgid = ?", msgID).Scan(&stored)
+	assert.Equal(t, "updated", stored)
+
+	// Owner GET returns the updated instructions.
+	oresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, ownerToken), nil), 10000)
+	require.NoError(t, err)
+	var ownerMsg message.Message
+	json.Unmarshal(rsp(oresp), &ownerMsg)
+	require.NotNil(t, ownerMsg.Accessinstructions, "owner should see the updated access instructions")
+	assert.Equal(t, "updated", *ownerMsg.Accessinstructions)
+
+	// Plain viewer GET must not see the instructions.
+	vresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, getToken(t, viewerID)), nil), 10000)
+	require.NoError(t, err)
+	var viewerMsg message.Message
+	json.Unmarshal(rsp(vresp), &viewerMsg)
+	assert.Nil(t, viewerMsg.Accessinstructions, "a plain viewer must not see access instructions")
+
+	// PATCH with empty string clears the instructions.
+	clearBody := map[string]interface{}{
+		"id":                 msgID,
+		"accessinstructions": "",
+	}
+	bb, _ = json.Marshal(clearBody)
+	req = httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Owner GET should return nil now the instructions have been cleared.
+	oresp2, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, ownerToken), nil), 10000)
+	require.NoError(t, err)
+	var ownerMsg2 message.Message
+	json.Unmarshal(rsp(oresp2), &ownerMsg2)
+	assert.Nil(t, ownerMsg2.Accessinstructions, "owner GET should return nil after clearing access instructions")
+}
+
 // addBulkItemRef returns the id of the (single) bulk item created for a message.
 func addBulkItemRef(t *testing.T, msgid uint64) uint64 {
 	var id uint64
