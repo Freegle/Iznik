@@ -5,9 +5,8 @@
       {{ items.length }} items in this offer
     </h4>
     <p v-if="!isOwner && !message.successful" class="bulkitems__prompt">
-      Turn on <strong>“I'd like this”</strong> for each item you want — pick as
-      many as you like, and choose how many of each. You'll need at least one
-      turned on before you can register your interest.
+      Tap <strong>Yes please</strong> on each item you want — pick as many as you
+      like, and choose how many of each.
     </p>
 
     <ul class="bulkitems__list">
@@ -56,17 +55,36 @@
 
         <!-- Recipient: labelled toggle + quantity dropdown, inline. -->
         <div v-else-if="!message.successful" class="bitem__pick">
-          <b-form-checkbox
-            v-model="picks[item.id].checked"
-            switch
-            class="bitem__toggle"
-            :class="{ 'bitem__toggle--on': picks[item.id].checked }"
-            :data-testid="'pick-' + item.id"
-            :aria-label="'I\'d like ' + item.name"
-            @change="onCheck(item)"
+          <div
+            class="bitem__choice"
+            role="group"
+            :aria-label="'Do you want ' + item.name + '?'"
           >
-            <span class="bitem__picktext">I'd like this</span>
-          </b-form-checkbox>
+            <b-button
+              size="sm"
+              class="bitem__choicebtn"
+              :variant="picks[item.id].checked ? 'success' : 'outline-secondary'"
+              :pressed="picks[item.id].checked"
+              :data-testid="'pick-' + item.id"
+              @click="setPick(item, true)"
+            >
+              <v-icon
+                v-if="picks[item.id].checked"
+                icon="check"
+                class="me-1"
+              />Yes please
+            </b-button>
+            <b-button
+              size="sm"
+              class="bitem__choicebtn"
+              :variant="!picks[item.id].checked ? 'dark' : 'outline-secondary'"
+              :pressed="!picks[item.id].checked"
+              :data-testid="'unpick-' + item.id"
+              @click="setPick(item, false)"
+            >
+              No thanks
+            </b-button>
+          </div>
           <!-- Quantity only matters when more than one is available. The slot
                keeps a fixed width so turning the toggle on doesn't shift it. -->
           <div v-if="item.quantity > 1" class="bitem__qtyslot">
@@ -215,12 +233,10 @@ const canRegister = computed(() => {
   return true
 })
 
-// Tells the recipient why the Register button is disabled.
+// Tells the recipient why the Register button is disabled. We don't repeat the
+// "pick an item" prompt here — the notice box above already explains it.
 const registerHint = computed(() => {
-  if (!anyPicked.value) {
-    return 'Turn on “I\'d like this” for at least one item above before you can register.'
-  }
-  if (slots.value.length && !cancollectTimes.value.length) {
+  if (anyPicked.value && slots.value.length && !cancollectTimes.value.length) {
     return 'Tick at least one collection time you can make.'
   }
   return ''
@@ -236,6 +252,12 @@ function onCheck(item) {
   if (p.checked && (!p.quantity || p.quantity < 1)) {
     p.quantity = 1
   }
+}
+
+// "Yes please" / "No thanks" toggle: set the choice and apply the qty default.
+function setPick(item, val) {
+  picks[item.id].checked = val
+  onCheck(item)
 }
 
 function thumb(item) {
@@ -346,13 +368,16 @@ defineExpose({
   font-size: 0.95rem;
 }
 
-/* The "I'd like this" label — clear, and greens up when turned on. */
-.bitem__picktext {
-  font-weight: 600;
+/* "Yes please" / "No thanks" choice — a clear, deliberate pair of buttons
+   (default off) rather than a subtle switch. */
+.bitem__choice {
+  display: flex;
+  gap: 0.35rem;
 }
 
-.bitem__toggle--on .bitem__picktext {
-  color: $color-green--darker;
+.bitem__choicebtn {
+  min-width: 5.5rem;
+  font-weight: 600;
 }
 
 .bulkitems__hint {
