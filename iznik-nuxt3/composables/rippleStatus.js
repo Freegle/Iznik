@@ -43,3 +43,36 @@ export function isRippledInToContextGroup(
   const earliest = Math.min(...arrivals)
   return ctxArrival > earliest + thresholdMs
 }
+
+/**
+ * Of the supplied group rows, return the groupid (as a number) with the earliest
+ * arrival - the post's origin-most copy.
+ *
+ * An edit under review belongs to the post's ORIGIN group, not to a copy that rippled
+ * in later. The moderation UI must therefore anchor edit review to this group rather
+ * than to the most-recent rippled-in copy - otherwise a moderator who is only a backup
+ * on a receiving group is told they are "moderating for" that backup group for an edit
+ * that actually lives on the origin group (Discourse 9518).
+ *
+ * Falls back to the first row's id when no arrival is parseable, and returns null for
+ * empty/invalid input.
+ *
+ * @param {Array<{groupid:number|string, arrival:string}>} groups
+ * @returns {number|null}
+ */
+export function earliestArrivalGroupId(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return null
+
+  let best = null
+  for (const g of groups) {
+    const t = g && g.arrival ? new Date(g.arrival).getTime() : NaN
+    if (Number.isNaN(t)) continue
+    if (best === null || t < best.t) best = { id: parseInt(g.groupid), t }
+  }
+
+  if (best === null) {
+    const id = parseInt(groups[0].groupid)
+    return Number.isNaN(id) ? null : id
+  }
+  return best.id
+}

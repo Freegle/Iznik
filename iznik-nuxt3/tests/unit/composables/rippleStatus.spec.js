@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   isRippledInToContextGroup,
+  earliestArrivalGroupId,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
 
@@ -100,5 +101,54 @@ describe('isRippledInToContextGroup', () => {
 
   it('exports the origin window as 10 minutes', () => {
     expect(RIPPLE_ORIGIN_WINDOW_MS).toBe(10 * 60 * 1000)
+  })
+})
+
+describe('earliestArrivalGroupId', () => {
+  it('returns the earliest-arriving group (the origin), not a later rippled-in copy', () => {
+    // Derek's case: post originates on Oxford and ripples into Vale/Didcot later.
+    // An edit belongs to the origin, so we must anchor to Oxford (the earliest),
+    // not the most-recent rippled-in copy.
+    const groups = [
+      { groupid: 21671, arrival: at(120) }, // Vale (rippled in)
+      { groupid: 21555, arrival: at(0) }, // Oxford (origin)
+      { groupid: 522858, arrival: at(120) }, // Didcot (rippled in)
+    ]
+    expect(earliestArrivalGroupId(groups)).toBe(21555)
+  })
+
+  it('returns null for empty/missing input', () => {
+    expect(earliestArrivalGroupId([])).toBeNull()
+    expect(earliestArrivalGroupId(null)).toBeNull()
+    expect(earliestArrivalGroupId(undefined)).toBeNull()
+  })
+
+  it('returns the single group id for a one-group post', () => {
+    expect(earliestArrivalGroupId([{ groupid: 42, arrival: at(0) }])).toBe(42)
+  })
+
+  it('returns a number even for string groupids', () => {
+    const groups = [
+      { groupid: '2', arrival: at(90) },
+      { groupid: '1', arrival: at(0) },
+    ]
+    expect(earliestArrivalGroupId(groups)).toBe(1)
+  })
+
+  it('falls back to the first group id when no arrival is parseable', () => {
+    const groups = [
+      { groupid: 7, arrival: 'not-a-date' },
+      { groupid: 8, arrival: null },
+    ]
+    expect(earliestArrivalGroupId(groups)).toBe(7)
+  })
+
+  it('ignores entries with missing arrivals when others are valid', () => {
+    const groups = [
+      { groupid: 5, arrival: null },
+      { groupid: 6, arrival: at(30) },
+      { groupid: 7, arrival: at(10) },
+    ]
+    expect(earliestArrivalGroupId(groups)).toBe(7)
   })
 })

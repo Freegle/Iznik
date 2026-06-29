@@ -767,7 +767,10 @@ import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 import { useModGroupStore } from '@/stores/modgroup'
 
 import { twem } from '~/composables/useTwem'
-import { isRippledInToContextGroup as isRippledIn } from '~/composables/rippleStatus'
+import {
+  isRippledInToContextGroup as isRippledIn,
+  earliestArrivalGroupId,
+} from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -914,6 +917,15 @@ const currentGroupid = computed(() => {
   if (props.contextGroupid) return parseInt(props.contextGroupid)
   const mine = moderatedGroupsOnPost.value
   if (mine.length) {
+    // An edit under review belongs to the post's ORIGIN group, not to a copy that
+    // rippled in later. Anchor to the origin-most group I moderate (earliest arrival)
+    // so the "moderating for X" banner and the Approve/Reject target the origin group
+    // - otherwise a post that originated on a group I'm active on but rippled into a
+    // group I only back up gets shown as "moderating for <backup group>" (Discourse 9518).
+    if (props.editreview) {
+      const originPick = earliestArrivalGroupId(mine)
+      if (originPick != null) return originPick
+    }
     const pending = mine.filter((g) =>
       ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
     )
