@@ -18,9 +18,13 @@
     $area           ?string - their area, for the provenance line
     $intro          ?string - optional override for the intro paragraph
     $items          array   - [ ['name'=>string, 'condition'=>?string,
-                                  'description'=>?string, 'photo'=>?string], ... ]
-                              photo is the item's image URL (a Freegle image-delivery
-                              URL is fine); omit/empty when the item has no photo.
+                                  'description'=>?string, 'photo'=>?string,
+                                  'photo_full'=>?string], ... ]
+                              photo is the item's image URL shown in the email (a
+                              Freegle image-delivery URL is fine). photo_full is the
+                              raw/high-res image the photo links to (just opens the
+                              image, no offer page); defaults to photo. Omit photo
+                              when the item has none.
     $signoffName    string  - "Natalie @ Freegle"
     $unsubscribeUrl string  - mailto:natalie-wagg+unsub@ilovefreegle.org?subject=unsubscribe
     $preview        string  - inbox preview text
@@ -47,6 +51,8 @@
               and I'll arrange collection with you. No sign-up or account needed.
             </p>
           @endif
+          <p style="margin:14px 0 4px 0;">Thanks,</p>
+          <p style="margin:0;"><strong>{{ $signoffName }}</strong></p>
         </mj-text>
       </mj-column>
     </mj-section>
@@ -56,8 +62,8 @@
       <mj-section padding="8px 24px" css-class="outreach-item">
         <mj-column>
           @if(!empty($item['photo']))
-            <mj-image src="{{ $item['photo'] }}" alt="{{ $item['name'] }}"
-                      align="left" padding="0 0 8px 0" border-radius="6px" />
+            <mj-image src="{{ $item['photo'] }}" href="{{ $item['photo_full'] ?? $item['photo'] }}"
+                      alt="{{ $item['name'] }}" align="left" padding="0 0 8px 0" border-radius="6px" />
           @endif
           <mj-text font-size="17px" line-height="1.4" color="#1d6607" font-weight="bold" padding="0">
             {{ $item['name'] }}@if(!empty($item['condition'])) <span style="color:#666666;font-weight:normal;font-size:14px;">({{ $item['condition'] }})</span>@endif
@@ -76,34 +82,20 @@
       </mj-section>
     @endforeach
 
-    {{-- Close --}}
-    <mj-section padding="8px 24px 4px 24px">
-      <mj-column>
-        <mj-text font-size="16px" line-height="1.6" color="#333333">
-          <p style="margin:0 0 14px 0;">
-            If any of these would be useful, just reply and let me know which - I'll sort out the
-            details and collection with you.
-          </p>
-          <p style="margin:0 0 4px 0;">Thanks,</p>
-          <p style="margin:0;"><strong>{{ $signoffName }}</strong></p>
-        </mj-text>
-      </mj-column>
-    </mj-section>
-
     {{-- Provenance + unsubscribe (no Freegle links). --}}
     <mj-section background-color="#f5f5f5" padding="20px 24px">
       <mj-column>
         <mj-text font-size="12px" color="#666666" line-height="1.6">
           You're receiving this because we found {{ $orgName ?? 'your organisation' }}'s contact
-          details published online@if(!empty($area)) for {{ $area }}@endif, and the items above are
+          details published online{{ !empty($area) ? ' for '.$area : '' }}, and the items above are
           local to you. If they're not useful, no problem -
           <a href="{{ $unsubscribeUrl }}" style="color:#338808;font-weight:bold;text-decoration:none;">click here to stop receiving these emails</a>
           and we won't contact you again.
         </mj-text>
         <mj-divider border-color="#dddddd" border-width="1px" padding="14px 0"></mj-divider>
         <mj-text font-size="11px" color="#666666" line-height="1.5">
-          Sent by a registered charity (HMRC ref. XT32865), run by volunteers.<br/>
-          {{ config('freegle.branding.registered_address') }}
+          {{ config('freegle.branding.name') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.<br/>
+          Registered address: {{ config('freegle.branding.registered_address') }}
         </mj-text>
       </mj-column>
     </mj-section>
