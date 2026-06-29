@@ -914,6 +914,10 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
+		// Freegle Helper — cross-clearance escalated queue (ModTools). Registered
+		// before /helper/:msgid so the literal "escalated" isn't parsed as a msgid.
+		rg.Get("/helper/escalated", message.GetHelperEscalated)
+
 		// Freegle Helper — AI concierge state + proposals for a bulk offer.
 		// @Router /helper/{msgid} [get]
 		// @Summary Get Helper state for a bulk offer

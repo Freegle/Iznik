@@ -1029,6 +1029,7 @@ func GetSession(c *fiber.Ctx) error {
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
+		var helperEscalated int64
 
 		var wg2 sync.WaitGroup
 
@@ -1327,6 +1328,15 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
+		// --- Escalated helper conversations (global, Clearance permission) ---
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			if auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+				db.Raw("SELECT COUNT(*) FROM helper_repliers WHERE state = 'ESCALATED'").Scan(&helperEscalated)
+			}
+		}()
+
 		// --- Gift aid (global) ---
 		wg2.Add(1)
 		go func() {
@@ -1437,7 +1447,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout
+			emailin + emailout + helperEscalated
 
 		work = fiber.Map{
 			"pending":              pending,
@@ -1456,6 +1466,7 @@ func GetSession(c *fiber.Ctx) error {
 			"chatreview":          chatreview,
 			"chatreviewother":     chatreviewother,
 			"newsletterstories":   newsletterstories,
+			"helperEscalated":     helperEscalated,
 			"giftaid":             giftaid,
 			"happiness":           happiness,
 			"relatedmembers":      relatedmembers,

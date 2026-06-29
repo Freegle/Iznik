@@ -41,6 +41,7 @@ type HelperBatch struct {
 	Msgid         uint64     `json:"msgid"`
 	Offereruserid uint64     `json:"offereruserid"`
 	Status        string     `json:"status"`
+	Automode      string     `json:"automode"`
 	Briefing      *string    `json:"briefing"`
 	Lastpolledat  *time.Time `json:"lastpolledat"`
 	Lastrunat     *time.Time `json:"lastrunat"`
@@ -180,7 +181,7 @@ func GetHelper(c *fiber.Ctx) error {
 
 	var batch *HelperBatch
 	var b HelperBatch
-	db.Raw("SELECT id, msgid, offereruserid, status, briefing, lastpolledat, lastrunat, pausedat FROM helper_batches WHERE msgid = ?", msgid).Scan(&b)
+	db.Raw("SELECT id, msgid, offereruserid, status, COALESCE(automode,'automatic') AS automode, briefing, lastpolledat, lastrunat, pausedat FROM helper_batches WHERE msgid = ?", msgid).Scan(&b)
 	if b.ID == 0 {
 		// No batch yet — the Helper hasn't been started for this offer.
 		return c.JSON(fiber.Map{"batch": nil, "repliers": []HelperReplier{}, "proposals": []HelperProposal{}, "sent": []HelperSentMessage{}})
@@ -215,6 +216,42 @@ func GetHelper(c *fiber.Ctx) error {
 }
 
 // ---------------------------------------------------------------------------
+// GET /helper/escalated — every ESCALATED replier across all clearances, for the
+// ModTools "needs you" queue. Gated on the Clearance permission.
+// ---------------------------------------------------------------------------
+
+type HelperEscalatedRow struct {
+	ID               uint64  `json:"id"`
+	Batchid          uint64  `json:"batchid"`
+	Msgid            uint64  `json:"msgid"`
+	Offereruserid    uint64  `json:"offereruserid"`
+	Userid           uint64  `json:"userid"`
+	Chatid           *uint64 `json:"chatid"`
+	EscalationReason *string `json:"escalation_reason"`
+	Subject          *string `json:"subject"`
+}
+
+func GetHelperEscalated(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+	if !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "Not permitted")
+	}
+	db := database.DBConn
+	var rows []HelperEscalatedRow
+	db.Raw("SELECT r.id, r.batchid, b.msgid, b.offereruserid, r.userid, r.chatid, r.escalation_reason, m.subject "+
+		"FROM helper_repliers r INNER JOIN helper_batches b ON b.id = r.batchid "+
+		"INNER JOIN messages m ON m.id = b.msgid "+
+		"WHERE r.state = 'ESCALATED' ORDER BY r.id DESC").Scan(&rows)
+	if rows == nil {
+		rows = []HelperEscalatedRow{}
+	}
+	return c.JSON(rows)
+}
+
+// ---------------------------------------------------------------------------
 // POST /helper — action dispatch (driver writes + human resolves).
 // ---------------------------------------------------------------------------
 
@@ -224,6 +261,7 @@ type HelperRequest struct {
 
 	// Batch
 	Status   *string `json:"status"`
+	Automode *string `json:"automode"`
 	Briefing *string `json:"briefing"`
 
 	// Replier knowledge record
@@ -369,6 +407,16 @@ func helperSetStatus(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest) 
 		db.Exec("UPDATE helper_batches SET status = ?, pausedat = NOW() WHERE id = ?", *req.Status, batchid)
 	} else {
 		db.Exec("UPDATE helper_batches SET status = ?, pausedat = NULL WHERE id = ?", *req.Status, batchid)
+	}
+	// The send mode (Automatic vs Approve) is orthogonal to pause/stop. In Approve
+	// mode the FSM proposes every outgoing message for the offerer to edit + approve.
+	if req.Automode != nil {
+		switch *req.Automode {
+		case "automatic", "approve":
+			db.Exec("UPDATE helper_batches SET automode = ? WHERE id = ?", *req.Automode, batchid)
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid automode")
+		}
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "batchid": batchid})
 }
@@ -604,6 +652,29 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 		auto = *req.Auto
 	}
 	body := strings.TrimSpace(*req.Body)
+	// Approve mode: never auto-send. Hold the message as a pending proposal so the
+	// offerer can edit it and approve it on the clearance page. Resolving the
+	// proposal sends the offerer's (possibly edited) text via helperResolveProposal,
+	// so it counts as a human send and gets no automated-message disclosure.
+	var automode string
+	db.Raw("SELECT COALESCE(automode, 'automatic') FROM helper_batches WHERE id = ?", batchid).Scan(&automode)
+	if automode == "approve" {
+		var ridArg interface{}
+		if replierid > 0 {
+			ridArg = replierid
+		}
+		sqlDB, dberr := db.DB()
+		if dberr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "DB error")
+		}
+		res, exerr := sqlDB.Exec("INSERT INTO helper_proposals (batchid, type, replierid, summary, proposed_text, status) VALUES (?, 'message', ?, ?, ?, 'pending')",
+			batchid, ridArg, "Message to send ("+kind+")", body)
+		if exerr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not create proposal")
+		}
+		pid, _ := res.LastInsertId()
+		return c.JSON(fiber.Map{"ret": 0, "status": "Proposed", "proposalid": uint64(pid)})
+	}
 	// On the FIRST message the Helper auto-sends to a replier, append a light-touch
 	// disclosure so the conversation isn't silently automated. Only once per
 	// replier, and only for auto-sends (human-confirmed sends are the offerer's
@@ -698,6 +769,17 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 	case "withdrawal_notice":
 		if p.Replierid != nil && p.Bulkitemid != nil {
 			db.Exec("UPDATE helper_item_states SET state = 'REJECTED' WHERE replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid)
+		}
+	case "escalation":
+		// Confirming an escalation moves the replier to ESCALATED with the AI's
+		// reason, so it surfaces in the offerer's "needs you" view and the
+		// cross-clearance ModTools queue.
+		if p.Replierid != nil && *p.Replierid > 0 {
+			reason := ""
+			if p.Summary != nil {
+				reason = *p.Summary
+			}
+			db.Exec("UPDATE helper_repliers SET state = 'ESCALATED', escalation_reason = ? WHERE id = ?", reason, *p.Replierid)
 		}
 	}
 

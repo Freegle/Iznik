@@ -16,7 +16,7 @@
       :rows="3"
       max-rows="8"
       class="helper-proposal__text"
-      data-testid="proposal-text"
+      data-testid="proposal-edit-text"
     />
 
     <div class="helper-proposal__actions">
@@ -24,7 +24,7 @@
         variant="success"
         size="sm"
         :disabled="busy"
-        data-testid="proposal-send"
+        data-testid="proposal-approve"
         @click="send"
       >
         <v-icon icon="paper-plane" class="me-1" />{{ sendLabel }}
@@ -34,7 +34,7 @@
         size="sm"
         :disabled="busy"
         class="ms-1"
-        data-testid="proposal-dismiss"
+        data-testid="proposal-reject"
         @click="dismiss"
       >
         Dismiss
@@ -70,6 +70,8 @@ const typeLabel = computed(() => {
       return 'Reminder'
     case 'withdrawal_notice':
       return 'Withdrawn'
+    case 'message':
+      return 'Message to send'
     default:
       return 'Message'
   }

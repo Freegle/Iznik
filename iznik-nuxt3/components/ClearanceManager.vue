@@ -19,14 +19,43 @@
     </NoticeMessage>
 
     <template v-else>
-      <!-- The AI concierge status + pause control. Shown whenever the Helper has
-           been started for this clearance. -->
-      <HelperStatusBar
+      <!-- The AI concierge mode selector — Paused / Approve / Automatic.
+           Shown whenever the Helper has been started for this clearance. -->
+      <div
         v-if="helperBatch"
-        :batch="helperBatch"
-        @pause="setStatus('paused')"
-        @resume="setStatus('active')"
-      />
+        class="clearance-manager__mode mb-3"
+        data-testid="helper-mode-selector"
+      >
+        <div class="btn-group" role="group" aria-label="Helper mode">
+          <b-button
+            size="sm"
+            :variant="helperMode === 'paused' ? 'warning' : 'outline-secondary'"
+            data-testid="helper-mode-paused"
+            @click="setMode('paused')"
+          >
+            Paused
+          </b-button>
+          <b-button
+            size="sm"
+            :variant="helperMode === 'approve' ? 'primary' : 'outline-secondary'"
+            data-testid="helper-mode-approve"
+            @click="setMode('approve')"
+          >
+            Approve
+          </b-button>
+          <b-button
+            size="sm"
+            :variant="helperMode === 'automatic' ? 'success' : 'outline-secondary'"
+            data-testid="helper-mode-automatic"
+            @click="setMode('automatic')"
+          >
+            Automatic
+          </b-button>
+        </div>
+        <p v-if="helperMode === 'approve'" class="small text-muted mt-1 mb-0">
+          Approve: every message is held for you to edit and approve before it's sent.
+        </p>
+      </div>
 
       <!-- Decisions the Helper wants the human to confirm/edit/send. -->
       <div
@@ -123,7 +152,6 @@ import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
 import NoticeMessage from '~/components/NoticeMessage'
 import ClearanceManageItem from '~/components/ClearanceManageItem'
-import HelperStatusBar from '~/components/HelperStatusBar'
 import HelperProposalCard from '~/components/HelperProposalCard'
 import {
   allocatedQuantity,
@@ -138,6 +166,7 @@ const props = defineProps({
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const { myid } = useMe()
+const { $api } = useNuxtApp()
 
 const message = computed(() => messageStore.byId(props.id))
 
@@ -171,6 +200,16 @@ const peopleInterested = computed(() => distinctInterestedUsers(items.value))
 
 // --- Freegle Helper (AI concierge) overlay ---------------------------------
 const helper = computed(() => messageStore.helperById?.(props.id))
+
+// Derive the three-way mode from the batch state:
+//   paused   -> status === 'paused'
+//   approve  -> status === 'active', automode === 'approve'
+//   automatic-> status === 'active', automode === 'automatic' (or unset)
+const helperMode = computed(() => {
+  if (!helperBatch.value) return null
+  if (helperBatch.value.status === 'paused') return 'paused'
+  return helperBatch.value.automode === 'approve' ? 'approve' : 'automatic'
+})
 const helperBatch = computed(() => helper.value?.batch || null)
 
 const pendingProposals = computed(() =>
@@ -199,12 +238,30 @@ const sentUsers = computed(() => {
   return set
 })
 
-async function setStatus(status) {
-  try {
-    await messageStore.helperSetStatus(props.id, status)
-  } catch (e) {
-    console.error('Failed to change Helper status', e)
+// Three-way mode setter.  Calls the API directly so we can pass automode,
+// then re-fetches helper state — mirroring helperSetStatus in the store.
+async function setMode(mode) {
+  const params = { action: 'SetStatus', msgid: props.id }
+  if (mode === 'paused') {
+    params.status = 'paused'
+  } else if (mode === 'approve') {
+    params.status = 'active'
+    params.automode = 'approve'
+  } else {
+    params.status = 'active'
+    params.automode = 'automatic'
   }
+  try {
+    await $api.message.helper(params)
+    await messageStore.fetchHelper(props.id)
+  } catch (e) {
+    console.error('Failed to change Helper mode', e)
+  }
+}
+
+// Thin shim kept for any callers that still pass a bare status string.
+async function setStatus(status) {
+  await setMode(status === 'paused' ? 'paused' : 'automatic')
 }
 
 async function onResolve({ id, decision, text }) {
@@ -292,9 +349,11 @@ defineExpose({
   fullyAllocated,
   load,
   helperBatch,
+  helperMode,
   pendingProposals,
   helperByUser,
   sentUsers,
+  setMode,
   setStatus,
   onResolve,
   localAccessInstructions,
