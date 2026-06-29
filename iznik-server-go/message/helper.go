@@ -130,7 +130,7 @@ func helperAuthForMsg(db *gorm.DB, myid uint64, msgid uint64) (offerer uint64, a
 		return 0, false, false
 	}
 	// The Helper / clearance feature is gated on the Clearance permission.
-	allowed := auth.HasPermission(myid, auth.PERM_CLEARANCE) && (offerer == myid || isModForMessage(db, myid, msgid))
+	allowed = auth.HasPermission(myid, auth.PERM_CLEARANCE) && (offerer == myid || isModForMessage(db, myid, msgid))
 	return offerer, allowed, true
 }
 
