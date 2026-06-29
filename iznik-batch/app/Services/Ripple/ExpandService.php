@@ -1046,36 +1046,43 @@ class ExpandService
             // area-scoped - a poster who left a rippled-into group must have their post pulled even
             // after the post's origin group leaves the trial (its origin then falls outside the
             // current area), otherwise the copy is stranded in a group they explicitly opted out of.
+            // Drive from RECENT Group/Left events, not from every rippled copy. The old
+            // shape scanned all rippled_in=1 rows (10k+ and growing daily) and ran the
+            // nested logs subquery per row — O(all rippled copies ever), which crept past
+            // 80s and hung every tick once the experiment had rippled enough. Leaves are
+            // the trigger and are rare, so we start from the (index-supported, via
+            // logs.timestamp_2) recent Left logs and only touch a rippled copy when its
+            // poster actually left that group. Cost is now bounded by leave volume, not by
+            // the rippled-copy population. This per-tick run only needs to cover leaves
+            // since the last successful run (seconds ago); a 2-day window is a generous
+            // safety margin covering brief stalls while keeping the scan fast (~3s vs the
+            // unbounded original's 80s+, which hung every tick). Idempotent — a copy
+            // already pulled (deleted=1) is simply skipped.
             $scopeSql = '';
-            $params = [];
+            $params = [now()->subDays(2)->toDateTimeString()];
             if ($onlyMsgid !== null) {
                 $scopeSql = ' AND mg.msgid = ?';
                 $params[] = $onlyMsgid;
             }
 
             $rows = DB::select(
-                "SELECT mg.msgid, mg.groupid, m.fromuser
-                 FROM messages_groups mg
-                 JOIN messages m ON m.id = mg.msgid
-                 WHERE mg.rippled_in = 1 AND mg.deleted = 0" . $scopeSql . "
+                "SELECT DISTINCT mg.msgid, mg.groupid, m.fromuser
+                 FROM logs ll
+                 JOIN messages_groups mg ON mg.groupid = ll.groupid AND mg.rippled_in = 1 AND mg.deleted = 0
+                 JOIN messages m ON m.id = mg.msgid AND m.fromuser = ll.user
+                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?" . $scopeSql . "
                    AND EXISTS (
                        SELECT 1 FROM logs lj
-                       WHERE lj.user = m.fromuser AND lj.groupid = mg.groupid
+                       WHERE lj.user = ll.user AND lj.groupid = ll.groupid
                          AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
+                         AND lj.id < ll.id
                          AND NOT EXISTS (
                              SELECT 1 FROM logs lj2
                              WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
                                AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
                                AND lj2.id > lj.id
                          )
-                         AND EXISTS (
-                             SELECT 1 FROM logs ll
-                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                               AND ll.type = 'Group' AND ll.subtype = 'Left'
-                               AND ll.id > lj.id
-                         )
-                   )
-                 GROUP BY mg.msgid, mg.groupid, m.fromuser",
+                   )",
                 $params
             );
 
