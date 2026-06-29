@@ -166,7 +166,6 @@ const props = defineProps({
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const { myid } = useMe()
-const { $api } = useNuxtApp()
 
 const message = computed(() => messageStore.byId(props.id))
 
@@ -238,22 +237,16 @@ const sentUsers = computed(() => {
   return set
 })
 
-// Three-way mode setter.  Calls the API directly so we can pass automode,
-// then re-fetches helper state — mirroring helperSetStatus in the store.
+// Three-way mode setter. Delegates to the store's helperSetStatus, which posts
+// SetStatus (with the optional automode) and re-fetches helper state.
 async function setMode(mode) {
-  const params = { action: 'SetStatus', msgid: props.id }
-  if (mode === 'paused') {
-    params.status = 'paused'
-  } else if (mode === 'approve') {
-    params.status = 'active'
-    params.automode = 'approve'
-  } else {
-    params.status = 'active'
-    params.automode = 'automatic'
-  }
   try {
-    await $api.message.helper(params)
-    await messageStore.fetchHelper(props.id)
+    if (mode === 'paused') {
+      await messageStore.helperSetStatus(props.id, 'paused')
+    } else {
+      // 'approve' or 'automatic' run with status active.
+      await messageStore.helperSetStatus(props.id, 'active', mode)
+    }
   } catch (e) {
     console.error('Failed to change Helper mode', e)
   }

@@ -69,7 +69,7 @@ import ClearanceManager from '~/components/ClearanceManager.vue'
 
 const mountOpts = {
   props: { id: 1 },
-  global: { stubs: { 'b-spinner': true } },
+  global: { stubs: { 'b-spinner': true, 'b-form-textarea': true } },
 }
 
 describe('ClearanceManager', () => {

@@ -336,9 +336,14 @@ export const useMessageStore = defineStore({
       this.helper[msgid] = ret
       return ret
     },
-    // Offerer: pause/resume/stop the Helper, then refresh helper state.
-    async helperSetStatus(msgid, status) {
-      await api(this.config).message.helper({ action: 'SetStatus', msgid, status })
+    // Offerer: pause/resume/stop the Helper and (optionally) set the send mode
+    // (automatic/approve), then refresh helper state.
+    async helperSetStatus(msgid, status, automode = null) {
+      const params = { action: 'SetStatus', msgid, status }
+      if (automode) {
+        params.automode = automode
+      }
+      await api(this.config).message.helper(params)
       return await this.fetchHelper(msgid)
     },
     // Offerer: confirm/edit/send or dismiss a proposed decision, then refresh both

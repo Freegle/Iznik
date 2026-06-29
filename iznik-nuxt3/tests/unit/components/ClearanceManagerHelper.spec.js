@@ -61,7 +61,10 @@ vi.mock('~/components/HelperProposalCard', () => ({
 
 import ClearanceManager from '~/components/ClearanceManager.vue'
 
-const mountOpts = { props: { id: 1 }, global: { stubs: { 'b-spinner': true } } }
+const mountOpts = {
+  props: { id: 1 },
+  global: { stubs: { 'b-spinner': true, 'b-form-textarea': true } },
+}
 
 describe('ClearanceManager — Helper integration', () => {
   beforeEach(() => {
