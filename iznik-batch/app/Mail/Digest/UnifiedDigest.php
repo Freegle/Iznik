@@ -1096,13 +1096,15 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             return [];
         }
 
-        // First photo per item (the catalogue photos carry a bulkitemid).
+        // First photo per item. Item photos are linked via the separate
+        // messages_bulk_item_attachments table (the bulk-offer feature adds no
+        // column to the core messages_attachments table).
         $firstByItem = [];
-        $atts = \Illuminate\Support\Facades\DB::table('messages_attachments')
-            ->where('msgid', $message->id)
-            ->whereNotNull('bulkitemid')
-            ->orderBy('id')
-            ->get(['id', 'bulkitemid', 'externaluid', 'externalurl', 'archived']);
+        $atts = \Illuminate\Support\Facades\DB::table('messages_attachments as ma')
+            ->join('messages_bulk_item_attachments as bia', 'bia.attachmentid', '=', 'ma.id')
+            ->where('ma.msgid', $message->id)
+            ->orderBy('ma.id')
+            ->get(['ma.id', 'bia.bulkitemid', 'ma.externaluid', 'ma.externalurl', 'ma.archived']);
         foreach ($atts as $a) {
             if (!isset($firstByItem[$a->bulkitemid])) {
                 $firstByItem[$a->bulkitemid] = $a;
