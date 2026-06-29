@@ -905,10 +905,6 @@ const groupid = computed(() => {
   return 0
 })
 
-const messageGroup = computed(() => {
-  return groupid.value || null
-})
-
 // The group this copy is being administered on. In a specific group's queue that's the
 // explicit context group; in the all-communities view we pick the group I moderate that
 // most needs attention - a Pending one first, then the most-recent arrival - so a Reject
@@ -1047,13 +1043,13 @@ const messageHistory = computed(() => {
 })
 
 const group = computed(() => {
-  let ret = null
-
-  if (messageGroup.value) {
-    ret = myModGroups.value.find((g) => parseInt(g.id) === messageGroup.value)
-  }
-
-  return ret
+  // Use currentGroupid (the group this copy is being administered on) rather than
+  // groupid/groups[0]. For a rippled post the first/unordered group may be the origin
+  // group, which would draw the wrong community's boundary on the map and centre it on
+  // the wrong place (Discourse 9808/305).
+  const gid = currentGroupid.value
+  if (!gid) return null
+  return myModGroups.value.find((g) => parseInt(g.id) === gid) || null
 })
 
 const position = computed(() => {
@@ -1445,9 +1441,13 @@ function startEdit() {
   editmessage.value = JSON.parse(JSON.stringify(message.value))
   editing.value = true
   miscStore.modtoolsediting = true
-  editmessage.value.groups.forEach((grp) => {
-    editgroup.value = grp.groupid
-  })
+  // Anchor the edit target to the group this copy is administered on (currentGroupid - a
+  // group the mod definitely moderates). Taking the last row of the unordered groups array
+  // could pick the origin group the mod does NOT moderate; ModGroupSelect (modonly) then
+  // resets the selection to 0, and save()'s move() fires with groupid 0 -> 400 (the title
+  // PATCH having already saved). With the right group, move() is skipped entirely. (9808/303)
+  editgroup.value =
+    currentGroupid.value || editmessage.value.groups[0]?.groupid || null
 }
 
 async function save() {

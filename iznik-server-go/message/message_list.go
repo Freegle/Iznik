@@ -22,6 +22,9 @@ type MessageGroupInfo struct {
 	Collection string    `json:"collection"`
 	Arrival    time.Time `json:"arrival"`
 	Heldby     *uint64   `json:"heldby,omitempty"`
+	// RippledIn marks a row created by the rippling engine; the mod queue uses it to show
+	// the rippled-in banner authoritatively (see MessageGroup.RippledIn). (9808/303)
+	RippledIn uint8 `json:"rippled_in"`
 }
 
 type PaginationContext struct {
@@ -246,7 +249,7 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT groupid, collection, arrival, heldby FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
+				db.Raw("SELECT groupid, collection, arrival, heldby, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
 
 			go func() {

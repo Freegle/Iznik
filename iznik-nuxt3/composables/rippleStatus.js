@@ -21,7 +21,7 @@ export function isRippledInToContextGroup(
   contextGroupid,
   thresholdMs = RIPPLE_ORIGIN_WINDOW_MS
 ) {
-  if (!Array.isArray(groups) || groups.length < 2) return false
+  if (!Array.isArray(groups)) return false
 
   // Require an explicit, matching context group. We deliberately do NOT fall back
   // to groups[0]: message.groups has no guaranteed order, so guessing the context
@@ -30,7 +30,20 @@ export function isRippledInToContextGroup(
   const ctxId = parseInt(contextGroupid)
   if (Number.isNaN(ctxId)) return false
   const ctx = groups.find((g) => parseInt(g.groupid) === ctxId)
-  if (!ctx || !ctx.arrival) return false
+  if (!ctx) return false
+
+  // Prefer the authoritative messages_groups.rippled_in column when the API supplies it.
+  // The arrival heuristic below is fragile: the approve path stamps arrival=NOW() on the
+  // origin row, which can make the origin look NEWER than the rippled-in copy and so hide
+  // the banner even though the row really did ripple in (Discourse 9808/303). rippled_in
+  // is set when the row was created by the rippling engine, so it's unambiguous.
+  if (ctx.rippled_in !== undefined && ctx.rippled_in !== null) {
+    return ctx.rippled_in === 1 || ctx.rippled_in === true
+  }
+
+  // Fallback for older API responses without rippled_in: arrival-time ordering. A post on
+  // a single group can't have rippled in, so it needs at least two groups here.
+  if (groups.length < 2 || !ctx.arrival) return false
 
   const ctxArrival = new Date(ctx.arrival).getTime()
   if (Number.isNaN(ctxArrival)) return false

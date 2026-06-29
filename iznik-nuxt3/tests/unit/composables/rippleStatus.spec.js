@@ -102,6 +102,67 @@ describe('isRippledInToContextGroup', () => {
   it('exports the origin window as 10 minutes', () => {
     expect(RIPPLE_ORIGIN_WINDOW_MS).toBe(10 * 60 * 1000)
   })
+
+  describe('authoritative rippled_in field', () => {
+    it('returns true when the context group row has rippled_in=1', () => {
+      const groups = [
+        { groupid: 1, arrival: at(0), rippled_in: 0 },
+        { groupid: 2, arrival: at(120), rippled_in: 1 },
+      ]
+      expect(isRippledInToContextGroup(groups, 2)).toBe(true)
+    })
+
+    it('returns false when the context group row has rippled_in=0', () => {
+      const groups = [
+        { groupid: 1, arrival: at(0), rippled_in: 0 },
+        { groupid: 2, arrival: at(120), rippled_in: 0 },
+      ]
+      // Even though arrival ordering would say "rippled in", the authoritative
+      // column says it wasn't, so the field wins.
+      expect(isRippledInToContextGroup(groups, 2)).toBe(false)
+    })
+
+    it('uses rippled_in even when the approve path scrambled arrivals', () => {
+      // Origin row re-stamped with arrival=NOW() at approval, so it looks NEWER than the
+      // rippled-in copy - the arrival heuristic would wrongly hide the banner, but
+      // rippled_in=1 on the context row is unambiguous.
+      const groups = [
+        { groupid: 1, arrival: at(200), rippled_in: 0 }, // origin, re-stamped late
+        { groupid: 2, arrival: at(60), rippled_in: 1 }, // rippled in earlier
+      ]
+      expect(isRippledInToContextGroup(groups, 2)).toBe(true)
+    })
+
+    it('honours rippled_in=1 even for a single returned group row', () => {
+      const groups = [{ groupid: 2, arrival: at(0), rippled_in: 1 }]
+      expect(isRippledInToContextGroup(groups, 2)).toBe(true)
+    })
+
+    it('accepts a boolean rippled_in', () => {
+      expect(
+        isRippledInToContextGroup([{ groupid: 2, rippled_in: true }], 2)
+      ).toBe(true)
+      expect(
+        isRippledInToContextGroup([{ groupid: 2, rippled_in: false }], 2)
+      ).toBe(false)
+    })
+
+    it('still requires a matching context group when rippled_in is present', () => {
+      const groups = [
+        { groupid: 1, arrival: at(0), rippled_in: 0 },
+        { groupid: 2, arrival: at(120), rippled_in: 1 },
+      ]
+      expect(isRippledInToContextGroup(groups, 999)).toBe(false)
+    })
+
+    it('falls back to the arrival heuristic when rippled_in is absent', () => {
+      const groups = [
+        { groupid: 1, arrival: at(0) },
+        { groupid: 2, arrival: at(120) },
+      ]
+      expect(isRippledInToContextGroup(groups, 2)).toBe(true)
+    })
+  })
 })
 
 describe('earliestArrivalGroupId', () => {
