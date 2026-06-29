@@ -17,6 +17,11 @@ const offlineRef = ref(false)
 const unloadingRef = ref(false)
 const errorDetailsRef = ref(null)
 const lastTypingRef = ref(null)
+const appOutOfDateRef = ref(false)
+const appOutOfDateMessageRef = ref('')
+
+// Mutable mobile-store state so each test can pick the app vs website variant.
+const mobileState = { isApp: false }
 
 // Mock Pinia's storeToRefs to return our refs while preserving other exports
 vi.mock('pinia', async (importOriginal) => {
@@ -31,6 +36,8 @@ vi.mock('pinia', async (importOriginal) => {
       unloading: unloadingRef,
       errorDetails: errorDetailsRef,
       lastTyping: lastTypingRef,
+      appOutOfDate: appOutOfDateRef,
+      appOutOfDateMessage: appOutOfDateMessageRef,
     }),
   }
 })
@@ -40,6 +47,11 @@ vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({
     clearError: mockClearError,
   }),
+}))
+
+// Mock mobile store so we can toggle the app vs website experience.
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => mobileState,
 }))
 
 describe('SomethingWentWrong', () => {
@@ -56,6 +68,9 @@ describe('SomethingWentWrong', () => {
     unloadingRef.value = false
     errorDetailsRef.value = null
     lastTypingRef.value = null
+    appOutOfDateRef.value = false
+    appOutOfDateMessageRef.value = ''
+    mobileState.isApp = false
     // jsdom's location.reload is not directly assignable; redefine it so we can
     // observe forced reloads without navigating.
     reloadSpy = vi.fn()
@@ -152,6 +167,65 @@ describe('SomethingWentWrong', () => {
       const wrapper = createWrapper()
       // Component should mount and connect to store without error
       expect(wrapper.exists()).toBe(true)
+    })
+  })
+
+  describe('app out of date (server kill switch / ret:123)', () => {
+    it('shows a danger banner with the server message and a Reload button on the website', () => {
+      appOutOfDateRef.value = true
+      appOutOfDateMessageRef.value =
+        'App is out of date - please upgrade or use the website'
+      mobileState.isApp = false
+
+      const wrapper = createWrapper()
+      const notice = wrapper.find('.notice-message')
+
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('danger')
+      expect(wrapper.text()).toContain(
+        'App is out of date - please upgrade or use the website'
+      )
+      expect(wrapper.text()).toContain('Reload')
+    })
+
+    it('reloads when the Reload button is clicked on the website', async () => {
+      appOutOfDateRef.value = true
+      mobileState.isApp = false
+
+      const wrapper = createWrapper()
+      await wrapper.find('button').trigger('click')
+
+      expect(reloadSpy).toHaveBeenCalled()
+    })
+
+    it('tells app users to update via their app store, offers the website, and shows no Reload button', () => {
+      appOutOfDateRef.value = true
+      appOutOfDateMessageRef.value =
+        'App is out of date - please upgrade or use the website'
+      mobileState.isApp = true
+
+      const wrapper = createWrapper()
+
+      expect(wrapper.find('.notice-message').exists()).toBe(true)
+      expect(wrapper.text().toLowerCase()).toContain('app store')
+      // Website fallback link is offered.
+      expect(wrapper.find('a').exists()).toBe(true)
+      // Reloading won't refresh a stale embedded app bundle, so no Reload button.
+      expect(wrapper.find('button').exists()).toBe(false)
+    })
+
+    it('takes priority over the stale-build hard-reload banner', () => {
+      appOutOfDateRef.value = true
+      appOutOfDateMessageRef.value =
+        'App is out of date - please upgrade or use the website'
+      // needToReloadHard renders immediately (immediate watcher); the
+      // out-of-date banner must still win.
+      needToReloadHardRef.value = true
+
+      const wrapper = createWrapper()
+
+      expect(wrapper.text()).toContain('App is out of date')
+      expect(wrapper.text()).not.toContain('more than a week out of date')
     })
   })
 

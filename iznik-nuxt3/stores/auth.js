@@ -333,6 +333,18 @@ export const useAuthStore = defineStore({
             false
           )
 
+          if (sessionData?.ret === 123) {
+            // Server kill switch: GET /session returns HTTP 200 with ret:123 when
+            // this client build is older than app_min_webversion and is therefore
+            // too old to function. The auth tokens are still valid, so we must NOT
+            // clear them - doing so would silently log the user out and bounce them
+            // to the login screen, which looks like a generic failure. Instead
+            // surface a clear "app is out of date" message and stop here.
+            useMiscStore().setAppOutOfDate(sessionData.status)
+            this.loginStateKnown = true
+            return this.user
+          }
+
           if (sessionData && sessionData.me && sessionData.me.id) {
             me = sessionData.me
 
