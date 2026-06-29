@@ -2,22 +2,25 @@ Hello {{ $greetingName }},
 @if(!empty($intro))
 
 {{ $intro }}
+@else
+
+Some people near you are giving away the things below - all free, and the givers just want them to go to good use rather than to the tip. I thought {{ $orgName ?? 'you' }} might find some of them handy.
+
+Have a look - if anything would be useful, just reply to this email and tell me which, and I'll arrange collection with you. No sign-up or account needed.
 @endif
 
-I help run {{ config('freegle.branding.name') }}, a free local reuse service. Some people near you are giving away things that I thought {{ $orgName ?? 'you' }} might be able to use - all free, and the giver just wants them to go to good use rather than to the tip.
-
-Here's what's currently available nearby:
-@foreach($posts as $i => $post)
-  {{ $i + 1 }}. {{ $post['title'] }}
-     {{ $post['url'] }}
+@foreach($items as $i => $item)
+{{ $i + 1 }}. {{ $item['name'] }}@if(!empty($item['condition'])) ({{ $item['condition'] }})@endif
+@if(!empty($item['description'])){{ $item['description'] }}
+@endif
 @endforeach
 
-If any of these would be useful, just reply to this email and tell me which ones - I'll sort out the details and collection with you. No Freegle account or sign-up needed; we can do it all by email.
+If any of these would be useful, just reply and let me know which - I'll sort out the details and collection with you.
 
 Thanks,
 {{ $signoffName }}
 
 ---
-You're receiving this because we found {{ $orgName ?? 'your organisation' }}'s contact details published online@if(!empty($area)) for {{ $area }}@endif, and the items above are local to you. If they're not useful, no problem - to stop receiving these emails, reply with the word UNSUBSCRIBE or email {{ $unsubscribeMailto }} and we won't contact you about reuse offers again.
+You're receiving this because we found {{ $orgName ?? 'your organisation' }}'s contact details published online@if(!empty($area)) for {{ $area }}@endif, and the items above are local to you. If they're not useful, reply with the word UNSUBSCRIBE or email {{ $unsubscribeMailto }} and we won't contact you again.
 
-{{ config('freegle.branding.name') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Registered address: {{ config('freegle.branding.registered_address') }}
+Sent by a registered charity (HMRC ref. XT32865), run by volunteers. {{ config('freegle.branding.registered_address') }}
