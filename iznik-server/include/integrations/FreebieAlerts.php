@@ -51,8 +51,9 @@ class FreebieAlerts
         $status = NULL;
         $json_response = NULL;
 
-        # Only want outstanding OFFERs.
-        if (!$m->hasOutcome() && $m->getPrivate('type') == Message::TYPE_OFFER) {
+        # Only want outstanding OFFERs that are not clearance/bulk-offer posts.
+        $isClearance = count($this->dbhr->preQuery('SELECT id FROM messages_bulk_items WHERE msgid = ? LIMIT 1', [$msgid])) > 0;
+        if (!$m->hasOutcome() && $m->getPrivate('type') == Message::TYPE_OFFER && !$isClearance) {
             $u = User::get($this->dbhr, $this->dbhm, $m->getFromuser());
 
             # TN messages are sync'd from TN itself.

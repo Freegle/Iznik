@@ -314,7 +314,9 @@ class ContentCheckService
                                         'contentcheck_reasons'    => null,
                                     ]);
 
-                                if ($row->msgtype === Message::TYPE_OFFER) {
+                                // Clearance/bulk-offer posts are excluded from freebiealerts.app.
+                                if ($row->msgtype === Message::TYPE_OFFER &&
+                                    !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
                                     DB::table('background_tasks')->insert([
                                         'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
                                         'data'      => json_encode(['msgid' => (int) $row->msgid]),

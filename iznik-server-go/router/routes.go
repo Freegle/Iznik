@@ -914,6 +914,30 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
+		// Freegle Helper — cross-clearance escalated queue (ModTools). Registered
+		// before /helper/:msgid so the literal "escalated" isn't parsed as a msgid.
+		rg.Get("/helper/escalated", message.GetHelperEscalated)
+
+		// Freegle Helper — AI concierge state + proposals for a bulk offer.
+		// @Router /helper/{msgid} [get]
+		// @Summary Get Helper state for a bulk offer
+		// @Description Offerer/mod only. Returns the Helper batch, per-replier FSM knowledge records with per-item state and score, queued proposals, and Helper-sent message ids.
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Get("/helper/:msgid", message.GetHelper)
+
+		// @Router /helper [post]
+		// @Summary Helper actions
+		// @Description Offerer/mod only. Actions: EnsureBatch, SetStatus (pause/resume/stop), UpsertReplier, SetItemState, Proposal, ResolveProposal (confirm/edit/send or dismiss), Send (auto-send a conversational message).
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/helper", message.PostHelper)
+
 		// User
 		// @Router /user/{id} [get]
 		// @Summary Get user by ID

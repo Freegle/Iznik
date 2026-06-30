@@ -159,6 +159,21 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
+          v-if="hasPermissionClearance"
+          link="/helper-escalated"
+          name="Clearances"
+          indent
+          :count="['helperEscalated']"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
+          v-if="hasPermissionClearance"
+          link="/modtools/helper-flow"
+          name="Helper flow"
+          indent
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
           link="/members/feedback"
           name="Feedback"
           indent
@@ -322,6 +337,7 @@ const {
   hasPermissionNewsletter,
   hasPermissionSpamAdmin,
   hasPermissionGiftAid,
+  hasPermissionClearance,
   checkWork,
   resetCheckWork,
 } = useModMe()
