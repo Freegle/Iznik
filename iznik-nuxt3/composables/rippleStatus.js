@@ -89,3 +89,44 @@ export function earliestArrivalGroupId(groups) {
   }
   return best.id
 }
+
+/**
+ * The home/origin group of a post: the group it was actually posted to, as opposed to a
+ * neighbouring group it later rippled into. Prefer the authoritative rippled_in flag
+ * (rippled_in falsy = a home group); among the home candidates (or all groups if no
+ * rippled_in info is present) pick the earliest arrival. We don't rely on arrival alone
+ * because the approve path stamps arrival=NOW() on the origin row, which can make it look
+ * newer than its rippled-in copies.
+ *
+ * @param {Array<{groupid:number|string, arrival?:string, rippled_in?:number|boolean}>} groups
+ * @returns {number|null}
+ */
+export function homeGroupId(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return null
+  const notRippled = groups.filter(
+    (g) => g && g.rippled_in !== 1 && g.rippled_in !== true
+  )
+  const pool = notRippled.length ? notRippled : groups
+  return earliestArrivalGroupId(pool)
+}
+
+/**
+ * Return a copy of the post's group rows with the home/origin group moved to the front,
+ * preserving the relative order of the rest. The group list is truncated in the UI
+ * (ShowMore limit), so without this the home group could be hidden behind "more".
+ *
+ * @param {Array<{groupid:number|string, arrival?:string, rippled_in?:number|boolean}>} groups
+ * @returns {Array} a new array (input is never mutated)
+ */
+export function homeGroupFirst(groups) {
+  if (!Array.isArray(groups)) return []
+  if (groups.length < 2) return [...groups]
+  const homeId = homeGroupId(groups)
+  if (homeId == null) return [...groups]
+  const idx = groups.findIndex((g) => g && parseInt(g.groupid) === homeId)
+  if (idx <= 0) return [...groups]
+  const copy = [...groups]
+  const [home] = copy.splice(idx, 1)
+  copy.unshift(home)
+  return copy
+}

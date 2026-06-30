@@ -645,6 +645,7 @@ import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst } from '~/composables/rippleStatus'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
@@ -726,7 +727,9 @@ const {
 // name + explore link; drop any not yet in the group store.
 const messageGroups = computed(() => {
   if (!message.value?.groups?.length) return []
-  return message.value.groups
+  // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+  // the home group could be hidden behind "more".
+  return homeGroupFirst(message.value.groups)
     .map((g) => groupStore.get(g.groupid))
     .filter(Boolean)
 })

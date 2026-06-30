@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   isRippledInToContextGroup,
   earliestArrivalGroupId,
+  homeGroupFirst,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
 
@@ -211,5 +212,70 @@ describe('earliestArrivalGroupId', () => {
       { groupid: 7, arrival: at(10) },
     ]
     expect(earliestArrivalGroupId(groups)).toBe(7)
+  })
+})
+
+// The group list shown for a post is truncated (ShowMore limit), so the home/origin
+// group must come first or it can be hidden behind "more". homeGroupFirst returns the
+// groups with the home group moved to the front, preserving the order of the rest.
+describe('homeGroupFirst', () => {
+  const ids = (groups) => groups.map((g) => parseInt(g.groupid))
+
+  it('moves the home group (earliest arrival) to the front', () => {
+    const groups = [
+      { groupid: 2, arrival: at(120) }, // rippled in
+      { groupid: 3, arrival: at(120) }, // rippled in
+      { groupid: 1, arrival: at(0) }, // origin/home, buried last
+    ]
+    expect(ids(homeGroupFirst(groups))).toEqual([1, 2, 3])
+  })
+
+  it('preserves the order of the non-home groups', () => {
+    const groups = [
+      { groupid: 5, arrival: at(60) },
+      { groupid: 9, arrival: at(0) }, // home
+      { groupid: 7, arrival: at(120) },
+      { groupid: 4, arrival: at(90) },
+    ]
+    expect(ids(homeGroupFirst(groups))).toEqual([9, 5, 7, 4])
+  })
+
+  it('uses rippled_in to pick the home group even when its arrival is later', () => {
+    // The approve path stamps arrival=NOW() on the origin row, so the origin can look
+    // NEWER than the rippled-in copies. The authoritative rippled_in flag must win.
+    const groups = [
+      { groupid: 2, arrival: at(30), rippled_in: 1 }, // rippled in earlier
+      { groupid: 1, arrival: at(200), rippled_in: 0 }, // home, re-stamped late
+    ]
+    expect(ids(homeGroupFirst(groups))).toEqual([1, 2])
+  })
+
+  it('leaves a single-group list unchanged', () => {
+    const groups = [{ groupid: 42, arrival: at(0) }]
+    expect(ids(homeGroupFirst(groups))).toEqual([42])
+  })
+
+  it('returns a new array and does not mutate the input', () => {
+    const groups = [
+      { groupid: 2, arrival: at(120) },
+      { groupid: 1, arrival: at(0) },
+    ]
+    const out = homeGroupFirst(groups)
+    expect(out).not.toBe(groups)
+    expect(ids(groups)).toEqual([2, 1]) // original untouched
+  })
+
+  it('returns [] for empty/missing input', () => {
+    expect(homeGroupFirst([])).toEqual([])
+    expect(homeGroupFirst(null)).toEqual([])
+    expect(homeGroupFirst(undefined)).toEqual([])
+  })
+
+  it('handles string groupids', () => {
+    const groups = [
+      { groupid: '2', arrival: at(90) },
+      { groupid: '1', arrival: at(0) },
+    ]
+    expect(ids(homeGroupFirst(groups))).toEqual([1, 2])
   })
 })
