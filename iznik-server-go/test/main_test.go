@@ -36,6 +36,11 @@ var app *TestApp
 func init() {
 	// Set environment variables needed for tests
 	os.Setenv("LOVEJUNK_PARTNER_KEY", "testkey123")
+	// Isolate image-delivery URL building from the environment. The apiv2
+	// container sets UPLOADS for runtime (the dev value points at local tusd);
+	// tests must not depend on that, nor on the production default. Pin an
+	// obviously-fake test host and assert image URLs against it (uploads.test).
+	os.Setenv("UPLOADS", "https://uploads.test/")
 
 	app = &TestApp{fiber.New()}
 	app.Use(user.NewAuthMiddleware(user.Config{}))

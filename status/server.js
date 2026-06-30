@@ -1848,10 +1848,14 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "started" }));
 
-    // Build test command - add race detection and coverage for CI
+    // Build test command - add race detection and coverage for CI.
+    // Include ./message/... so the package's white-box unit tests (the
+    // *_pure_test.go files, which need no DB) actually run: ./test/... alone
+    // never compiles them, so they were dormant and their lines showed as
+    // uncovered. These are DB-free, so they add no fixture requirements.
     const testCmd = withCoverage
-      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... -coverpkg ./..."
-      : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... -v";
+      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... ./message/... -coverpkg ./..."
+      : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... ./message/... -v";
 
     // Run tests asynchronously
     const { spawn } = require("child_process");

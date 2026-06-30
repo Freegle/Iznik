@@ -282,6 +282,7 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 404.*api\/chat\//, // Chat API 404 errors when chat rooms are deleted between test runs.
       /Failed to load resource: the server responded with a status of 404.*api\/session/, // Session API 404 can happen when trying to logout when not logged in.
       /Failed to load resource: the server responded with a status of 404.*delivery\.localhost/, // Delivery service 404 errors for missing images can happen during normal operation.
+      /Failed to load resource: the server responded with a status of 404.*\/\d+w/, // Responsive image width-variant (e.g. /320w) not generated in the test image env — same class as the delivery.localhost image 404 above.
       /FedCM get\(\) rejects with/, // Not available in test
       /Error retrieving a token./, // Also related to GSI FedCM, not available in test
       /FedCM well-known file/, // FedCM well-known file fetch errors — Chrome FedCM API not available in Docker test environment

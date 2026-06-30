@@ -61,7 +61,10 @@
     </p>
   </div>
   <div class="post-rest">
-    @if($post['messageText'])
+    @if(!empty($post['bulkSummary']))
+    {{-- Bulk offer ("clearance"): show it's multi-item with a short item list. --}}
+    <p class="post-preview">{{ $post['bulkSummary'] }}</p>
+    @elseif($post['messageText'])
     {{-- User-supplied description. Multi-post truncates for AMP size. --}}
     <p class="post-preview">{!! nl2br(e(\Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
     @endif
