@@ -3,6 +3,7 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
+use App\Models\Membership;
 use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
 use Carbon\Carbon;
@@ -134,6 +135,77 @@ class UnifiedDigestTest extends TestCase
         $groupAName = $groupA->namefull ?: $groupA->nameshort;
         $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
         $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
+    }
+
+    public function test_immediate_subject_prefers_immediate_group_over_muted_membership(): void
+    {
+        // Discourse #9808: a rippled-in post reaches a member because it ripples
+        // into a group they receive IMMEDIATELY (emailfrequency=-1). The post is
+        // also on its origin group, which the member happens to be a (muted)
+        // member of. The subject must name the group whose immediate setting
+        // actually drives the email — not the muted origin group — otherwise a
+        // mod/member turns off a group that isn't sending the mail and it keeps
+        // coming. Member of A (origin, muted) and B (immediate); label must be B.
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        // A: member but email OFF for this group (the post's origin group).
+        $this->createMembership($user, $groupA, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER,
+        ]);
+        // B: the group the member receives immediately on — what actually sends.
+        $this->createMembership($user, $groupB, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
+        ]);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $groupA);
+        $message = $this->createTestMessage($poster, $groupA, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+
+        // Origin group A listed first (as messages_groups returns the origin).
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $groupBName = $groupB->namefull ?: $groupB->nameshort;
+        $groupAName = $groupA->namefull ?: $groupA->nameshort;
+        $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
+        $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
+    }
+
+    public function test_select_preferred_group_prefers_priority_then_membership_then_first(): void
+    {
+        // Pure-function contract for the labelling choice.
+        // 1) A priority group (e.g. the immediate-membership group) wins even when
+        //    a plain-membership group sorts earlier in the post's group list.
+        $this->assertSame(
+            30,
+            UnifiedDigest::selectPreferredGroup([10, 20, 30], [10, 20, 30], [30]),
+            'priority group should win over earlier plain memberships'
+        );
+        // 2) With no priority list, behaviour is unchanged: first membership match.
+        $this->assertSame(
+            10,
+            UnifiedDigest::selectPreferredGroup([10, 20, 30], [10, 20, 30]),
+            'no priority -> first posted-to group the recipient is a member of'
+        );
+        // 3) Priority id not on the post -> fall back to first membership match.
+        $this->assertSame(
+            20,
+            UnifiedDigest::selectPreferredGroup([20, 30], [20, 30], [99]),
+            'priority id absent from post -> first membership match'
+        );
+        // 4) Recipient in none -> first posted-to group.
+        $this->assertSame(
+            20,
+            UnifiedDigest::selectPreferredGroup([20, 30], [], [99]),
+            'recipient in neither -> first posted-to group'
+        );
     }
 
     public function test_subject_with_multiple_posts(): void

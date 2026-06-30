@@ -8,6 +8,7 @@ use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
@@ -306,13 +307,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      * Static + public so it can be used in both instance and static contexts,
      * including from UnifiedDigestService when scoping a per-post group.
      */
-    public static function selectPreferredGroup(array $groups, array $userGroupIds): ?int
+    public static function selectPreferredGroup(array $groups, array $userGroupIds, array $priorityGroupIds = []): ?int
     {
         if (empty($groups)) {
             return null;
         }
         if (count($groups) === 1) {
             return $groups[0];
+        }
+
+        // First prefer a group whose membership actually DRIVES this email — for
+        // an immediate/reach mail, a group the recipient is set to receive
+        // immediately on (emailfrequency=-1). A rippled-in post can reach a member
+        // via one immediate group while another posted-to group they happen to be
+        // a (muted) member of sorts first; labelling it with the muted group misled
+        // mods into turning off a group that wasn't sending the mail (Discourse
+        // #9808: turned off Blaby, but delivery came via the member's Charnwood
+        // immediate membership). Empty priority list = unchanged behaviour.
+        foreach ($groups as $groupId) {
+            if (in_array($groupId, $priorityGroupIds, true)) {
+                return $groupId;
+            }
         }
 
         foreach ($groups as $groupId) {
@@ -337,7 +352,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     {
         $groups = $post['postedToGroups'] ?? [];
         $myGroupIds = $this->user->memberships->pluck('groupid')->all();
-        return self::selectPreferredGroup($groups, $myGroupIds);
+        return self::selectPreferredGroup($groups, $myGroupIds, $this->immediatePriorityGroupIds());
+    }
+
+    /**
+     * Group ids whose membership drives an immediate email for this recipient —
+     * the groups they are set to receive immediately on (emailfrequency=-1).
+     * Used so a post is labelled with the group that actually controls its
+     * delivery, and muting that group's email stops the mail. Empty for the
+     * daily roll-up, which spans all the recipient's groups rather than one.
+     */
+    protected function immediatePriorityGroupIds(): array
+    {
+        if ($this->mode !== UnifiedDigestService::MODE_IMMEDIATE) {
+            return [];
+        }
+
+        return $this->user->memberships
+            ->where('emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->pluck('groupid')
+            ->map(fn ($g) => (int) $g)
+            ->all();
     }
 
     /**
@@ -838,7 +873,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $groupUrl = null;
         $primaryGroupId = self::selectPreferredGroup(
             $postedToGroups,
-            $this->user->memberships->pluck('groupid')->all()
+            $this->user->memberships->pluck('groupid')->all(),
+            $this->immediatePriorityGroupIds()
         );
         if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
             $g = $this->groupLookup[$primaryGroupId];
