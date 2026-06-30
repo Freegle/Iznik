@@ -54,4 +54,14 @@ describe('MyPostsClearances', () => {
     const w = mount(MyPostsClearances, mountOpts([{ id: 2 }]))
     expect(w.find('[data-testid="myposts-clearances"]').exists()).toBe(false)
   })
+
+  it('ignores undefined/null/id-less entries without crashing', () => {
+    // myposts can hand us holes (a not-yet-loaded or removed post); reading
+    // p.id on an undefined p used to throw a TypeError and blank the page.
+    const w = mount(
+      MyPostsClearances,
+      mountOpts([{ id: 1 }, undefined, null, {}, { id: 2 }])
+    )
+    expect(w.vm.clearances.map((c) => c.id)).toEqual([1])
+  })
 })

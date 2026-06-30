@@ -52,6 +52,9 @@ const messageStore = useMessageStore()
 
 const clearances = computed(() =>
   (props.posts || [])
+    // Guard against undefined/idless entries: myposts can hand us holes (e.g. a
+    // not-yet-loaded or removed post), and reading p.id on an undefined p throws.
+    .filter((p) => p && p.id != null)
     .map((p) => {
       const full = messageStore.byId(p.id)
       const bulkcount = full?.bulkcount ?? full?.bulkitems?.length ?? 0
