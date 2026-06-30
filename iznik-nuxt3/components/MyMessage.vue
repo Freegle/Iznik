@@ -520,6 +520,7 @@ import { milesAway } from '~/composables/useDistance'
 import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst } from '~/composables/rippleStatus'
 import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
@@ -795,7 +796,9 @@ const canrepostatago = computed(() => {
 
 const messageGroups = computed(() => {
   if (message.value?.groups?.length) {
-    return message.value.groups
+    // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+    // the home group could be hidden behind "more".
+    return homeGroupFirst(message.value.groups)
       .map((g) => groupStore?.get(g.groupid))
       .filter(Boolean)
   }
