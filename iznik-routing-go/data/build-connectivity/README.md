@@ -24,9 +24,21 @@ can refresh it when DfT republishes and never lose *how* it was constructed.
      centroids are fine for nearest-centroid node tagging. Override the layer with
      `LSOA_ARCGIS_URL` if ONS renames it.
 
-> Coverage: **England & Wales only.** Scotland/NI LSOAs are absent; nodes there get `Conn=0`
-> and the model cleanly falls back to the plain isochrone. That gap is intentional and handled
-> in code (`connectivity.go` / `friction.go`).
+> Coverage: **England & Wales (DfT), plus Scotland (SIMD)**. Northern Ireland is still absent
+> (nodes there get `Conn=0` → plain-isochrone fallback, handled in `connectivity.go`/`friction.go`).
+>
+> **Scotland** has no DfT metric, so `scotland_append.js` uses the **SIMD 2020v2 "Geographic
+> Access to Services" domain rank** (Data Zone 2011, same "1=worst..N=best" convention as DfT),
+> **quantile-mapped onto the E&W DfT distribution** so both share one 0-100 scale. This is a
+> *comparable proxy, not DfT's methodology* (different service basket, geography vintage and
+> year) — do not present Scotland scores as "DfT scores" user-facing. Sources: access rank from
+> ScotGov PeopleSociety `MapServer/7` (`gaccrank`); centroids from the `SG_DataZoneCent_2011`
+> FeatureServer.
+>
+> **Northern Ireland** is designed + agent-verified (NIMDM 2017 Access domain, SOA 2001, with a
+> proj4 EPSG:29902→WGS84 reprojection) but not yet wired in — see
+> `plans/active/scotland-ni-connectivity.md`. It needs a scoped `proj4` dependency in this
+> directory, hence deferred.
 
 ## Rebuild
 
@@ -53,6 +65,8 @@ Steps (what `build.sh` runs):
 
 ## Release log
 
-| Built | DfT release | LSOAs | conn median |
-|-------|-------------|-------|-------------|
-| 2026-07-01 | connectivity_metrics_2025 (Q4 2024, v1.0.0) | 35,672 | 67 |
+| Built | Source | Areas | conn median |
+|-------|--------|-------|-------------|
+| 2026-07-01 | DfT connectivity_metrics_2025 (Q4 2024, v1.0.0) — E&W | 35,672 | 67 |
+| 2026-07-01 | + Scotland SIMD 2020v2 Access (quantile-mapped) | 6,976 | 67 |
+| _pending_ | + NI NIMDM 2017 Access (quantile-mapped) | 890 | — |

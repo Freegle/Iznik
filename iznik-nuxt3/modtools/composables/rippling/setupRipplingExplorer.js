@@ -66,6 +66,8 @@ export async function setupRipplingExplorer({
   let currentMode = 'drive'
   // Dashed overlay for the connectivity-friction reach (toggled by #rippling-tog-friction).
   let frictionLayer = null
+  // Filled overlay for the inbound catchment (toggled by #rippling-tog-catchment).
+  let catchmentLayer = null
   let marker = null
   let layers = {}
   // Minimal mode only: when the isochrone covers >=90% of the home group,
@@ -209,6 +211,10 @@ export async function setupRipplingExplorer({
     if (frictionLayer) {
       map.removeLayer(frictionLayer)
       frictionLayer = null
+    }
+    if (catchmentLayer) {
+      map.removeLayer(catchmentLayer)
+      catchmentLayer = null
     }
     // freeglersMarkers is declared later in the script (temporal dead zone),
     // so we can't reference it by name from here.  Instead, fire a custom
@@ -513,6 +519,10 @@ export async function setupRipplingExplorer({
   document
     .getElementById('rippling-tog-friction')
     .addEventListener('change', updateFrictionOverlay)
+
+  document
+    .getElementById('rippling-tog-catchment')
+    .addEventListener('change', updateCatchmentOverlay)
 
   document
     .getElementById('rippling-tog-freeglers')
@@ -865,6 +875,7 @@ export async function setupRipplingExplorer({
         updateFreeglersInside(data)
         drawGroupsOverlay()
         updateFrictionOverlay()
+        updateCatchmentOverlay()
         showStatus('Done', false)
       })
       .catch((err) => {
@@ -910,6 +921,45 @@ export async function setupRipplingExplorer({
         })
           .addTo(map)
           .bindTooltip('Connectivity-friction reach (' + currentMode + ')')
+      })
+      .catch(() => {})
+  }
+
+  // Inbound catchment overlay (filled green): the area from which posts would ripple IN to a
+  // group at the current location (connectivity-shaped — a rural group pulls from further than
+  // an urban one). This is the per-group "where do posts ripple in from?" view, point-anchored.
+  function updateCatchmentOverlay() {
+    const cb = document.getElementById('rippling-tog-catchment')
+    if (catchmentLayer) {
+      map.removeLayer(catchmentLayer)
+      catchmentLayer = null
+    }
+    if (!cb || !cb.checked || currentLat === null) return
+    const minutes = parseInt(timeSlider.value)
+    const gen = isochroneGeneration
+    fetch(
+      apiUrl(
+        `/v1/catchment?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
+          6
+        )}&minutes=${minutes}&mode=${currentMode}&friction=1`
+      )
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
+      .then((data) => {
+        if (gen !== isochroneGeneration) return
+        const ring =
+          data && data.catchment && data.catchment.geometry &&
+          data.catchment.geometry.coordinates[0]
+        if (!ring) return
+        if (catchmentLayer) map.removeLayer(catchmentLayer)
+        catchmentLayer = L.polygon(geoToLeaflet(ring), {
+          color: '#0a8f3c',
+          weight: 2,
+          fillColor: '#0a8f3c',
+          fillOpacity: 0.12,
+        })
+          .addTo(map)
+          .bindTooltip('Inbound catchment — posts ripple in from here (' + currentMode + ')')
       })
       .catch(() => {})
   }

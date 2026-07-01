@@ -310,6 +310,12 @@
               ><input id="rippling-tog-friction" type="checkbox" />
               Connectivity friction</label
             >
+            <label
+              class="rpl-layer-toggle"
+              title="Show this location's inbound catchment: the area from which posts would ripple IN to a group here (connectivity-shaped)"
+              ><input id="rippling-tog-catchment" type="checkbox" />
+              Catchment (in)</label
+            >
           </div>
         </div>
 

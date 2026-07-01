@@ -26,7 +26,16 @@ unzip -p "$ODS" content.xml | node extract_lsoa.js lsoa_conn_codes.csv
 echo "2/3 Fetching ONS LSOA 2021 centroids and joining…"
 node join_centroids.js lsoa_conn_codes.csv uk_lsoa_connectivity.csv
 
-echo "3/3 Installing → ../uk_lsoa_connectivity.csv"
+echo "3/4 Installing E&W → ../uk_lsoa_connectivity.csv"
 cp uk_lsoa_connectivity.csv ../uk_lsoa_connectivity.csv
+
+echo "4/4 Appending Scotland (SIMD 2020 Access domain, quantile-mapped onto E&W)…"
+# Uses the just-installed E&W file as the quantile reference, then appends Scotland rows.
+node scotland_append.js ../uk_lsoa_connectivity.csv scotland_rows.csv
+cat scotland_rows.csv >> ../uk_lsoa_connectivity.csv
+# Northern Ireland: designed + agent-verified (NIMDM 2017 Access domain, SOA2001 + proj4
+# reprojection) — see plans/active/scotland-ni-connectivity.md. Add as a 5th stage when
+# the proj4 dependency is introduced into build-connectivity/.
+
 wc -l ../uk_lsoa_connectivity.csv
 echo "Done. Commit ../uk_lsoa_connectivity.csv (and note the release/date in README)."
