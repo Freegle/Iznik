@@ -77,7 +77,19 @@
       </div>
 
       <div class="clearance-manager__head">
-        <h2 class="clearance-manager__title">{{ message.subject }}</h2>
+        <div
+          class="d-flex align-items-start justify-content-between gap-2 flex-wrap"
+        >
+          <h2 class="clearance-manager__title">{{ message.subject }}</h2>
+          <b-button
+            variant="outline-primary"
+            size="sm"
+            data-testid="clearance-edit"
+            @click="goEdit"
+          >
+            <v-icon icon="pen" /> Edit offer
+          </b-button>
+        </div>
         <p class="clearance-manager__totals" data-testid="clearance-totals">
           {{ items.length }} items ·
           <strong>{{ peopleInterested }}</strong>
@@ -147,6 +159,7 @@
 
 <script setup>
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useRouter } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
@@ -166,6 +179,12 @@ const props = defineProps({
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const { myid } = useMe()
+const router = useRouter()
+
+// Open the create/edit form pre-loaded with this clearance for editing.
+function goEdit() {
+  router.push('/give/clearance?id=' + props.id)
+}
 
 const message = computed(() => messageStore.byId(props.id))
 

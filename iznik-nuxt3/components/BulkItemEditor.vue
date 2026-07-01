@@ -52,15 +52,15 @@
             v-for="(item, idx) in items"
             :key="idx"
             class="bgrid brow"
-            :class="{ 'brow--over': dragOverIdx === idx }"
-            @dragover.prevent
-            @dragenter.prevent="dragOverIdx = idx"
-            @dragleave="onRowLeave(idx)"
-            @drop="onDropToItem(idx)"
+            :class="{ 'brow--over': dragOverIdx === idx, 'brow--drag': isDragging }"
+            @dragover.prevent="dragOverIdx = idx"
+            @drop.prevent="onDropToItem($event, idx)"
           >
             <div
               class="bcell-photo brow__photos"
-              :class="{ 'bcell-photo--target': selectedTrayPhoto !== null }"
+              :class="{
+                'bcell-photo--target': selectedTrayPhoto !== null || isDragging,
+              }"
               :data-testid="'item-photocell-' + idx"
               @click="onRowPhotoClick(idx)"
             >
@@ -73,9 +73,17 @@
                   draggable="true"
                   title="Drag to move, click to remove"
                   @dragstart="onDragStart($event, idx, pi)"
+                  @dragend="onDragEnd"
                   @click.stop="unassign(idx, pi)"
                 >
-                  <img :src="thumbSrc(p)" alt="" />
+                  <OurUploadedImage
+                  v-if="p.ouruid"
+                  :src="p.ouruid"
+                  :width="56"
+                  fit="cover"
+                  alt=""
+                />
+                <img v-else :src="thumbSrc(p)" alt="" />
                 </div>
                 <div
                   v-if="!item.photos.length && item.photourl"
@@ -87,7 +95,10 @@
                 <!-- While a batch photo is "picked up", the cell is a drop
                      target — show that instead of the add button. -->
                 <span
-                  v-else-if="!item.photos.length && selectedTrayPhoto !== null"
+                  v-else-if="
+                    !item.photos.length &&
+                    (selectedTrayPhoto !== null || isDragging)
+                  "
                   class="brow__drop"
                   aria-hidden="true"
                 >
@@ -191,11 +202,12 @@
             v-model="uploaderModel"
             type="Message"
             :max-photos="50"
+            compact
             empty-title="Add a batch of photos"
             empty-subtitle="Then drag each onto its item below"
           />
           <div
-            v-if="tray.length"
+            v-if="tray.length || uploadingPhotos.length"
             class="bulkeditor__tray"
             data-testid="photo-tray"
           >
@@ -204,8 +216,8 @@
                 <v-icon icon="plus" /> Now tap the item this photo belongs to
               </template>
               <template v-else>
-                <v-icon icon="arrow-up" /> Drag a photo onto its item above — or
-                tap a photo, then tap its item
+                <v-icon icon="arrow-down" /> Drag a photo onto its item below —
+                or tap a photo, then tap its item
               </template>
             </span>
             <div class="bulkeditor__tray-strip">
@@ -219,9 +231,17 @@
                 :aria-pressed="selectedTrayPhoto === i"
                 :data-testid="'tray-photo-' + i"
                 @dragstart="onDragStart($event, -1, i)"
+                @dragend="onDragEnd"
                 @click="onTrayPhotoClick(i)"
               >
-                <img :src="thumbSrc(p)" alt="" />
+                <OurUploadedImage
+                  v-if="p.ouruid"
+                  :src="p.ouruid"
+                  :width="56"
+                  fit="cover"
+                  alt=""
+                />
+                <img v-else :src="thumbSrc(p)" alt="" />
                 <button
                   type="button"
                   class="pthumb__x"
@@ -230,6 +250,18 @@
                 >
                   ×
                 </button>
+              </div>
+              <!-- Photos still uploading: shown so nothing is hidden, but not
+                   draggable until they finish and move into the tray above. -->
+              <div
+                v-for="(p, i) in uploadingPhotos"
+                :key="'up-' + (p.tempId || p.preview || i)"
+                class="pthumb pthumb--uploading"
+                title="Uploading…"
+                aria-label="Photo uploading"
+              >
+                <img v-if="p.preview" :src="p.preview" alt="" />
+                <span class="pthumb__spin"><Spinner :size="18" /></span>
               </div>
             </div>
           </div>
@@ -281,11 +313,15 @@ import {
 } from '~/composables/useBulkItems'
 import { useBulkPhotoUpload } from '~/composables/useBulkPhotoUpload'
 import PhotoUploader from '~/components/PhotoUploader'
+import OurUploadedImage from '~/components/OurUploadedImage.vue'
 
 const props = defineProps({
   modelValue: { type: Array, default: () => [] },
+  // Unassigned photos "pile" — lifted out so the parent can persist it across a
+  // refresh (photos uploaded but not yet dragged onto an item).
+  tray: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'update:tray'])
 
 const conditions = BULK_CONDITIONS
 
@@ -297,13 +333,37 @@ const items = ref(
 )
 
 // null = no choice yet (show only the prompt + buttons); 'manual' = type items
-// into the table; 'upload' = import a spreadsheet.
-const mode = ref(null)
+// into the table; 'upload' = import a spreadsheet. If we're seeded with real
+// content (a restored draft — named items or tray photos), open the table
+// straight away rather than making the user pick "type them in" again.
+const seededWithContent =
+  (props.modelValue &&
+    props.modelValue.some((i) => i && i.name && i.name.trim())) ||
+  (props.tray && props.tray.length > 0)
+const mode = ref(seededWithContent ? 'manual' : null)
 
 // The uploader's model — we drain finished uploads from it into `tray`,
 // so it always shows just the "Add photos" affordance (never a big gallery).
 const uploaderModel = ref([])
-const tray = ref([])
+// Seed the tray from the parent (restored draft) once, then own it locally and
+// emit changes back up so the parent can persist it.
+const tray = ref(
+  props.tray && props.tray.length ? props.tray.map((p) => ({ ...p })) : []
+)
+watch(
+  tray,
+  (val) => {
+    emit('update:tray', val)
+  },
+  { deep: true }
+)
+
+// Photos still uploading (no real numeric id yet) — kept in the uploader model
+// until they finish, when the drain watch moves them into `tray`. Surfaced in
+// the tray strip so an in-flight photo is never invisible.
+const uploadingPhotos = computed(() =>
+  uploaderModel.value.filter((p) => !(p.id && typeof p.id === 'number'))
+)
 
 const importMessage = ref('')
 const photoError = ref('')
@@ -318,6 +378,9 @@ let pendingPhotoItem = null
 // Drag source: { from: -1 for tray else item index, index: position in that list }
 let dragSrc = null
 const dragOverIdx = ref(null)
+// True while a photo is being dragged, so every item row can advertise itself as
+// a drop target (not just the small photo cell).
+const isDragging = ref(false)
 
 // Tap-to-assign (touch fallback for drag-and-drop, which doesn't fire on touch):
 // the index of the tray photo the user has tapped to "pick up", or null.
@@ -352,9 +415,9 @@ watch(
 )
 
 function addItem() {
-  // Newest at the top, next to the photo tray, so dragging a photo onto a
-  // just-added item is a short move (no scrolling to the bottom).
-  items.value.unshift({ ...blankBulkItem(), photos: [] })
+  // Append below the existing rows, so the list builds downward in the order
+  // the offerer adds things (photos sit above the list).
+  items.value.push({ ...blankBulkItem(), photos: [] })
 }
 
 function removeItem(idx) {
@@ -373,6 +436,7 @@ function removeTrayPhoto(i) {
 
 function onDragStart(e, from, index) {
   dragSrc = { from, index }
+  isDragging.value = true
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
     // Required for Firefox to initiate the drag.
@@ -380,8 +444,10 @@ function onDragStart(e, from, index) {
   }
 }
 
-function onRowLeave(idx) {
-  if (dragOverIdx.value === idx) dragOverIdx.value = null
+// Drag finished (dropped or cancelled, anywhere) — clear the drag cues.
+function onDragEnd() {
+  isDragging.value = false
+  dragOverIdx.value = null
 }
 
 function takeDragged() {
@@ -397,11 +463,39 @@ function takeDragged() {
   return photo || null
 }
 
-function onDropToItem(idx) {
+async function onDropToItem(e, idx) {
   dragOverIdx.value = null
+  isDragging.value = false
+  const item = items.value[idx]
+  if (!item) return
+
+  // External file drop (from the desktop / file explorer): upload each image
+  // and attach it to this item. Without this the browser navigates to the
+  // dropped file (opens a new tab) instead of uploading it.
+  const files = e?.dataTransfer?.files
+  if (files && files.length) {
+    photoError.value = ''
+    item.uploading = true
+    try {
+      for (const file of files) {
+        if (!file.type || !file.type.startsWith('image/')) continue
+        const photo = await uploadPhoto(file, { type: 'Message' })
+        if (!item.photos) item.photos = []
+        item.photos.push(photo)
+      }
+    } catch (err) {
+      photoError.value =
+        "Sorry — that photo couldn't be uploaded. Please try again."
+    } finally {
+      item.uploading = false
+    }
+    return
+  }
+
+  // Internal drag: a tray thumbnail or a thumbnail from another row.
   const photo = takeDragged()
-  if (photo && items.value[idx]) {
-    items.value[idx].photos.push(photo)
+  if (photo) {
+    item.photos.push(photo)
   }
 }
 
@@ -528,6 +622,11 @@ defineExpose({
   addPhotoToRow,
   onRowFile,
   photoError,
+  isDragging,
+  dragOverIdx,
+  onDragStart,
+  onDragEnd,
+  onDropToItem,
 })
 </script>
 
@@ -558,10 +657,13 @@ defineExpose({
 
 .bulkeditor__items {
   min-width: 0;
+  order: 2;
 }
 
+/* Photos above the list of items. */
 .bulkeditor__tools {
   width: 100%;
+  order: 1;
 }
 
 .tool {
@@ -617,11 +719,38 @@ defineExpose({
 .brow {
   padding: 0.35rem 0;
   border-bottom: 1px solid $color-gray--lighter;
+  transition: background-color 0.12s ease, outline-color 0.12s ease,
+    padding 0.12s ease;
 }
 
+/* While a photo is being dragged, every row shows it can receive a drop. */
+.brow--drag {
+  outline: 1px dashed $color-gray--base;
+  outline-offset: -3px;
+  border-radius: 6px;
+
+  .brow__drop {
+    border-color: $color-green--darker;
+    color: $color-green--darker;
+  }
+}
+
+/* The row under the pointer: strong highlight and a little taller, so it's a
+   big, obvious target even though the photo cell itself is small. */
 .brow--over {
   background-color: $color-green-background;
+  outline: 2px dashed $color-green--darker;
+  outline-offset: -2px;
   border-radius: 6px;
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+
+  .brow__drop {
+    border-style: solid;
+    border-color: $color-green--darker;
+    color: $color-green--darker;
+    transform: scale(1.15);
+  }
 }
 
 /* Every input/select fills its grid column, so the row reads as one tidy table. */
@@ -690,6 +819,17 @@ defineExpose({
     pointer-events: none;
   }
 
+  /* OurUploadedImage renders a <picture><img>; reach into it so the thumbnail
+     fills the cell just like a plain <img> does. */
+  :deep(picture),
+  :deep(picture img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+  }
+
   &:active {
     cursor: grabbing;
   }
@@ -698,6 +838,23 @@ defineExpose({
 .pthumb--sm {
   width: 34px;
   height: 34px;
+}
+
+/* An in-flight upload: dimmed, not draggable, with a spinner overlay. */
+.pthumb--uploading {
+  cursor: default;
+
+  img {
+    opacity: 0.5;
+  }
+}
+
+.pthumb__spin {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Tap-to-assign cues: the picked-up tray photo, and the item photo cells that

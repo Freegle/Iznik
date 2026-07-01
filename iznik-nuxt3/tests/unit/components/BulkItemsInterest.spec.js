@@ -69,6 +69,7 @@ const mountOpts = {
       'b-form-group': true,
       'b-form-input': true,
       'b-form-select': true,
+      'b-form-textarea': true,
     },
   },
 }

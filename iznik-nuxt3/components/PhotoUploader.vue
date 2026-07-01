@@ -1,10 +1,28 @@
 <template>
   <div class="app-photo-uploader" @dragenter="onDragEnter">
+    <!-- Compact mode (e.g. the bulk-clearance editor): render nothing but an
+         "Add photos" button. The actual photos live in the parent's draggable
+         tray, so there is no big featured gallery to fight with drag-to-item. -->
+    <div v-if="compact" class="compact-add">
+      <b-button
+        variant="outline-primary"
+        size="lg"
+        class="add-photos-button"
+        data-testid="compact-add-photos"
+        @click="openPhotoOptions"
+      >
+        <v-icon icon="camera" /> Add photos
+      </b-button>
+      <span v-if="emptySubtitle" class="compact-add__hint">{{
+        emptySubtitle
+      }}</span>
+    </div>
+
     <!-- Featured photo - always shows first photo (the primary one for post) -->
     <!-- Drop target: dragging a thumbnail here makes it the primary photo -->
     <Transition name="fade">
       <div
-        v-if="selectedPhoto"
+        v-if="selectedPhoto && !compact"
         class="featured-photo"
         :class="{ 'drop-target-active': dragging }"
         @dragover.prevent
@@ -33,7 +51,7 @@
     </Transition>
 
     <!-- Thumbnail carousel (excluding selected photo) -->
-    <div v-if="photos.length > 1" class="thumbnail-carousel">
+    <div v-if="photos.length > 1 && !compact" class="thumbnail-carousel">
       <draggable
         v-model="photos"
         class="thumbnail-strip"
@@ -72,7 +90,7 @@
 
     <!-- Add more button (when photos exist) - secondary style -->
     <div
-      v-if="photos.length > 0 && photos.length < maxPhotos"
+      v-if="photos.length > 0 && photos.length < maxPhotos && !compact"
       class="add-more-section"
     >
       <b-button
@@ -86,7 +104,7 @@
     </div>
 
     <!-- Empty state -->
-    <div v-if="photos.length === 0" class="empty-state">
+    <div v-if="photos.length === 0 && !compact" class="empty-state">
       <div class="empty-icon">
         <v-icon icon="camera" size="4x" />
       </div>
@@ -207,6 +225,14 @@ const props = defineProps({
     type: Number,
     required: false,
     default: 10,
+  },
+  // Compact mode: hide the featured photo / carousel / empty state and show
+  // only an "Add photos" button. Used where the photos are displayed and
+  // managed by the parent (e.g. the bulk-clearance editor's draggable tray).
+  compact: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
   recognise: {
     type: Boolean,
@@ -730,6 +756,20 @@ onBeforeUnmount(() => {
 
 .app-photo-uploader {
   padding: 1rem;
+}
+
+/* Compact mode: just the add button + a short hint, no gallery. */
+.compact-add {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0;
+}
+
+.compact-add__hint {
+  font-size: 0.85rem;
+  color: $color-gray--normal;
 }
 
 /* Featured photo area - square */
