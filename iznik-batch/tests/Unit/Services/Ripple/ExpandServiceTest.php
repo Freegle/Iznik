@@ -1773,6 +1773,111 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    // ── Retract rippled copies when the HOME post is deleted / moved back to pending ──
+    // A mod Delete or Back-to-Pending on the origin group leaves the rippled-in copies live
+    // and Approved elsewhere, so the post still has messages_spatial rows and the
+    // spatial-IS-NULL trigger in removeStaleAndRetract never fires - the copies are stranded.
+
+    /**
+     * A post with a live rippled-in copy on group B (+ ripple membership + reach + a
+     * messages_spatial row, so it is NOT stale-by-spatial), whose ORIGIN row is in $originState:
+     *   'deleted'  - origin messages_groups row hard-deleted (mod Delete on home)
+     *   'pending'  - origin row collection=Pending (mod Back to Pending on home)
+     *   'approved' - origin row still live Approved (control)
+     * Returns [msgid, groupB, posterId].
+     */
+    private function seedRippledCopyWithOrigin(string $originState, float $lat = 51.5, float $lng = -0.1): array
+    {
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: home-removed', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subHours(2), 'arrival' => now()->subHours(2), 'lat' => $lat, 'lng' => $lng,
+        ]);
+        if ($originState !== 'deleted') {
+            MessageGroup::create([
+                'msgid' => $message->id, 'groupid' => $origin->id,
+                'collection' => $originState === 'pending'
+                    ? MessageGroup::COLLECTION_PENDING
+                    : MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $groupB->id, 'collection' => 'Approved',
+            'approvedat' => now(), 'arrival' => now(), 'autoreposts' => 0,
+            'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
+        ]);
+        DB::table('memberships')->insert([
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
+        ]);
+        // A messages_spatial row (the live rippled copy has one) so the post is NOT stale-by-spatial.
+        DB::insert(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText(?, 3857), ?, ?, ?)",
+            [$message->id, "POINT($lng $lat)", $groupB->id, Message::TYPE_OFFER, now()]
+        );
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, self::WKT, now()->subHours(2)]
+        );
+
+        return [(int) $message->id, (int) $groupB->id, (int) $user->id];
+    }
+
+    /** Deleting the post on its home community pulls the rippled-in copies left live elsewhere. */
+    public function test_delete_on_home_group_retracts_rippled_copies(): void
+    {
+        Http::fake();
+        [$msgid, $groupB, $posterId] = $this->seedRippledCopyWithOrigin('deleted');
+        // Precondition: still in spatial, so the existing spatial-null retraction cannot be what fires.
+        $this->assertSame(1, (int) DB::table('messages_spatial')->where('msgid', $msgid)->count());
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'rippled-in copy pulled after the home post was deleted');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'reach dropped so the deleted post stops spreading');
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
+            'groupid' => $groupB, 'msgid' => $msgid, 'text' => 'Rippling: removed on origin removal',
+        ]);
+    }
+
+    /** Moving the post back to pending on its home community pulls the rippled-in copies. */
+    public function test_back_to_pending_on_home_group_retracts_rippled_copies(): void
+    {
+        Http::fake();
+        [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('pending');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'rippled-in copy pulled after the home post was moved back to pending');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count());
+    }
+
+    /** A post still live+approved on its home community keeps its rippled-in copies. */
+    public function test_live_home_post_keeps_rippled_copies(): void
+    {
+        Http::fake();
+        [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('approved');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'a live approved home post must not have its rippled copies retracted');
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'reach kept for a live post');
+    }
+
     /** A scoped (onlyMsgid) run retracts only the in-scope post, leaving others untouched. */
     public function test_scoped_only_msgid_retracts_only_in_scope_post(): void
     {

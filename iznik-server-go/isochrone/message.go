@@ -132,7 +132,7 @@ func Messages(c *fiber.Ctx) error {
 		wg.Wait()
 
 		// Q2a (§6): hide posts whose rippling reach exists but hasn't reached the viewer
-		// yet. Inert until the reach engine populates rippling_reach.
+		// yet. A no-op for posts with no rippling_reach row (non-rippled posts).
 		res = FilterReachBlocked(db, res, float64(latlng.Lat), float64(latlng.Lng))
 
 		// Pin the two posts nearest the viewer to the top of the feed, then leave the
@@ -250,9 +250,8 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 }
 
 // FilterReachBlocked removes messages whose rippling reach exists but does not yet cover
-// the viewer's location (§6 — a post stays hidden until the ripple reaches you). It is
-// inert until the reach engine populates rippling_reach: a missing table or no matching
-// rows leaves msgs unchanged, so non-rippling posts and the pre-engine period are
+// the viewer's location (§6 — a post stays hidden until the ripple reaches you). A missing
+// rippling_reach table or no matching rows leaves msgs unchanged, so non-rippling posts are
 // unaffected.
 func FilterReachBlocked(db *gorm.DB, msgs []message.MessageSummary, lat, lng float64) []message.MessageSummary {
 	if len(msgs) == 0 || (lat == 0 && lng == 0) {
@@ -272,7 +271,7 @@ func FilterReachBlocked(db *gorm.DB, msgs []message.MessageSummary, lat, lng flo
 			"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
 		ids, lng, lat, utils.SRID,
 	).Scan(&rows).Error; err != nil {
-		return msgs // rippling_reach absent (pre-engine) — no filtering
+		return msgs // rippling_reach table absent — no filtering
 	}
 	if len(rows) == 0 {
 		return msgs
@@ -323,8 +322,8 @@ func isochroneCount(myid uint64) uint64 {
 	latlng := user.GetLatLng(myid)
 
 	// Reach-gate the count to match the browse list (FilterReachBlocked) so the nav badge
-	// doesn't over-count. Only when the reach engine's table exists (ships in PR A) and the
-	// viewer has a known location — otherwise count everything (inert/pre-engine behaviour).
+	// doesn't over-count. Applied only when the rippling_reach table exists and the viewer
+	// has a known location — otherwise count everything.
 	applyReach := false
 	if latlng.Lng != 0 || latlng.Lat != 0 {
 		var n int

@@ -879,7 +879,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				if n := len(reachBlocked); n > 0 {
 					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
 					// can't reply to yet). Best-effort — errors ignored so it never affects the
-					// response, and it is inert until the reach engine populates rippling_reach.
+					// response.
 					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
 						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
 				}
