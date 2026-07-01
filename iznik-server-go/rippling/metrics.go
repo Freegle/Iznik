@@ -445,19 +445,19 @@ func Metrics(c *fiber.Ctx) error {
 			       SUM(CASE WHEN is_rippled = 1 THEN replied ELSE 0 END) AS ripple_replied
 			FROM (
 			    SELECT m.id,
-			           DATE_FORMAT(mg.arrival, '%Y-%m-%d') AS day,
-			           MAX(CASE WHEN fr.first_reply <= mg.arrival + INTERVAL 36 HOUR THEN 1 ELSE 0 END) AS replied,
-			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0 AND mgr.arrival <= mg.arrival + INTERVAL 36 HOUR) AS is_rippled
+			           DATE_FORMAT(COALESCE(rip.first_ripple, mg.arrival), '%Y-%m-%d') AS day,
+			           MAX(CASE WHEN fr.first_reply <= COALESCE(rip.first_ripple, mg.arrival) + INTERVAL 36 HOUR THEN 1 ELSE 0 END) AS replied,
+			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (
 			        SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
 			        WHERE type = 'Interested' AND date >= ? AND date < (? + INTERVAL 36 HOUR) GROUP BY refmsgid
 			    ) fr ON fr.refmsgid = m.id
 			    WHERE m.type = 'Offer'
-			      AND mg.arrival >= ? AND mg.arrival < ?
-			    GROUP BY m.id, mg.arrival
+			      AND COALESCE(rip.first_ripple, mg.arrival) >= ? AND COALESCE(rip.first_ripple, mg.arrival) < ?
+			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
 			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&replyRates)
@@ -480,19 +480,19 @@ func Metrics(c *fiber.Ctx) error {
 			       SUM(CASE WHEN is_rippled = 1 THEN reply_count ELSE 0 END) AS ripple_replies
 			FROM (
 			    SELECT m.id,
-			           DATE_FORMAT(mg.arrival, '%Y-%m-%d') AS day,
+			           DATE_FORMAT(COALESCE(rip.first_ripple, mg.arrival), '%Y-%m-%d') AS day,
 			           COUNT(DISTINCT cm.id) AS reply_count,
-			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0 AND mgr.arrival <= mg.arrival + INTERVAL 36 HOUR) AS is_rippled
+			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN chat_messages cm
 			           ON cm.refmsgid = m.id AND cm.type = 'Interested'
 			          AND cm.date >= ? AND cm.date < (? + INTERVAL 36 HOUR)
-			          AND cm.date >= mg.arrival AND cm.date < mg.arrival + INTERVAL 36 HOUR
+			          AND cm.date >= COALESCE(rip.first_ripple, mg.arrival) AND cm.date < COALESCE(rip.first_ripple, mg.arrival) + INTERVAL 36 HOUR
 			    WHERE m.type = 'Offer'
-			      AND mg.arrival >= ? AND mg.arrival < ?
-			    GROUP BY m.id, mg.arrival
+			      AND COALESCE(rip.first_ripple, mg.arrival) >= ? AND COALESCE(rip.first_ripple, mg.arrival) < ?
+			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
 			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&repliesPerPost)
@@ -568,18 +568,18 @@ func Metrics(c *fiber.Ctx) error {
 			       SUM(CASE WHEN is_rippled = 1 THEN taken ELSE 0 END) AS ripple_taken
 			FROM (
 			    SELECT m.id,
-			           DATE_FORMAT(mg.arrival, '%Y-%m-%d') AS day,
+			           DATE_FORMAT(COALESCE(rip.first_ripple, mg.arrival), '%Y-%m-%d') AS day,
 			           MAX(CASE WHEN o.msgid IS NOT NULL THEN 1 ELSE 0 END) AS taken,
-			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0 AND mgr.arrival <= mg.arrival + INTERVAL 36 HOUR) AS is_rippled
+			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes
 			               WHERE outcome IN ('Taken','Received') AND timestamp >= ?) o
 			           ON o.msgid = m.id
 			    WHERE m.type IN ('Offer','Wanted')
-			      AND mg.arrival >= ? AND mg.arrival < ?
-			    GROUP BY m.id, mg.arrival
+			      AND COALESCE(rip.first_ripple, mg.arrival) >= ? AND COALESCE(rip.first_ripple, mg.arrival) < ?
+			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
 			ORDER BY day DESC`, takenRateArgs(gid, start, end)...).Scan(&takenRates)
