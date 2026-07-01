@@ -450,13 +450,13 @@ func Metrics(c *fiber.Ctx) error {
 			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
-			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 GROUP BY msgid) rip ON rip.msgid = m.id
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= NOW() - INTERVAL 100 DAY GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (
 			        SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
 			        WHERE type = 'Interested' AND date >= ? AND date < (? + INTERVAL 36 HOUR) GROUP BY refmsgid
 			    ) fr ON fr.refmsgid = m.id
 			    WHERE m.type = 'Offer'
-			      AND COALESCE(rip.first_ripple, mg.arrival) >= ? AND COALESCE(rip.first_ripple, mg.arrival) < ?
+			      AND mg.arrival >= ? AND mg.arrival < ?
 			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
@@ -485,13 +485,13 @@ func Metrics(c *fiber.Ctx) error {
 			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
-			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 GROUP BY msgid) rip ON rip.msgid = m.id
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= NOW() - INTERVAL 100 DAY GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN chat_messages cm
 			           ON cm.refmsgid = m.id AND cm.type = 'Interested'
 			          AND cm.date >= ? AND cm.date < (? + INTERVAL 36 HOUR)
 			          AND cm.date >= COALESCE(rip.first_ripple, mg.arrival) AND cm.date < COALESCE(rip.first_ripple, mg.arrival) + INTERVAL 36 HOUR
 			    WHERE m.type = 'Offer'
-			      AND COALESCE(rip.first_ripple, mg.arrival) >= ? AND COALESCE(rip.first_ripple, mg.arrival) < ?
+			      AND mg.arrival >= ? AND mg.arrival < ?
 			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
@@ -573,12 +573,12 @@ func Metrics(c *fiber.Ctx) error {
 			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
-			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 GROUP BY msgid) rip ON rip.msgid = m.id
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= NOW() - INTERVAL 100 DAY GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes
 			               WHERE outcome IN ('Taken','Received') AND timestamp >= ?) o
 			           ON o.msgid = m.id
 			    WHERE m.type IN ('Offer','Wanted')
-			      AND COALESCE(rip.first_ripple, mg.arrival) >= ? AND COALESCE(rip.first_ripple, mg.arrival) < ?
+			      AND mg.arrival >= ? AND mg.arrival < ?
 			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
