@@ -29,9 +29,9 @@ node join_centroids.js lsoa_conn_codes.csv uk_lsoa_connectivity.csv
 echo "3/5 Installing E&W → ../uk_lsoa_connectivity.csv"
 cp uk_lsoa_connectivity.csv ../uk_lsoa_connectivity.csv
 
-# Build-time-only deps for Scotland (none) and NI (proj4 reprojection + xlsx for the .xls).
-# Installed here, git-ignored (see .gitignore). Harmless to re-run.
-npm install --silent proj4 xlsx >/dev/null 2>&1 || echo "  (npm install proj4/xlsx failed — NI stage may skip)"
+# Build-time-only deps for NI (proj4 reprojection + xlsx for the .xls). Declared in the
+# committed package.json; node_modules is git-ignored. Harmless to re-run.
+npm install --silent >/dev/null 2>&1 || echo "  (npm install failed — NI stage may skip)"
 
 echo "4/5 Appending Scotland (SIMD 2020 Access domain, quantile-mapped onto E&W)…"
 # Uses the just-installed E&W file (E&W-only at this point) as the quantile reference.
