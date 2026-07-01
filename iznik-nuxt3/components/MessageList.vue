@@ -144,12 +144,11 @@ import {
   onMounted,
   onBeforeUnmount,
 } from 'vue'
-import dayjs from 'dayjs'
 import MessageListUpToDate from './MessageListUpToDate'
 import ScrollGrid from '~/components/ScrollGrid'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
 import { useScrollDepth } from '~/composables/useScrollDepth'
@@ -247,7 +246,7 @@ const emit = defineEmits(['update:none', 'update:visible'])
 
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const { me, myid, myGroups: myMemberships } = useMe()
 
 // Browse-feed scroll-depth instrumentation: record how far down the feed this
@@ -324,6 +323,23 @@ if (initialIds?.length) {
   initialFetchDone.value = true
 }
 
+// Batch-fetch the groups referenced by the whole list in one request, so the per-post
+// MessageTag components find their group cached instead of each firing its own
+// /group/{id} call. This matters most for the nearby/reach feed: a post can be in a group
+// the viewer isn't a member of, so it won't already be in the membership cache loaded at
+// login - without this, a heavy-membership user saw dozens of separate group fetches. The
+// feed summaries carry a groupid, so we can batch them upfront without waiting for the
+// per-message detail. fetchBatch de-dupes against what's already cached and no-ops if all
+// are present.
+const listGroupIds = [
+  ...new Set(
+    (props.messagesForList ?? []).map((m) => m.groupid).filter(Boolean)
+  ),
+]
+if (listGroupIds.length) {
+  groupStore.fetchBatch(listGroupIds)
+}
+
 // Data
 const myGroups = []
 const failedIds = ref(new Set())
@@ -378,6 +394,13 @@ const reduceSuccessful = computed(() => {
 const filteredMessagesToShow = computed(() => {
   const ret = []
 
+  // Precompute the "older than a week" cutoff ONCE instead of calling dayjs() (which
+  // re-creates "now") and parsing each message's arrival inside the loop. On a large
+  // feed - a heavy-membership user's "all my communities" can be thousands of posts -
+  // the per-item dayjs was a multi-hundred-millisecond main-thread block (seen in a CPU
+  // profile). Date.parse on the ISO arrival string is a cheap native number compare.
+  const weekAgoTs = Date.now() - 7 * 24 * 60 * 60 * 1000
+
   // ScrollGrid handles visibility limits, so we provide all filtered messages
   for (let i = 0; i < reduceSuccessful.value?.length; i++) {
     const m = reduceSuccessful.value[i]
@@ -388,14 +411,10 @@ const filteredMessagesToShow = computed(() => {
       if (m.successful) {
         if (myid.value === m.fromuser) {
           addIt = true
-        } else {
-          const daysago = dayjs().diff(dayjs(m.arrival), 'day')
-
-          if (props.selectedType !== 'All') {
-            addIt = false
-          } else if (daysago > 7) {
-            addIt = false
-          }
+        } else if (props.selectedType !== 'All') {
+          addIt = false
+        } else if (Date.parse(m.arrival) < weekAgoTs) {
+          addIt = false
         }
       }
 
@@ -553,11 +572,11 @@ function visibilityChanged(visible) {
 }
 
 function markSeen() {
-  // Mark the whole list the count is computed over (the full isochrone/mygroups response),
+  // Mark the whole list the count is computed over (the full nearby/mygroups response),
   // not just the rendered/viewport subset — otherwise unseen posts that are off-screen or
   // filtered out keep the server count above zero and "Mark seen" can never clear it.
-  const source = isochroneStore.messageList?.length
-    ? isochroneStore.messageList
+  const source = nearbyStore.messageList?.length
+    ? nearbyStore.messageList
     : props.messagesForList
   const ids = []
 

@@ -35,7 +35,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
 import { useComposeStore } from '~/stores/compose'
 import { useChatStore } from '~/stores/chat'
 import { useReactiveTabBadge } from '~/composables/useTitleBadge'
@@ -98,7 +98,7 @@ const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const composeStore = useComposeStore()
 const chatStore = useChatStore()
 const addressStore = useAddressStore()
@@ -141,7 +141,7 @@ groupStore.init(runtimeConfig)
 messageStore.init(runtimeConfig)
 authStore.init(runtimeConfig)
 userStore.init(runtimeConfig)
-isochroneStore.init(runtimeConfig)
+nearbyStore.init(runtimeConfig)
 composeStore.init(runtimeConfig)
 chatStore.init(runtimeConfig)
 addressStore.init(runtimeConfig)

@@ -11,10 +11,6 @@ const mockMessageStore = {
   fetchCount: vi.fn(),
 }
 
-const mockIsochroneStore = {
-  list: [],
-}
-
 const mockAuthStore = {
   saveAndGet: vi.fn().mockResolvedValue({}),
 }
@@ -35,10 +31,6 @@ vi.mock('~/stores/misc', () => ({
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
-}))
-
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => mockIsochroneStore,
 }))
 
 vi.mock('~/stores/auth', () => ({
@@ -77,7 +69,6 @@ describe('PostFilters', () => {
       },
     }
     mockMyGroups.value = [{ id: 1, nameshort: 'TestGroup' }]
-    mockIsochroneStore.list = []
   })
 
   function createWrapper(props = {}) {
@@ -135,11 +126,6 @@ describe('PostFilters', () => {
               '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
             props: ['variant', 'title'],
             emits: ['click'],
-          },
-          IsoChrone: {
-            template: '<div class="isochrone" />',
-            props: ['id', 'addButton', 'last'],
-            emits: ['add', 'added', 'cancel'],
           },
           'v-icon': {
             template: '<span class="v-icon" />',
@@ -312,7 +298,7 @@ describe('PostFilters', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const text = wrapper.text()
       expect(text).toContain('We show posts near you first')
-      expect(wrapper.find('.isochrone').exists()).toBe(false)
+      expect(wrapper.find('.nearby-help').exists()).toBe(true)
     })
 
     it('links to change postcode and the FAQ', () => {
