@@ -114,6 +114,7 @@ import {
   isWithinDistance,
   filterMessagesByDistance,
 } from '~/composables/useDistance'
+import { distinctGroupIds } from '~/composables/useMessageDedup'
 import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
 
 const props = defineProps({
@@ -282,17 +283,9 @@ const showGroups = computed(() => {
 })
 
 const groups = computed(() => {
-  const ret = []
-
-  if (messageList.value) {
-    messageList.value.forEach((m) => {
-      if (!ret.includes(m.groupid)) {
-        ret.push(m.groupid)
-      }
-    })
-  }
-
-  return ret
+  // Distinct groupids in first-appearance order (O(n) via a Set rather than the previous
+  // includes()-in-loop).
+  return distinctGroupIds(messageList.value)
 })
 
 const largeGroupMarkers = computed(() => {
