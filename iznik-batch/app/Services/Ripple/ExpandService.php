@@ -76,6 +76,11 @@ class ExpandService
         // from the experiment (poster had already left, but the post stayed live there). See
         // ExpandServiceTest::test_*_retraction_*_not_gated_by_current_area_scope.
         $this->removeStaleAndRetract($dryRun, $stats, $onlyMsgid);
+        // 1a. Pull rippled-in copies stranded when the HOME post is deleted or moved back to
+        //     pending on its origin group. Those actions leave the rippled-in copies Approved
+        //     (so the post still has messages_spatial rows) while the origin row is gone or
+        //     Pending, so the spatial-null trigger in removeStaleAndRetract never sees them.
+        $this->retractCopiesOrphanedByOriginRemoval($dryRun, $stats, $onlyMsgid);
         // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
         //     leave removes the poster's post from that group (not just their membership).
         $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid);
@@ -277,6 +282,66 @@ class ExpandService
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: remove-stale-and-retract failed: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Pull rippled-in copies stranded when the HOME post is no longer live-approved on its
+     * origin group. removeStaleAndRetract only fires once a post has left messages_spatial
+     * entirely, but a mod Delete or Back-to-Pending on the origin group leaves the rippled-in
+     * copies Approved (so the msgid still has spatial rows) while the origin row is gone (Delete
+     * hard-deletes it) or Pending (Back-to-Pending) - so that trigger never sees them and the
+     * copies are stranded on the neighbouring groups. This catches exactly that case: an
+     * active-reach post with a live rippled_in copy but NO live Approved origin row. Reuses the
+     * same retraction (soft-delete + Message/Deleted log + ripple-membership cleanup, no
+     * Group/Left) and drops the reach row so it stops spreading; a later re-approval on the home
+     * group re-ripples it afresh. Best-effort: never breaks the run.
+     */
+    private function retractCopiesOrphanedByOriginRemoval(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
+    {
+        try {
+            $scopeSql = '';
+            $params = ['Approved'];
+            if ($onlyMsgid !== null) {
+                $scopeSql = ' AND mr.msgid = ?';
+                $params[] = $onlyMsgid;
+            }
+
+            $orphaned = DB::select(
+                'SELECT DISTINCT mr.msgid AS msgid
+                   FROM rippling_reach mr
+                   JOIN messages_groups mg
+                     ON mg.msgid = mr.msgid AND mg.rippled_in = 1 AND mg.deleted = 0
+                  WHERE NOT EXISTS (
+                          SELECT 1 FROM messages_groups o
+                           WHERE o.msgid = mr.msgid AND o.rippled_in = 0
+                             AND o.deleted = 0 AND o.collection = ?
+                        )' . $scopeSql,
+                $params
+            );
+            if (empty($orphaned)) {
+                return;
+            }
+            $msgids = array_map(static fn ($r) => (int) $r->msgid, $orphaned);
+
+            if ($dryRun) {
+                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
+                    ->whereIn('msgid', $msgids)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->count();
+
+                return;
+            }
+
+            foreach ($msgids as $msgid) {
+                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
+                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
+                $stats['removed']++;
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: retract-orphaned-copies failed: {$e->getMessage()}");
         }
     }
 
