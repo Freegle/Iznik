@@ -80,10 +80,50 @@ func TestReplyEligibleReach(t *testing.T) {
 	db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?", viewerID, group)
 }
 
-// While the master activation switch is OFF (the default), the reply-eligibility path is skipped
-// entirely: even a post that has rippled out beyond the viewer (and even a ban) leaves ReplyEligible
-// omitted, so the API is identical to pre-rippling and the app shows no view-only blocks.
-func TestReplyEligibleDarkWhenDisabled(t *testing.T) {
+// Data-driven activation: with the RIPPLE_ENABLED master switch OFF, a post that is actually
+// rippling (it has a rippling_reach row) is STILL reply-gated. This is the per-group trial
+// (RIPPLE_WITHIN_GROUPS) case — the reach engine populates rippling_reach without the master
+// switch, and the write-path gate (chat.CreateChatMessage) is likewise data-driven. The read
+// path must mark out-of-reach posts view-only here too, otherwise the UI offers a Reply button
+// the write path then rejects with 403 not_in_reach (Discourse: dejavu / msg 120820564).
+func TestReplyEligibleReachWhenMasterSwitchOff(t *testing.T) {
+	t.Setenv("RIPPLE_ENABLED", "false")
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("repeligtrial")
+	posterID := CreateTestUser(t, prefix, "Poster")
+	group := CreateTestGroup(t, prefix)
+	mid := CreateTestMessage(t, posterID, group, "OFFER: reply-eligible trial test", 51.5, -0.1)
+	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+	idStr := fmt.Sprint(mid)
+
+	// Reach row whose polygon does NOT contain the viewer → out of reach → replyeligible=false,
+	// even though RIPPLE_ENABLED is off (the post is rippling via the per-group trial).
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
+	msgs := message.GetMessagesByIds(viewerID, []string{idStr}, false)
+	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "trial post, master off → replyeligible set") {
+		assert.False(t, *msgs[0].ReplyEligible, "trial post outside reach, master off → replyeligible=false")
+	}
+
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+}
+
+// When a post is NOT rippling at all (no rippling_reach row) and the master switch is OFF, the
+// reply-eligibility path stays dark: the field is omitted so the API is identical to pre-rippling,
+// and a ban alone — with no reach row in play — does not mark the post view-only on this path.
+func TestReplyEligibleDarkWhenNotRippling(t *testing.T) {
 	t.Setenv("RIPPLE_ENABLED", "false")
 	db := database.DBConn
 
@@ -104,19 +144,15 @@ func TestReplyEligibleDarkWhenDisabled(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 	idStr := fmt.Sprint(mid)
 
-	// A reach row that does NOT contain the viewer AND a ban: both would set replyeligible=false
-	// when rippling is ON, so this proves the switch (not just absent data) makes the path dark.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
+	// No reach row for this post → not rippling. A ban alone must not set replyeligible here.
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 	db.Exec("INSERT INTO users_banned (userid, groupid) VALUES (?, ?) "+
 		"ON DUPLICATE KEY UPDATE userid = VALUES(userid)", viewerID, group)
 
 	msgs := message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) {
-		assert.Nil(t, msgs[0].ReplyEligible, "rippling off → reply-eligibility never set (post stays eligible)")
+		assert.Nil(t, msgs[0].ReplyEligible, "not rippling + master off → reply-eligibility stays dark")
 	}
 
-	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 	db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?", viewerID, group)
 }
