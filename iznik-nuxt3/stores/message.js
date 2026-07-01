@@ -4,7 +4,8 @@ import api from '~/api'
 import { APIError } from '~/api/APIErrors'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
+import { useGroupStore } from '~/stores/group'
 import { useMiscStore } from '~/stores/misc'
 
 // Debounce delay for batching message fetches (ms)
@@ -216,6 +217,26 @@ export const useMessageStore = defineStore({
               this.fetching[id] = null
             })
           }
+        }
+
+        // Batch-fetch the groups these messages belong to in one request, so the per-post
+        // MessageTag components find their group cached instead of each firing its own
+        // /group/{id} call. Done here (rather than only in the list component) so it covers
+        // every fetch path uniformly - initial render AND lazy pagination. It matters most
+        // for heavy-membership users on the nearby/reach and "all my communities" feeds,
+        // where a post can be in a group the viewer isn't a member of (so it isn't in the
+        // membership cache loaded at login). fetchBatch de-dupes against the cache and
+        // no-ops when everything is already present.
+        const groupIds = [
+          ...new Set(
+            left
+              .flatMap((id) => this.list[id]?.groups ?? [])
+              .map((g) => g.groupid)
+              .filter(Boolean)
+          ),
+        ]
+        if (groupIds.length) {
+          useGroupStore().fetchBatch(groupIds)
         }
       }
     },
@@ -508,8 +529,8 @@ export const useMessageStore = defineStore({
         throw e
       }
 
-      const isochroneStore = useIsochroneStore()
-      isochroneStore.markSeen(ids)
+      const nearbyStore = useNearbyStore()
+      nearbyStore.markSeen(ids)
 
       // Also update local cache to prevent watcher loop in MessageList.vue
       const idSet = new Set(ids)

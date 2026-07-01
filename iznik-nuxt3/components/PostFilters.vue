@@ -44,7 +44,7 @@
       </div>
       <!-- Rippling-out (#1): the catchment is worked out automatically and ripples
            out over time, so there's no manual travel-time slider. -->
-      <div v-if="browseView === 'nearby'" class="isochrones">
+      <div v-if="browseView === 'nearby'" class="nearby-help">
         <p class="help-text d-none d-md-block mt-0">
           We show posts near you first, then gradually further away.
           <nuxt-link no-prefetch to="/help?topic=which-posts">
@@ -380,7 +380,7 @@ const sort = computed({
     }
   }
 
-  .isochrones {
+  .nearby-help {
     grid-column: 1 / 3;
     grid-row: 4 / 5;
 

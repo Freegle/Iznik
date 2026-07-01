@@ -37,8 +37,8 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => ({}),
 }))
 
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => ({}),
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => ({}),
 }))
 
 const mockMiscStore = { modtools: false }

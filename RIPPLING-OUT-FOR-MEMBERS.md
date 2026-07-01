@@ -133,10 +133,13 @@ community does not affect the rest.
 
 ### Nearest and freshest first
 
-On the browse page you will see posts that are close to you and new to you. The old
-travel-time slider and transport picker are gone - the system works out the right
-distance for you and widens it automatically over time. You can still sort by "Newest
-posted" or "Nearby" if you prefer.
+On the browse page's "Nearby" view you see exactly the posts that have reached you - the
+ones close enough that you can get in touch right now. The old travel-time slider and
+transport picker are gone: the system works out the right distance for you and widens it
+automatically over time, so more posts appear in your Nearby view as they ripple towards
+you. You will not see distant posts you cannot yet reply to cluttering the list or map -
+Nearby stays genuinely nearby. You can still sort by "Newest posted" or "Nearby" if you
+prefer, and "All my communities" still shows everything in the communities you belong to.
 
 ### When you post, there is no group to choose
 

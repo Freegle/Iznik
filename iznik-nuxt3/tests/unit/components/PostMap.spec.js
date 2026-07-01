@@ -1,12 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import PostMap from '~/components/PostMap.vue'
 
+// Unmount each test's wrapper afterwards. PostMap watches the shared nearby-store bounds
+// ref; without cleanup a wrapper from a previous test stays mounted and re-runs its
+// getMessages() when a later test changes that ref, polluting call-count assertions.
+enableAutoUnmount(afterEach)
+
 // Hoisted mock values for reactive store state
 const {
-  mockIsochroneList,
-  mockIsochroneBounds,
+  mockNearbyBounds,
+  mockNearbyFetchMessages,
   mockGroupList,
   mockMessageStore,
   mockAuthStore,
@@ -19,8 +24,8 @@ const {
   const { ref } = require('vue')
 
   return {
-    mockIsochroneList: ref([]),
-    mockIsochroneBounds: ref(null),
+    mockNearbyBounds: ref(null),
+    mockNearbyFetchMessages: vi.fn().mockResolvedValue([]),
     mockGroupList: ref([]),
     mockMessageStore: {
       fetchInBounds: vi.fn().mockResolvedValue([]),
@@ -63,11 +68,10 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => ({
-    list: mockIsochroneList.value,
-    fetchMessages: vi.fn().mockResolvedValue([]),
-    bounds: mockIsochroneBounds,
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => ({
+    fetchMessages: mockNearbyFetchMessages,
+    bounds: mockNearbyBounds,
   }),
 }))
 
@@ -187,8 +191,8 @@ beforeEach(() => {
 describe('PostMap', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockIsochroneList.value = []
-    mockIsochroneBounds.value = null
+    mockNearbyBounds.value = null
+    mockNearbyFetchMessages.mockResolvedValue([])
     mockGroupList.value = []
     mockMyGroups.value = []
     mockMiscStore.get.mockReturnValue(false)
@@ -524,15 +528,20 @@ describe('PostMap', () => {
     })
   })
 
-  describe('isochrone display', () => {
-    it('renders isochrones when showIsochrones is true', async () => {
-      mockIsochroneList.value = [
-        { id: 1, polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))' },
-      ]
-      const wrapper = await createWrapper({ showIsochrones: true })
+  describe('isochrone overlay (fixed polygon override only)', () => {
+    it('renders the override polygon when showIsochrones is true', async () => {
+      const override = {
+        id: 1,
+        polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))',
+      }
+      const wrapper = await createWrapper({
+        showIsochrones: true,
+        isochroneOverride: override,
+      })
       await flushPromises()
-      // Isochrone geojson should be rendered
-      expect(wrapper.exists()).toBe(true)
+      // The override polygon's geojson should be rendered.
+      const geoJsonEls = wrapper.findAll('.l-geo-json')
+      expect(geoJsonEls.length).toBe(1)
     })
 
     it('applies Chaikin smoothing to isochrone polygons for the reach overlay', async () => {
@@ -574,18 +583,21 @@ describe('PostMap', () => {
     })
 
     it('does not render the reach overlay when showIsochrones is false', async () => {
-      mockIsochroneList.value = [
-        { id: 1, polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))' },
-      ]
-      const wrapper = await createWrapper({ showIsochrones: false })
+      const override = {
+        id: 1,
+        polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))',
+      }
+      const wrapper = await createWrapper({
+        showIsochrones: false,
+        isochroneOverride: override,
+      })
       await flushPromises()
       // With showIsochrones=false the l-geo-json elements for the overlay are not rendered.
       const geoJsonEls = wrapper.findAll('.l-geo-json')
       expect(geoJsonEls.length).toBe(0)
     })
 
-    it('renders no overlay when the user has no isochrones', async () => {
-      mockIsochroneList.value = []
+    it('renders no overlay when there is no override (no per-user isochrone polygon any more)', async () => {
       const wrapper = await createWrapper({ showIsochrones: true })
       await flushPromises()
       const geoJsonEls = wrapper.findAll('.l-geo-json')
@@ -733,6 +745,42 @@ describe('PostMap', () => {
       await flushPromises()
       // Messages should be filtered to only include Offer type
       expect(true).toBe(true)
+    })
+
+    it('fetches the nearby feed via the nearby store when showing nearby posts and the member has a location', async () => {
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      await createWrapper({ showIsochrones: true })
+      // getMessages() runs from the nearbyBounds watcher, so change the store bounds to
+      // trigger a fetch cycle.
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockNearbyFetchMessages).toHaveBeenCalled()
+    })
+
+    it('falls back to group bounds when showing nearby posts but the member has no location', async () => {
+      mockAuthStore.user = {
+        id: 1,
+        lat: null,
+        lng: null,
+        settings: {},
+      }
+      mockMyGroups.value = [{ id: 1 }]
+      await createWrapper({ showIsochrones: true })
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
     })
   })
 
