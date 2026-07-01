@@ -564,6 +564,27 @@ class UnifiedDigestService
             }
 
             $srid = (int) config('freegle.srid', 3857);
+
+            // Content-level dedup across a "prolific cross-poster"'s sibling copies. Such a poster
+            // posts one item as many SEPARATE msgids (one per group), all sharing
+            // fromuser+subject+locationid. Each copy gets its own rippling_reach row and is reach-
+            // mailed independently, and the reach dedup ledger (rippling_reach_notified) is keyed on
+            // (msgid,userid) — so a member near several of the copy's groups would get the SAME item
+            // once per msgid (Discourse #9850: a bed 8x; 64 members got one "Mirror" 2-9x). The daily
+            // digest already collapses these by content key; mirror that here by treating ALL sibling
+            // msgids as one for the dedup. Exact subject match (cross-post copies are byte-identical)
+            // within a recent window, so a genuine re-post of the same item weeks later still notifies.
+            $siblingMsgids = DB::table('messages')
+                ->where('fromuser', $msg->fromuser)
+                ->where('subject', $msg->subject)
+                ->whereRaw('locationid <=> ?', [$msg->locationid])
+                ->where('arrival', '>=', now()->subDays(14))
+                ->pluck('id')->map(fn ($v) => (int) $v)->all();
+            if (!in_array($msgid, $siblingMsgids, true)) {
+                $siblingMsgids[] = $msgid;
+            }
+            $siblingPlaceholders = implode(',', array_fill(0, count($siblingMsgids), '?'));
+
             $recipientIds = collect(DB::select(
                 "SELECT DISTINCT u.id AS id
                  FROM messages_groups mg
@@ -589,9 +610,10 @@ class UnifiedDigestService
                               ELSE l.lat END
                        ), ?))
                    AND NOT EXISTS (
-                         SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
+                         SELECT 1 FROM rippling_reach_notified n
+                         WHERE n.msgid IN ($siblingPlaceholders) AND n.userid = u.id
                        )",
-                [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
+                array_merge([Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid], $siblingMsgids)
             ))->pluck('id')->map(fn ($v) => (int) $v)->all();
 
             if (empty($recipientIds)) {
