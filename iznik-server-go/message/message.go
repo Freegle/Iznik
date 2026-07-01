@@ -1348,6 +1348,17 @@ func filterExpiredMessages(db *gorm.DB, msgs []MessageSummary) []MessageSummary 
 	return result
 }
 
+// FilterExpiredSummaries applies the same age-based expiry the My Posts endpoint
+// uses (filterExpiredMessages/applyExpiry) and returns only the still-active
+// summaries. The browse feeds' "own posts" arms — which query the messages table
+// directly and so bypass the messages_spatial pruning that removes expired posts
+// for everyone else — use this so a poster's own post drops off the feed at the
+// same moment it drops off My Posts, instead of lingering (within the 90-day
+// window) until the daily batch inserts an outcome row.
+func FilterExpiredSummaries(db *gorm.DB, msgs []MessageSummary) []MessageSummary {
+	return filterExpiredMessages(db, msgs)
+}
+
 // markExpiredMessages sets Hasoutcome=true on expired messages in-place (for active=false).
 // Also marks messages without spatial entries (and not Pending/Rejected) as having outcomes,
 // matching the active=true HAVING clause so navbar count and page count stay consistent.

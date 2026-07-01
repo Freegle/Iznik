@@ -223,14 +223,47 @@ func Messages(c *fiber.Ctx) error {
 			myid, utils.MESSAGE_LIKES_VIEW, myid, start,
 		).Scan(&ownCandidates)
 
+		// Apply the SAME age-based expiry the My Posts endpoint uses, so a poster's
+		// own post that has aged out of its group's display window doesn't keep
+		// showing on browse after My Posts has already hidden it as old. Convert the
+		// own candidates to summaries, then drop the expired ones.
+		ownSummaries := make([]message.MessageSummary, 0, len(ownCandidates))
+		for _, cand := range ownCandidates {
+			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env))
+		}
+		activeOwn := message.FilterExpiredSummaries(db, ownSummaries)
+
+		// Any own post that expired must not linger on the feed even if the reach arm
+		// (messages_spatial, not yet pruned by the daily batch) also surfaced it, so
+		// remove expired own posts from the reach-arm results too.
+		activeOwnIDs := make(map[uint64]bool, len(activeOwn))
+		for _, m := range activeOwn {
+			activeOwnIDs[m.ID] = true
+		}
+		expiredOwn := make(map[uint64]bool)
+		for _, cand := range ownCandidates {
+			if !activeOwnIDs[cand.ID] {
+				expiredOwn[cand.ID] = true
+			}
+		}
+		if len(expiredOwn) > 0 {
+			kept := res[:0]
+			for _, m := range res {
+				if !expiredOwn[m.ID] {
+					kept = append(kept, m)
+				}
+			}
+			res = kept
+		}
+
 		// De-dupe: an own post already surfaced by the reach arm must not appear twice.
 		seen := make(map[uint64]bool, len(res))
 		for _, m := range res {
 			seen[m.ID] = true
 		}
-		for _, cand := range ownCandidates {
-			if !seen[cand.ID] {
-				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env))
+		for _, m := range activeOwn {
+			if !seen[m.ID] {
+				res = append(res, m)
 			}
 		}
 

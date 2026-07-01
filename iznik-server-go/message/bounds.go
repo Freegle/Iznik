@@ -5,6 +5,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -21,12 +22,6 @@ func Bounds(c *fiber.Ctx) error {
 	limit := c.Query("limit", "")
 	limit64, _ := strconv.ParseUint(limit, 10, 64)
 
-	limitq := ""
-
-	if limit64 > 0 {
-		limitq = " LIMIT " + strconv.FormatUint(limit64, 10)
-	}
-
 	msgs := []MessageSummary{}
 
 	// The optional postvisibility property of a group indicates the area within which members must lie for a post
@@ -41,12 +36,9 @@ func Bounds(c *fiber.Ctx) error {
 		latlng.Lng = float32((swlng + nelng)) / 2
 	}
 
-	// We want to include our own messages, so that it is less obvious if a message is delayed for approval and
-	// hasn't made it into messages_spatial yet.
-	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
-
+	// The posts in the bounds that everyone can see: the spatial index, which the daily batch
+	// prunes of expired posts.
 	db.Raw(""+
-		"SELECT * FROM ("+
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
 		"messages_spatial.msgid AS id, "+
@@ -60,8 +52,28 @@ func Bounds(c *fiber.Ctx) error {
 		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
 		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point) "+
-		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
-		"UNION "+
+		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1",
+		myid, utils.MESSAGE_LIKES_VIEW,
+		swlng, swlat,
+		swlng, nelat,
+		nelng, nelat,
+		nelng, swlat,
+		swlng, swlat,
+		utils.SRID,
+		latlng.Lng,
+		latlng.Lat,
+		utils.SRID,
+	).Scan(&msgs)
+
+	// We also want to include our own messages, so that it is less obvious if a message is delayed for approval and
+	// hasn't made it into messages_spatial yet. This arm queries the messages table directly, so it bypasses the
+	// spatial-index pruning above; we therefore apply the same age-based expiry the My Posts endpoint uses so an
+	// aged-out own post drops off browse at the same time it drops off My Posts (rather than lingering here within
+	// the 90-day window until the daily batch inserts an outcome row).
+	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
+
+	ownMsgs := []MessageSummary{}
+	db.Raw(""+
 		"SELECT messages.lat, messages.lng, messages.id, "+
 		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
@@ -79,20 +91,7 @@ func Bounds(c *fiber.Ctx) error {
 		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
 		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"AND messages_outcomes.id IS NULL "+
-		"GROUP BY messages.id "+
-		") t "+
-		"ORDER BY unseen DESC, arrival DESC, id DESC "+
-		limitq+";",
-		myid, utils.MESSAGE_LIKES_VIEW,
-		swlng, swlat,
-		swlng, nelat,
-		nelng, nelat,
-		nelng, swlat,
-		swlng, swlat,
-		utils.SRID,
-		latlng.Lng,
-		latlng.Lat,
-		utils.SRID,
+		"GROUP BY messages.id",
 		utils.OUTCOME_TAKEN,
 		utils.OUTCOME_RECEIVED,
 		myid, utils.MESSAGE_LIKES_VIEW,
@@ -108,7 +107,54 @@ func Bounds(c *fiber.Ctx) error {
 		latlng.Lng,
 		latlng.Lat,
 		utils.SRID,
-	).Scan(&msgs)
+	).Scan(&ownMsgs)
+
+	// Drop own posts that have aged out, and note their ids so they don't linger via the spatial arm
+	// either (before the daily batch has pruned their spatial row).
+	activeOwn := filterExpiredMessages(db, ownMsgs)
+	activeOwnIDs := make(map[uint64]bool, len(activeOwn))
+	for _, m := range activeOwn {
+		activeOwnIDs[m.ID] = true
+	}
+	expiredOwn := make(map[uint64]bool)
+	for _, m := range ownMsgs {
+		if !activeOwnIDs[m.ID] {
+			expiredOwn[m.ID] = true
+		}
+	}
+
+	merged := make([]MessageSummary, 0, len(msgs)+len(activeOwn))
+	seen := make(map[uint64]bool, len(msgs)+len(activeOwn))
+	for _, m := range msgs {
+		if expiredOwn[m.ID] || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		merged = append(merged, m)
+	}
+	for _, m := range activeOwn {
+		if seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		merged = append(merged, m)
+	}
+	msgs = merged
+
+	// Order to match the old combined SQL: unseen first, then most-recent arrival, then highest id.
+	sort.SliceStable(msgs, func(i, j int) bool {
+		if msgs[i].Unseen != msgs[j].Unseen {
+			return msgs[i].Unseen
+		}
+		if !msgs[i].Arrival.Equal(msgs[j].Arrival) {
+			return msgs[i].Arrival.After(msgs[j].Arrival)
+		}
+		return msgs[i].ID > msgs[j].ID
+	})
+
+	if limit64 > 0 && uint64(len(msgs)) > limit64 {
+		msgs = msgs[:limit64]
+	}
 
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
