@@ -1,4 +1,5 @@
 import BaseAPI from '@/api/BaseAPI'
+import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
@@ -115,12 +116,13 @@ export default class MessageAPI extends BaseAPI {
   // in that item.
   // interestuserid lets the offerer record a replier's interest on their behalf;
   // omit it (or pass falsy) to express your own.
-  bulkInterest(id, items, interestuserid) {
+  bulkInterest(id, items, interestuserid, comment) {
     return this.$postv2('/message', {
       action: 'BulkInterest',
       id,
       bulkinterest: items,
       ...(interestuserid ? { interestuserid } : {}),
+      ...(comment ? { comment } : {}),
     })
   }
 
@@ -274,14 +276,19 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, log) {
-    return await this.$getv2(
-      '/message/count',
-      {
-        browseView,
-      },
-      log
-    )
+  async count(browseView, maxDistance, log) {
+    const params = {
+      browseView,
+    }
+
+    // Only send a distance limit when it's a real limit - the sentinel (or absent)
+    // means "no limit", and omitting it lets the server fall back to its own fast,
+    // unfiltered count rather than doing extra work for a limit that doesn't apply.
+    if (maxDistance != null && maxDistance < BROWSE_DISTANCE_UNLIMITED) {
+      params.maxDistance = maxDistance
+    }
+
+    return await this.$getv2('/message/count', params, log)
   }
 
   async markSeen(ids) {

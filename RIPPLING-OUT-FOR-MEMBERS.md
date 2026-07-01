@@ -131,15 +131,30 @@ community does not affect the rest.
 
 ## Things you will notice on the browse page
 
-### Nearest and freshest first
+### The most relevant posts first
 
 On the browse page's "Nearby" view you see exactly the posts that have reached you - the
-ones close enough that you can get in touch right now. The old travel-time slider and
-transport picker are gone: the system works out the right distance for you and widens it
-automatically over time, so more posts appear in your Nearby view as they ripple towards
-you. You will not see distant posts you cannot yet reply to cluttering the list or map -
-Nearby stays genuinely nearby. You can still sort by "Newest posted" or "Nearby" if you
-prefer, and "All my communities" still shows everything in the communities you belong to.
+ones close enough that you can get in touch right now. Posts you have not seen before
+appear first, then the ones you have already looked at; within each group, we bring the
+most worthwhile posts to the top by weighing up how close a post is, how fresh it is, and
+how much interest it has already had - not just which arrived most recently. So you should
+not find a five-day-old post from several miles away sitting above a fresh one from just
+up your street. The old travel-time slider and transport picker are gone: the system works
+out the right distance for you and widens it automatically over time, so more posts appear
+in your Nearby view as they ripple towards you. You will not see distant posts you cannot
+yet reply to cluttering the list or map - Nearby stays genuinely nearby. You can still sort
+by "Newest posted" or "Closest" if you prefer, and "All my communities" still shows
+everything in the communities you belong to.
+
+### A distance slider, if you want one
+
+In the browse filters there is a simple slider marked **"Nearer"** at one end and
+**"Further"** at the other - no numbers, just a feel for how far you would like posts to
+come from. It starts set to "Further", which means no extra limit beyond the posts that
+have naturally reached you. If you would rather only see things from close by, drag it
+towards "Nearer" at any time; drag it back whenever you like. Freegle remembers your
+choice, along with your other filters (which posts, which communities, and sort order), so
+you do not need to set them again next time you visit.
 
 ### When you post, there is no group to choose
 
@@ -151,10 +166,13 @@ that for you.
 
 ### "You can reply when it reaches you"
 
-You might occasionally see a post that you cannot yet reply to, because it has not
-rippled out to your area yet. You will see a friendly message explaining this. As soon
-as the post reaches your area, the reply option appears and you can get in touch as
-normal. Nothing is lost - it is just "not yet" rather than "no".
+On the default Nearby view, every post you see has already reached you, so you can
+always reply. Only if you move away from that default - for example by switching to
+"All my communities", or widening what you are looking at - might you occasionally come
+across a post that has not rippled out to your area yet. If so, you will see a friendly
+message instead of a reply box. As soon as the post reaches your area, the reply option
+appears and you can get in touch as normal. Nothing is lost - it is just "not yet" rather
+than "no".
 
 ---
 
@@ -163,6 +181,9 @@ normal. Nothing is lost - it is just "not yet" rather than "no".
 | What | How it works |
 |---|---|
 | Your post | Shown to people nearby first, then gradually further away |
+| Nearby browse order | Unseen posts first, then seen; each ordered by closeness, freshness and interest, not just newest |
+| Distance slider | Optional "Nearer/Further" filter in Browse; starts at "Further" (no extra limit) |
+| Browse filters | Remembered between visits, including the distance slider |
 | New communities | You are joined automatically so replies and contact work |
 | Email defaults | Immediate is switched to daily; no-email and daily are unchanged |
 | Community events/volunteering emails | Left at whatever you already had |

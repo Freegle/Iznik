@@ -16,4 +16,15 @@ type MessageSummary struct {
 	Lat        float64   `json:"lat"`
 	Lng        float64   `json:"lng"`
 	Unseen     bool      `json:"unseen"`
+	// Score is the rippling relevance score (see isochrone.Score) used to
+	// order the 'nearby' browse feed. Only populated on that path; zero/
+	// omitted elsewhere.
+	Score float64 `json:"score,omitempty"`
+	// Distance is the great-circle distance in miles from the viewer to this
+	// post, computed from the BLURRED (already-privacy-fuzzed) coordinates —
+	// never the real ones, so it can't be used to triangulate a post's true
+	// location. Only populated on the 'nearby' browse feed; 0 elsewhere (0 is
+	// a meaningful "very close" value there too, so this field is never
+	// omitted).
+	Distance float64 `json:"distance"`
 }

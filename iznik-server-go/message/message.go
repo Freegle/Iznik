@@ -848,10 +848,28 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	// only run when there's something to find (a known location / an actual ban), keeping
 	// them off the hot path for the common case.
 	//
-	// Gated by the master activation switch: while rippling is off this whole section is skipped,
-	// so ReplyEligible is never set and the response matches pre-rippling exactly (no reach query,
-	// no ban-eligibility query, no metrics write).
-	if rippleEnabled() && myid > 0 && len(messages) > 0 {
+	// Activation is DATA-DRIVEN, mirroring the write-path reach gate in
+	// chat.CreateChatMessage: the section runs when EITHER the RIPPLE_ENABLED master switch
+	// is on, OR at least one fetched post is actually rippling (it has a rippling_reach row).
+	// The per-group trial (RIPPLE_WITHIN_GROUPS) ripples posts WITHOUT the master switch, and
+	// the write gate is not switch-gated either — so keying the read path on the master switch
+	// alone left the UI offering a Reply button on trial posts that the write path then
+	// rejected with 403 not_in_reach (Discourse: dejavu / msg 120820564). The EXISTS probe
+	// runs only when the switch is off, so the fully-disabled case stays a single cheap
+	// indexed lookup and otherwise matches pre-rippling exactly.
+	active := rippleEnabled()
+	if !active && myid > 0 && len(messages) > 0 {
+		probeIDs := make([]uint64, 0, len(messages))
+		for _, m := range messages {
+			probeIDs = append(probeIDs, m.ID)
+		}
+		var anyReach int
+		// rippling_reach may not exist until the reach engine (PR A) ships → treat as inactive.
+		_ = db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach WHERE msgid IN (?))", probeIDs).Scan(&anyReach).Error
+		active = anyReach == 1
+	}
+
+	if active && myid > 0 && len(messages) > 0 {
 		ids := make([]uint64, 0, len(messages))
 		for _, m := range messages {
 			ids = append(ids, m.ID)
@@ -1328,6 +1346,17 @@ func filterExpiredMessages(db *gorm.DB, msgs []MessageSummary) []MessageSummary 
 		}
 	}
 	return result
+}
+
+// FilterExpiredSummaries applies the same age-based expiry the My Posts endpoint
+// uses (filterExpiredMessages/applyExpiry) and returns only the still-active
+// summaries. The browse feeds' "own posts" arms — which query the messages table
+// directly and so bypass the messages_spatial pruning that removes expired posts
+// for everyone else — use this so a poster's own post drops off the feed at the
+// same moment it drops off My Posts, instead of lingering (within the 90-day
+// window) until the daily batch inserts an outcome row.
+func FilterExpiredSummaries(db *gorm.DB, msgs []MessageSummary) []MessageSummary {
+	return filterExpiredMessages(db, msgs)
 }
 
 // markExpiredMessages sets Hasoutcome=true on expired messages in-place (for active=false).

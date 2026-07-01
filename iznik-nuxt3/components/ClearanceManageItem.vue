@@ -1,7 +1,13 @@
 <template>
   <div class="clearance-item" :data-testid="'clearance-item-' + item.id">
     <div class="clearance-item__head">
-      <span class="clearance-item__photo">
+      <button
+        type="button"
+        class="clearance-item__photo"
+        :class="{ 'clearance-item__photo--zoom': thumb }"
+        :title="thumb ? 'Click to enlarge' : ''"
+        @click.stop.prevent="enlarge"
+      >
         <img
           v-if="thumb"
           :src="thumb"
@@ -10,7 +16,7 @@
           @error="brokenImage"
         />
         <v-icon v-else icon="image" class="clearance-item__nophoto" />
-      </span>
+      </button>
       <div class="clearance-item__title">
         <span class="clearance-item__ref">#{{ index + 1 }}</span>
         <span class="clearance-item__name">{{ item.name }}</span>
@@ -109,13 +115,25 @@
         <ClearanceCandidate v-for="row in inactiveRows" :key="row.userid" v-bind="candProps(row)" />
       </template>
     </div>
+
+    <!-- Full-screen photo zoom, opened from the item photo (offerer view). -->
+    <MessagePhotosModal
+      v-if="showPhotos"
+      :id="message.id"
+      :initial-index="photoIndex"
+      @hidden="showPhotos = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, defineAsyncComponent } from 'vue'
 import ClearanceCandidate from '~/components/ClearanceCandidate'
 import HelperItemSummary from '~/components/HelperItemSummary'
+
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('~/components/MessagePhotosModal')
+)
 import {
   isAllocatedState,
   isPoolState,
@@ -275,6 +293,18 @@ const thumb = computed(() => {
   return (a && (a.paththumb || a.path)) || props.item.photourl || null
 })
 
+// Full-screen photo zoom, opened from the item photo.
+const showPhotos = ref(false)
+const photoIndex = ref(0)
+function enlarge() {
+  const att = props.item.attachments && props.item.attachments[0]
+  if (!att) return
+  const all = props.message.attachments || []
+  const idx = all.findIndex((a) => a.id === att.id)
+  photoIndex.value = idx >= 0 ? idx : 0
+  showPhotos.value = true
+}
+
 // Names of OTHER items in this clearance the given user is already allocated.
 // Surfacing this lets the offerer give one person several items in one trip.
 function otherAllocationsFor(userid) {
@@ -318,10 +348,22 @@ defineExpose({
 @import 'assets/css/_color-vars.scss';
 
 .clearance-item {
-  border: 1px solid $color-gray--lighter;
-  border-radius: 6px;
-  padding: 0.75rem;
-  margin-bottom: 0.75rem;
+  border: 1px solid $color-gray--light;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.85rem;
+  background-color: $color-white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.clearance-item__photo--zoom {
+  cursor: zoom-in;
+}
+
+/* The photo is a button now — strip default button chrome. */
+.clearance-item__photo {
+  padding: 0;
+  border: 0;
 }
 
 .clearance-item__head {

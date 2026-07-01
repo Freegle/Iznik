@@ -81,6 +81,15 @@
           v-html="currentNode.html"
         />
 
+        <!-- Shared component content for detailed answers - e.g. which-posts, which is
+             also rendered by the browse-page filters "How does this work?" modal, so
+             the copy lives in one place and both stay consistent. -->
+        <component
+          :is="currentNode.component"
+          v-if="currentNode.component"
+          class="flow-html"
+        />
+
         <!-- App download links -->
         <div v-if="currentNode.showAppLinks" class="flow-app-links">
           <div class="app-links">
@@ -186,6 +195,7 @@ import ChatButton from '~/components/ChatButton'
 import NoticeMessage from '~/components/NoticeMessage'
 import SupportLink from '~/components/SupportLink'
 import ExternalLink from '~/components/ExternalLink'
+import WhichPostsExplanation from '~/components/WhichPostsExplanation.vue'
 import { useAuthStore } from '~/stores/auth'
 import { useClientLog } from '~/composables/useClientLog'
 
@@ -317,9 +327,10 @@ const helpTree = {
   },
 
   // === WHICH POSTS DO I SEE? (rippling-out member FAQ, #8) ===
+  // Reuses WhichPostsExplanation.vue, the same component the browse-page filters'
+  // "How does this work?" modal renders, so the copy lives in one place.
   'which-posts': {
-    html: `<p>When someone offers something, we show it to people nearby first, then gradually ripple it out to people further away as time passes. This keeps freegling local — neighbours get first chance to collect, which means less travel and a fairer chance for everyone.</p>
-<p>Because of this, you might occasionally find you're not able to reply to a post because it hasn't rippled out to your area yet. As soon as it reaches you, you'll be able to reply. <em>(This is a new change to how Freegle works.)</em></p>`,
+    component: WhichPostsExplanation,
     options: [{ id: 'start', label: 'Start over', icon: 'home' }],
   },
 

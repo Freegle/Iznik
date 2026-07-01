@@ -2373,7 +2373,8 @@
             ]
           }
         ],
-        "description": "Returns all isochrones for the authenticated user",
+        "deprecated": true,
+        "description": "DEPRECATED (PR #921, no current client calls this) - the isochrone editor was removed in the rippling-out reach flip; only /isochrone/message and /message/count remain in use. Returns all isochrones for the authenticated user",
         "tags": [
           "isochrone"
         ],
@@ -2396,7 +2397,8 @@
             ]
           }
         ],
-        "description": "Creates a new isochrone for the authenticated user",
+        "deprecated": true,
+        "description": "DEPRECATED (PR #921, no current client calls this) - isochrone editor removed. Creates a new isochrone for the authenticated user",
         "tags": [
           "isochrone"
         ],
@@ -2422,7 +2424,8 @@
             ]
           }
         ],
-        "description": "Deletes an isochrone for the authenticated user",
+        "deprecated": true,
+        "description": "DEPRECATED (PR #921, no current client calls this) - isochrone editor removed. Deletes an isochrone for the authenticated user",
         "tags": [
           "isochrone"
         ],
@@ -2445,7 +2448,8 @@
             ]
           }
         ],
-        "description": "Updates an existing isochrone",
+        "deprecated": true,
+        "description": "DEPRECATED (PR #921, no current client calls this) - isochrone editor removed. Updates an existing isochrone",
         "tags": [
           "isochrone"
         ],

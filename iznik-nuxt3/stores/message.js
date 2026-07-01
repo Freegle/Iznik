@@ -44,8 +44,12 @@ export const useMessageStore = defineStore({
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, log = true) {
-      const ret = await api(this.config).message.count(browseView, log)
+    async fetchCount(browseView, maxDistance, log = true) {
+      const ret = await api(this.config).message.count(
+        browseView,
+        maxDistance,
+        log
+      )
       this.count = ret?.count || 0
       return this.count
     },
@@ -327,11 +331,12 @@ export const useMessageStore = defineStore({
     },
     // Register the current user's interest in bulk-offer items, then refetch so
     // the per-item interest summary and yourinterest are up to date.
-    async bulkInterest(id, items, interestuserid) {
+    async bulkInterest(id, items, interestuserid, comment) {
       const data = await api(this.config).message.bulkInterest(
         id,
         items,
-        interestuserid
+        interestuserid,
+        comment
       )
       const message = await this.fetch(id, true)
       this.list[id] = message

@@ -71,6 +71,56 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, post(), "in-app reply accepted once the reach covers the replier")
 }
 
+// TestCreateChatMessage_ReportToModsNotReachGated verifies the reach gate does NOT apply to a
+// report. A report goes to the group's mods (User2Mod) and carries refmsgid (to link the reported
+// post), so CreateChatMessage types it CHAT_MESSAGE_INTERESTED — the same type as an Interested
+// reply. But reporting must work regardless of the reporter's location, even for a rippled post
+// whose reach hasn't reached them (Discourse #9852: a report of a rippled South-London post 403'd
+// because the reporter was outside its reach polygon). The gate is scoped to User2User, so the
+// identical setup that rejects a reply (above) must ACCEPT a report.
+func TestCreateChatMessage_ReportToModsNotReachGated(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("reachreport")
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	// Reporter is at (51.5, -0.1) and — like Neville in #9852 — is NOT a member of the post's group.
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, reporterID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach report test item", 51.5, -0.1)
+
+	// Reach exists but does NOT cover the reporter (far to the east) — this is exactly the polygon
+	// that 403s a User2User reply in the test above.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857))", msgID)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	// Report chat: reporter -> the group's mods (User2Mod), reporter is user1 so is authorised.
+	chatID := CreateTestChatRoom(t, reporterID, nil, &groupID, "User2Mod")
+	_, token := CreateTestSession(t, reporterID)
+
+	var payload chat.ChatMessage
+	payload.Message = "I'm reporting this post as inappropriate: it's written as a sale."
+	payload.Refmsgid = &msgID
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode,
+		"a report to mods (User2Mod) must NOT be reach-gated even when the reporter is outside the post's reach")
+}
+
 // TestCreateChatMessage_RecordsReplyAttribution verifies the rippling reply-source capture: posting
 // an Interested reply records, in rippling_reply_attribution, whether the replier was an ESTABLISHED
 // home-group member at reply time. A membership made well before the reply -> home (1). A non-member

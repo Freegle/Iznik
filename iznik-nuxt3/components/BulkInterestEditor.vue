@@ -6,8 +6,8 @@
   >
     <div class="bulkinteresteditor__intro small text-muted mb-1">
       <template v-if="editingOwn">
-        The items you'd like — turn on any others you want, or turn one off to
-        drop it.
+        The items you've asked for. To change these, just send a message in the
+        chat.
       </template>
       <template v-else-if="editable">
         What {{ theirName }} would like — turn on anything they've asked for in
@@ -41,7 +41,7 @@
           {{ item.name }}
         </span>
         <b-form-select
-          v-if="picks[item.id].checked"
+          v-if="picks[item.id].checked && item.quantity > 1"
           v-model="picks[item.id].quantity"
           :options="qtyOptions(item)"
           size="sm"
@@ -82,12 +82,22 @@ const { myid } = useMe()
 const busy = ref(false)
 
 const message = computed(() => messageStore.byId(props.messageid) || {})
-const items = computed(() => message.value?.bulkitems || [])
+// Items the user is interested in sort to the top so they're easy to see.
+const items = computed(() => {
+  const list = message.value?.bulkitems || []
+  const rank = (it) => {
+    const r = interestFor(it)
+    return r && r.state !== 'Withdrawn' ? 0 : 1
+  }
+  return [...list].sort((a, b) => rank(a) - rank(b))
+})
 
 // Editing your own interest, or (as the offerer) recording someone else's.
 const editingOwn = computed(() => props.interestuserid === myid.value)
 const isOfferer = computed(() => message.value?.fromuser === myid.value)
-const editable = computed(() => editingOwn.value || isOfferer.value)
+// Only the offerer edits interest here. A replier's own view is read-only —
+// they ask for changes via normal chat messages instead.
+const editable = computed(() => isOfferer.value)
 
 const theirName = computed(() => {
   const u = userStore.byId(props.interestuserid)

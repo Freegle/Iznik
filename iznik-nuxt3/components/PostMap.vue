@@ -63,6 +63,11 @@
             </div>
             <div v-if="showIsochrones">
               <l-geo-json
+                v-if="coverageGeoJSON"
+                :geojson="coverageGeoJSON"
+                :options="isochroneOptions"
+              />
+              <l-geo-json
                 v-for="g in isochroneGEOJSONs"
                 :key="'isochrone' + g.id"
                 :geojson="g.json"
@@ -101,7 +106,15 @@ import { useAuthStore } from '~/stores/auth'
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css'
 import '~/assets/css/gesture-handling.css'
 import { useMe } from '~/composables/useMe'
-import { smoothGeoJSON } from '~/composables/useReachPolygon'
+import {
+  smoothGeoJSON,
+  buildCoverageGeoJSON,
+} from '~/composables/useReachPolygon'
+import {
+  isWithinDistance,
+  filterMessagesByDistance,
+} from '~/composables/useDistance'
+import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
 
 const props = defineProps({
   showIsochrones: {
@@ -177,6 +190,15 @@ const props = defineProps({
     type: Number,
     required: false,
     default: null,
+  },
+  // Personal distance preference (miles). BROWSE_DISTANCE_UNLIMITED (the
+  // default) means "no client-side limit" - show everything the reach feed
+  // returned. Anything smaller filters the map markers (and the coverage hull)
+  // to posts within that distance, so the map tracks the Browse slider.
+  selectedMaxDistance: {
+    type: Number,
+    required: false,
+    default: BROWSE_DISTANCE_UNLIMITED,
   },
 })
 
@@ -338,10 +360,31 @@ const groupsInBounds = computed(() => {
   return sorted
 })
 
+// Posts narrowed by the member's distance slider (selectedMaxDistance).
+// BROWSE_DISTANCE_UNLIMITED = show everything the reach feed returned. This is
+// what the map markers and the coverage hull are drawn from, so the map tracks
+// the slider the same way the list does.
+const distanceFilteredMessages = computed(() => {
+  return filterMessagesByDistance(messageList.value, props.selectedMaxDistance)
+})
+
 const messagesForMap = computed(() => {
-  return mapObject.value && messageList.value && messageList.value.length
-    ? messageList.value
+  return mapObject.value && distanceFilteredMessages.value.length
+    ? distanceFilteredMessages.value
     : []
+})
+
+// A smoothed convex hull enclosing the posts currently shown, as an indication
+// of the area covered. The true reach is travel-time-based (not a simple
+// radius), so this is only an approximation - but it shrinks as the slider is
+// pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
+// this is an outward-rounded hull rather than Chaikin smoothing.
+const coverageGeoJSON = computed(() => {
+  if (!props.showIsochrones) return null
+  const points = messagesForMap.value
+    .filter((m) => m.lat != null || m.lng != null)
+    .map((m) => [m.lng, m.lat])
+  return buildCoverageGeoJSON(points)
 })
 
 const isochrones = computed(() => {
@@ -376,28 +419,32 @@ const isochroneOptions = computed(() => {
   // Faded fill so post pins remain clearly visible; soft border echoes the
   // rippling explorer's reach polygon style.
   return {
-    fillColor: '#3388cc',
+    fillColor: ISOCHRONE_COLOR,
     fill: true,
     fillOpacity: 0.12,
-    color: '#3388cc',
+    color: ISOCHRONE_COLOR,
     weight: 2,
     opacity: 0.5,
   }
 })
 
 const messageIds = computed(() => {
-  return new Set(messageList.value.map((m) => m.id))
+  return new Set(distanceFilteredMessages.value.map((m) => m.id))
 })
 
 const secondaryMessagesForMap = computed(() => {
+  const withinDistance = (m) =>
+    isWithinDistance(m.distance, props.selectedMaxDistance)
+
   if (secondaryMessageList.value?.length > 200) {
     // So many posts that the precise numbers no longer matter that much.  So return all the ones we have fetched
     // rather than spend CPU on filtering (which is a significant issue on slow browsers).
-    return secondaryMessageList.value
+    return secondaryMessageList.value.filter(withinDistance)
   } else {
     // Return anything relevant we have fetched which is not already in the primary one.
     return secondaryMessageList.value.filter((m) => {
       return (
+        withinDistance(m) &&
         !messageIds.value.has(m.id) &&
         (!props.groupid || m.groupid === props.groupid) &&
         (props.type === 'All' || m.type === props.type)
@@ -426,18 +473,65 @@ watch(zoom, (newVal) => {
   }
 })
 
-watch(nearbyBounds, (newVal) => {
-  if (newVal && mapObject.value) {
-    // Frame the map around the nearby messages we've fetched.
-    try {
-      mapObject.value.fitBounds(newVal)
-    } catch (e) {
-      // This happens when leaflet is destroyed.
-      console.log('Ignore flyToBounds exception', e)
-    }
+// Fit the map to the currently-shown (distance-filtered) markers, with a little
+// padding, so the map frames what's actually visible - and zooms in as the
+// distance slider is pulled in. No-op if the map isn't ready or nothing has
+// coordinates.
+function fitToShownMarkers() {
+  if (!mapObject.value) return
+  const latlngs = messagesForMap.value
+    .filter((m) => m.lat != null || m.lng != null)
+    .map((m) => [m.lat, m.lng])
+  if (!latlngs.length) return
+  try {
+    mapObject.value.fitBounds(new window.L.LatLngBounds(latlngs), {
+      padding: [40, 40],
+      maxZoom: props.postZoom + 3,
+    })
+  } catch (e) {
+    // This happens when leaflet is destroyed.
+    console.log('Ignore fitToShownMarkers exception', e)
   }
+}
+
+watch(nearbyBounds, () => {
+  // Frame the map around the nearby messages we've fetched (with padding).
+  fitToShownMarkers()
   getMessages()
 })
+
+// Re-fit whenever the set of shown posts changes - the distance slider narrowing
+// or widening, or new data arriving - so the map always frames what's on screen.
+// Keyed on the count + bounds of the shown set and debounced, so the map settles
+// once after any churn rather than fighting itself mid-update.
+let fitDebounce = null
+watch(
+  () => {
+    const m = messagesForMap.value
+    if (!m.length) return '0'
+    let latMin = Infinity
+    let latMax = -Infinity
+    let lngMin = Infinity
+    let lngMax = -Infinity
+    for (const p of m) {
+      if (p.lat != null) {
+        latMin = Math.min(latMin, p.lat)
+        latMax = Math.max(latMax, p.lat)
+      }
+      if (p.lng != null) {
+        lngMin = Math.min(lngMin, p.lng)
+        lngMax = Math.max(lngMax, p.lng)
+      }
+    }
+    return `${m.length}:${latMin.toFixed(2)}:${latMax.toFixed(
+      2
+    )}:${lngMin.toFixed(2)}:${lngMax.toFixed(2)}`
+  },
+  () => {
+    if (fitDebounce) clearTimeout(fitDebounce)
+    fitDebounce = setTimeout(fitToShownMarkers, 200)
+  }
+)
 
 watch(
   groups,

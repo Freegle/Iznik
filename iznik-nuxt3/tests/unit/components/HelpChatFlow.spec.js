@@ -668,23 +668,28 @@ describe('HelpChatFlow', () => {
     })
 
     describe('which-posts path (rippling-out #8)', () => {
-      it('shows the rippling-out explanation when clicked', async () => {
+      it('shows the which-posts explanation when clicked', async () => {
         const wrapper = createWrapper()
         const option = wrapper
           .findAll('.flow-option')
           .find((o) => o.text().includes('Which posts do I see?'))
         await option.trigger('click')
-        expect(wrapper.text()).toContain('we show it to people nearby first')
-        expect(wrapper.text()).toContain('new change to how Freegle works')
+        expect(wrapper.text()).toContain('Show posts from')
+        expect(wrapper.text()).toContain('distance slider')
+        // The shared explainer describes how it works, not that it changed.
+        expect(wrapper.text()).not.toContain('new change to how Freegle works')
       })
 
-      it('renders the answer as html content', async () => {
+      it('renders the shared WhichPostsExplanation component', async () => {
         const wrapper = createWrapper()
         const option = wrapper
           .findAll('.flow-option')
           .find((o) => o.text().includes('Which posts do I see?'))
         await option.trigger('click')
         expect(wrapper.find('.flow-html').exists()).toBe(true)
+        // The same component the browse-page filters modal renders (WhichPostsModal),
+        // so the two stay consistent.
+        expect(wrapper.text()).toContain('Can I always reply?')
       })
     })
 
