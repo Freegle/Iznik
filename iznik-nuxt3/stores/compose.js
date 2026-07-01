@@ -39,11 +39,22 @@ export const useComposeStore = defineStore({
     max: 4,
     uploading: false,
     lastSubmitted: 0,
+    // In-progress bulk "clearance" (pages/give/clearance.vue). Held here so it
+    // survives a refresh via this store's localStorage persistence — a clearance
+    // holds far more (many items + photos) than a normal post, so losing it hurts.
+    clearanceDraft: null,
   }),
   actions: {
     init(config) {
       this.config = config
       this.$api = api(config)
+    },
+    // Save / clear the in-progress clearance draft (persisted to localStorage).
+    saveClearanceDraft(draft) {
+      this.clearanceDraft = draft
+    },
+    clearClearanceDraft() {
+      this.clearanceDraft = null
     },
     calculateSteps(type) {
       let steps = 0
@@ -158,7 +169,25 @@ export const useComposeStore = defineStore({
         data.accessinstructions = message.accessinstructions
       }
 
+      if (data.bulkitems || data.bulkslots || data.accessinstructions) {
+        console.log('[compose] createDraft PUT /message (bulk)', {
+          bulkitemCount: data.bulkitems ? data.bulkitems.length : 0,
+          bulkitems: data.bulkitems,
+          bulkslots: data.bulkslots,
+          attachments: data.attachments,
+          hasAccess: !!data.accessinstructions,
+        })
+      }
+
       const ret = await this.$api.message.put(data)
+
+      if (data.bulkitems) {
+        console.log('[compose] createDraft <- response', {
+          id: ret?.id,
+          bulkcount: ret?.bulkcount,
+          ret,
+        })
+      }
 
       // For unauthenticated users, Go creates a user and returns auth tokens.
       // Store them so the subsequent JoinAndPost call is authenticated.
@@ -181,7 +210,11 @@ export const useComposeStore = defineStore({
           return data?.error !== 403
         },
       })
-      console.log('Returned', ret)
+      console.log('[compose] submitDraft joinAndPost <- response', {
+        id,
+        bulkcount: ret?.bulkcount,
+        ret,
+      })
 
       // Fetch the submitted message - if we're on My Posts, for example, we want to update what we see.
       const messageStore = useMessageStore()

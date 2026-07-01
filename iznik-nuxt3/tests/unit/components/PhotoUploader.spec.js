@@ -1367,6 +1367,34 @@ describe('PhotoUploader', () => {
     })
   })
 
+  describe('compact mode', () => {
+    it('shows only the compact add button and no gallery when compact', () => {
+      createWrapper({ compact: true, modelValue: [] })
+      expect(wrapper.find('.compact-add').exists()).toBe(true)
+      expect(wrapper.find('.empty-state').exists()).toBe(false)
+    })
+
+    it('hides the featured photo, carousel and add-more even with photos', () => {
+      createWrapper({
+        compact: true,
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      expect(wrapper.find('.featured-photo').exists()).toBe(false)
+      expect(wrapper.find('.thumbnail-carousel').exists()).toBe(false)
+      expect(wrapper.find('.add-more-section').exists()).toBe(false)
+      expect(wrapper.find('.compact-add').exists()).toBe(true)
+    })
+
+    it('is not compact by default — the gallery still shows', () => {
+      createWrapper({ modelValue: [{ id: 1, ouruid: 'uid1' }] })
+      expect(wrapper.find('.compact-add').exists()).toBe(false)
+      expect(wrapper.find('.featured-photo').exists()).toBe(true)
+    })
+  })
+
   // AssertFlip test — Step 1: documents the buggy behaviour (PASSES on current code).
   // Step 2 (inverted) is below and FAILS until the fix lands.
   describe('AI image pruning via Uppy upload (web mode) — bug: handleUppySuccess does not remove AI photos', () => {
