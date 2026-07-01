@@ -76,6 +76,11 @@ class ExpandService
         // from the experiment (poster had already left, but the post stayed live there). See
         // ExpandServiceTest::test_*_retraction_*_not_gated_by_current_area_scope.
         $this->removeStaleAndRetract($dryRun, $stats, $onlyMsgid);
+        // 1a. Pull rippled-in copies stranded when the HOME post is deleted or moved back to
+        //     pending on its origin group. Those actions leave the rippled-in copies Approved
+        //     (so the post still has messages_spatial rows) while the origin row is gone or
+        //     Pending, so the spatial-null trigger in removeStaleAndRetract never sees them.
+        $this->retractCopiesOrphanedByOriginRemoval($dryRun, $stats, $onlyMsgid);
         // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
         //     leave removes the poster's post from that group (not just their membership).
         $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid);
@@ -87,6 +92,49 @@ class ExpandService
         if ($this->inActiveHours()) {
             $this->advanceDue($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
         }
+
+        return $stats;
+    }
+
+    /**
+     * One-off (re-runnable) backfill: seed a rippling_reach row for every LIVE post that is
+     * eligible to ripple but has none — the posts whose messages_spatial.arrival predates the
+     * go-live cutoff (freegle.ripple.enabled_at) and so were never picked up by initialiseNew.
+     *
+     * It reuses initialiseNew EXACTLY (same concurrent routing, blurred-origin de-dup, tick
+     * placement, INSERT, cross-post rippleIntoNewGroups and poster auto-join), only lifting the
+     * arrival cutoff, so a backfilled reach row is identical to a natively-initialised one. It
+     * deliberately does NOT retract, advance or otherwise touch existing reach rows: the
+     * per-minute ripple:expand cron advances the seeded rows on later ticks (division of labour —
+     * backfill seeds, expand grows). Because it only INSERTs seed rows (Galera-safe, one row per
+     * INSERT inside initialiseNew) it cannot fight the expand cron; the command also takes a
+     * DISTINCT Cache lock ('ripple:backfill:run', never 'ripple:expand:run').
+     *
+     * Idempotent and resumable: a post that already has a reach row is skipped by the same
+     * LEFT JOIN rippling_reach ... IS NULL the live path uses, so re-running drains the backlog
+     * in --limit-sized bites. Gated exactly like process(): an UNSCOPED backfill is inert while
+     * global rippling is off, but a within-poly scope is still allowed through (experiment path).
+     *
+     * NB seeding is NOT a cheap insert: initialiseNew computes each post's reach polygon inline
+     * via the routing server (deduped by blurred origin, fanned out at compute_concurrency) and
+     * cross-posts the post into its tick-0 groups. The routing server is therefore the throughput
+     * limiter, which is why $shardCount/$shardIndex let several instances drain disjoint msgid
+     * slices in parallel — keep shards x compute_concurrency within the routing server's headroom.
+     *
+     * @return array{initialized:int,skipped:int,errors:int,rippled_in:int,memberships_added:int}
+     */
+    public function backfill(bool $dryRun = false, int $limit = 500, ?string $withinPolyWkt = null, ?int $shardCount = null, ?int $shardIndex = null, bool $recompute = false): array
+    {
+        $stats = [
+            'initialized' => 0, 'skipped' => 0, 'errors' => 0,
+            'rippled_in' => 0, 'mailed' => 0, 'memberships_added' => 0, 'reused' => 0,
+        ];
+
+        if (!config('freegle.ripple.enabled') && $withinPolyWkt === null) {
+            return $stats;
+        }
+
+        $this->initialiseNew($dryRun, $limit, $stats, null, $withinPolyWkt, true, $shardCount, $shardIndex, $recompute);
 
         return $stats;
     }
@@ -281,6 +329,66 @@ class ExpandService
     }
 
     /**
+     * Pull rippled-in copies stranded when the HOME post is no longer live-approved on its
+     * origin group. removeStaleAndRetract only fires once a post has left messages_spatial
+     * entirely, but a mod Delete or Back-to-Pending on the origin group leaves the rippled-in
+     * copies Approved (so the msgid still has spatial rows) while the origin row is gone (Delete
+     * hard-deletes it) or Pending (Back-to-Pending) - so that trigger never sees them and the
+     * copies are stranded on the neighbouring groups. This catches exactly that case: an
+     * active-reach post with a live rippled_in copy but NO live Approved origin row. Reuses the
+     * same retraction (soft-delete + Message/Deleted log + ripple-membership cleanup, no
+     * Group/Left) and drops the reach row so it stops spreading; a later re-approval on the home
+     * group re-ripples it afresh. Best-effort: never breaks the run.
+     */
+    private function retractCopiesOrphanedByOriginRemoval(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
+    {
+        try {
+            $scopeSql = '';
+            $params = ['Approved'];
+            if ($onlyMsgid !== null) {
+                $scopeSql = ' AND mr.msgid = ?';
+                $params[] = $onlyMsgid;
+            }
+
+            $orphaned = DB::select(
+                'SELECT DISTINCT mr.msgid AS msgid
+                   FROM rippling_reach mr
+                   JOIN messages_groups mg
+                     ON mg.msgid = mr.msgid AND mg.rippled_in = 1 AND mg.deleted = 0
+                  WHERE NOT EXISTS (
+                          SELECT 1 FROM messages_groups o
+                           WHERE o.msgid = mr.msgid AND o.rippled_in = 0
+                             AND o.deleted = 0 AND o.collection = ?
+                        )' . $scopeSql,
+                $params
+            );
+            if (empty($orphaned)) {
+                return;
+            }
+            $msgids = array_map(static fn ($r) => (int) $r->msgid, $orphaned);
+
+            if ($dryRun) {
+                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
+                    ->whereIn('msgid', $msgids)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->count();
+
+                return;
+            }
+
+            foreach ($msgids as $msgid) {
+                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
+                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
+                $stats['removed']++;
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: retract-orphaned-copies failed: {$e->getMessage()}");
+        }
+    }
+
+    /**
      * Pull every rippled-in copy of a post that has left the browsable set and clean up the
      * memberships rippling created for it. Soft-deletes (deleted=1) each rippled_in
      * messages_groups copy with a Message/Deleted audit log, then — for each group the copy was
@@ -431,7 +539,88 @@ class ExpandService
         }
     }
 
-    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
+    /**
+     * One-off remediation for the window before rippling honoured users_banned: for every
+     * ripple-join (memberships.rippled=1) into a group the member is now banned from, soft-delete
+     * that member's rippled-in post copies still live there and remove the ripple-join membership.
+     *
+     * A ban (users_banned row, no expiry) is an explicit mod ejection that deletes the membership
+     * and withdraws the poster's posts; the unguarded ripple used to re-join the banned poster and
+     * re-insert their post. Only ripple-joins (rippled=1) are removed — an organic membership is
+     * never touched. Driven off the membership rows, so it targets exactly "banned users who were
+     * (re-)joined by rippling". Galera-safe: one row per statement; honours --dry-run.
+     *
+     * @return array{pairs:int,memberships_removed:int,posts_pulled:int}
+     */
+    public function pullBannedRippleMemberships(?int $userId, int $limit, bool $dryRun, array &$stats): array
+    {
+        $q = DB::table('memberships as m')
+            ->join('users_banned as ub', function ($j) {
+                $j->on('ub.userid', '=', 'm.userid')->on('ub.groupid', '=', 'm.groupid');
+            })
+            ->where('m.rippled', 1);
+        if ($userId !== null) {
+            $q->where('m.userid', $userId);
+        }
+        $pairs = $q->orderBy('m.userid')->orderBy('m.groupid')
+            ->limit($limit)
+            ->get(['m.userid', 'm.groupid']);
+
+        foreach ($pairs as $p) {
+            $stats['pairs'] = ($stats['pairs'] ?? 0) + 1;
+            $userid = (int) $p->userid;
+            $groupid = (int) $p->groupid;
+
+            // Soft-delete this banned member's rippled-in post copies still live in the group.
+            $msgids = DB::table('messages_groups as mg')
+                ->join('messages as msg', 'msg.id', '=', 'mg.msgid')
+                ->where('msg.fromuser', $userid)
+                ->where('mg.groupid', $groupid)
+                ->where('mg.rippled_in', 1)
+                ->where('mg.deleted', 0)
+                ->pluck('mg.msgid');
+            foreach ($msgids as $msgid) {
+                if ($dryRun) {
+                    $stats['posts_pulled'] = ($stats['posts_pulled'] ?? 0) + 1;
+                    continue;
+                }
+                // Reuses the shared retraction (Message/Deleted log, no Group/Left). It removes the
+                // membership only when no OTHER live post remains; the explicit delete below covers
+                // the case where an organic post keeps it, since a banned member must be off entirely.
+                $this->retractRippledCopyInGroup(
+                    (int) $msgid,
+                    $groupid,
+                    $userid,
+                    'Rippling: pulled - poster banned from group',
+                    'posts_pulled',
+                    $stats
+                );
+            }
+
+            // Remove the ripple-join membership itself (idempotent with the above).
+            if ($dryRun) {
+                $exists = DB::table('memberships')
+                    ->where('userid', $userid)->where('groupid', $groupid)->where('rippled', 1)
+                    ->exists();
+                if ($exists) {
+                    $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
+                }
+                continue;
+            }
+            $removed = DB::table('memberships')
+                ->where('userid', $userid)
+                ->where('groupid', $groupid)
+                ->where('rippled', 1)
+                ->delete();
+            if ($removed > 0) {
+                $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
+            }
+        }
+
+        return $stats;
+    }
+
+    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null, bool $ignoreArrivalCutoff = false, ?int $shardCount = null, ?int $shardIndex = null, bool $recompute = false): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
         // cutoff ever start rippling, so flipping RIPPLE_ENABLED on does not make the
@@ -456,21 +645,51 @@ class ExpandService
                 $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ms.point)';
                 $params[] = $withinPolyWkt;
             }
-            if (!empty($enabledAt)) {
+            // The go-live arrival cutoff is what leaves every pre-go-live post without a reach
+            // row. The one-off ripple:backfill drain (ignoreArrivalCutoff) lifts it so those
+            // still-live posts get seeded too; everything else about the selection/seed is
+            // identical, so a backfilled post is indistinguishable from a natively-initialised one.
+            if (!empty($enabledAt) && !$ignoreArrivalCutoff && !$recompute) {
                 $cutoffSql = ' AND ms.arrival >= ?';
                 $params[] = $enabledAt;
             }
             // Reply-saturation stop (extent-governor T1.1): a post that already has >= threshold
             // distinct repliers never starts rippling - it has enough interest without reach.
-            // 0 disables. Applies to normal and scoped (experiment) runs alike.
+            // 0 disables. Applies to normal and scoped (experiment) runs alike. NOT applied on a
+            // recompute pass: those posts already have a placeholder reach row we must resolve to
+            // real (or 'done') so the drain terminates - a saturated one would otherwise stay in the
+            // candidate set forever and stall the loop. (advanceDue re-checks saturation next tick.)
             $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
-            if ($satStop > 0) {
+            if ($satStop > 0 && !$recompute) {
                 $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
                                   WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?";
                 $params[] = $satStop;
             }
         }
+        // Sharding (ripple:backfill --shards N --shard i): partition the candidate set by msgid so
+        // several instances can drain DISJOINT slices in parallel without overlapping or double-
+        // seeding. Deterministic and stateless (msgid % N), so a re-run of a shard still only sees
+        // its own not-yet-seeded rows. Applied to every scope; ignored for a single-post run
+        // (that is inherently one row). Each shard still fans its routing out at compute_concurrency,
+        // so total concurrent routing load ~= shards x compute_concurrency (see the command docs).
+        $shardSql = '';
+        if ($shardCount !== null && $shardCount > 1 && $shardIndex !== null) {
+            $shardSql = ' AND (ms.msgid % ?) = ?';
+            $params[] = $shardCount;
+            $params[] = $shardIndex;
+        }
         $params[] = $limit;
+
+        // Candidate source. Normal/backfill: live posts with NO reach row yet (anti-join). Recompute:
+        // the placeholder "DPA" seeds (status='stopped' + schedule IS NULL) laid down by the quick
+        // geometry pass, which this pass replaces IN PLACE with real routed reach (upsert below, so
+        // the post is never momentarily without a reach row).
+        $reachJoin = $recompute
+            ? 'JOIN rippling_reach mr ON mr.msgid = ms.msgid'
+            : 'LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid';
+        $reachWhere = $recompute
+            ? "mr.status = 'stopped' AND mr.schedule IS NULL"
+            : 'mr.msgid IS NULL';
 
         $rows = DB::select(
             'SELECT ms.msgid AS msgid,
@@ -478,8 +697,8 @@ class ExpandService
                     ANY_VALUE(ST_X(ms.point)) AS lng,
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
-             LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . '
+             ' . $reachJoin . '
+             WHERE ' . $reachWhere . $scopeSql . $cutoffSql . $satSql . $shardSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -509,6 +728,50 @@ class ExpandService
         }
 
         $scheduleByKey = []; // "lat,lng" => parsed schedule | null
+
+        // Reuse: a reach schedule is a deterministic function of the blurred origin (+ global ripple
+        // config - see the Phase-1 note above), so if another live post at the SAME blurred origin
+        // already has a real computed reach, copy its schedule rather than hit the routing server
+        // again. This covers "same user posting again from home" and any co-located posts; on the
+        // recompute drain (many posts share a postcode/home) it removes the bulk of routing calls.
+        // Exact because blurOrigin quantises to 4dp and only the blurred origin + global config feed
+        // the schedule. If that config (curve/max_minutes/extent) ever changes, set
+        // freegle.ripple.reuse_reach=false for one full recompute so stale reaches are not reused.
+        if (config('freegle.ripple.reuse_reach', true) && !empty($distinctOrigins)) {
+            $pairs = array_values($distinctOrigins);
+            $placeholders = implode(',', array_fill(0, count($pairs), '(?, ?)'));
+            $reuseParams = [];
+            foreach ($pairs as $p) {
+                $reuseParams[] = $p['lat'];
+                $reuseParams[] = $p['lng'];
+            }
+            $existing = DB::select(
+                'SELECT lat, lng, schedule, total_freeglers, max_drive_min
+                 FROM rippling_reach
+                 WHERE schedule IS NOT NULL AND (lat, lng) IN (' . $placeholders . ')',
+                $reuseParams
+            );
+            foreach ($existing as $e) {
+                // Rebuild the same 4dp key the distinctOrigins map uses, so PHP-float and DB-double
+                // string formatting agree (both sides are round(...,4)).
+                $k = round((float) $e->lat, 4) . ',' . round((float) $e->lng, 4);
+                if (!isset($distinctOrigins[$k]) || isset($scheduleByKey[$k])) {
+                    continue; // not one of this batch's origins, or already reused
+                }
+                $ticks = json_decode($e->schedule, true);
+                if (!is_array($ticks) || empty($ticks)) {
+                    continue;
+                }
+                $scheduleByKey[$k] = [
+                    'ticks' => $ticks,
+                    'total_freeglers' => (int) $e->total_freeglers,
+                    'max_drive_min' => (float) $e->max_drive_min,
+                ];
+                unset($distinctOrigins[$k]); // reused - do not recompute this origin on the routing server
+                $stats['reused'] = ($stats['reused'] ?? 0) + 1;
+            }
+        }
+
         $concurrency = max(1, (int) config('freegle.ripple.compute_concurrency', 8));
         $keys = array_keys($distinctOrigins);
         foreach (array_chunk($keys, $concurrency) as $keyChunk) {
@@ -536,7 +799,31 @@ class ExpandService
 
                 $schedule = $scheduleByKey[$blurredByRow[$i]['key']] ?? null;
                 if ($schedule === null) {
-                    // Routing unreachable or origin off-graph — retry next run.
+                    // The blurred origin can snap to a DISCONNECTED routing node (a driveway stub
+                    // or isolated segment) whose drive-isochrone reaches almost nothing, so the
+                    // schedule comes back empty -> the post is skipped on EVERY run and never
+                    // ripples. Because blurOrigin is deterministic this is permanent: ~16% of live
+                    // candidates were stranded this way. Fall back to the post's RAW origin, which
+                    // is geocoded onto the connected road network. A ~400m blur is imperceptible
+                    // against a 30-min drive isochrone (the innermost tick is already km-scale), so
+                    // this does not meaningfully reduce origin privacy - it only rescues the posts
+                    // the blur would otherwise lose. Costs one extra routing call per stranded post.
+                    $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                    if ($schedule !== null) {
+                        $lat = (float) $row->lat;
+                        $lng = (float) $row->lng;
+                    }
+                }
+                if ($schedule === null) {
+                    // Genuinely unreachable (raw origin off-graph too) — retry next run.
+                    if ($recompute && !$dryRun) {
+                        // On the recompute drain, retire this permanently-stranded placeholder from
+                        // the candidate set (flip status off 'stopped' -> 'done') so the loop does
+                        // not re-select it forever and stall. It keeps its DPA polygon, so replies
+                        // stay gated to its area; nothing off-graph would resolve on a retry anyway.
+                        DB::table('rippling_reach')->where('msgid', $row->msgid)
+                            ->update(['status' => 'done', 'updated_at' => now()]);
+                    }
                     $stats['skipped']++;
                     continue;
                 }
@@ -553,6 +840,11 @@ class ExpandService
                 $tick = min($this->reach->tickForElapsedHours($elapsedHours), $total);
                 $entry = $this->entryForTick($schedule['ticks'], $tick);
                 if ($entry === null) {
+                    if ($recompute && !$dryRun) {
+                        // As above: retire the placeholder so the recompute drain terminates.
+                        DB::table('rippling_reach')->where('msgid', $row->msgid)
+                            ->update(['status' => 'done', 'updated_at' => now()]);
+                    }
                     $stats['skipped']++;
                     continue;
                 }
@@ -561,12 +853,23 @@ class ExpandService
 
                 if (!$dryRun) {
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+                    // Upsert, not plain INSERT: on the normal/backfill path the anti-join guarantees
+                    // no existing row so this behaves exactly like INSERT; on the recompute path the
+                    // placeholder (DPA) row already exists and we replace it IN PLACE, so the post is
+                    // never momentarily without a reach row (created_at is preserved - not in the SET).
                     DB::statement(
                         'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, next_expansion_at, status,
                             created_at, updated_at)
-                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
+                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                         ON DUPLICATE KEY UPDATE
+                            lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon),
+                            arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
+                            total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
+                            max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
+                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
+                            updated_at = NOW()',
                         [
                             $row->msgid, $lat, $lng, $storeWkt, $arrival,
                             $this->reach->mode(), $tick, $total,
@@ -812,8 +1115,22 @@ class ExpandService
                                AND ll.type = 'Group' AND ll.subtype = 'Left'
                                AND ll.id > lj.id
                          )
+                   )
+                   AND NOT EXISTS (
+                       -- A ban is an explicit mod ejection: it withdraws the poster's live posts
+                       -- and (modern ban) deletes their membership while recording a users_banned
+                       -- row. Never ripple a poster's post into a group they are banned from - that
+                       -- would silently re-insert the post (and, via addPosterMembershipToRippledGroups,
+                       -- re-join the banned poster). Cover both representations: the users_banned
+                       -- table (authoritative, no expiry) and a legacy collection='Banned' membership.
+                       SELECT 1 FROM users_banned ub
+                       WHERE ub.userid = ? AND ub.groupid = g.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memberships mb
+                       WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned'
                    )",
-                [$reachWkt, $msgid, $msg->fromuser]
+                [$reachWkt, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
             $n = 0;
@@ -924,8 +1241,16 @@ class ExpandService
                                AND ll.type = 'Group' AND ll.subtype = 'Left'
                                AND ll.id > lj.id
                          )
+                   )
+                   AND NOT EXISTS (
+                       -- Never re-join a poster to a group they are banned from. A ban deletes
+                       -- their membership and withdraws their posts; site A already stops the post
+                       -- rippling in, but this guards the membership backfill independently (it
+                       -- runs for every already-rippled group, incl. pre-guard ones). No expiry.
+                       SELECT 1 FROM users_banned ub
+                       WHERE ub.userid = ? AND ub.groupid = mg.groupid
                    )",
-                [$msgid, $posterId, $posterId]
+                [$msgid, $posterId, $posterId, $posterId]
             );
 
             $addedThisCall = 0;

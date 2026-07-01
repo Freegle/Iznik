@@ -35,6 +35,7 @@ const APIV1_PHPUNIT = `${PROJECT}-apiv1-phpunit`;
 const BATCH = `${PROJECT}-batch`;
 const PLAYWRIGHT = `${PROJECT}-playwright`;
 const PROD_LOCAL = `${PROJECT}-prod-local`;
+const DEV_LOCAL = `${PROJECT}-dev-local`;
 const PERCONA = `${PROJECT}-percona`;
 console.log(`Using container prefix: ${PROJECT}`);
 
@@ -1847,10 +1848,14 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "started" }));
 
-    // Build test command - add race detection and coverage for CI
+    // Build test command - add race detection and coverage for CI.
+    // Include ./message/... so the package's white-box unit tests (the
+    // *_pure_test.go files, which need no DB) actually run: ./test/... alone
+    // never compiles them, so they were dormant and their lines showed as
+    // uncovered. These are DB-free, so they add no fixture requirements.
     const testCmd = withCoverage
-      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... -coverpkg ./..."
-      : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... -v";
+      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... ./message/... -coverpkg ./..."
+      : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... ./message/... -v";
 
     // Run tests asynchronously
     const { spawn } = require("child_process");
@@ -1931,6 +1936,143 @@ const httpServer = http.createServer(async (req, res) => {
       testStatuses.goTests.status = "failed";
       testStatuses.goTests.message = `Error: ${error.message}`;
       testStatuses.goTests.endTime = Date.now();
+    });
+
+    return;
+  }
+
+  // Vitest (frontend unit) tests status endpoint
+  if (parsedUrl.pathname === "/api/tests/vitest/status" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(testStatuses.vitestTests || { status: "idle" }));
+    return;
+  }
+
+  // Vitest (frontend unit) tests endpoint
+  // Runs iznik-nuxt3's Vitest suite (the frontend unit-test gate that previously
+  // only ran in CI) inside the running nuxt3 dev container, which has the source
+  // baked at /app, node_modules present, and .nuxt already prepared by the dev
+  // server. Mirrors CI's `npm run test:unit:run`. Optional JSON body {"filter":"X"}
+  // narrows to matching spec files/names; ?coverage=true enables coverage.
+  if (parsedUrl.pathname === "/api/tests/vitest" && req.method === "POST") {
+    console.log("Starting Vitest (frontend unit) tests...");
+
+    // Check if already running
+    if (
+      testStatuses.vitestTests &&
+      testStatuses.vitestTests.status === "running"
+    ) {
+      res.writeHead(409, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Vitest tests are already running" }));
+      return;
+    }
+
+    // Parse request body for optional filter parameter
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
+
+    req.on("end", () => {
+      let filter = "";
+      if (body) {
+        try {
+          const parsed = JSON.parse(body);
+          if (parsed && typeof parsed.filter === "string") filter = parsed.filter;
+        } catch (e) {
+          // Malformed body — fall back to running the full suite.
+        }
+      }
+      // Sanitise to a safe pattern (no shell metacharacters reach the container).
+      const safeFilter = filter.replace(/[^A-Za-z0-9_./-]/g, "");
+      const withCoverage =
+        parsedUrl.query && parsedUrl.query.coverage === "true";
+
+      // Initialize test status
+      testStatuses.vitestTests = {
+        status: "running",
+        message: safeFilter
+          ? `Running Vitest (filter: ${safeFilter})...`
+          : "Running Vitest unit tests...",
+        logs: "",
+        filter: safeFilter,
+        progress: { completed: 0, total: 0, passed: 0, failed: 0, current: "" },
+        startTime: Date.now(),
+        withCoverage,
+      };
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "started" }));
+
+      const coverageArg = withCoverage ? " --coverage" : "";
+      const filterArg = safeFilter ? ` ${safeFilter}` : "";
+      const innerCmd = `npm run test:unit:run -- --reporter=verbose${coverageArg}${filterArg}`;
+
+      const { spawn } = require("child_process");
+      const testProcess = spawn(
+        "sh",
+        ["-c", `docker exec -w /app ${DEV_LOCAL} sh -c "${innerCmd} 2>&1"`],
+        { stdio: "pipe" }
+      );
+
+      testProcess.stdout.on("data", (data) => {
+        const text = data.toString();
+        testStatuses.vitestTests.logs += text;
+
+        const lines = text.split("\n");
+        for (const line of lines) {
+          // Per-test/file marks from the verbose reporter (✓ pass, ×/✗ fail).
+          // These can over-count (file + test level); the final summary below
+          // overrides with the authoritative totals.
+          if (/^\s*[✓√]\s/.test(line)) {
+            testStatuses.vitestTests.progress.passed++;
+            testStatuses.vitestTests.progress.completed++;
+            const m = line.match(/^\s*[✓√]\s+(.*?)(?:\s+\d+\s*ms)?$/);
+            if (m && m[1]) testStatuses.vitestTests.progress.current = m[1];
+          } else if (/^\s*[×✗✘]\s/.test(line)) {
+            testStatuses.vitestTests.progress.failed++;
+            testStatuses.vitestTests.progress.completed++;
+          }
+          // Authoritative summary, e.g.:
+          //   Tests  2 failed | 338 passed | 1 skipped (341)
+          //   Tests  340 passed (340)
+          const tm = line.match(
+            /Tests\s+(?:(\d+)\s+failed\s*\|\s*)?(\d+)\s+passed(?:\s*\|\s*(\d+)\s+skipped)?\s*\((\d+)\)/
+          );
+          if (tm) {
+            testStatuses.vitestTests.progress.failed = parseInt(tm[1] || "0", 10);
+            testStatuses.vitestTests.progress.passed = parseInt(tm[2] || "0", 10);
+            testStatuses.vitestTests.progress.total = parseInt(tm[4] || "0", 10);
+            testStatuses.vitestTests.progress.completed =
+              testStatuses.vitestTests.progress.total;
+          }
+        }
+
+        const p = testStatuses.vitestTests.progress;
+        testStatuses.vitestTests.message = `Running... ${p.passed}✓ ${p.failed}✗`;
+      });
+
+      testProcess.stderr.on("data", (data) => {
+        testStatuses.vitestTests.logs += data.toString();
+      });
+
+      testProcess.on("close", (code) => {
+        const p = testStatuses.vitestTests.progress;
+        testStatuses.vitestTests.status = code === 0 ? "completed" : "failed";
+        testStatuses.vitestTests.success = code === 0;
+        testStatuses.vitestTests.endTime = Date.now();
+        testStatuses.vitestTests.message =
+          code === 0
+            ? `All tests passed (${p.passed}✓)`
+            : `Tests failed (${p.passed}✓ ${p.failed}✗)`;
+        console.log(`Vitest tests completed with code ${code}`);
+      });
+
+      testProcess.on("error", (error) => {
+        testStatuses.vitestTests.status = "failed";
+        testStatuses.vitestTests.message = `Error: ${error.message}`;
+        testStatuses.vitestTests.endTime = Date.now();
+      });
     });
 
     return;

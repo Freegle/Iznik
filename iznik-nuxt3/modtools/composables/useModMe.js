@@ -39,6 +39,9 @@ export function useModMe() {
   const hasPermissionGiftAid = computed(() => {
     return hasPermission('GiftAid')
   })
+  const hasPermissionClearance = computed(() => {
+    return hasPermission('Clearance')
+  })
   // Needed for some modtoolstasks but /mixins/me.js/myGroups() OK for most mod tasks as it is a copy of modgroup.list
   const myModGroups = computed(() => {
     // But do we need to do other stuff in myGroups() eg sorting?
@@ -140,6 +143,7 @@ export function useModMe() {
     hasPermissionNewsletter,
     hasPermissionSpamAdmin,
     hasPermissionGiftAid,
+    hasPermissionClearance,
     myModGroups,
     myModGroup,
     amAModOn,

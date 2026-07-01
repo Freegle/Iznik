@@ -29,4 +29,10 @@ type MessageGroup struct {
 	Spamreason              *string          `json:"spamreason,omitempty"`
 	ContentcheckCheckedAt   *time.Time       `json:"contentcheck_checked_at,omitempty"`
 	ContentcheckReasons     *json.RawMessage `json:"contentcheck_reasons,omitempty"`
+
+	// RippledIn is set when this messages_groups row was created by the rippling engine
+	// (the post originated on another group and rippled in here). The moderation UI uses
+	// it to show the "rippled out / rippled in" banner authoritatively rather than guessing
+	// from arrival times, which the approve path (arrival=NOW()) can scramble. (9808/303)
+	RippledIn uint8 `json:"rippled_in"`
 }

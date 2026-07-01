@@ -49,10 +49,11 @@ $msgs = $dbhr->preQuery("SELECT messages.id FROM messages
     INNER JOIN `groups` ON groups.id = messages_groups.groupid
     WHERE messages.arrival >= ? AND
           messages.arrival >= '2023-06-13 14:50' AND
-      messages.type = ? AND   
+      messages.type = ? AND
       lovejunk.msgid IS NULL AND
       messages_groups.collection = ? AND
-      groups.onlovejunk = 1
+      groups.onlovejunk = 1 AND
+      NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE messages_bulk_items.msgid = messages.id)
       ORDER BY messages.arrival ASC;
 ", [
     $start,

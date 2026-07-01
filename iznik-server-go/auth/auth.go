@@ -159,6 +159,7 @@ const (
 	PERM_SPAM_ADMIN          = "SpamAdmin"
 	PERM_TEAMS               = "Teams"
 	PERM_BUSINESS_CARDS      = "BusinessCardsAdmin"
+	PERM_CLEARANCE           = "Clearance"
 )
 
 // HasPermission checks if a user has a specific permission.
@@ -221,7 +222,6 @@ func IsModOfAnyGroup(myid uint64) bool {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
 	return count > 0
 }
-
 
 // HashPassword computes sha1(password + salt).
 func HashPassword(password, salt string) string {

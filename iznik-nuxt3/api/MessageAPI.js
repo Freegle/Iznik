@@ -110,6 +110,45 @@ export default class MessageAPI extends BaseAPI {
     return this.$postv2('/message', body)
   }
 
+  // Register interest in one or more items of a bulk offer. `items` is an array
+  // of { bulkitemid, quantity, cancollect }. A quantity of 0 withdraws interest
+  // in that item.
+  // interestuserid lets the offerer record a replier's interest on their behalf;
+  // omit it (or pass falsy) to express your own.
+  bulkInterest(id, items, interestuserid) {
+    return this.$postv2('/message', {
+      action: 'BulkInterest',
+      id,
+      bulkinterest: items,
+      ...(interestuserid ? { interestuserid } : {}),
+    })
+  }
+
+  // Offerer/mod transition of one interest row (Interested → Reserved →
+  // Collected, or Rejected/Withdrawn).
+  bulkInterestState(id, bulkitemid, userid, state) {
+    return this.$postv2('/message', {
+      action: 'BulkInterestState',
+      id,
+      bulkitemid,
+      userid,
+      state,
+    })
+  }
+
+  // Freegle Helper (AI concierge) state for a bulk offer: batch, per-replier FSM
+  // knowledge records with per-item state/score, queued proposals, and the ids of
+  // Helper-sent chat messages. Offerer/mod only.
+  getHelper(msgid, logError = true) {
+    return this.$getv2('/helper/' + msgid, {}, logError)
+  }
+
+  // Helper actions. The page uses SetStatus (pause/resume/stop) and
+  // ResolveProposal (confirm/edit/send or dismiss); the driver uses the rest.
+  helper(payload) {
+    return this.$postv2('/helper', payload)
+  }
+
   async getIllustration(item) {
     try {
       const result = await this.$getv2(

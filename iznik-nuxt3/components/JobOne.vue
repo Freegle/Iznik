@@ -131,6 +131,8 @@ const props = defineProps({
   },
 })
 
+const emit = defineEmits(['clicked'])
+
 const router = useRouter()
 const jobStore = useJobStore()
 
@@ -309,10 +311,8 @@ function clicked() {
     page,
   })
 
-  // Route to jobs page to encourage viewing of more jobs.
-  if (router?.currentRoute?.value?.path !== '/jobs') {
-    router.push('/jobs')
-  }
+  // Notify parent so it can show the follow-up modal with more jobs.
+  emit('clicked', job.value.id)
 }
 
 function filterNonsense(val) {

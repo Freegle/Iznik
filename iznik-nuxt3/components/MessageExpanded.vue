@@ -314,6 +314,7 @@
                 </div>
               </div>
               <div
+                v-if="!hideGeneratedBulkBody"
                 class="description-content"
                 :class="{
                   'description-content--promised':
@@ -323,6 +324,16 @@
                 <MessageTextBody :id="id" />
               </div>
             </div>
+
+            <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
+            <BulkItemsInterest
+              v-if="isBulk"
+              ref="bulkInterestRef"
+              :id="id"
+              @can-register="bulkCanRegister = $event"
+              @submitted="bulkSubmitted = $event"
+              @validation="bulkPickError = $event"
+            />
 
             <!-- Posted by divider and section (shown on taller screens, after description) -->
             <client-only>
@@ -434,6 +445,14 @@
                 v-else-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
+                <NoticeMessage
+                  v-if="isBulk && bulkTriedRegister && bulkPickError"
+                  variant="danger"
+                  class="register-error mb-0"
+                  data-testid="register-error"
+                >
+                  {{ bulkPickError }}
+                </NoticeMessage>
                 <b-button
                   v-if="inModal || fullscreenOverlay"
                   variant="secondary"
@@ -448,9 +467,16 @@
                   variant="primary"
                   size="lg"
                   class="reply-button"
-                  @click="expandReply"
+                  :data-testid="isBulk ? 'register-interest' : undefined"
+                  @click="isBulk ? registerBulkInterest() : expandReply()"
                 >
-                  Reply
+                  {{
+                    isBulk
+                      ? bulkSubmitted
+                        ? 'Update my interest'
+                        : 'Register interest'
+                      : 'Reply'
+                  }}
                 </b-button>
               </div>
               <b-alert
@@ -494,6 +520,14 @@
           v-else-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
+          <NoticeMessage
+            v-if="isBulk && bulkTriedRegister && bulkPickError"
+            variant="danger"
+            class="register-error mb-0"
+            data-testid="register-error"
+          >
+            {{ bulkPickError }}
+          </NoticeMessage>
           <b-button
             v-if="inModal || fullscreenOverlay"
             variant="secondary"
@@ -508,9 +542,16 @@
             variant="primary"
             size="lg"
             class="reply-button"
-            @click="expandReply"
+            :data-testid="isBulk ? 'register-interest' : undefined"
+            @click="isBulk ? registerBulkInterest() : expandReply()"
           >
-            Reply
+            {{
+              isBulk
+                ? bulkSubmitted
+                  ? 'Update my interest'
+                  : 'Register interest'
+                : 'Reply'
+            }}
           </b-button>
         </div>
         <b-alert
@@ -604,10 +645,12 @@ import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst } from '~/composables/rippleStatus'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
+import BulkItemsInterest from '~/components/BulkItemsInterest'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -684,7 +727,9 @@ const {
 // name + explore link; drop any not yet in the group store.
 const messageGroups = computed(() => {
   if (!message.value?.groups?.length) return []
-  return message.value.groups
+  // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+  // the home group could be hidden behind "more".
+  return homeGroupFirst(message.value.groups)
     .map((g) => groupStore.get(g.groupid))
     .filter(Boolean)
 })
@@ -699,6 +744,40 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
 )
+
+// For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
+// collection times structurally. The server also stores a plain-text summary as
+// the body (so digests/search/non-bulk clients still have something), but on the
+// web page that just duplicates the catalogue — so suppress it. A giver's own
+// free-text description doesn't start with this generated marker, so it still
+// shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
+const isBulk = computed(
+  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
+)
+const hideGeneratedBulkBody = computed(() => {
+  const body = message.value?.textbody || ''
+  return isBulk.value && body.startsWith('Items available in this offer:')
+})
+
+// A bulk offer is replied to by registering per-item interest, not by opening a
+// reply box — so the main reply button becomes "Register interest". These mirror
+// the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+const bulkInterestRef = ref(null)
+const bulkCanRegister = ref(false)
+const bulkSubmitted = ref(false)
+// Red error shown above the reply button when a "Register interest" click can't
+// go through yet (e.g. no item chosen) — otherwise the click silently no-ops.
+// The child's live "why you can't register yet" message ('' once ready), and
+// whether the user has actually pressed the button. We only show the red error
+// after a try, so an empty "Register interest" click gives feedback instead of
+// silently no-opping — and it clears itself the moment the reply becomes valid.
+const bulkPickError = ref('')
+const bulkTriedRegister = ref(false)
+function registerBulkInterest() {
+  bulkTriedRegister.value = true
+  if (bulkPickError.value) return
+  bulkInterestRef.value?.submit()
+}
 
 // State
 const replied = ref(false)
@@ -2209,10 +2288,16 @@ onUnmounted(() => {
 
 .footer-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   width: 100%;
   max-width: 600px;
   margin: 0 auto;
+
+  /* The empty-submit error spans the full width and sits above the buttons. */
+  .register-error {
+    flex: 0 0 100%;
+  }
 
   .cancel-button,
   .reply-button {

@@ -168,7 +168,9 @@ class Digest
                 $sql = "SELECT msgid, messages_groups.arrival, autoreposts FROM messages_groups
                         INNER JOIN messages ON messages.id = messages_groups.msgid
                         INNER JOIN users ON users.id = messages.fromuser
-                        WHERE groupid = ? AND collection = ? AND messages_groups.deleted = 0 AND users.deleted IS NULL $oldest $msgdtq ORDER BY messages_groups.arrival $ord $limq;";
+                        WHERE groupid = ? AND collection = ? AND messages_groups.deleted = 0 AND users.deleted IS NULL
+                          AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE messages_bulk_items.msgid = messages_groups.msgid)
+                          $oldest $msgdtq ORDER BY messages_groups.arrival $ord $limq;";
                 $messages = $this->dbhr->preQuery($sql, [
                     $groupid,
                     MessageCollection::APPROVED,

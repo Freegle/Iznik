@@ -315,6 +315,13 @@ return [
         // host's core count; exceeding it just queues on the routing server. DB writes stay
         // serial regardless. 1 = sequential (the old behaviour).
         'compute_concurrency' => (int) env('RIPPLE_COMPUTE_CONCURRENCY', 8),
+        // Reuse an already-computed reach when another live post shares the SAME blurred origin,
+        // instead of hitting the routing server again. The reach schedule is a deterministic
+        // function of the blurred origin (4dp) + the ripple config here, so this is exact and it
+        // removes the bulk of routing calls on the recompute drain (co-located posts, repeat posters
+        // from home). Set false for one full recompute after changing curve/max_minutes/extent so
+        // reaches computed under the OLD config are not reused. true = on.
+        'reuse_reach' => filter_var(env('RIPPLE_REUSE_REACH', true), FILTER_VALIDATE_BOOLEAN),
         // Per-request timeout (seconds) for a /v1/ripple-schedule call. A dense-origin post can
         // take tens of seconds; the pool path uses this so one slow post does not abort the chunk.
         'request_timeout' => (int) env('RIPPLE_REQUEST_TIMEOUT', 60),

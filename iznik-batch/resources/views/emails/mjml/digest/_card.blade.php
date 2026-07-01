@@ -77,9 +77,11 @@
                      the full-width .fd-narrow-only copy below. The min-width
                      @media reveals this on wide screens that keep <style>. --}}
                 <div class="fd-wide-only" style="display: none;">
-                    @if($post['messageText'] || $post['postedToText'])
+                    @if(!empty($post['bulkSummary']) || $post['messageText'] || $post['postedToText'])
                     <div style="padding-top: 2px;">
-                        @if($post['messageText'])
+                        @if(!empty($post['bulkSummary']))
+                        <span class="fd-desc" style="color: {{ $bodyColor }}; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ $post['bulkSummary'] }}</span>
+                        @elseif($post['messageText'])
                         <span class="fd-desc" style="color: {{ $bodyColor }}; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
                         @endif
                         @if($post['postedToText'])
@@ -135,9 +137,11 @@
     <mj-column>
         <mj-text padding="0" font-size="14px" color="{{ $titleColor }}">
             <div class="fd-narrow-only" style="padding: 0 20px 8px;">
-                @if($post['messageText'] || $post['postedToText'])
+                @if(!empty($post['bulkSummary']) || $post['messageText'] || $post['postedToText'])
                 <div style="padding-bottom: 6px;">
-                    @if($post['messageText'])
+                    @if(!empty($post['bulkSummary']))
+                    <span class="fd-desc" style="color: {{ $bodyColor }}; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ $post['bulkSummary'] }}</span>
+                    @elseif($post['messageText'])
                     <span class="fd-desc" style="color: {{ $bodyColor }}; font-size: 14px; font-weight: 400; line-height: 1.5;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
                     @endif
                     @if($post['postedToText'])

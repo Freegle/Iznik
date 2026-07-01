@@ -1346,6 +1346,50 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	// Log creation is now handled by the batch processor (not synchronously in the Go API).
 }
 
+// A mod reply must write its "Replied" log synchronously, exactly once. Previously the log
+// was written only by the batch, whose unconditional INSERT re-ran on task retry and
+// duplicated the row in the mod history (Discourse 9672/6). The batch now skips it.
+func TestPostMessageReplyCreatesLogSynchronously(t *testing.T) {
+	prefix := uniquePrefix("msgmod_reply_log")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reply",
+		"groupid": groupID,
+		"subject": "Re: your post",
+		"body":    "Thanks for posting!",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Exactly one Replied log, written synchronously by the Go handler.
+	var logCount int
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Message' AND subtype = 'Replied' AND msgid = ? AND byuser = ?",
+		msgID, modID).Scan(&logCount)
+	assert.Equal(t, 1, logCount, "Reply should create exactly one Replied log synchronously")
+
+	// The reply email is still queued via the background task.
+	var taskCount int
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_reply' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.GreaterOrEqual(t, taskCount, 1, "Reply should still queue the email task")
+}
+
 // A reject that lands on a message which is no longer Pending (e.g. it was
 // re-approved/promoted to live before the mod's click arrived) must NOT silently
 // queue a rejection email/log nor claim success - otherwise the mod and the poster
@@ -4641,6 +4685,47 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&taskCount)
 	assert.Equal(t, int64(1), taskCount, "freebie_alerts_add task should be queued when Offer is approved")
+}
+
+func TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd(t *testing.T) {
+	// Approving a clearance (bulk-offer) Offer must NOT queue a freebie_alerts_add task —
+	// the concierge manages those posts and freebiealerts.app is not the right channel.
+	prefix := uniquePrefix("msgw_fa_clr")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Add mod as moderator of the group.
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
+
+	// Create a pending Offer and mark it as a clearance via messages_bulk_items.
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance offer", 52.5, -1.8)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	db.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`) VALUES (?, 0, 'Office desk', 1, 'Good')", msgID)
+	defer db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ?", msgID)
+
+	// Clean any pre-existing freebie_alerts_add tasks for this message.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "freebie_alerts_add must NOT be queued when the approved Offer is a clearance")
 }
 
 func TestDeleteMessageQueuesFreebieAlertsRemove(t *testing.T) {
