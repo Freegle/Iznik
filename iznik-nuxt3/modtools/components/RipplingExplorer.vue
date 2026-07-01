@@ -304,6 +304,12 @@
               ><input id="rippling-tog-groups" type="checkbox" checked />
               Groups</label
             >
+            <label
+              class="rpl-layer-toggle"
+              title="Overlay reach shaped by DfT transport connectivity (dense areas ripple tighter, sparse areas wider; rural collectors travel further than urban)"
+              ><input id="rippling-tog-friction" type="checkbox" />
+              Connectivity friction</label
+            >
           </div>
         </div>
 

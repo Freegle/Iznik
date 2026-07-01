@@ -10,3 +10,8 @@ data/*
 # fresh checkout boots with a baseline; spatial:update-data overwrites it atomically
 # when it successfully refetches. The rest of data/ stays runtime-generated.
 !data/uk_lsoa_quintile.csv
+# Commit the DfT connectivity centroids (E&W) and the reproducible build pipeline so a
+# fresh checkout boots the connectivity-friction reach model. uk-latest.osm.pbf stays
+# ignored (2.4GB, fetched separately).
+!data/uk_lsoa_connectivity.csv
+!data/build-connectivity/

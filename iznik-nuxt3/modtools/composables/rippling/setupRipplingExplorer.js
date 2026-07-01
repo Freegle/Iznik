@@ -64,6 +64,8 @@ export async function setupRipplingExplorer({
   let currentLat = null
   let currentLng = null
   let currentMode = 'drive'
+  // Dashed overlay for the connectivity-friction reach (toggled by #rippling-tog-friction).
+  let frictionLayer = null
   let marker = null
   let layers = {}
   // Minimal mode only: when the isochrone covers >=90% of the home group,
@@ -204,6 +206,10 @@ export async function setupRipplingExplorer({
   function clearOutboundLayers() {
     Object.values(layers).forEach((l) => map.removeLayer(l))
     layers = {}
+    if (frictionLayer) {
+      map.removeLayer(frictionLayer)
+      frictionLayer = null
+    }
     // freeglersMarkers is declared later in the script (temporal dead zone),
     // so we can't reference it by name from here.  Instead, fire a custom
     // event that the freeglers-clearing block listens for.
@@ -503,6 +509,10 @@ export async function setupRipplingExplorer({
       })
       if (showQuintiles) requestAnimationFrame(updateFairnessClip)
     })
+
+  document
+    .getElementById('rippling-tog-friction')
+    .addEventListener('change', updateFrictionOverlay)
 
   document
     .getElementById('rippling-tog-freeglers')
@@ -854,6 +864,7 @@ export async function setupRipplingExplorer({
         drawFreeglersLayer()
         updateFreeglersInside(data)
         drawGroupsOverlay()
+        updateFrictionOverlay()
         showStatus('Done', false)
       })
       .catch((err) => {
@@ -862,6 +873,45 @@ export async function setupRipplingExplorer({
           'rippling-stats'
         ).innerHTML = `<div class="rpl-tip" style="color:#c00">${err.message}</div>`
       })
+  }
+
+  // Connectivity-friction reach overlay (dashed purple): the reach reshaped by the DfT
+  // transport-connectivity model, drawn alongside the red standard reach so mods can see
+  // where connectivity shrinks (dense/urban) or widens (sparse/rural) the ripple. Uses the
+  // current travel mode. Off unless #rippling-tog-friction is checked.
+  function updateFrictionOverlay() {
+    const cb = document.getElementById('rippling-tog-friction')
+    if (frictionLayer) {
+      map.removeLayer(frictionLayer)
+      frictionLayer = null
+    }
+    if (!cb || !cb.checked || currentLat === null) return
+    const minutes = parseInt(timeSlider.value)
+    const gen = isochroneGeneration
+    fetch(
+      apiUrl(
+        `/v1/isochrone?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
+          6
+        )}&minutes=${minutes}&friction=1`
+      )
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('friction ' + r.status))))
+      .then((data) => {
+        if (gen !== isochroneGeneration) return // location/mode/time moved on
+        const poly = data && data[currentMode]
+        const ring = poly && poly.geometry && poly.geometry.coordinates[0]
+        if (!ring) return
+        if (frictionLayer) map.removeLayer(frictionLayer)
+        frictionLayer = L.polygon(geoToLeaflet(ring), {
+          color: '#7b2ff7',
+          weight: 2.5,
+          dashArray: '6 5',
+          fill: false,
+        })
+          .addTo(map)
+          .bindTooltip('Connectivity-friction reach (' + currentMode + ')')
+      })
+      .catch(() => {})
   }
 
   let lastIsoData = null
