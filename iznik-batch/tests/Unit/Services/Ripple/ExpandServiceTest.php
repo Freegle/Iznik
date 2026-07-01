@@ -2175,7 +2175,11 @@ class ExpandServiceTest extends TestCase
      */
     public function test_reposted_pre_go_live_post_gets_reach_after_spatial_refresh(): void
     {
-        Http::fake(); // spatial-admin removeItems calls (if any) become no-ops
+        // fakeRouting stubs the ripple-schedule endpoint; any other HTTP (the spatial-admin
+        // removeItems call in updateSpatialIndex) falls through to Laravel's default no-op 200
+        // while a fake is active. Do NOT add a catch-all Http::fake() before this: a catch-all
+        // registered first shadows the ripple-schedule stub (first matching stub wins), so the
+        // reach computation gets an empty response, no schedule, and nothing is seeded.
         $this->fakeRouting(3);
         // Cutoff is one hour ago; the post arrived two hours ago (pre-cutoff).
         config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);

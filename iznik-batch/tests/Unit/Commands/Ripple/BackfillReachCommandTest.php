@@ -100,7 +100,7 @@ class BackfillReachCommandTest extends TestCase
         $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count());
 
         $this->artisan('ripple:backfill')
-            ->expectsOutputToContain('Seeded 0 reach row(s)')
+            ->expectsOutputToContain('Nothing to backfill.')
             ->assertExitCode(0);
         $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count());
     }
@@ -153,7 +153,7 @@ class BackfillReachCommandTest extends TestCase
         $this->fakeRouting();
         $this->seedSpatialPost();
 
-        $held = Cache::lock('ripple:backfill:run:shard2-0', 30);
+        $held = Cache::lock('ripple:backfill:seed:shard2-0', 30);
         $this->assertTrue($held->get(), 'precondition: hold shard 0 of 2');
 
         try {
