@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
@@ -614,4 +616,61 @@ func TestRipplingMetricsTrialScope(t *testing.T) {
 	assert.Equal(t, false, result2["trial_only"], "trial_only false without the param")
 	ids2, _ := result2["trial_group_ids"].([]interface{})
 	assert.Empty(t, ids2, "trial_group_ids empty without the param")
+}
+
+// Re-anchor regression (Discourse #9808): the reply-rate KPI must key on the post's
+// APPEARANCE (its origin messages_groups.arrival), not messages.arrival. messages.arrival is
+// frozen at first-ever post; auto-repost only updates messages_groups.arrival, and rippling
+// acts on that appearance. A post originally from weeks ago (pre-go-live) that was reposted and
+// rippled recently must be counted on its recent appearance day in the rippled cohort — NOT
+// back-dated to its stale original arrival, which is what produced phantom "rippled-out" data on
+// pre-go-live days. is_rippled is also time-bounded: rippled within 36h of the appearance.
+func TestRipplingMetricsReanchorsOnAppearanceNotOriginalArrival(t *testing.T) {
+	prefix := uniquePrefix("ripreanchor")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	db := database.DBConn
+
+	poster := CreateTestUser(t, prefix, "Poster")
+	group := CreateTestGroup(t, prefix)
+	other := CreateTestGroup(t, prefix+"b")
+	mid := CreateTestMessage(t, poster, group, "OFFER: reanchor "+prefix, 51.5, -0.1)
+
+	// Auto-repost pattern: stale original messages.arrival (30 days ago, pre-go-live),
+	// but the post actually (re)appeared on its origin group yesterday and rippled then.
+	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 30 DAY WHERE id = ?", mid)
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 1 DAY WHERE msgid = ? AND rippled_in = 0", mid)
+	// A rippled-in copy that appeared within 36h of the appearance -> rippled cohort.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW() - INTERVAL 1 DAY, 'Approved', 0, 1)", mid, other)
+
+	// Window covers the recent appearance (last 3 days) but NOT the 30-day-old original arrival.
+	// If the KPI still keyed on messages.arrival, the post would fall outside the window and vanish.
+	start := time.Now().AddDate(0, 0, -3).Format("2006-01-02 15:04:05")
+	end := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s&start=%s&end=%s",
+		token, url.QueryEscape(start), url.QueryEscape(end)), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	rows, ok := result["reply_rate_36h"].([]interface{})
+	assert.True(t, ok, "reply_rate_36h present")
+
+	// With the old messages.arrival anchor the post (arrival 30d ago) would fall outside the
+	// window and vanish entirely; with the appearance anchor it shows on its appearance day.
+	appearanceDay := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	found := false
+	for _, r := range rows {
+		m, _ := r.(map[string]interface{})
+		if m["day"] == appearanceDay {
+			found = true
+			// Counted in the rippled cohort on the appearance day (ripple within 36h of appearance).
+			assert.GreaterOrEqual(t, m["ripple_posts"].(float64), float64(1),
+				"reposted+rippled post is in the rippled cohort on its appearance day")
+		}
+	}
+	assert.True(t, found,
+		"post appears on its appearance day (mg.arrival), proving the KPI re-anchors off messages.arrival")
 }
