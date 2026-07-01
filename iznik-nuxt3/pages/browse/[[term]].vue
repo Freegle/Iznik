@@ -44,7 +44,7 @@
               </div>
             </NoticeMessage>
             <NoticeMessage
-              v-if="browseView === 'nearby' && !isochrones.length"
+              v-if="browseView === 'nearby' && !hasLocation"
               variant="warning"
             >
               <p class="fw-bold">
@@ -126,7 +126,7 @@ import { useMobileStore } from '~/stores/mobile'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
 import PostFilters from '~/components/PostFilters'
 import SidebarLeft from '~/components/SidebarLeft'
 import PostCode from '~/components/PostCode'
@@ -176,7 +176,7 @@ const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const authStore = useAuthStore()
 const groupStore = useGroupStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const messageStore = useMessageStore()
 const api = Api(runtimeConfig)
 
@@ -214,8 +214,10 @@ const noMessagesNoLocation = computed(() => {
   return messagesOnMapCount.value === 0 && !me.value?.settings?.mylocation
 })
 
-const isochrones = computed(() => {
-  return isochroneStore?.list || []
+// Do we know where the member is? There's no per-user isochrone/reach polygon on
+// the client any more to use as a proxy for this, so check their location directly.
+const hasLocation = computed(() => {
+  return !!(me.value && (me.value.lat || me.value.lng))
 })
 
 // Methods
@@ -227,28 +229,22 @@ async function calculateInitialMapBounds() {
   if (process.client) {
     if (browseView.value === 'nearby') {
       if (me.value) {
-        // The initial bounds for the map are determined from the isochrones if possible.
-        const promises = []
-        promises.push(isochroneStore.fetch())
-
-        // By default we'll be showing the isochrone view in PostMap, so start the fetch of the messages now.
-        // That way we can display the list rapidly. Fetching this and the isochrones in parallel reduces latency.
-        promises.push(isochroneStore.fetchMessages(true))
-
+        // The initial bounds for the map are determined from the nearby messages once
+        // we've fetched them, so start that fetch now to display the list rapidly.
         try {
-          await Promise.all(promises)
-          initialBounds.value = isochroneStore.bounds
+          await nearbyStore.fetchMessages(true)
+          initialBounds.value = nearbyStore.bounds
         } catch (e) {
           // If this fails revert to a default view.
         }
       }
     } else {
-      initialBounds.value = isochroneStore.bounds
+      initialBounds.value = nearbyStore.bounds
     }
 
     if (!initialBounds.value) {
-      // Either we have no isochrones, or we're showing our groups. Use the bounding box of the group that
-      // our own location is within.
+      // Either we have no nearby messages yet, or we're showing our groups. Use the bounding
+      // box of the group that our own location is within.
       let mylat = null
       let mylng = null
 
@@ -358,8 +354,10 @@ async function savePostcode(pc) {
       settings,
     })
 
-    // Now get an isochrone at this location.
-    await isochroneStore.fetch()
+    // Now that we know a new location, refresh the nearby feed and re-fit the map to it.
+    await nearbyStore.fetchMessages(true)
+    initialBounds.value = nearbyStore.bounds
+    incBump()
   }
 }
 
@@ -517,7 +515,7 @@ watch(noMessagesNoLocation, (newVal) => {
   }
 })
 
-// When the isochrones or filters change, just re-render the whole map and list.
+// When the filters change, just re-render the whole map and list.
 watch(searchTerm, () => {
   incBump()
 })
@@ -557,12 +555,6 @@ watch(selectedType, () => {
 
 watch(browseView, () => {
   calculateInitialMapBounds()
-  incBump()
-})
-
-watch(isochrones, async () => {
-  initialBounds.value = isochroneStore.bounds
-  await isochroneStore.fetchMessages(true)
   incBump()
 })
 

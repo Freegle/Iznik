@@ -129,7 +129,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
 import { MAX_MAP_ZOOM } from '~/constants'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
 
 import JoinWithConfirm from '~/components/JoinWithConfirm'
 import MessageList from '~/components/MessageList'
@@ -243,7 +243,7 @@ const emit = defineEmits([
 const miscStore = useMiscStore()
 const groupStore = useGroupStore()
 const authStore = useAuthStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const me = computed(() => authStore.user)
 
 // Refs from setup
@@ -271,22 +271,23 @@ const lastFilteredIds = ref(null)
 const lockedSortOrder = ref(null)
 
 // Computed properties
-const showIsochrones = computed(() => {
-  if (props.isochroneOverride) {
-    return true
-  } else {
-    return browseView.value === 'nearby'
-  }
-})
-
-const mapHidden = computed(() => {
-  return miscStore?.get('hidepostmap')
-})
-
 const browseView = computed(() => {
   return me.value?.settings?.browseView
     ? me.value.settings.browseView
     : 'nearby'
+})
+
+// Whether PostMap should use its "nearby" data path (the server-computed reach feed). The
+// name is historical - there's no longer a per-user isochrone POLYGON for plain nearby
+// browsing (reach is worked out server-side) - but this flag still selects the nearby feed
+// in PostMap.getMessages, so it must be true for the nearby view, not just for an explicit
+// polygon override (e.g. the fixed Essex boundary on the Essex landing page).
+const showIsochrones = computed(() => {
+  return !!props.isochroneOverride || browseView.value === 'nearby'
+})
+
+const mapHidden = computed(() => {
+  return miscStore?.get('hidepostmap')
 })
 
 const messagesOnMap = computed({
@@ -295,8 +296,8 @@ const messagesOnMap = computed({
       // We have been told by the map to show a specific set of messages.
       return updatedMessagesOnMap.value
     } else {
-      // See if we have some from the isochrone, which we will have fetched in browse/index.
-      return isochroneStore?.messageList ?? []
+      // See if we have some from the nearby feed, which we will have fetched in browse/index.
+      return nearbyStore?.messageList ?? []
     }
   },
   set(newVal) {
@@ -541,7 +542,7 @@ watch(
 )
 
 watch(
-  () => isochroneStore.messageList,
+  () => nearbyStore.messageList,
   (newList) => {
     if (updatedMessagesOnMap.value && newList?.length) {
       const unseenMap = new Map(newList.map((m) => [m.id, m.unseen]))
