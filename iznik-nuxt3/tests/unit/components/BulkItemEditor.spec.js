@@ -11,6 +11,7 @@ vi.mock('~/components/PhotoUploader', () => ({
       'modelValue',
       'type',
       'maxPhotos',
+      'compact',
       'recognise',
       'emptyTitle',
       'emptySubtitle',
@@ -150,7 +151,7 @@ describe('BulkItemEditor', () => {
     const pending = w.vm.onRowFile({
       target: { files: [new Blob(['x'])], value: '' },
     })
-    // A new row is unshifted (so indices shift) before the upload resolves.
+    // A new row is added (so indices shift) before the upload resolves.
     w.vm.addItem()
     resolveUpload({ id: 7 })
     await pending
@@ -191,5 +192,104 @@ describe('BulkItemEditor', () => {
     })
     expect(w.vm.items).toHaveLength(1)
     expect(w.vm.items[0].name).toBe('Sofa')
+  })
+
+  it('adds new rows at the end so the list builds downward', () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.items[0].name = 'First'
+    w.vm.addItem()
+    w.vm.items[1].name = 'Second'
+    w.vm.addItem()
+    expect(w.vm.items.map((i) => i.name)).toEqual(['First', 'Second', ''])
+  })
+
+  it('seeds the tray from the tray prop (restored draft)', () => {
+    const w = mount(BulkItemEditor, {
+      ...mountOpts,
+      props: { tray: [{ id: 21 }, { id: 22 }] },
+    })
+    expect(w.vm.tray.map((p) => p.id)).toEqual([21, 22])
+  })
+
+  it('opens the type-them-in table when seeded with named items (restored draft)', () => {
+    const w = mount(BulkItemEditor, {
+      ...mountOpts,
+      props: { modelValue: [{ name: 'Desk', quantity: 1 }] },
+    })
+    expect(w.vm.mode).toBe('manual')
+  })
+
+  it('opens the type-them-in table when seeded with tray photos', () => {
+    const w = mount(BulkItemEditor, {
+      ...mountOpts,
+      props: { tray: [{ id: 5, ouruid: 'u5' }] },
+    })
+    expect(w.vm.mode).toBe('manual')
+  })
+
+  it('still shows the chooser when seeded empty (no draft)', () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    expect(w.vm.mode).toBe(null)
+  })
+
+  it('emits update:tray when the tray changes, so the parent can persist it', async () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.tray.push({ id: 31 })
+    await nextTick()
+    const emits = w.emitted('update:tray')
+    expect(emits).toBeTruthy()
+    expect(emits[emits.length - 1][0].map((p) => p.id)).toEqual([31])
+  })
+
+  it('flags dragging on drag start and clears it (with the hover row) on drag end', () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.tray.push({ id: 11 })
+    w.vm.onDragStart({}, -1, 0)
+    expect(w.vm.isDragging).toBe(true)
+    w.vm.dragOverIdx = 0
+    w.vm.onDragEnd()
+    expect(w.vm.isDragging).toBe(false)
+    expect(w.vm.dragOverIdx).toBe(null)
+  })
+
+  it('drops a dragged tray photo onto an item row (whole-row drop target)', async () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.items[0].name = 'Desk'
+    w.vm.tray.push({ id: 11 })
+    await nextTick()
+
+    w.vm.onDragStart({}, -1, 0) // pick up the tray photo
+    w.vm.onDropToItem({}, 0) // drop anywhere on row 0
+    await nextTick()
+
+    expect(w.vm.items[0].photos.map((p) => p.id)).toEqual([11])
+    expect(w.vm.tray).toHaveLength(0)
+    expect(w.vm.isDragging).toBe(false)
+  })
+
+  it('uploads an external file dropped onto a row and attaches it to that item', async () => {
+    uploadPhotoMock.mockResolvedValueOnce({ id: 77, path: 'u', paththumb: 't' })
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.items[0].name = 'Desk'
+
+    const file = new Blob(['x'], { type: 'image/png' })
+    await w.vm.onDropToItem({ dataTransfer: { files: [file] } }, 0)
+    await nextTick()
+
+    expect(uploadPhotoMock).toHaveBeenCalledTimes(1)
+    expect(w.vm.items[0].photos.map((p) => p.id)).toEqual([77])
+    expect(w.vm.items[0].uploading).toBe(false)
+  })
+
+  it('ignores a non-image file dropped onto a row', async () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.items[0].name = 'Desk'
+
+    const file = new Blob(['x'], { type: 'application/pdf' })
+    await w.vm.onDropToItem({ dataTransfer: { files: [file] } }, 0)
+    await nextTick()
+
+    expect(uploadPhotoMock).not.toHaveBeenCalled()
+    expect(w.vm.items[0].photos).toHaveLength(0)
   })
 })

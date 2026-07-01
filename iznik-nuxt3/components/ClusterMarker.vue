@@ -41,7 +41,7 @@
   </div>
 </template>
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import Supercluster from 'supercluster/dist/supercluster'
 import ClusterIcon from './ClusterIcon'
 import { MAX_MAP_ZOOM } from '~/constants'
@@ -95,42 +95,73 @@ const props = defineProps({
 
 const emit = defineEmits(['click'])
 
+// Recompute clusters when the map zooms or pans. Supercluster returns different
+// clusters per zoom/bbox, but the `clusters` computed reads getZoom()/getBounds()
+// imperatively (non-reactive), so without this the clustering would freeze at the
+// zoom it was first computed at (and wouldn't split/merge as you zoom or as the
+// distance slider changes the framing). Bump a reactive epoch on the map's
+// zoomend/moveend and read it in `clusters`.
+const mapEpoch = ref(0)
+let boundMap = null
+function onMapChange() {
+  mapEpoch.value++
+}
+watch(
+  () => props.map,
+  (m) => {
+    if (boundMap) {
+      boundMap.off('zoomend moveend', onMapChange)
+      boundMap = null
+    }
+    if (m) {
+      m.on('zoomend moveend', onMapChange)
+      boundMap = m
+      mapEpoch.value++
+    }
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  if (boundMap) {
+    boundMap.off('zoomend moveend', onMapChange)
+    boundMap = null
+  }
+})
+
 const points = computed(() => {
-  // Ensure that markers don't exactly overlap.  Simplistic.
+  // Ensure markers at the exact same location don't sit precisely on top of each
+  // other (so each can be seen/clicked when zoomed in): nudge each subsequent
+  // duplicate at a location by a small, fixed offset.
+  //
+  // IMPORTANT: compute the nudged position into LOCAL variables and never mutate
+  // the marker objects. props.markers are the same objects the list and store
+  // hold, so writing marker.lat/marker.lng corrupts a post's real coordinates -
+  // and because this is a computed that re-runs, the offset would ACCUMULATE on
+  // every recompute, eventually flinging a post far from where it actually is.
+  // (The previous version also did Math.max(nelat, ...), which snapped every
+  // duplicate to the north edge of the map.)
   const ret = []
-  const latlngs = []
+  const seen = {}
 
-  if (props.map) {
-    const bounds = props.map.getBounds()
-    if (bounds) {
-      const nelng = bounds.getNorthWest().lng
-      const nelat = bounds.getNorthWest().lat
+  if (props.map && props.markers) {
+    props.markers.forEach((marker) => {
+      if (marker.lat || marker.lng) {
+        const key = marker.lat + '|' + marker.lng
+        const already = seen[key] || 0
+        seen[key] = already + 1
 
-      if (props.markers) {
-        props.markers.forEach((marker) => {
-          if (marker.lat || marker.lng) {
-            const key = marker.lat + '|' + marker.lng
-            const already = latlngs[key] ? latlngs[key] : 0
+        const lat = marker.lat + already * 0.003
+        const lng = marker.lng + already * 0.003
 
-            if (already) {
-              marker.lat = Math.max(nelat, marker.lat + (already + 1) * 0.003)
-              marker.lng = Math.max(nelng, marker.lng + (already + 1) * 0.003)
-            }
-
-            latlngs[key] = already + 1
-
-            // Add a geoJSON point.
-            ret.push({
-              id: marker.id,
-              type: 'Point',
-              geometry: {
-                coordinates: [marker.lng, marker.lat],
-              },
-            })
-          }
+        ret.push({
+          id: marker.id,
+          type: 'Point',
+          geometry: {
+            coordinates: [lng, lat],
+          },
         })
       }
-    }
+    })
   }
 
   return ret
@@ -151,6 +182,10 @@ const index = computed(() => {
 })
 
 const clusters = computed(() => {
+  // Reading mapEpoch makes this recompute on map zoom/pan (see above).
+  // eslint-disable-next-line no-unused-expressions
+  mapEpoch.value
+
   let clustersList = []
 
   try {

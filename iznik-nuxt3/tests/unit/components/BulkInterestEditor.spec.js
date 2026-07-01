@@ -86,10 +86,11 @@ describe('BulkInterestEditor', () => {
     expect(w.vm.picks[10].checked).toBe(false) // withdrawn item is off
   })
 
-  it('replier view seeds from their own yourinterest', () => {
-    const w = mountAs(7, 7) // replier editing themselves
+  it('replier view seeds from their own yourinterest but is read-only', () => {
+    const w = mountAs(7, 7) // replier viewing their own interest
     expect(w.vm.editingOwn).toBe(true)
-    expect(w.vm.editable).toBe(true)
+    // The replier's own view is read-only now — they change interest via chat.
+    expect(w.vm.editable).toBe(false)
     expect(w.vm.picks[11].checked).toBe(true)
     expect(w.vm.picks[11].quantity).toBe(2)
   })

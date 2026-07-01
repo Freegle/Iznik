@@ -99,6 +99,7 @@ vi.mock('~/composables/useMap', () => ({
 
 vi.mock('~/constants', () => ({
   MAX_MAP_ZOOM: 16,
+  BROWSE_DISTANCE_UNLIMITED: Number.MAX_SAFE_INTEGER,
 }))
 
 // Mock defineAsyncComponent to return simple stubs
@@ -226,7 +227,7 @@ describe('PostMapAndList', () => {
           },
           MessageList: {
             template:
-              '<div class="message-list" :data-search="search" :data-selected-group="selectedGroup"><slot /></div>',
+              '<div class="message-list" :data-search="search" :data-selected-group="selectedGroup" :data-ids="(messagesForList || []).map((m) => m.id).join(\',\')"><slot /></div>',
             props: [
               'visible',
               'none',
@@ -397,6 +398,11 @@ describe('PostMapAndList', () => {
     it('accepts authorityid with default null', () => {
       const props = PostMapAndList.props
       expect(props.authorityid.default).toBe(null)
+    })
+
+    it('accepts selectedMaxDistance defaulting to unlimited (BROWSE_DISTANCE_UNLIMITED)', () => {
+      const props = PostMapAndList.props
+      expect(props.selectedMaxDistance.default).toBe(Number.MAX_SAFE_INTEGER)
     })
 
     it('passes props to PostMap', () => {
@@ -680,6 +686,136 @@ describe('PostMapAndList', () => {
       const bunseen = messages[1].unseen && !messages[1].successful // true
       expect(aunseen).toBe(false)
       expect(bunseen).toBe(true)
+    })
+  })
+
+  describe('distance filter (rippling-out relevance ordering + slider, #E)', () => {
+    it('excludes messages beyond selectedMaxDistance', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          distance: 1,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: false,
+          groupid: 1,
+          distance: 5,
+        },
+      ]
+      const wrapper = createWrapper({
+        startOnGroups: false,
+        selectedMaxDistance: 2,
+      })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe('100')
+    })
+
+    it('includes all messages when selectedMaxDistance is the unlimited sentinel (default)', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          distance: 1,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: false,
+          groupid: 1,
+          distance: 50,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      const ids = wrapper.find('.message-list').attributes('data-ids')
+      expect(ids.split(',').sort()).toEqual(['100', '101'])
+    })
+
+    it('keeps messages with no distance field regardless of the limit', async () => {
+      mockNearbyMessageList.value = [
+        { id: 100, arrival: '2024-01-20T10:00:00Z', unseen: true, groupid: 1 },
+      ]
+      const wrapper = createWrapper({
+        startOnGroups: false,
+        selectedMaxDistance: 1,
+      })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe('100')
+    })
+  })
+
+  describe('bucketed relevance ordering (score desc within unseen/seen buckets, #C)', () => {
+    it('orders unseen messages by score desc rather than arrival', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 1,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 9,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe(
+        '101,100'
+      )
+    })
+
+    it('treats a missing score as 0', async () => {
+      mockNearbyMessageList.value = [
+        { id: 100, arrival: '2024-01-19T10:00:00Z', unseen: true, groupid: 1 },
+        {
+          id: 101,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 5,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe(
+        '101,100'
+      )
+    })
+
+    it('still shows unseen posts before seen posts regardless of score', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: false,
+          groupid: 1,
+          score: 99,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 1,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe(
+        '101,100'
+      )
     })
   })
 

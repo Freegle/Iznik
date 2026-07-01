@@ -1464,36 +1464,43 @@ class UnifiedDigestService
     public function deduplicatePosts(Collection $posts): Collection
     {
         $deduplicated = collect();
+        // key => LIST of entry indices sharing that dedup key. A single key can hold several
+        // distinct-body items (e.g. the same poster reposts one item with slightly reworded body,
+        // or posts two genuinely different things at one location under the same subject), so we
+        // must keep every distinct-body representative — not just the first. Keying on only the
+        // first meant the SECOND item's cross-post/ripple copies kept failing bodiesMatch against
+        // the wrong representative and each got pushed as its own card, so a reposted item that
+        // rippled into N groups showed N times in the digest (Discourse #9850: linda_rowlands' bed
+        // 10x — one repost collapsed, the reworded repost's 10 rippled copies did not).
         $processed = [];
 
         foreach ($posts as $post) {
             $key = $this->getDeduplicationKey($post);
+            $merged = false;
 
-            if (isset($processed[$key])) {
-                // Key matches - also check body similarity before deduplicating.
-                $existingIndex = $processed[$key];
+            // Merge into the first same-key representative whose body matches (true duplicate,
+            // incl. every cross-post/ripple copy of the same message). bodiesMatch still keeps two
+            // genuinely different items sharing a subject+location apart.
+            foreach ($processed[$key] ?? [] as $existingIndex) {
                 $existing = $deduplicated[$existingIndex];
-
                 if ($this->bodiesMatch($existing['message'], $post)) {
-                    // Same key AND similar body - true duplicate, merge groups.
                     $existing['postedToGroups'][] = $post->groupid;
                     $deduplicated[$existingIndex] = $existing;
-                } else {
-                    // Same key but different body - treat as separate post.
-                    $index = $deduplicated->count();
-                    $deduplicated->push([
-                        'message' => $post,
-                        'postedToGroups' => [$post->groupid],
-                    ]);
+                    $merged = true;
+                    break;
                 }
-            } else {
-                // New unique post.
+            }
+
+            if (!$merged) {
+                // No body-matching representative yet — a new distinct post. Register it under the
+                // key so its OWN later copies collapse into it (the fix: previously only the very
+                // first post per key was ever a merge target).
                 $index = $deduplicated->count();
                 $deduplicated->push([
                     'message' => $post,
                     'postedToGroups' => [$post->groupid],
                 ]);
-                $processed[$key] = $index;
+                $processed[$key][] = $index;
             }
         }
 

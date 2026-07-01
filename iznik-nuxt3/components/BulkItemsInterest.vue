@@ -10,6 +10,21 @@
     </p>
 
     <ul class="bulkitems__list">
+      <!-- Column headings, so it's clear what "6 available" / "Good" mean. -->
+      <li
+        v-if="!isOwner && !message.successful"
+        class="bitem bitem--head"
+        aria-hidden="true"
+      >
+        <span class="bitem__photo bitem__photo--spacer" />
+        <span class="bitem__detail">Item</span>
+        <span class="bitem__meta">
+          <span class="bitem__avail">Available</span>
+          <span class="bitem__cond">Condition</span>
+        </span>
+        <span class="bitem__pick bitem__pick--head">Want it?</span>
+      </li>
+
       <!-- One compact line per item: thumb | #ref name + badges | toggle + qty. -->
       <li v-for="(item, idx) in items" :key="item.id" class="bitem">
         <button
@@ -17,7 +32,7 @@
           class="bitem__photo"
           :class="{ 'bitem__photo--zoom': thumb(item) }"
           :title="thumb(item) ? 'Click to enlarge' : ''"
-          @click="enlarge(item)"
+          @click.stop.prevent="enlarge(item)"
         >
           <img
             v-if="thumb(item)"
@@ -139,14 +154,27 @@
         />
       </b-form-group>
 
+      <b-form-group
+        label="Add a message for the giver (optional)"
+        class="mb-2"
+      >
+        <b-form-textarea
+          v-model="comment"
+          rows="2"
+          max-rows="12"
+          no-resize
+          maxlength="1000"
+          placeholder="e.g. what you'll use them for, or anything the giver should know"
+          data-testid="interest-comment"
+        />
+      </b-form-group>
+
       <p v-if="registerHint" class="bulkitems__hint small">
         {{ registerHint }}
       </p>
-      <!-- The "Register interest" action lives in the page's main reply button
-           (see MessageExpanded), which calls submit() and reflects canRegister. -->
-      <NoticeMessage v-if="submitted" variant="success" class="mt-2">
-        Thanks! We've let the giver know which items you're interested in.
-      </NoticeMessage>
+      <!-- The "Register interest" action and the success message both live in the
+           page's main reply button area (see MessageExpanded), so the thanks note
+           appears immediately above the button. -->
     </div>
   </div>
 </template>
@@ -167,7 +195,12 @@ const props = defineProps({
 
 // The page's main reply button drives the actual "Register interest" action, so
 // it needs to know whether we're ready, and whether interest is already in.
-const emit = defineEmits(['can-register', 'submitted', 'validation'])
+const emit = defineEmits([
+  'can-register',
+  'submitted',
+  'validation',
+  'had-interest',
+])
 
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
@@ -185,12 +218,18 @@ const isOwner = computed(
     authStore.user.id === message.value.fromuser
 )
 
+// `submitted` = interest was registered THIS visit (drives the thanks message).
+// `hadInterestOnLoad` = interest already existed when the page loaded (drives the
+// "Update my interest" button label — we don't flip to that after a fresh reply).
 const submitted = ref(false)
+const hadInterestOnLoad = ref(false)
 // Free-text collection time (used when the giver set no fixed windows).
 const cancollect = ref('')
 // Selected fixed collection windows — recipients tick all the times they can
 // make, not just one.
 const cancollectTimes = ref([])
+// Free-text message the recipient can add for the giver, sent with their interest.
+const comment = ref('')
 
 // Per-item pick state, seeded from any interest the user already expressed.
 const picks = reactive({})
@@ -216,7 +255,7 @@ function seedPicks() {
         }
       }
       if (yi && yi.state !== 'Withdrawn') {
-        submitted.value = true
+        hadInterestOnLoad.value = true
       }
     }
   }
@@ -249,6 +288,7 @@ const registerHint = computed(() => {
 // disabled until canRegister, then "Update my interest" once interest is in).
 watch(canRegister, (v) => emit('can-register', v), { immediate: true })
 watch(submitted, (v) => emit('submitted', v), { immediate: true })
+watch(hadInterestOnLoad, (v) => emit('had-interest', v), { immediate: true })
 
 function onCheck(item) {
   const p = picks[item.id]
@@ -346,7 +386,12 @@ async function submit(callback) {
   }
   const payload = buildPayload()
   if (payload.length) {
-    await messageStore.bulkInterest(props.id, payload)
+    await messageStore.bulkInterest(
+      props.id,
+      payload,
+      undefined,
+      comment.value.trim() || null
+    )
     submitted.value = true
   }
   if (callback) callback()
@@ -359,6 +404,7 @@ defineExpose({
   picks,
   canRegister,
   cancollectTimes,
+  comment,
   registerHint,
 })
 </script>
@@ -393,6 +439,21 @@ defineExpose({
 .bitem__choicebtn {
   min-width: 5.5rem;
   font-weight: 600;
+  /* Bootstrap gives buttons an active/focus drop-shadow; on the pressed
+     ("No thanks") button that reads as an odd shadow under the row. Drop it and
+     use a clear outline for keyboard focus instead. */
+  box-shadow: none;
+
+  &:active,
+  &.active,
+  &:focus {
+    box-shadow: none;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $color-green--darker;
+    outline-offset: 1px;
+  }
 }
 
 .bulkitems__hint {
@@ -406,6 +467,32 @@ defineExpose({
   padding: 0;
 }
 
+/* Column headings row — aligns to the fixed meta columns below. */
+.bitem--head {
+  border-bottom: 2px solid $color-gray--light;
+  padding-bottom: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: $color-gray--dark;
+
+  .bitem__photo--spacer {
+    background: none;
+  }
+
+  .bitem__pick--head {
+    align-items: flex-end;
+  }
+}
+
+/* Rows wrap on mobile, so a fixed header can't line up — hide it there. */
+@media (max-width: 575.98px) {
+  .bitem--head {
+    display: none;
+  }
+}
+
 /* One compact line: photo | details (flex, truncates) | toggle + qty. */
 .bitem {
   display: flex;
@@ -416,9 +503,9 @@ defineExpose({
 }
 
 .bitem__photo {
-  flex: 0 0 40px;
-  width: 40px;
-  height: 40px;
+  flex: 0 0 80px;
+  width: 80px;
+  height: 80px;
   padding: 0;
   border: 0;
   border-radius: 5px;
@@ -490,7 +577,9 @@ defineExpose({
 /* Toggle on top; the quantity (label + dropdown) sits BELOW it when turned on,
    so turning the toggle on never shifts its position. */
 .bitem__pick {
-  flex: 0 0 auto;
+  /* Fixed width so the button group lines up under the "Want it?" heading and
+     the meta columns stay aligned between the header row and the item rows. */
+  flex: 0 0 12rem;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -535,7 +624,7 @@ defineExpose({
     flex-basis: 100%;
     /* Indent with padding (inside the 100% basis) not margin (which would add
        on top of 100% and re-introduce overflow). */
-    padding-left: calc(40px + 0.5rem);
+    padding-left: calc(80px + 0.5rem);
     margin-top: 0.25rem;
   }
 

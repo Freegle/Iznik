@@ -209,6 +209,14 @@ const visiblePosts = computed(() => {
   let visiblePostList = showOldPosts.value ? posts.value : activePosts.value
   visiblePostList = visiblePostList || []
 
+  // Bulk offers ("clearances") are managed from their own card
+  // (MyPostsClearances) — don't also show them in the normal posts list.
+  visiblePostList = visiblePostList.filter((post) => {
+    const msg = messageStore.byId(post.id)
+    const bulkcount = msg?.bulkcount ?? msg?.bulkitems?.length ?? 0
+    return bulkcount === 0
+  })
+
   const filter = filterText.value.trim().toLowerCase()
   if (filter) {
     visiblePostList = visiblePostList.filter((post) => {
