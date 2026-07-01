@@ -136,6 +136,55 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    /**
+     * Regression (Discourse #9850): a poster reposts one item under the same subject/location with
+     * a slightly reworded body, and BOTH reposts ripple into several groups. The two reposts share
+     * a dedup key but differ by body. Each repost's own multi-group copies must still collapse into
+     * a single card — the earlier code kept only the FIRST post per key as a merge target, so the
+     * second repost's copies each failed bodiesMatch against the first and became a separate card
+     * (linda_rowlands' bed appeared ~10x). Expect exactly TWO cards (one per repost), each listing
+     * all its groups — not one-card-per-group.
+     */
+    public function test_deduplication_two_reworded_reposts_each_collapse_across_groups(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        // Two reposts of the same item: same subject + location, slightly different body.
+        $repost1 = $this->createTestMessage($user, $groupA, [
+            'subject' => 'OFFER: Divan bed frame (London)',
+            'textbody' => '5ft wide retail bedframe for queen sized divan. Dismantled.',
+        ]);
+        $repost2 = $this->createTestMessage($user, $groupA, [
+            'subject' => 'OFFER: Divan bed frame (London)',
+            'textbody' => '5ft wide retail bedframe only for queen. Dismantled, all fittings.',
+        ]);
+        $repost2->locationid = $repost1->locationid;
+        $repost2->save();
+
+        // Each repost appears on BOTH groups (the join produces one row per (msgid, group)),
+        // interleaved as the real query would return them by arrival.
+        $mk = function ($msg, $groupid) {
+            $row = $msg->fresh();
+            $row->locationid = $msg->locationid;
+            $row->groupid = $groupid;
+            return $row;
+        };
+        $posts = collect([
+            $mk($repost1, $groupA->id), $mk($repost2, $groupA->id),
+            $mk($repost1, $groupB->id), $mk($repost2, $groupB->id),
+        ]);
+
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        $this->assertCount(2, $deduplicated, 'each reworded repost is one card, not one card per group');
+        foreach ($deduplicated as $card) {
+            $this->assertCount(2, $card['postedToGroups'], 'each repost card lists both its groups');
+            $this->assertEqualsCanonicalizing([$groupA->id, $groupB->id], $card['postedToGroups']);
+        }
+    }
+
     public function test_deduplication_without_tnpostid(): void
     {
         $user = $this->createTestUser();
