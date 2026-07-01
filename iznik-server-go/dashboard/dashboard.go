@@ -246,13 +246,23 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 	} else {
 		// For specific groups, use correlated subquery with messages_groups filter.
 		// Uses existing groupid index on messages_groups.
+		//
+		// rippled_in = 0 restricts to each post's ORIGIN group row. Rippling-out adds
+		// an Approved messages_groups row (rippled_in = 1) per group a post reaches, so
+		// without this filter a post rippled into several of a moderator's groups would
+		// appear once per group (duplicates under allgroups) and posts merely rippled
+		// INTO a group would pollute that group's own popular list. GROUP BY mg.msgid
+		// additionally collapses genuine multi-group (crossposted) origin rows so each
+		// post is listed once. Same native-only pattern as the stats/IP-abuse/edit-queue
+		// fixes (fa60c39b0, 4b6d7b3c3).
 		db.Raw("SELECT "+
 			"(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, "+
-			"mg.msgid AS id, m.subject "+
+			"mg.msgid AS id, MIN(m.subject) AS subject "+
 			"FROM messages_groups mg "+
 			"INNER JOIN messages m ON m.id = mg.msgid "+
 			"WHERE mg.arrival >= ? AND mg.arrival <= ? "+
-			"AND mg.groupid IN (?) AND mg.collection = ? "+
+			"AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0 "+
+			"GROUP BY mg.msgid "+
 			"ORDER BY views DESC LIMIT 5",
 			utils.MESSAGE_LIKES_VIEW, startQ, endQ, groupIDs, utils.COLLECTION_APPROVED).Scan(&posts)
 	}
