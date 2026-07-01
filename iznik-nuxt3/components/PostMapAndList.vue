@@ -25,6 +25,7 @@
       :can-hide="canHide"
       :isochrone-override="isochroneOverride"
       :authorityid="authorityid"
+      :selected-max-distance="selectedMaxDistance"
       @searched="searched"
       @messages="messagesChanged($event)"
       @groups="groupsChanged($event)"
@@ -128,7 +129,7 @@ import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
-import { MAX_MAP_ZOOM } from '~/constants'
+import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import { useNearbyStore } from '~/stores/nearby'
 
 import JoinWithConfirm from '~/components/JoinWithConfirm'
@@ -230,6 +231,15 @@ const props = defineProps({
     type: Number,
     required: false,
     default: null,
+  },
+  // Rippling-out relevance ordering + distance slider: the member's current maximum
+  // distance preference (miles), or BROWSE_DISTANCE_UNLIMITED (the default) to defer to
+  // the server's own reach limit. Filtered locally against each post's blurred
+  // `distance` field for an instant response as the slider moves.
+  selectedMaxDistance: {
+    type: Number,
+    required: false,
+    default: BROWSE_DISTANCE_UNLIMITED,
   },
 })
 
@@ -336,6 +346,16 @@ const messagesForList = computed(() => {
     msgs = msgs.filter((m) => m.groupid === props.selectedGroup)
   }
 
+  if (props.selectedMaxDistance !== BROWSE_DISTANCE_UNLIMITED) {
+    // Distance slider: the feed already returns the full reach set, so this is a local,
+    // instant filter rather than a refetch. Posts with no distance (e.g. an older feed
+    // response before the API returned it) always pass, so we don't hide anything on a
+    // stale/partial response.
+    msgs = msgs.filter(
+      (m) => m.distance == null || m.distance <= props.selectedMaxDistance
+    )
+  }
+
   return msgs
 })
 
@@ -400,7 +420,12 @@ function sortMessages(messages) {
       } else if (!aunseen && bunseen) {
         return 1
       } else {
-        return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
+        // Within each bucket (unseen, then seen), order by the server's rippling
+        // relevance score rather than raw recency, so the most relevant posts (a mix
+        // of closeness, freshness and quietness) come first rather than just the
+        // newest. Missing score (e.g. an API not yet returning it) treats as 0, so
+        // everything still sorts stably rather than breaking.
+        return (b.score ?? 0) - (a.score ?? 0)
       }
     } else if (nearbyRef) {
       // Nearby: nearest-first, then recency as a tiebreak. Posts with no

@@ -87,6 +87,24 @@ the post reaches that member's area, or once the post has finished spreading as 
 will go, so no reply is ever held indefinitely. Members are never shown this reason; only
 moderators see it.
 
+### 5. Members' Nearby feed is ordered by relevance, with their own distance preference
+
+The "Nearby" browse feed no longer just shows the newest post first. Posts a member has
+not seen yet are shown ahead of ones they have already seen, and within each of those two
+groups, posts are ordered by a relevance score that balances how close a post is, how
+fresh it is, and how much interest it has already had (views and replies) - the same kind
+of scoring already used to order the rippling digest email. This changes the order a
+member's own browse page shows posts in; it does not change what rippling approves, joins,
+or who a post reaches.
+
+Members also have a new distance slider in their filters, marked "Nearer" and "Further"
+with no numbers shown. It is a **personal display preference each member sets for
+themselves** - by default it is left at "Further" (no extra limit beyond their normal
+rippling reach), and moving it towards "Nearer" simply narrows what appears on their own
+screen. It has no effect on rippling itself, on what other members see, or on moderation -
+and, like their other browse filters (which posts, which communities, sort order), their
+choice is remembered between visits.
+
 ---
 
 ## When a poster leaves your community
@@ -205,6 +223,14 @@ answer is reassuring:
 > *The post has not rippled out to your area yet. It is being shown to people closest
 > to it first. As soon as it reaches you, you will be able to reply - you do not need
 > to do anything.*
+
+Worth knowing: on their default Nearby view, a member only ever sees posts that have
+already reached them, so this question usually only comes up if they have switched to
+"All my communities" or otherwise moved away from the default view. It is fine to say so -
+it should reassure them that what they normally see is always reply-able.
+
+Members may also ask about the order posts appear in, or about the new distance slider in
+the filters - see "Members' Nearby feed is ordered by relevance" above for the mechanism.
 
 Members on **immediate emails** may also notice they get an alert when a post that
 started on a neighbouring community ripples close enough to reach them. That is expected:

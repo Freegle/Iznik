@@ -44,8 +44,12 @@ export const useMessageStore = defineStore({
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, log = true) {
-      const ret = await api(this.config).message.count(browseView, log)
+    async fetchCount(browseView, maxDistance, log = true) {
+      const ret = await api(this.config).message.count(
+        browseView,
+        maxDistance,
+        log
+      )
       this.count = ret?.count || 0
       return this.count
     },

@@ -51,18 +51,18 @@ describe('MessageListCounts', () => {
   describe('count display', () => {
     it('shows singular when count is 1', () => {
       const wrapper = createWrapper({ count: 1 })
-      expect(wrapper.find('.unread-text').text()).toBe('1 unread post')
+      expect(wrapper.find('.unread-text').text()).toBe('1 new post')
     })
 
     it('shows plural when count > 1', () => {
       const wrapper = createWrapper({ count: 5 })
-      expect(wrapper.find('.unread-text').text()).toBe('5 unread posts')
+      expect(wrapper.find('.unread-text').text()).toBe('5 new posts')
     })
 
     it('caps browseCount at 99 for display logic', () => {
       const wrapper = createWrapper({ count: 150 })
       // browseCount is min(99, count) but text uses actual count
-      expect(wrapper.find('.unread-text').text()).toBe('150 unread posts')
+      expect(wrapper.find('.unread-text').text()).toBe('150 new posts')
     })
 
     it('shows zero count in text when applicable', () => {

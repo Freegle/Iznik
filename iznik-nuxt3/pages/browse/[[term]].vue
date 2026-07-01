@@ -57,6 +57,7 @@
               v-model:selected-group="selectedGroup"
               v-model:selected-type="selectedType"
               v-model:selected-sort="selectedSort"
+              v-model:selected-max-distance="selectedMaxDistance"
               v-model:search="searchTerm"
               class="mt-2 mt-md-0"
             />
@@ -67,6 +68,7 @@
               v-model:selected-group="selectedGroup"
               v-model:selected-type="selectedType"
               v-model:selected-sort="selectedSort"
+              :selected-max-distance="selectedMaxDistance"
               :initial-bounds="initialBounds"
               force-messages
               group-info
@@ -127,6 +129,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useNearbyStore } from '~/stores/nearby'
+import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import PostFilters from '~/components/PostFilters'
 import SidebarLeft from '~/components/SidebarLeft'
 import PostCode from '~/components/PostCode'
@@ -189,6 +192,7 @@ const messagesOnMapCount = ref(null)
 const selectedGroup = ref(0)
 const selectedType = ref('All')
 const selectedSort = ref('Unseen')
+const selectedMaxDistance = ref(BROWSE_DISTANCE_UNLIMITED)
 const forceShowFilters = ref(false)
 const lastCountUpdate = ref(0)
 const updatingCount = ref(false)
@@ -203,6 +207,19 @@ const debugBirthdayModal = computed(() => {
 
 // Use me and myGroups computed properties from useMe composable for consistency
 const { me, myGroups } = useMe()
+
+// Rippling-out relevance ordering + distance slider (#D/#E): unlike selectedSort/
+// selectedType (which only get updated via PostFilters' emit, so a persisted
+// non-default value doesn't apply until the member touches the control), we
+// initialise this from settings straight away so a saved distance preference is
+// honoured on the very first render of the feed.
+watch(
+  () => me.value?.settings?.browseMaxDistance,
+  (newVal) => {
+    selectedMaxDistance.value = newVal ?? BROWSE_DISTANCE_UNLIMITED
+  },
+  { immediate: true }
+)
 
 const browseView = computed(() => {
   return me.value?.settings?.browseView
@@ -374,7 +391,11 @@ async function handleScroll() {
   ) {
     lastCountUpdate.value = new Date().getTime()
     updatingCount.value = true
-    await messageStore.fetchCount(me.value.settings?.browseView, false)
+    await messageStore.fetchCount(
+      me.value.settings?.browseView,
+      me.value.settings?.browseMaxDistance,
+      false
+    )
     updatingCount.value = false
   }
 }

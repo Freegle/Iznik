@@ -172,7 +172,7 @@ export function useNavbar() {
   })
 
   const browseCountPlural = computed(() => {
-    return pluralize('unseen post', messageStore.count, true)
+    return pluralize('new post', messageStore.count, true)
   })
 
   const activePostsCountPlural = computed(() => {
@@ -285,7 +285,11 @@ export function useNavbar() {
           throw new Error('Not logged in')
         }
 
-        await messageStore.fetchCount(me?.settings?.browseView, false)
+        await messageStore.fetchCount(
+          me?.settings?.browseView,
+          me?.settings?.browseMaxDistance,
+          false
+        )
 
         if (!myid.value) {
           throw new Error('Not logged in')
