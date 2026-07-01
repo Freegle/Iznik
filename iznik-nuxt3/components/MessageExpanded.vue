@@ -332,6 +332,7 @@
               :id="id"
               @can-register="bulkCanRegister = $event"
               @submitted="bulkSubmitted = $event"
+              @had-interest="bulkHadInterest = $event"
               @validation="bulkPickError = $event"
             />
 
@@ -446,6 +447,15 @@
                 class="footer-buttons"
               >
                 <NoticeMessage
+                  v-if="isBulk && bulkSubmitted"
+                  variant="success"
+                  class="mb-0"
+                  data-testid="bulk-submitted"
+                >
+                  Thanks! We've let the giver know which items you're interested
+                  in.
+                </NoticeMessage>
+                <NoticeMessage
                   v-if="isBulk && bulkTriedRegister && bulkPickError"
                   variant="danger"
                   class="register-error mb-0"
@@ -472,7 +482,7 @@
                 >
                   {{
                     isBulk
-                      ? bulkSubmitted
+                      ? bulkHadInterest
                         ? 'Update my interest'
                         : 'Register interest'
                       : 'Reply'
@@ -521,6 +531,14 @@
           class="footer-buttons"
         >
           <NoticeMessage
+            v-if="isBulk && bulkSubmitted"
+            variant="success"
+            class="mb-0"
+            data-testid="bulk-submitted"
+          >
+            Thanks! We've let the giver know which items you're interested in.
+          </NoticeMessage>
+          <NoticeMessage
             v-if="isBulk && bulkTriedRegister && bulkPickError"
             variant="danger"
             class="register-error mb-0"
@@ -547,7 +565,7 @@
           >
             {{
               isBulk
-                ? bulkSubmitted
+                ? bulkHadInterest
                   ? 'Update my interest'
                   : 'Register interest'
                 : 'Reply'
@@ -762,6 +780,10 @@ const hideGeneratedBulkBody = computed(() => {
 const bulkInterestRef = ref(null)
 const bulkCanRegister = ref(false)
 const bulkSubmitted = ref(false)
+// Interest already existed when the page loaded — drives the "Update my interest"
+// button label. A fresh reply this visit sets bulkSubmitted (thanks note) but NOT
+// this, so we don't flip the button to "Update my interest" right after replying.
+const bulkHadInterest = ref(false)
 // Red error shown above the reply button when a "Register interest" click can't
 // go through yet (e.g. no item chosen) — otherwise the click silently no-ops.
 // The child's live "why you can't register yet" message ('' once ready), and

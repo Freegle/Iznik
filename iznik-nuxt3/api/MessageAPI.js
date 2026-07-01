@@ -115,12 +115,13 @@ export default class MessageAPI extends BaseAPI {
   // in that item.
   // interestuserid lets the offerer record a replier's interest on their behalf;
   // omit it (or pass falsy) to express your own.
-  bulkInterest(id, items, interestuserid) {
+  bulkInterest(id, items, interestuserid, comment) {
     return this.$postv2('/message', {
       action: 'BulkInterest',
       id,
       bulkinterest: items,
       ...(interestuserid ? { interestuserid } : {}),
+      ...(comment ? { comment } : {}),
     })
   }
 

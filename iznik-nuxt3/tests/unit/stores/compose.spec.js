@@ -121,6 +121,78 @@ describe('compose store', () => {
     })
   })
 
+  describe('createDraft — bulk offer (clearance)', () => {
+    it('forwards bulkitems/bulkslots/accessinstructions and filters blank-name items', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 5 }
+      store.group = 10
+      mockMessagePut.mockResolvedValueOnce({ id: 999 })
+
+      const id = await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Office clearance',
+          description: 'desc',
+          availablenow: 1,
+          attachments: [],
+          bulkitems: [
+            {
+              name: 'Desk',
+              quantity: 2,
+              condition: 'Good',
+              attachments: [7, 9],
+            },
+            { name: '   ', quantity: 1 }, // blank name — must be dropped
+          ],
+          bulkslots: ['Tue 10am'],
+          accessinstructions: 'Side gate',
+        },
+        'me@example.com'
+      )
+
+      expect(id).toBe(999)
+      expect(mockMessagePut).toHaveBeenCalledTimes(1)
+      const sent = mockMessagePut.mock.calls[0][0]
+      expect(sent.bulkitems).toEqual([
+        {
+          name: 'Desk',
+          quantity: 2,
+          condition: 'Good',
+          dimensions: null,
+          photourl: null,
+          description: null,
+          attachments: [7, 9],
+        },
+      ])
+      expect(sent.bulkslots).toEqual(['Tue 10am'])
+      expect(sent.accessinstructions).toBe('Side gate')
+    })
+
+    it('omits the bulk fields entirely for an ordinary single-item post', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 5 }
+      mockMessagePut.mockResolvedValueOnce({ id: 1 })
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Chair',
+          description: '',
+          availablenow: 1,
+          attachments: [],
+        },
+        'me@example.com'
+      )
+
+      const sent = mockMessagePut.mock.calls[0][0]
+      expect(sent.bulkitems).toBeUndefined()
+      expect(sent.bulkslots).toBeUndefined()
+      expect(sent.accessinstructions).toBeUndefined()
+    })
+  })
+
   describe('add / ensureMessage', () => {
     it('adds a new message and returns its id', () => {
       const store = useComposeStore()

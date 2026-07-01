@@ -261,6 +261,10 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 				break
 			}
 		}
+		// The recipient's own free-text message to the giver, if they added one.
+		if req.Comment != nil && strings.TrimSpace(*req.Comment) != "" {
+			body += "\n\n" + strings.TrimSpace(*req.Comment)
+		}
 		var existingID uint64
 		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
 			chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
