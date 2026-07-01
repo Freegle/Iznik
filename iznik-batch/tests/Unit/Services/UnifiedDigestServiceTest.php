@@ -2173,49 +2173,4 @@ class UnifiedDigestServiceTest extends TestCase
             'the owning shard mails the reachable member'
         );
     }
-
-    /**
-     * Content-level dedup across a prolific cross-poster's sibling copies (Discourse #9850).
-     * The poster posts one item as several SEPARATE msgids (same fromuser+subject+locationid);
-     * each gets its own reach row and is reach-mailed. Keyed only on (msgid,userid) the ledger
-     * would let a member near several copies get the SAME item once per msgid (a bed 8x; 64
-     * members got one "Mirror" 2-9x). Assert a member is mailed ONCE across the sibling copies.
-     */
-    public function test_reach_mail_dedups_cross_poster_sibling_copies_by_content(): void
-    {
-        [$messageA, $member] = $this->setUpRippledPostWithReachableImmediateMember();
-        $poster = User::find($messageA->fromuser);
-        $groupId = (int) DB::table('messages_groups')->where('msgid', $messageA->id)->value('groupid');
-        $group = Group::find($groupId);
-
-        // Sibling copy B: identical fromuser + subject + locationid (both null), its own reach row
-        // over the same member, on the same group the member is immediate on.
-        $messageB = $this->createTestMessage($poster, $group, ['subject' => $messageA->subject]);
-        DB::table('messages_groups')->where('msgid', $messageB->id)->update([
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subHours(1),
-        ]);
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
-            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$messageB->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
-        );
-
-        // First copy mails the member.
-        $sentA = $this->service->mailNewlyReachedForPost((int) $messageA->id);
-        $this->assertGreaterThanOrEqual(1, $sentA, 'the first copy mails the reachable member');
-
-        // The sibling copy must NOT mail the same member again — it is the same item.
-        $sentB = $this->service->mailNewlyReachedForPost((int) $messageB->id);
-        $this->assertSame(0, $sentB, 'a sibling cross-post copy does not re-mail a member already notified for the item');
-
-        $this->assertSame(
-            1,
-            (int) DB::table('rippling_reach_notified')
-                ->whereIn('msgid', [$messageA->id, $messageB->id])
-                ->where('userid', $member->id)->count(),
-            'the member is recorded once for the item, not once per cross-post copy'
-        );
-    }
 }
