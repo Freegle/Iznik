@@ -849,6 +849,145 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('Banned', $m->collection, 'existing banned membership left untouched');
     }
 
+    /**
+     * A poster banned from a group (users_banned row) must NOT have their post rippled into it,
+     * nor be re-joined to it. A ban is an explicit mod ejection; rippling must not silently undo it.
+     */
+    public function test_post_is_not_rippled_into_a_group_the_poster_is_banned_from(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        // Group B's area intersects the reach — it would ripple in but for the ban.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // The poster is banned from group B (authoritative users_banned record, no membership row).
+        DB::table('users_banned')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'byuser' => null, 'date' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post not rippled into a group the poster is banned from'
+        );
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'banned poster not re-joined to the group'
+        );
+    }
+
+    /** A legacy collection='Banned' membership also blocks the post rippling into that group. */
+    public function test_post_is_not_rippled_into_a_group_with_a_banned_collection_membership(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Banned', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post not rippled into a group where the poster has a Banned-collection membership'
+        );
+    }
+
+    /**
+     * Backfill: pullBannedRippleMemberships removes ripple-join memberships into groups the member
+     * is banned from and soft-deletes their rippled-in posts there. Dry run writes nothing.
+     */
+    public function test_backfill_removes_ripple_joins_for_banned_users(): void
+    {
+        $poster = $this->createTestUser();
+        $groupB = $this->createTestGroup();
+
+        // A rippled-in post copy of the poster's message, live in group B.
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $poster->id,
+            'subject' => 'OFFER: lamp', 'textbody' => 'A lamp.', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $groupB->id, 'collection' => 'Approved',
+            'arrival' => now()->subDay(), 'rippled_in' => 1, 'deleted' => 0,
+        ]);
+        // The ripple-join membership and the ban that should have blocked it.
+        DB::table('memberships')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Approved', 'rippled' => 1, 'added' => now()->subDay(),
+        ]);
+        DB::table('users_banned')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'byuser' => null, 'date' => now()->subDays(2),
+        ]);
+
+        // Dry run changes nothing.
+        $dry = ['pairs' => 0, 'memberships_removed' => 0, 'posts_pulled' => 0];
+        $this->service()->pullBannedRippleMemberships(null, 1000, true, $dry);
+        $this->assertSame(1, $dry['pairs']);
+        $this->assertSame(1, $dry['memberships_removed']);
+        $this->assertSame(1, $dry['posts_pulled']);
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $poster->id)->where('groupid', $groupB->id)->first(),
+            'dry run leaves the membership in place'
+        );
+        $this->assertSame(0, (int) DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)->value('deleted'),
+            'dry run leaves the post live');
+
+        // Commit removes the membership and pulls the post.
+        $stats = ['pairs' => 0, 'memberships_removed' => 0, 'posts_pulled' => 0];
+        $this->service()->pullBannedRippleMemberships(null, 1000, false, $stats);
+        $this->assertSame(1, $stats['pairs']);
+        $this->assertSame(1, $stats['memberships_removed']);
+        $this->assertSame(1, $stats['posts_pulled']);
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $poster->id)->where('groupid', $groupB->id)->first(),
+            'ripple-join membership removed for the banned user'
+        );
+        $this->assertSame(1, (int) DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)->value('deleted'),
+            'rippled-in post soft-deleted');
+    }
+
+    /** Backfill never touches an organic (rippled=0) membership, even if the user is banned. */
+    public function test_backfill_leaves_organic_membership_of_banned_user(): void
+    {
+        $poster = $this->createTestUser();
+        $groupB = $this->createTestGroup();
+        DB::table('memberships')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Approved', 'rippled' => 0, 'added' => now()->subDay(),
+        ]);
+        DB::table('users_banned')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'byuser' => null, 'date' => now()->subDays(2),
+        ]);
+
+        $stats = ['pairs' => 0, 'memberships_removed' => 0, 'posts_pulled' => 0];
+        $this->service()->pullBannedRippleMemberships(null, 1000, false, $stats);
+
+        $this->assertSame(0, $stats['pairs'], 'organic membership is not a ripple-join and is skipped');
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $poster->id)->where('groupid', $groupB->id)->first(),
+            'organic membership left untouched'
+        );
+    }
+
     /** A no-email home setting (0) is preserved on the rippled membership - never forced to daily. */
     public function test_no_email_home_setting_is_preserved_on_rippled_membership(): void
     {

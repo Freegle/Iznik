@@ -431,6 +431,87 @@ class ExpandService
         }
     }
 
+    /**
+     * One-off remediation for the window before rippling honoured users_banned: for every
+     * ripple-join (memberships.rippled=1) into a group the member is now banned from, soft-delete
+     * that member's rippled-in post copies still live there and remove the ripple-join membership.
+     *
+     * A ban (users_banned row, no expiry) is an explicit mod ejection that deletes the membership
+     * and withdraws the poster's posts; the unguarded ripple used to re-join the banned poster and
+     * re-insert their post. Only ripple-joins (rippled=1) are removed — an organic membership is
+     * never touched. Driven off the membership rows, so it targets exactly "banned users who were
+     * (re-)joined by rippling". Galera-safe: one row per statement; honours --dry-run.
+     *
+     * @return array{pairs:int,memberships_removed:int,posts_pulled:int}
+     */
+    public function pullBannedRippleMemberships(?int $userId, int $limit, bool $dryRun, array &$stats): array
+    {
+        $q = DB::table('memberships as m')
+            ->join('users_banned as ub', function ($j) {
+                $j->on('ub.userid', '=', 'm.userid')->on('ub.groupid', '=', 'm.groupid');
+            })
+            ->where('m.rippled', 1);
+        if ($userId !== null) {
+            $q->where('m.userid', $userId);
+        }
+        $pairs = $q->orderBy('m.userid')->orderBy('m.groupid')
+            ->limit($limit)
+            ->get(['m.userid', 'm.groupid']);
+
+        foreach ($pairs as $p) {
+            $stats['pairs'] = ($stats['pairs'] ?? 0) + 1;
+            $userid = (int) $p->userid;
+            $groupid = (int) $p->groupid;
+
+            // Soft-delete this banned member's rippled-in post copies still live in the group.
+            $msgids = DB::table('messages_groups as mg')
+                ->join('messages as msg', 'msg.id', '=', 'mg.msgid')
+                ->where('msg.fromuser', $userid)
+                ->where('mg.groupid', $groupid)
+                ->where('mg.rippled_in', 1)
+                ->where('mg.deleted', 0)
+                ->pluck('mg.msgid');
+            foreach ($msgids as $msgid) {
+                if ($dryRun) {
+                    $stats['posts_pulled'] = ($stats['posts_pulled'] ?? 0) + 1;
+                    continue;
+                }
+                // Reuses the shared retraction (Message/Deleted log, no Group/Left). It removes the
+                // membership only when no OTHER live post remains; the explicit delete below covers
+                // the case where an organic post keeps it, since a banned member must be off entirely.
+                $this->retractRippledCopyInGroup(
+                    (int) $msgid,
+                    $groupid,
+                    $userid,
+                    'Rippling: pulled - poster banned from group',
+                    'posts_pulled',
+                    $stats
+                );
+            }
+
+            // Remove the ripple-join membership itself (idempotent with the above).
+            if ($dryRun) {
+                $exists = DB::table('memberships')
+                    ->where('userid', $userid)->where('groupid', $groupid)->where('rippled', 1)
+                    ->exists();
+                if ($exists) {
+                    $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
+                }
+                continue;
+            }
+            $removed = DB::table('memberships')
+                ->where('userid', $userid)
+                ->where('groupid', $groupid)
+                ->where('rippled', 1)
+                ->delete();
+            if ($removed > 0) {
+                $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
+            }
+        }
+
+        return $stats;
+    }
+
     private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
@@ -828,8 +909,22 @@ class ExpandService
                                AND ll.type = 'Group' AND ll.subtype = 'Left'
                                AND ll.id > lj.id
                          )
+                   )
+                   AND NOT EXISTS (
+                       -- A ban is an explicit mod ejection: it withdraws the poster's live posts
+                       -- and (modern ban) deletes their membership while recording a users_banned
+                       -- row. Never ripple a poster's post into a group they are banned from - that
+                       -- would silently re-insert the post (and, via addPosterMembershipToRippledGroups,
+                       -- re-join the banned poster). Cover both representations: the users_banned
+                       -- table (authoritative, no expiry) and a legacy collection='Banned' membership.
+                       SELECT 1 FROM users_banned ub
+                       WHERE ub.userid = ? AND ub.groupid = g.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memberships mb
+                       WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned'
                    )",
-                [$reachWkt, $msgid, $msg->fromuser]
+                [$reachWkt, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
             $n = 0;
@@ -940,8 +1035,16 @@ class ExpandService
                                AND ll.type = 'Group' AND ll.subtype = 'Left'
                                AND ll.id > lj.id
                          )
+                   )
+                   AND NOT EXISTS (
+                       -- Never re-join a poster to a group they are banned from. A ban deletes
+                       -- their membership and withdraws their posts; site A already stops the post
+                       -- rippling in, but this guards the membership backfill independently (it
+                       -- runs for every already-rippled group, incl. pre-guard ones). No expiry.
+                       SELECT 1 FROM users_banned ub
+                       WHERE ub.userid = ? AND ub.groupid = mg.groupid
                    )",
-                [$msgid, $posterId, $posterId]
+                [$msgid, $posterId, $posterId, $posterId]
             );
 
             $addedThisCall = 0;
