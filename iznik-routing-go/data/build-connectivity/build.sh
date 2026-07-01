@@ -26,16 +26,23 @@ unzip -p "$ODS" content.xml | node extract_lsoa.js lsoa_conn_codes.csv
 echo "2/3 Fetching ONS LSOA 2021 centroids and joining…"
 node join_centroids.js lsoa_conn_codes.csv uk_lsoa_connectivity.csv
 
-echo "3/4 Installing E&W → ../uk_lsoa_connectivity.csv"
+echo "3/5 Installing E&W → ../uk_lsoa_connectivity.csv"
 cp uk_lsoa_connectivity.csv ../uk_lsoa_connectivity.csv
 
-echo "4/4 Appending Scotland (SIMD 2020 Access domain, quantile-mapped onto E&W)…"
-# Uses the just-installed E&W file as the quantile reference, then appends Scotland rows.
+# Build-time-only deps for Scotland (none) and NI (proj4 reprojection + xlsx for the .xls).
+# Installed here, git-ignored (see .gitignore). Harmless to re-run.
+npm install --silent proj4 xlsx >/dev/null 2>&1 || echo "  (npm install proj4/xlsx failed — NI stage may skip)"
+
+echo "4/5 Appending Scotland (SIMD 2020 Access domain, quantile-mapped onto E&W)…"
+# Uses the just-installed E&W file (E&W-only at this point) as the quantile reference.
 node scotland_append.js ../uk_lsoa_connectivity.csv scotland_rows.csv
 cat scotland_rows.csv >> ../uk_lsoa_connectivity.csv
-# Northern Ireland: designed + agent-verified (NIMDM 2017 Access domain, SOA2001 + proj4
-# reprojection) — see plans/active/scotland-ni-connectivity.md. Add as a 5th stage when
-# the proj4 dependency is introduced into build-connectivity/.
+
+echo "5/5 Appending Northern Ireland (NIMDM 2017 Access domain, quantile-mapped onto E&W)…"
+# ni_append.js slices the first 35,672 (E&W) rows as its reference, so Scotland's appended
+# rows above do not feed back into the NI quantile mapping.
+node ni_append.js ../uk_lsoa_connectivity.csv ni_rows.csv
+cat ni_rows.csv >> ../uk_lsoa_connectivity.csv
 
 wc -l ../uk_lsoa_connectivity.csv
 echo "Done. Commit ../uk_lsoa_connectivity.csv (and note the release/date in README)."

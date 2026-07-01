@@ -24,21 +24,22 @@ can refresh it when DfT republishes and never lose *how* it was constructed.
      centroids are fine for nearest-centroid node tagging. Override the layer with
      `LSOA_ARCGIS_URL` if ONS renames it.
 
-> Coverage: **England & Wales (DfT), plus Scotland (SIMD)**. Northern Ireland is still absent
-> (nodes there get `Conn=0` → plain-isochrone fallback, handled in `connectivity.go`/`friction.go`).
+> Coverage: **UK-wide** — England & Wales (DfT), Scotland (SIMD), Northern Ireland (NIMDM).
+> Anywhere still unscored (e.g. Isle of Man / Channel Islands) gets `Conn=0` → plain-isochrone
+> fallback, handled in `connectivity.go`/`friction.go`.
 >
-> **Scotland** has no DfT metric, so `scotland_append.js` uses the **SIMD 2020v2 "Geographic
-> Access to Services" domain rank** (Data Zone 2011, same "1=worst..N=best" convention as DfT),
-> **quantile-mapped onto the E&W DfT distribution** so both share one 0-100 scale. This is a
-> *comparable proxy, not DfT's methodology* (different service basket, geography vintage and
-> year) — do not present Scotland scores as "DfT scores" user-facing. Sources: access rank from
-> ScotGov PeopleSociety `MapServer/7` (`gaccrank`); centroids from the `SG_DataZoneCent_2011`
-> FeatureServer.
->
-> **Northern Ireland** is designed + agent-verified (NIMDM 2017 Access domain, SOA 2001, with a
-> proj4 EPSG:29902→WGS84 reprojection) but not yet wired in — see
-> `plans/active/scotland-ni-connectivity.md`. It needs a scoped `proj4` dependency in this
-> directory, hence deferred.
+> Scotland and NI have no DfT metric, so we substitute each nation's official small-area
+> **"Access to Services" deprivation-domain rank** (same "1=worst..N=best" convention as DfT) and
+> **quantile-map it onto the E&W DfT distribution** so all UK scores share one 0-100 scale.
+> These are *comparable proxies, not DfT's methodology* (different service basket, geography
+> vintage and year) — do not present Scotland/NI scores as "DfT scores" user-facing.
+> - **Scotland** (`scotland_append.js`): SIMD 2020v2 Access rank (Data Zone 2011); access rank
+>   from ScotGov PeopleSociety `MapServer/7` (`gaccrank`), centroids from `SG_DataZoneCent_2011`.
+> - **Northern Ireland** (`ni_append.js`): NIMDM 2017 Access rank (SOA 2001); ranks from the
+>   NISRA `.xls`, centroids computed area-weighted from the OpenDataNI SOA2001 boundary GeoJSON
+>   and reprojected EPSG:29902→WGS84. Needs build-time deps `proj4` + `xlsx` (scoped to this
+>   directory, git-ignored). Both Scotland and NI map onto the E&W-only reference (first 35,672
+>   rows) so appended nations never feed back into the mapping.
 
 ## Rebuild
 
@@ -69,4 +70,5 @@ Steps (what `build.sh` runs):
 |-------|--------|-------|-------------|
 | 2026-07-01 | DfT connectivity_metrics_2025 (Q4 2024, v1.0.0) — E&W | 35,672 | 67 |
 | 2026-07-01 | + Scotland SIMD 2020v2 Access (quantile-mapped) | 6,976 | 67 |
-| _pending_ | + NI NIMDM 2017 Access (quantile-mapped) | 890 | — |
+| 2026-07-01 | + NI NIMDM 2017 Access (quantile-mapped) | 890 | 67 |
+| | **UK total** | **43,538** | **67** |
