@@ -581,3 +581,106 @@ func TestRipplingMetricsDistanceCohorts(t *testing.T) {
 	// Near replier is at the same spot as the post (~0 km); far replier is in Edinburgh (~535 km).
 	assert.Greater(t, row["ripple_median_km"].(float64), row["home_median_km"].(float64), "rippled replies are further away")
 }
+
+// TestRipplingMetricsTrialScope verifies the ?trialOnly=1 filter:
+//   - when no rippling_reach rows exist (no trial running), trialOnly=1 returns empty KPI arrays
+//     and trial_group_ids: [] (no dilution risk — the scope correctly returns nothing).
+//   - when rippling_reach has a row for a specific group (simulating a trial group), trialOnly=1
+//     scopes all KPIs to that group only: a message from a NON-trial group must not appear.
+//   - trial_only and trial_group_ids are always echoed back in the response.
+func TestRipplingMetricsTrialScope(t *testing.T) {
+	prefix := uniquePrefix("ripptrial")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+
+	// Ensure rippling_reach exists (defensive — migrations should have run it).
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		arrival TIMESTAMP NULL, mode VARCHAR(8) NOT NULL DEFAULT 'drive',
+		tick SMALLINT UNSIGNED NOT NULL DEFAULT 0, total_ticks SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+		total_freeglers INT UNSIGNED NOT NULL DEFAULT 0, max_drive_min FLOAT NULL,
+		schedule JSON NULL, polygon GEOMETRY NULL SRID 3857,
+		rejected_groups JSON NULL, ripple_intro_sent TINYINT(1) NOT NULL DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	)`)
+
+	// ---- part A: ?trialOnly=1 response always has the correct shape ----
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?trialOnly=1&jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var emptyResult map[string]interface{}
+	json.Unmarshal(rsp(resp), &emptyResult)
+
+	// Response must echo back the scope flags, regardless of whether reach rows exist.
+	assert.Equal(t, true, emptyResult["trial_only"], "trial_only echoed when trialOnly=1")
+	_, hasTrialGroupIDs := emptyResult["trial_group_ids"]
+	assert.True(t, hasTrialGroupIDs, "trial_group_ids key is always present in response")
+
+	// ---- part B: reach row for trial group → non-trial posts are excluded ----
+	// Create a trial group and a non-trial group.
+	trialGroupID := CreateTestGroup(t, prefix+"_trial")
+	nonTrialGroupID := CreateTestGroup(t, prefix+"_nontrial")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	CreateTestMembership(t, posterID, trialGroupID, "Member")
+	CreateTestMembership(t, posterID, nonTrialGroupID, "Member")
+	CreateTestMembership(t, replierID, trialGroupID, "Member")
+	CreateTestMembership(t, replierID, nonTrialGroupID, "Member")
+
+	// Seed attribution rows: one from the trial group, one from the non-trial group.
+	// Use a date 10 days ago so it's inside the default 30-day window.
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reply_attribution (
+		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		replied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, was_home_member TINYINT(1) NOT NULL,
+		PRIMARY KEY (msgid, userid), KEY rra_replied_at (replied_at))`)
+
+	// Create real messages with FK-valid msgids.
+	trialMsgID := CreateTestMessage(t, posterID, trialGroupID, "OFFER: trial scope test", 51.5, -0.1)
+	nonTrialMsgID := CreateTestMessage(t, posterID, nonTrialGroupID, "OFFER: non-trial test", 51.5, -0.1)
+
+	// Seed attribution rows: one from the trial group, one from the non-trial group.
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+
+		"(?, ?, NOW() - INTERVAL 10 DAY, 1), (?, ?, NOW() - INTERVAL 10 DAY, 1)",
+		trialMsgID, replierID,
+		nonTrialMsgID, replierID)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid IN (?, ?)", trialMsgID, nonTrialMsgID)
+
+	// The CreateTestMessage helper inserts a messages_groups row for the group; we need the
+	// origin row to have rippled_in=0 (the default). Verify and ensure.
+	db.Exec("UPDATE messages_groups SET rippled_in = 0 WHERE msgid IN (?, ?) AND deleted = 0",
+		trialMsgID, nonTrialMsgID)
+
+	// Insert a rippling_reach row for trialMsgID — this makes trialGroupID appear in the trial scope.
+	db.Exec("INSERT IGNORE INTO rippling_reach (msgid, lat, lng) VALUES (?, 51.5, -0.1)", trialMsgID)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", trialMsgID)
+
+	// Fetch with trialOnly=1 — should see trialGroupID in trial_group_ids.
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?trialOnly=1&jwt=%s", token), nil))
+	assert.Equal(t, 200, resp2.StatusCode)
+	var trialResult map[string]interface{}
+	json.Unmarshal(rsp(resp2), &trialResult)
+
+	assert.Equal(t, true, trialResult["trial_only"], "trial_only echoed in scoped response")
+	trialIDsB, _ := trialResult["trial_group_ids"].([]interface{})
+	assert.NotEmpty(t, trialIDsB, "trial_group_ids is non-empty when reach rows exist")
+	found := false
+	for _, id := range trialIDsB {
+		if id == float64(trialGroupID) {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "the seeded trial group id is present in trial_group_ids")
+
+	// Fetch without ?trialOnly — both groups' attribution rows show up in reply_source_split.
+	// Since the attribution table has rows for both trialMsgID and nonTrialMsgID, the
+	// unscoped total should be >= 2.
+	resp3, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	var allResult map[string]interface{}
+	json.Unmarshal(rsp(resp3), &allResult)
+	assert.Equal(t, false, allResult["trial_only"], "trial_only is false when param absent")
+	trialIDsC, _ := allResult["trial_group_ids"].([]interface{})
+	assert.Empty(t, trialIDsC, "trial_group_ids is empty when ?trialOnly not set")
+}

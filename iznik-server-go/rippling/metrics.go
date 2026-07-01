@@ -3,6 +3,8 @@
 package rippling
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -186,6 +188,47 @@ type GroupOption struct {
 	Name string `json:"name" gorm:"column:name"`
 }
 
+// trialGroupIDs returns the group IDs whose posts are currently in rippling_reach via an
+// origin (rippled_in=0) messages_groups row. During the trial these are exactly the groups
+// configured in RIPPLE_WITHIN_GROUPS in the batch container, because the scoped cron only
+// processes those groups' posts. Defensive: returns nil (no restriction) if rippling_reach
+// is empty or does not exist yet.
+func trialGroupIDs() []uint64 {
+	type row struct {
+		ID uint64 `gorm:"column:id"`
+	}
+	var rows []row
+	database.DBConn.Raw(
+		"SELECT DISTINCT mg.groupid AS id " +
+			"FROM rippling_reach rr " +
+			"JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0",
+	).Scan(&rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]uint64, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// buildTrialGroupClause returns an SQL fragment " AND mg.groupid IN (1,2,...)" and a slice of
+// placeholders for use in the origin-group filter. When ids is nil or empty it returns empty
+// strings (no restriction). The clause appends to the existing messages_groups alias mg.
+func buildTrialGroupClause(ids []uint64) (clause string, args []interface{}) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(ids))
+	args = make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return fmt.Sprintf(" AND mg.groupid IN (%s) AND mg.rippled_in = 0", strings.Join(placeholders, ",")), args
+}
+
 // Metrics returns the rippling-out event counters plus the §15/§16 rollout-health metrics.
 // Events: reply_blocked (#2), held/released/taken_gone (#3), secondary_reject (#6),
 // immediate_mailed (#0), rippled_in (#6). Support/Admin only.
@@ -195,6 +238,14 @@ type GroupOption struct {
 //   - held_reply_summary: counts by status + median hold duration (§15 friction).
 //   - cross_group_summary: rippled-in share + approval rate over the last 30 days (§16.3).
 //   - capture_summary: latest offline-simulator week for timing / capture rate (§16.4).
+//
+// Optional query params:
+//   - ?groupid=N     : scope KPIs to a single origin group (0 = all).
+//   - ?trialOnly=1   : scope KPIs to the trial group set only (groups with posts in
+//                      rippling_reach, i.e. RIPPLE_WITHIN_GROUPS groups). When combined
+//                      with ?groupid= the single-group filter takes precedence.
+//   - ?start=        : date range start (default: 30 days ago).
+//   - ?end=          : date range end (default: now).
 //
 // @Router /rippling/metrics [get]
 // @Summary Rippling-out live event counters and §16 rollout-health metrics (sysadmin)
@@ -211,6 +262,19 @@ func Metrics(c *fiber.Ctx) error {
 	// rippled_in=0 messages_groups row), so results read per place - dense Croydon won't look
 	// like rural Ribble Valley. 0 = all groups. Each scoped query takes one gid arg.
 	gid := c.QueryInt("groupid", 0)
+
+	// Optional ?trialOnly=1 restricts all KPI queries to the trial group set: the groups whose
+	// posts currently appear in rippling_reach (the engine only writes there for groups in
+	// RIPPLE_WITHIN_GROUPS during the scoped-trial cron). This lets sysadmin see the impact
+	// without the stats being diluted by the vast majority of groups not yet in the trial.
+	// When ?groupid= is also set, the single-group filter takes precedence.
+	trialOnly := c.QueryInt("trialOnly", 0) == 1
+	var trialIDs []uint64
+	if trialOnly && gid == 0 {
+		trialIDs = trialGroupIDs()
+	}
+	trialClause, trialArgs := buildTrialGroupClause(trialIDs)
+
 	// Optional ?start= & ?end= date range bounds every KPI below; default to the last 30 days.
 	// This is what lets you read a treatment group's before vs after rippling went on.
 	start := c.Query("start")
@@ -221,41 +285,51 @@ func Metrics(c *fiber.Ctx) error {
 	if end == "" {
 		end = time.Now().Format("2006-01-02 15:04:05")
 	}
+
+	// Single-group filter: the groupid filter takes precedence over the trial-group set.
+	// The trialClause already ensures mg.rippled_in = 0 when trial groups are active, so
+	// we do not double-append it when gid > 0.
 	rateGroup, srcGroup, distGroup := "", "", ""
+	var rateGroupArgs, srcGroupArgs []interface{}
 	if gid > 0 {
 		rateGroup = " AND mg.groupid = ? AND mg.rippled_in = 0"
+		rateGroupArgs = []interface{}{gid}
 		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+		srcGroupArgs = []interface{}{gid}
 		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+	} else if trialClause != "" {
+		// Trial scope: the mg alias is already present in all KPI queries as a JOIN;
+		// append the IN clause after the existing JOIN condition.
+		rateGroup = trialClause
+		rateGroupArgs = trialArgs
+		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.deleted = 0" + trialClause
+		srcGroupArgs = trialArgs
+		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.deleted = 0" + trialClause
 	}
+
 	// Per-query args: the group filter (when set) sits in a JOIN before the date-bounded WHERE,
-	// so gid comes first, then start, end.
+	// so group args come first, then start, end.
 	gargs := func() []interface{} {
-		a := []interface{}{}
-		if gid > 0 {
-			a = append(a, gid)
-		}
+		a := make([]interface{}, len(srcGroupArgs))
+		copy(a, srcGroupArgs)
 		return append(a, start, end)
 	}
 
 	// replyRateArgs orders args to match the SQL: optional group filter, then the fr-subquery
 	// window (start, end), then the outer arrival window (start, end).
 	// Parallel in structure to takenRateArgs — keep the two in sync.
-	replyRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
-		a := []interface{}{}
-		if groupID > 0 {
-			a = append(a, groupID)
-		}
+	replyRateArgs := func(windowStart, windowEnd string) []interface{} {
+		a := make([]interface{}, len(rateGroupArgs))
+		copy(a, rateGroupArgs)
 		return append(a, windowStart, windowEnd, windowStart, windowEnd)
 	}
 
 	// takenRateArgs orders args to match the SQL: optional group filter, then the outcomes
 	// subquery lower bound (start), then the outer arrival window (start, end).
 	// Parallel in structure to replyRateArgs — keep the two in sync.
-	takenRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
-		a := []interface{}{}
-		if groupID > 0 {
-			a = append(a, groupID)
-		}
+	takenRateArgs := func(windowStart, windowEnd string) []interface{} {
+		a := make([]interface{}, len(rateGroupArgs))
+		copy(a, rateGroupArgs)
 		return append(a, windowStart, windowStart, windowEnd)
 	}
 
@@ -407,7 +481,7 @@ func Metrics(c *fiber.Ctx) error {
 			    GROUP BY m.id, m.arrival
 			) per_msg
 			GROUP BY day
-			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&replyRates)
+			ORDER BY day DESC`, replyRateArgs(start, end)...).Scan(&replyRates)
 	}()
 
 	// (1b) Mean number of Interested replies per Offer within 36h, per arrival day, split by cohort.
@@ -442,7 +516,7 @@ func Metrics(c *fiber.Ctx) error {
 			    GROUP BY m.id, m.arrival
 			) per_msg
 			GROUP BY day
-			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&repliesPerPost)
+			ORDER BY day DESC`, replyRateArgs(start, end)...).Scan(&repliesPerPost)
 	}()
 
 	// (2) Rippling vs home-group replies, per day, from rippling_reply_attribution (captured at
@@ -529,7 +603,7 @@ func Metrics(c *fiber.Ctx) error {
 			    GROUP BY m.id, m.arrival
 			) per_msg
 			GROUP BY day
-			ORDER BY day DESC`, takenRateArgs(gid, start, end)...).Scan(&takenRates)
+			ORDER BY day DESC`, takenRateArgs(start, end)...).Scan(&takenRates)
 	}()
 
 	// Groups whose posts have rippled - the per-group filter options (the experiment groups appear
@@ -622,6 +696,16 @@ func Metrics(c *fiber.Ctx) error {
 		capture.CaptureRate = float64(capture.PairsInTime) / float64(capture.PairsTotal) * 100
 	}
 
+	// Echo back the active scope so the client can label the charts correctly.
+	// trial_group_ids is non-empty only when ?trialOnly=1 is in effect and rippling_reach
+	// has rows (i.e. the trial is actually running).
+	trialGroupIDsOut := make([]uint64, 0)
+	if trialOnly {
+		if trialIDs != nil {
+			trialGroupIDsOut = trialIDs
+		}
+	}
+
 	return c.JSON(fiber.Map{
 		"totals":                totals,
 		"recent":                recent,
@@ -638,6 +722,8 @@ func Metrics(c *fiber.Ctx) error {
 		"taken_rate":            takenRates,
 		"groups":                groupOpts,
 		"groupid":               gid,
+		"trial_only":            trialOnly,
+		"trial_group_ids":       trialGroupIDsOut,
 		"start":                 start,
 		"end":                   end,
 	})

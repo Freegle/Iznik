@@ -16,11 +16,44 @@
       @fetch="onFilterFetch"
     />
 
+    <!-- Scope selector: trial-groups-only toggle + per-group filter -->
+    <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+      <b-form-checkbox
+        v-model="trialOnly"
+        switch
+        size="sm"
+        @change="onScopeChange"
+      >
+        <span class="small fw-bold">Trial groups only</span>
+        <span class="text-muted small ms-1">
+          (groups currently in rippling_reach - the RIPPLE_WITHIN_GROUPS experiment)
+        </span>
+      </b-form-checkbox>
+    </div>
+
     <div v-if="loading" class="text-center py-3">
       <b-spinner />
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else>
+      <!-- Show active trial scope label when trialOnly is on -->
+      <div
+        v-if="trialOnly && trialGroupIds.length"
+        class="alert alert-info small py-1 mb-2"
+      >
+        Showing <strong>{{ trialGroupIds.length }} trial group(s)</strong> only.
+        <span v-if="groupOptions.length">
+          Use the group filter below to drill into a single one.
+        </span>
+      </div>
+      <div
+        v-else-if="trialOnly && !trialGroupIds.length"
+        class="alert alert-warning small py-1 mb-2"
+      >
+        Trial scope selected but no groups are in rippling_reach yet - rippling may
+        not be running. Stats below cover all groups.
+      </div>
+
       <b-form-group
         v-if="groupOptions.length"
         label="Group:"
@@ -34,7 +67,7 @@
           style="width: auto"
           @change="onGroupChange"
         >
-          <option :value="0">All groups</option>
+          <option :value="0">{{ trialOnly ? 'All trial groups' : 'All groups' }}</option>
           <option v-for="g in groupOptions" :key="g.id" :value="g.id">
             {{ g.name }}
           </option>
@@ -252,6 +285,12 @@ const takenRate = ref([])
 // Per-group KPI filter (results differ a lot by place; 0 = all groups).
 const groupOptions = ref([])
 const groupFilter = ref(0)
+// Trial-only scope: when true, KPIs are restricted to the groups currently in
+// rippling_reach (the RIPPLE_WITHIN_GROUPS trial groups). Prevents the stats from
+// being diluted by the large majority of groups that are not yet rippling.
+const trialOnly = ref(false)
+// Group IDs the server identified as trial groups (echoed back in the response).
+const trialGroupIds = ref([])
 
 const COHORT_HEADER = (allLabel) => [
   'Date',
@@ -404,7 +443,8 @@ async function fetchMetrics() {
     const result = await apiInstance.rippling.fetchMetrics(
       groupFilter.value,
       startDate.value,
-      endDate.value
+      endDate.value,
+      trialOnly.value
     )
     hotspots.value = result?.hotspots || []
     heldReplySummary.value = result?.held_reply_summary || []
@@ -414,6 +454,7 @@ async function fetchMetrics() {
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []
     groupOptions.value = result?.groups || []
+    trialGroupIds.value = result?.trial_group_ids || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
@@ -425,6 +466,13 @@ function onGroupChange() {
   fetchMetrics()
 }
 
+// Fired when the trial-only toggle is flipped. Reset the per-group filter so we
+// don't end up with a group that isn't in the trial scope.
+function onScopeChange() {
+  groupFilter.value = 0
+  fetchMetrics()
+}
+
 // ModEmailDateFilter fires this on mount and whenever the period changes, so it
 // drives the initial load too (no separate onMounted fetch needed).
 function onFilterFetch({ start, end }) {
@@ -433,5 +481,12 @@ function onFilterFetch({ start, end }) {
   fetchMetrics()
 }
 
-defineExpose({ fetchMetrics, groupFilter, onGroupChange, onFilterFetch })
+defineExpose({
+  fetchMetrics,
+  groupFilter,
+  trialOnly,
+  onGroupChange,
+  onScopeChange,
+  onFilterFetch,
+})
 </script>
