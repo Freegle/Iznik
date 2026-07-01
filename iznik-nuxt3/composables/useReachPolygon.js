@@ -120,6 +120,29 @@ export function roundedConvexHull(ring, r, steps = 8) {
   return out
 }
 
+// Build a smoothed convex-hull GeoJSON Polygon enclosing a set of [lng, lat] points -
+// the Browse map's "coverage" overlay showing the area the currently-shown posts span.
+// Returns null when fewer than three distinct, non-collinear points are given (see
+// convexHull). Deliberately uses roundedConvexHull (an outward buffer), NOT
+// chaikinSmooth - chaikinSmooth cuts corners INWARD and so can leave an outlying point
+// (e.g. a single distant post) outside the smoothed boundary, which would be
+// misleading for a "coverage" indicator. The corner radius scales with the hull's mean
+// radius (18%), with a ~1-mile-ish floor (0.015 degrees) so rounding stays visible even
+// for a small, tight cluster of posts.
+export function buildCoverageGeoJSON(points) {
+  const hull = convexHull(points)
+  if (!hull) return null
+
+  const v = hull.slice(0, -1)
+  const cx = v.reduce((s, p) => s + p[0], 0) / v.length
+  const cy = v.reduce((s, p) => s + p[1], 0) / v.length
+  const meanR =
+    v.reduce((s, p) => s + Math.hypot(p[0] - cx, p[1] - cy), 0) / v.length
+  const r = Math.max(meanR * 0.18, 0.015)
+
+  return { type: 'Polygon', coordinates: [roundedConvexHull(hull, r)] }
+}
+
 // Apply Chaikin smoothing to every ring in a GeoJSON geometry.
 // Returns a new geometry object (does not mutate the input).
 // Handles Polygon (single exterior + optional holes) and MultiPolygon.

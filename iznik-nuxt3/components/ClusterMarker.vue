@@ -109,11 +109,13 @@ function onMapChange() {
 watch(
   () => props.map,
   (m) => {
-    if (boundMap) {
+    // Guard on() / off(): a real Leaflet map has them, but test mocks (and any
+    // non-Leaflet map object) may not, and we must not throw during setup.
+    if (boundMap && typeof boundMap.off === 'function') {
       boundMap.off('zoomend moveend', onMapChange)
-      boundMap = null
     }
-    if (m) {
+    boundMap = null
+    if (m && typeof m.on === 'function') {
       m.on('zoomend moveend', onMapChange)
       boundMap = m
       mapEpoch.value++
@@ -122,10 +124,10 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => {
-  if (boundMap) {
+  if (boundMap && typeof boundMap.off === 'function') {
     boundMap.off('zoomend moveend', onMapChange)
-    boundMap = null
   }
+  boundMap = null
 })
 
 const points = computed(() => {

@@ -108,9 +108,12 @@ import '~/assets/css/gesture-handling.css'
 import { useMe } from '~/composables/useMe'
 import {
   smoothGeoJSON,
-  convexHull,
-  roundedConvexHull,
+  buildCoverageGeoJSON,
 } from '~/composables/useReachPolygon'
+import {
+  isWithinDistance,
+  filterMessagesByDistance,
+} from '~/composables/useDistance'
 import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
 
 const props = defineProps({
@@ -362,13 +365,7 @@ const groupsInBounds = computed(() => {
 // what the map markers and the coverage hull are drawn from, so the map tracks
 // the slider the same way the list does.
 const distanceFilteredMessages = computed(() => {
-  const all = messageList.value || []
-  if (props.selectedMaxDistance === BROWSE_DISTANCE_UNLIMITED) {
-    return all
-  }
-  return all.filter(
-    (m) => m.distance == null || m.distance <= props.selectedMaxDistance
-  )
+  return filterMessagesByDistance(messageList.value, props.selectedMaxDistance)
 })
 
 const messagesForMap = computed(() => {
@@ -380,27 +377,14 @@ const messagesForMap = computed(() => {
 // A smoothed convex hull enclosing the posts currently shown, as an indication
 // of the area covered. The true reach is travel-time-based (not a simple
 // radius), so this is only an approximation - but it shrinks as the slider is
-// pulled in, giving a visual sense of coverage. Chaikin-smoothed to match the
-// rippling explorer's rounded look.
+// pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
+// this is an outward-rounded hull rather than Chaikin smoothing.
 const coverageGeoJSON = computed(() => {
   if (!props.showIsochrones) return null
-  const hull = convexHull(
-    messagesForMap.value
-      .filter((m) => m.lat != null || m.lng != null)
-      .map((m) => [m.lng, m.lat])
-  )
-  if (!hull) return null
-  // Round the hull's corners OUTWARD so the shape is smooth but always encloses
-  // every post. (Chaikin corner-cutting would pull the boundary inward and leave
-  // outliers outside.) The corner radius scales with the hull size, with a ~1
-  // mile floor, so the rounding stays visible but proportionate.
-  const v = hull.slice(0, -1)
-  const cx = v.reduce((s, p) => s + p[0], 0) / v.length
-  const cy = v.reduce((s, p) => s + p[1], 0) / v.length
-  const meanR =
-    v.reduce((s, p) => s + Math.hypot(p[0] - cx, p[1] - cy), 0) / v.length
-  const r = Math.max(meanR * 0.18, 0.015)
-  return { type: 'Polygon', coordinates: [roundedConvexHull(hull, r)] }
+  const points = messagesForMap.value
+    .filter((m) => m.lat != null || m.lng != null)
+    .map((m) => [m.lng, m.lat])
+  return buildCoverageGeoJSON(points)
 })
 
 const isochrones = computed(() => {
@@ -450,9 +434,7 @@ const messageIds = computed(() => {
 
 const secondaryMessagesForMap = computed(() => {
   const withinDistance = (m) =>
-    props.selectedMaxDistance === BROWSE_DISTANCE_UNLIMITED ||
-    m.distance == null ||
-    m.distance <= props.selectedMaxDistance
+    isWithinDistance(m.distance, props.selectedMaxDistance)
 
   if (secondaryMessageList.value?.length > 200) {
     // So many posts that the precise numbers no longer matter that much.  So return all the ones we have fetched
