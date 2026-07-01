@@ -115,13 +115,14 @@ In `isochrone/message.go` (`Messages`, the `browseView = nearby` path):
 
 `GET /message/count` / `nearbyCount`:
 
-- Accept the viewer's `settings.browseMaxDistance` (miles; null/absent = no limit). Prefer
-  reading it from the user's own settings server-side so the app-wide navbar badge honours
-  it without every client call site having to pass it; also accept an explicit `maxDistance`
-  query param so the browse page can force a fresh value immediately after a slider change.
-- When a limit is set, count unseen reach posts whose **blurred** distance ≤ limit (same
-  blur/formula as the feed, so it matches the client list exactly). When no limit, keep the
-  existing fast count.
+- Accept the viewer's `settings.browseMaxDistance` (miles; the MAXINT sentinel / absent = no
+  limit). Prefer reading it from the user's own settings server-side so the app-wide navbar
+  badge honours it without every client call site having to pass it; also accept an explicit
+  `maxDistance` query param so the browse page can force a fresh value immediately after a
+  slider change.
+- When a real limit is set (below the sentinel), count unseen reach posts whose **blurred**
+  distance ≤ limit (same blur/formula as the feed, so it matches the client list exactly).
+  When it is the sentinel/absent, keep the existing fast count (server reach limit governs).
 - Refactor the reach row production into a shared helper so feed and count cannot drift.
 
 ## Client changes (`iznik-nuxt3`)
@@ -144,12 +145,21 @@ invalidation is needed because score is stable within a session for a given ID.
   (`MyPostsDonationAsk.vue`) but using the green panel palette (`$color-success`/
   `$color-green--darker`) instead of blue. Rounded thumb, gradient track, hover/active
   states. Accessible (`aria-label="Maximum distance"`, keyboard operable).
-- Range: min 0.5 mile (left), max 30 miles (right). Step 0.5. End labels only:
-  **"Nearer"** (left) and **"Further"** (right). **No numeric readout.**
-- The far-right position ("Further", = the max) means **no limit**. Stored value:
-  `settings.browseMaxDistance` in **miles**, where the max/`null` = unlimited. Default =
-  unlimited (slider sits at "Further"), so existing users see no change until they pull it
-  left.
+- **No fixed cap.** The slider's `max` (right end) is **scaled to the farthest `distance`
+  in the last feed response** (`Math.ceil(max(m.distance))` over `nearbyStore.messageList`,
+  with a sensible floor if the feed is tiny). Left end = **0.5 mile**. Step 0.5. End labels
+  only: **"Nearer"** (left) and **"Further"** (right). **No numeric readout.**
+- The far-right position ("Further") means **no client-side limit — defer to the server**.
+  Stored value: `settings.browseMaxDistance` in **miles**, EXCEPT the unlimited/default state
+  is a **MAXINT sentinel** (`BROWSE_DISTANCE_UNLIMITED = Number.MAX_SAFE_INTEGER`), not a real
+  mileage. Rationale: the server already applies its own reach limit; the sentinel means "do
+  not interfere with it", so newly-arriving distant posts keep showing. Default =
+  `BROWSE_DISTANCE_UNLIMITED` (thumb renders at the far right), so existing users see no
+  change until they pull it left.
+- Thumb mapping: when `browseMaxDistance >= feedMax` (or `=== BROWSE_DISTANCE_UNLIMITED`),
+  render the thumb at the far right. Dragging to the rightmost stop sets the value back to
+  `BROWSE_DISTANCE_UNLIMITED` (not `feedMax`), so the server limit governs. Any position left
+  of the max stores that real mile value.
 - Persistence: a `computed` with get/set mirroring `sort` — read
   `me.value?.settings?.browseMaxDistance`, write by mutating `settings` and calling
   `authStore.saveAndGet({ settings })`, then emit `update:selectedMaxDistance`. Debounce the
@@ -159,9 +169,9 @@ invalidation is needed because score is stable within a session for a given ID.
 ### E. List distance filter
 
 In `PostMapAndList.vue::messagesForList` (right after the existing `selectedGroup` filter):
-`msgs = msgs.filter(m => max == null || m.distance == null || m.distance <= max)`. Everything
-downstream (dedup, unseen/seen buckets, grids) inherits it. Own posts (distance ≈ 0) always
-pass. This is instant and needs no refetch when the slider moves.
+`msgs = msgs.filter(m => max === BROWSE_DISTANCE_UNLIMITED || m.distance == null || m.distance
+<= max)`. Everything downstream (dedup, unseen/seen buckets, grids) inherits it. Own posts
+(distance ≈ 0) always pass. This is instant and needs no refetch when the slider moves.
 
 ### F. Count threading
 
@@ -176,9 +186,9 @@ param keeps the browse page immediate.)
 
 Add `hasNonDefaultFilters` in `PostFilters.vue` and render a small red badge on the
 "Map & Filters" toggle button (`PostFilters.vue:94-105`, the `!showFilters` state).
-Definition (to confirm): active when `type !== 'All'` OR a specific group is selected OR
-`browseMaxDistance` is set below unlimited. Sort order and nearby-vs-mygroups view are
-treated as view/order choices, not "filters" (open decision below).
+Definition: active when **any** control differs from its default — `browseView !== 'nearby'`
+(i.e. group ref not at the nearby sentinel) OR `browseSort !== 'Unseen'` OR `type !== 'All'`
+OR a specific group is selected OR `browseMaxDistance !== BROWSE_DISTANCE_UNLIMITED`.
 
 ### H. Copy changes
 
@@ -205,6 +215,35 @@ Ensure every browse filter persists in `settings`:
 Slider left, sort right, in the same filter row. Add a `.distance` grid area to the
 `.filters` CSS grid (`PostFilters.vue:335-392`) alongside `.group`/`.type`/`.sort`.
 
+### K. "How does this work?" explainer modal
+
+Today the "How does this work?" link (`PostFilters.vue:50`) navigates to
+`/help?topic=which-posts`. Change it to open an in-place **modal** instead (reuse the
+project's standard modal pattern; do not navigate away).
+
+Modal content:
+
+- **Explain the filters**: "Show posts from" (which communities/area), "Show these posts"
+  (Offers/Wanteds), "Sort by" (New to you / Newest / Closest), and the distance slider
+  (Nearer↔Further — how far away posts may come from). Note the feed shows the most relevant
+  posts first (nearest and newest, unseen first).
+- **The reply caveat, made conditional**: normally you only see posts that have already
+  reached your area, which you can reply to. If you **change from the default view** (widen
+  distance, change sort, or switch which posts you see) you may see a post that has not yet
+  reached you and that you cannot reply to until it does — the reply option appears once it
+  reaches your area. Make clear this only applies when you have changed from the default
+  view; on the default view you only see posts you can reply to.
+- **No "this is new / we have changed this" framing** — describe how it works, not that it
+  changed.
+- **Reuse the help-page component.** Render the same component the help page uses for the
+  `which-posts` topic (e.g. `RipplingExplanation.vue`) inside the modal rather than writing
+  separate copy. Make the copy edits (explain the filters, the conditional reply caveat,
+  remove change-announcement language) **in that shared component** so the help page and the
+  modal stay consistent.
+
+The `MessageExpanded.vue` links to `/help?topic=which-posts` (lines 441, 525) are left as-is
+in this phase unless trivially shared.
+
 ## Settings schema additions
 
 - `settings.browseMaxDistance`: number (miles) or null. null/absent = no limit. Default null.
@@ -216,8 +255,8 @@ Update `RIPPLING-OUT-FOR-MEMBERS.md` and `RIPPLING-OUT-FOR-MODERATORS.md` (and t
 `plans/rippling-out-rollout/CHANGES-FOR-MEMBERS.md` / `CHANGES-FOR-MODERATORS.md`) to explain:
 the Nearby feed now shows the most relevant posts first (closest/newest/quietest balance,
 unseen first), and members can use the distance slider to limit how far away posts come from.
-Check the "How does this work?" help link target (`PostFilters.vue:51`) points at the right
-explainer.
+The in-filter "How does this work?" explainer is now a modal (section K), so the docs and the
+modal should tell a consistent story, including the conditional reply caveat.
 
 ## Edge cases
 
@@ -249,10 +288,11 @@ explainer.
 - Digest/email honouring `settings.browseMaxDistance` server-side.
 - Optional server-side feed payload filtering by distance.
 
-## Open decisions (confirm before build)
+## Resolved decisions
 
-1. Badge definition: include sort/view changes, or only narrowing filters (type, distance,
-   group)? Proposed: only narrowing filters.
-2. Slider max = 30 miles (with the top = unlimited). Acceptable, or different cap?
-3. Mark-seen with an active distance filter: mark the whole feed (current) or only the
-   visible within-distance set?
+1. Badge lights for **any** non-default filter (view, sort, type, distance, group), not only
+   narrowing ones.
+2. Slider has **no fixed cap**: the default/unlimited value is a MAXINT sentinel (defer to the
+   server's own reach limit), and the slider's max is scaled to the farthest `distance` in the
+   last feed response.
+3. Mark-seen marks **all** posts in the nearby feed, regardless of an active distance filter.
