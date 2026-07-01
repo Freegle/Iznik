@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, h, Suspense } from 'vue'
 
 /* ---------------------------------------------------- component under test */
 
@@ -80,8 +81,6 @@ const mockJobStore = {
 }
 
 const mockAction = vi.fn()
-const mockModalShow = vi.fn()
-const mockModalHide = vi.fn()
 
 vi.mock('~/stores/job', () => ({
   useJobStore: () => mockJobStore,
@@ -91,36 +90,53 @@ vi.mock('~/composables/useClientLog', () => ({
   action: (...args) => mockAction(...args),
 }))
 
-/* Minimal useOurModal stub: modal.value points to an object with show/hide;
- * autoShow=false is respected (onMounted does nothing). */
-vi.mock('~/composables/useOurModal', () => ({
-  useOurModal: ({ autoShow } = {}) => {
-    const modal = { value: { show: mockModalShow, hide: mockModalHide } }
-    return {
-      modal,
-      show: () => modal.value.show(),
-      hide: () => modal.value.hide(),
-    }
-  },
-}))
+/* useOurModal stub. modal must be a real ref: the component binds it as a template ref
+ * (<b-modal ref="modal">), and a plain object triggers a Vue warning (which the test setup
+ * treats as a failure). */
+vi.mock('~/composables/useOurModal', async () => {
+  const { ref } = await vi.importActual('vue')
+  return {
+    useOurModal: () => {
+      const modal = ref({ show: () => {}, hide: () => {} })
+      return {
+        modal,
+        show: () => modal.value?.show?.(),
+        hide: () => modal.value?.hide?.(),
+      }
+    },
+  }
+})
 
+/* Neutralise the async import of JobOne so the real (heavy) component isn't loaded. JobOne is
+ * the only async component in the modal, so the stub renders as a lightweight .job-one row. */
 vi.mock('vue', async () => {
   const actual = await vi.importActual('vue')
   return {
     ...actual,
-    defineAsyncComponent: (loader) => ({
+    defineAsyncComponent: () => ({
+      props: ['id', 'summary', 'context', 'position', 'listLength'],
       template:
         '<div class="job-one" :data-id="id" :data-context="context" :data-position="position" />',
-      props: ['id', 'summary', 'context', 'position', 'listLength'],
     }),
   }
 })
 
 /* ----------------------------------------------------------------- helpers */
 
+/* The modal imports JobOne via defineAsyncComponent, so it must be resolved inside a
+ * <Suspense> boundary (mounting it bare leaves the root instance unresolved). */
 function createWrapper(props = {}) {
-  return mount(JobsFollowUpModal, {
-    props,
+  const TestWrapper = defineComponent({
+    setup() {
+      return () =>
+        h(Suspense, null, {
+          default: () => h(JobsFollowUpModal, props),
+          fallback: () => h('div', 'Loading...'),
+        })
+    },
+  })
+
+  return mount(TestWrapper, {
     attachTo: document.body,
     global: {
       stubs: {
