@@ -2211,10 +2211,23 @@ class ExpandServiceTest extends TestCase
             'the repost pushed messages_spatial.arrival past the go-live cutoff'
         );
 
-        // Next expand tick now picks the reposted post up through the normal gate — no backfill.
-        $stats = $this->service()->process(false, 500);
+        // updateSpatialIndex() only refreshes messages_spatial; it does not create reach rows,
+        // so the reposted post still has none until the expand tick below.
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no reach for the reposted post until the expand tick runs'
+        );
 
-        $this->assertSame(1, $stats['initialized'], 'the reposted (now post-cutoff) post ripples on the next tick');
+        // Next expand tick now picks the reposted post up through the normal gate — no backfill.
+        // Assert on THIS post's reach row, not the global initialised count: the REAL
+        // updateSpatialIndex() above upserts every recent approved message it can see into
+        // messages_spatial, and this suite runs in parallel (paratest) against one shared
+        // iznik_batch_test database, so the number of other posts seeded on this tick is
+        // non-deterministic. What this test actually proves is that the reposted (now
+        // post-cutoff) post specifically ripples, which the msgid-scoped assertion below does.
+        $this->service()->process(false, 500);
+
         $this->assertSame(
             1,
             DB::table('rippling_reach')->where('msgid', $msgid)->count(),
