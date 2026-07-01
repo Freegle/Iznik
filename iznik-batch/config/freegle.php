@@ -378,6 +378,21 @@ return [
             // all backlog posts after go-live).
             'default_reach_metres' => (float) env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000),
         ],
+
+        // Email distance-preference filter (Nearby browse's distance slider, extended
+        // to member-facing emails) — see App\Services\Ripple\DistancePreferenceFilter and
+        // docs/superpowers/specs/2026-07-01-distance-preference-email-filtering-design.md.
+        // Narrows the daily digest / immediate cursor / reach-mail pipelines to posts
+        // within a member's settings.browseMaxDistance (miles); absent or the sentinel
+        // (Number.MAX_SAFE_INTEGER) means "no limit" — the default for every member who
+        // has never touched the slider, so the feature is inherently opt-in and safe on
+        // its own. This flag is an EXTRA emergency kill-switch on top of that: default
+        // true (filtering active for members who set a limit); set to false to fall back
+        // to today's fully-unfiltered behaviour for EVERY member (including those with a
+        // configured limit) with no deploy, if a bug is ever found in the filter itself.
+        'distance_filter' => [
+            'enabled' => filter_var(env('RIPPLE_DISTANCE_FILTER_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        ],
     ],
 
     /*

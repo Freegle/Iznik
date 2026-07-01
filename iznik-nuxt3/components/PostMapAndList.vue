@@ -129,6 +129,7 @@ import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
+import { filterMessagesByDistance } from '~/composables/useDistance'
 import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import { useNearbyStore } from '~/stores/nearby'
 
@@ -346,15 +347,12 @@ const messagesForList = computed(() => {
     msgs = msgs.filter((m) => m.groupid === props.selectedGroup)
   }
 
-  if (props.selectedMaxDistance !== BROWSE_DISTANCE_UNLIMITED) {
-    // Distance slider: the feed already returns the full reach set, so this is a local,
-    // instant filter rather than a refetch. Posts with no distance (e.g. an older feed
-    // response before the API returned it) always pass, so we don't hide anything on a
-    // stale/partial response.
-    msgs = msgs.filter(
-      (m) => m.distance == null || m.distance <= props.selectedMaxDistance
-    )
-  }
+  // Distance slider: the feed already returns the full reach set, so this is a local,
+  // instant filter rather than a refetch. Posts with no distance (e.g. an older feed
+  // response before the API returned it) always pass, so we don't hide anything on a
+  // stale/partial response. Shared with PostMap's own marker/coverage filtering so the
+  // list and the map can never disagree about which posts are within range.
+  msgs = filterMessagesByDistance(msgs, props.selectedMaxDistance)
 
   return msgs
 })

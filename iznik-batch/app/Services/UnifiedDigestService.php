@@ -10,6 +10,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
+use App\Services\Ripple\DistancePreferenceFilter;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -294,6 +295,16 @@ class UnifiedDigestService
             ->get()
             ->keyBy('id');
 
+        // Resolve each recipient's latlng ONCE, before the message loop — not once per
+        // message. $users is already a small, once-per-group collection, so this is a
+        // single extra pass, not a per-message cost. Used by the distance-preference
+        // filter below (settings.browseMaxDistance); see the design doc's insertion
+        // point B.
+        $recipientLatLng = [];
+        foreach ($users as $uid => $recipientUser) {
+            $recipientLatLng[$uid] = $this->resolveUserLatLng($recipientUser);
+        }
+
         $emailsSent = 0;
         $touched = [];
         $lastProcessed = null;
@@ -316,6 +327,22 @@ class UnifiedDigestService
             $sponsorsCache = null;
             foreach ($users as $uid => $user) {
                 if (!$user->email_preferred) {
+                    continue;
+                }
+                // Distance-preference filter (settings.browseMaxDistance) — skip
+                // spooling for this (message, recipient) pair when out of range, but
+                // the message is still counted as processed below ($lastProcessed is
+                // set outside this inner loop), so the group cursor advances
+                // regardless of how many recipients were filtered. Own posts always
+                // bypass (V1-parity own-post loop-back, test_immediate_includes_poster_own_post).
+                $isOwnPost = (int) $message->fromuser === (int) $uid;
+                if (!$this->passesDistancePreference(
+                    $recipientLatLng[$uid] ?? null,
+                    $message->lat,
+                    $message->lng,
+                    $user,
+                    $isOwnPost
+                )) {
                     continue;
                 }
                 if (!$dryRun) {
@@ -564,8 +591,21 @@ class UnifiedDigestService
             }
 
             $srid = (int) config('freegle.srid', 3857);
-            $recipientIds = collect(DB::select(
-                "SELECT DISTINCT u.id AS id
+            // The resolved-point CASE expression is repeated for ST_Contains' argument AND
+            // (new) projected as plain columns — same "mylocation else lastlocation" order
+            // as resolveUserLatLng, so the distance-preference filter below measures from
+            // exactly the point that decided reach-polygon membership, not a second,
+            // possibly-divergent resolution.
+            $recipientRows = collect(DB::select(
+                "SELECT DISTINCT u.id AS id,
+                       CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                            THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+                            ELSE l.lat END AS resolved_lat,
+                       CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                            THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+                            ELSE l.lng END AS resolved_lng
                  FROM messages_groups mg
                  JOIN rippling_reach mr ON mr.msgid = mg.msgid
                  JOIN memberships m ON m.groupid = mg.groupid
@@ -592,10 +632,21 @@ class UnifiedDigestService
                          SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
                        )",
                 [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
-            ))->pluck('id')->map(fn ($v) => (int) $v)->all();
+            ));
+
+            $recipientIds = $recipientRows->pluck('id')->map(fn ($v) => (int) $v)->all();
 
             if (empty($recipientIds)) {
                 return 0;
+            }
+
+            // Recipient point resolved by the SQL above (mylocation else lastlocation) —
+            // reused by the distance-preference filter below instead of re-resolving.
+            $recipientLatLng = [];
+            foreach ($recipientRows as $row) {
+                $recipientLatLng[(int) $row->id] = ($row->resolved_lat !== null && $row->resolved_lng !== null)
+                    ? [(float) $row->resolved_lat, (float) $row->resolved_lng]
+                    : null;
             }
 
             // Same allowlist gate as the cursor immediate digest.
@@ -620,6 +671,25 @@ class UnifiedDigestService
             $sent = 0;
             foreach ($users as $user) {
                 if (!$user->email_preferred) {
+                    continue;
+                }
+                // Distance-preference filter (settings.browseMaxDistance). Deliberately
+                // does NOT write rippling_reach_notified on a filtered-out skip (unlike
+                // the "already sent" path below) — see the design doc's "Reach-mail
+                // ledger semantics" edge case: leaving the ledger unwritten lets a later
+                // tick re-consider this (post, user) pair if the member widens their
+                // slider (or their location changes) while the post is still inside the
+                // reach-mail recency window; once that window closes the post drops out
+                // of sendReachDigests' candidate query regardless, so the cost is bounded.
+                // Own posts always bypass (mirrors the cursor path's own-post exception).
+                $isOwnPost = (int) $user->id === (int) $msg->fromuser;
+                if (!$this->passesDistancePreference(
+                    $recipientLatLng[(int) $user->id] ?? null,
+                    $msg->lat,
+                    $msg->lng,
+                    $user,
+                    $isOwnPost
+                )) {
                     continue;
                 }
                 if ($dryRun) {
@@ -1047,7 +1117,22 @@ class UnifiedDigestService
         // Daily only — immediate mode stays chronological (single-group, real-time).
         // Dedup runs after, so the kept cross-post representative is the top-scoring one.
         if ($mode === self::MODE_DAILY) {
-            $posts = $this->scoreAndSortAvailable($posts, $this->resolveUserLatLng($user));
+            $latlng = $this->resolveUserLatLng($user);
+            $posts = $this->scoreAndSortAvailable($posts, $latlng);
+            // Distance-preference filter (settings.browseMaxDistance) — a pure narrowing
+            // step layered after scoring/sorting and before dedup, so the kept
+            // cross-post representative (picked in deduplicatePosts below) is both the
+            // top-scoring AND the in-range one. Deliberately independent of
+            // scoreAndSortAvailable's internal $post->_dist (which is only set when that
+            // method doesn't early-return) — see DistancePreferenceFilter and the design
+            // doc's "Insertion points" section.
+            $posts = $posts->filter(fn ($p) => $this->passesDistancePreference(
+                $latlng,
+                $p->lat,
+                $p->lng,
+                $user,
+                (int) $p->fromuser === (int) $user->id
+            ))->values();
         }
 
         $completedPosts = $mode === self::MODE_DAILY
@@ -1293,6 +1378,58 @@ class UnifiedDigestService
         }
 
         return null;
+    }
+
+    /**
+     * Whether a candidate post passes the recipient's distance preference
+     * (settings.browseMaxDistance) — the single choke point all three
+     * member-notification pipelines call (daily digest, immediate cursor,
+     * reach-mail). True = keep (spool/include this post for this recipient);
+     * false = filter out. See DistancePreferenceFilter and the design doc
+     * docs/superpowers/specs/2026-07-01-distance-preference-email-filtering-design.md.
+     *
+     * Fail-open (returns true, i.e. no filtering) when: the feature's
+     * kill-switch is off (freegle.ripple.distance_filter.enabled), the
+     * recipient's or post's location can't be resolved, the post is the
+     * recipient's own, or the recipient's setting is absent/sentinel
+     * (the overwhelming majority — checked via maxDistanceMiles() before any
+     * haversine is computed, so that fast path costs nothing extra).
+     *
+     * @param array{0:float,1:float}|null $recipientLatLng Recipient's resolved point.
+     * @param mixed $lat Post/message latitude (numeric or null).
+     * @param mixed $lng Post/message longitude (numeric or null).
+     */
+    private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost): bool
+    {
+        if ($isOwnPost) {
+            return true;
+        }
+
+        if (!config('freegle.ripple.distance_filter.enabled', true)) {
+            return true;
+        }
+
+        if ($recipientLatLng === null || $lat === null || $lng === null) {
+            // Fail open: matches the existing reach-gate/scorer precedent of
+            // "skip when we can't resolve — no regression for locationless members".
+            return true;
+        }
+
+        $filter = app(DistancePreferenceFilter::class);
+        $maxMiles = $filter->maxDistanceMiles($user);
+        if ($maxMiles >= DistancePreferenceFilter::DISTANCE_UNLIMITED) {
+            // Fast path: absent/sentinel setting, the majority case. No haversine needed.
+            return true;
+        }
+
+        $distanceMiles = $filter->distanceMiles(
+            $recipientLatLng[0],
+            $recipientLatLng[1],
+            (float) $lat,
+            (float) $lng
+        );
+
+        return $filter->passes($distanceMiles, $maxMiles, false);
     }
 
     /**
