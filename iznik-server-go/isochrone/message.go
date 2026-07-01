@@ -171,11 +171,23 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 // myGroupsMsgIDs returns the open (successful=0) message ids in the user's member groups — the
 // shared universe for the 'mygroups' browse view, so Messages (the feed) and Count (the badge)
 // agree and "Mark seen" can drain the count.
+//
+// Membership is tested via messages_groups (a post's FULL group set), NOT
+// messages_spatial.groupid, which stores only ONE group per post and so mis-attributes
+// rippled/cross-posted messages — the same reason the feed (message.Groups), popular-posts and
+// edit-queue queries all filter on messages_groups. Using spatial.groupid here left two bugs:
+// a post rippled INTO a member group (its spatial row points at the non-member origin) was
+// missed, and a spatial row still pointing at a member group after the post was
+// removed/retracted there was counted but absent from the feed — a residual Mark seen could
+// never clear.
 func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
-	db.Raw("SELECT DISTINCT messages_spatial.msgid FROM memberships "+
-		"INNER JOIN messages_spatial ON messages_spatial.groupid = memberships.groupid "+
-		"WHERE memberships.userid = ? AND messages_spatial.successful = 0", myid).Scan(&ids)
+	db.Raw("SELECT DISTINCT ms.msgid FROM messages_spatial ms "+
+		"WHERE ms.successful = 0 "+
+		"AND EXISTS (SELECT 1 FROM messages_groups mg "+
+		"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
+		"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
+		"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).Scan(&ids)
 	return ids
 }
 
@@ -223,10 +235,18 @@ func Count(c *fiber.Ctx) error {
 	browseView := effectiveBrowseView(c, db, myid)
 
 	if browseView == "mygroups" {
-		db.Raw("SELECT COUNT(DISTINCT(messages_spatial.msgid)) FROM memberships "+
-			"INNER JOIN messages_spatial ON messages_spatial.groupid = memberships.groupid "+
-			"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-			"WHERE memberships.userid = ? AND messages_spatial.successful = 0 AND messages_likes.msgid IS NULL", myid, utils.MESSAGE_LIKES_VIEW, myid).Scan(&count)
+		// Test membership via messages_groups (the post's full group set), not
+		// messages_spatial.groupid — which stores only ONE group per post and mis-attributes
+		// rippled/cross-posted messages (see myGroupsMsgIDs). This EXISTS matches the mygroups
+		// feed (message.Groups / myGroupsMsgIDs), so feed == badge and "Mark seen" drains to
+		// zero instead of sticking on rows the feed never renders.
+		db.Raw("SELECT COUNT(DISTINCT ms.msgid) FROM messages_spatial ms "+
+			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
+			"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
+			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
+			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid, utils.MESSAGE_LIKES_VIEW, myid).Scan(&count)
 	} else {
 		count = nearbyCount(myid)
 	}

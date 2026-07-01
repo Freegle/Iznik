@@ -684,11 +684,21 @@ func SetupRoutes(app *fiber.App) {
 		rg.Delete("/noticeboard/:id", noticeboard.DeleteNoticeboard)
 
 		// Isochrones
+		//
+		// DEPRECATED: the per-user isochrone editor was removed in the rippling-out
+		// "Nearby = reach" flip (PR #921). No current client (Freegle or ModTools) calls
+		// these four CRUD endpoints - the isochrone store/editor that used them was
+		// deleted (stores/isochrone.js -> stores/nearby.js; components/IsoChrone.vue
+		// removed). Kept only for backward compatibility with any older deployed clients;
+		// safe to remove once those have aged out. NOTE: /isochrone/message and
+		// /message/count below are NOT deprecated - they still back the Nearby feed and
+		// its unseen count.
 		// @Router /isochrone [get]
 		// @Summary List isochrones
-		// @Description Returns all isochrones
+		// @Description [DEPRECATED - no current client calls this; see PR #921] Returns all isochrones
 		// @Tags isochrone
 		// @Produce json
+		// @Deprecated
 		// @Success 200 {array} isochrone.Isochrone
 		rg.Get("/isochrone", isochrone.ListIsochrones)
 		rg.Put("/isochrone", isochrone.CreateIsochrone)

@@ -1,23 +1,12 @@
 import BaseAPI from '@/api/BaseAPI'
 
 export default class IsochroneAPI extends BaseAPI {
-  add(params) {
-    return this.$putv2('/isochrone', params)
-  }
-
-  fetchv2(params) {
-    return this.$getv2('/isochrone', params)
-  }
-
+  // Backs the Nearby feed (and the mygroups feed) via stores/nearby.js. This is the
+  // only isochrone endpoint the client still calls: the isochrone-polygon CRUD methods
+  // (add/list/patch/delete) were removed when the isochrone editor was deleted in the
+  // rippling-out reach flip (PR #921). The server /isochrone CRUD routes remain (marked
+  // deprecated) for backward compatibility with older cached clients.
   fetchMessages(params) {
     return this.$getv2('/isochrone/message', params)
-  }
-
-  patch(params) {
-    return this.$patchv2('/isochrone', params)
-  }
-
-  del(id) {
-    return this.$delv2('/isochrone', { id })
   }
 }
