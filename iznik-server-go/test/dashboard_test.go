@@ -444,6 +444,106 @@ func TestGetDashboardPopularPostsWithGroup(t *testing.T) {
 	assert.Greater(t, len(pp), 0, "Should have at least one popular post")
 }
 
+// TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups verifies that a post
+// which has been rippled into several of a moderator's groups is shown ONCE in the
+// Popular Posts list, not once per group it reached. Rippling-out adds a
+// messages_groups row (rippled_in=1) per group a post ripples to; without a
+// rippled_in filter / dedup the allgroups query returns one identical row per group.
+func TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups(t *testing.T) {
+	prefix := uniquePrefix("DashPPDup")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"A")
+	groupB := CreateTestGroup(t, prefix+"B")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Native post on groupA (origin row, rippled_in defaults to 0).
+	msgID := CreateTestMessage(t, modID, groupA, prefix+" OFFER: rippled item", 52.5, -1.8)
+
+	// Ripple the SAME post into groupB — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupB)
+
+	// Give it a couple of views so it ranks.
+	viewer1 := CreateTestUser(t, prefix+"_v1", "User")
+	viewer2 := CreateTestUser(t, prefix+"_v2", "User")
+	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer1)
+	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_likes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB)
+	})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=PopularPosts&allgroups=true&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	pp, ok := comps["PopularPosts"].([]interface{})
+	assert.True(t, ok, "PopularPosts should be an array")
+
+	occurrences := 0
+	for _, row := range pp {
+		post := row.(map[string]interface{})
+		if uint64(post["id"].(float64)) == msgID {
+			occurrences++
+		}
+	}
+	assert.Equal(t, 1, occurrences, "A rippled post must appear once, not once per group it reached")
+}
+
+// TestGetDashboardPopularPostsExcludesRippledIn verifies that a post which only
+// rippled INTO a group (it is not native to it) is not listed among that group's
+// Popular Posts. Popular Posts on a group means that group's own posts, matching the
+// per-group native-only semantics used elsewhere (stats, IP-abuse, edit queue).
+func TestGetDashboardPopularPostsExcludesRippledIn(t *testing.T) {
+	prefix := uniquePrefix("DashPPRin")
+	db := database.DBConn
+
+	origin := CreateTestGroup(t, prefix+"Origin")
+	rippledTo := CreateTestGroup(t, prefix+"RippledTo")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, rippledTo, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Native post on the origin group (mod does not moderate it).
+	msgID := CreateTestMessage(t, posterID, origin, prefix+" OFFER: not mine", 52.5, -1.8)
+
+	// The post ripples INTO rippledTo — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, rippledTo)
+
+	viewer := CreateTestUser(t, prefix+"_v", "User")
+	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_likes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledTo)
+	})
+
+	// Dashboard for rippledTo only — the rippled-in copy must not be listed.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=PopularPosts&group=%d&jwt=%s", rippledTo, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	pp, ok := comps["PopularPosts"].([]interface{})
+	assert.True(t, ok, "PopularPosts should be an array")
+
+	for _, row := range pp {
+		post := row.(map[string]interface{})
+		assert.NotEqual(t, msgID, uint64(post["id"].(float64)),
+			"A post only rippled into the group must not be shown as its own popular post")
+	}
+}
+
 func TestGetDashboardPopularPostsSystemwide(t *testing.T) {
 	prefix := uniquePrefix("DashPPSW")
 	_, _, token := createModDashboardFixtures(t, prefix)
