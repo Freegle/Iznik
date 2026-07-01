@@ -15,25 +15,6 @@ const { loginViaHomepage, logoutIfLoggedIn } = require('./utils/user')
 
 const ASSET = (f) => path.join(__dirname, 'assets', f)
 
-// Drag a tray photo (the first remaining one) onto item row `rowIdx`.
-// The component keeps its drag state in JS (set on dragstart, read on drop),
-// so dispatching synthetic HTML5 drag events drives it exactly like a real drag.
-async function dragFirstTrayPhotoToRow(page, rowIdx) {
-  return page.evaluate((idx) => {
-    const tray = document.querySelector(
-      '[data-testid="photo-tray"] .pthumb'
-    )
-    const row = document.querySelectorAll('.brow')[idx]
-    if (!tray || !row) return false
-    const dt = new DataTransfer()
-    tray.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
-    row.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: dt }))
-    row.dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt }))
-    row.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }))
-    return true
-  }, rowIdx)
-}
-
 test.describe('Bulk offer (clearance) end-to-end', () => {
   // Video is recorded via the context fixture (recordVideo) for the whole flow.
   test('offerer posts a clearance; two repliers pick items; offerer allocates and completes', async ({
@@ -84,62 +65,34 @@ test.describe('Bulk offer (clearance) end-to-end', () => {
     // The items: choose "Type them in".
     await page.getByTestId('mode-manual').click()
 
-    // New rows are inserted at the top, so we always fill row 0.
+    // New rows append below the existing ones, so item i lives at row i.
     for (let i = 0; i < items.length; i++) {
       if (i > 0) await page.getByTestId('add-item').click()
-      await page.getByTestId('item-name-0').fill(items[i].name)
-      await page.getByTestId('item-qty-0').fill(items[i].qty)
+      await page.getByTestId(`item-name-${i}`).fill(items[i].name)
+      await page.getByTestId(`item-qty-${i}`).fill(items[i].qty)
       await page
-        .getByTestId('item-condition-0')
+        .getByTestId(`item-condition-${i}`)
         .selectOption(items[i].condition)
     }
     console.log(`Listed ${items.length} items`)
     await takeScreenshot('bulk-items-listed')
 
-    // Photos: upload three via the batch uploader, then drag each onto a row.
-    try {
-      await page.getByRole('button', { name: /add photos/i }).first().click()
-      // Target the Uppy dashboard's own (multiple) file input specifically. The
-      // composer also has a single-file per-row "Add photo" input, so a broad
-      // input[type=file] selector would grab the wrong one ("Non-multiple file
-      // input can only accept single file").
-      const fileInput = page.locator('.uppy-Dashboard-input').first()
-      await fileInput.waitFor({ state: 'attached', timeout: timeouts.ui.appearance })
-      await fileInput.setInputFiles([
-        ASSET('item1.png'),
-        ASSET('item2.png'),
-        ASSET('item3.png'),
+    // Photos: one per item via the per-row uploader. Each row's camera button
+    // opens a file chooser tied to that row; the picked file uploads and shows
+    // as a thumbnail in that row's photo cell. (This also exercises the dev
+    // image pipeline, asserted again on the replier side below.)
+    for (let i = 0; i < items.length; i++) {
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser'),
+        page.getByTestId(`item-addphoto-${i}`).click(),
       ])
-      // Wait for them to upload and drain into the tray.
-      await page
-        .locator('[data-testid="photo-tray"] .pthumb')
-        .first()
-        .waitFor({ state: 'visible', timeout: 60000 })
-
-      // Drag the first tray photo onto each item row in turn.
-      let trayCount = await page.locator('[data-testid="photo-tray"] .pthumb').count()
-      console.log(`${trayCount} photos in the tray`)
-      for (let r = 0; r < items.length && trayCount > 0; r++) {
-        await dragFirstTrayPhotoToRow(page, r)
-        await page.waitForTimeout(300)
-        trayCount = await page.locator('[data-testid="photo-tray"] .pthumb').count()
-      }
-      await takeScreenshot('bulk-photos-assigned')
-      console.log('Photos assigned to items')
-    } catch (e) {
-      console.warn(`Photo upload/drag step did not complete: ${e.message}`)
-      await takeScreenshot('bulk-photos-failed')
-    } finally {
-      // Always dismiss the uploader modal — if it's left open it overlays the
-      // form and intercepts pointer events on the steps below (e.g. add-slot).
-      const closeBtn = page.locator(
-        '.uppy-Dashboard-close, button[aria-label="Close Modal"]'
-      )
-      if (await closeBtn.count())
-        await closeBtn.first().click().catch(() => {})
-      await page.keyboard.press('Escape').catch(() => {})
-      await page.waitForTimeout(400)
+      await chooser.setFiles(ASSET(`item${i + 1}.png`))
+      await expect(
+        page.locator(`[data-testid="item-photocell-${i}"] .pthumb`)
+      ).toBeVisible({ timeout: timeouts.api.default })
     }
+    await takeScreenshot('bulk-photos-assigned')
+    console.log('Photos assigned to items')
 
     // Collection times.
     await page.getByTestId('slot-0').fill('Tue 7 Apr, 10am-4pm')
