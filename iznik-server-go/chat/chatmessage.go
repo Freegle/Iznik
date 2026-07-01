@@ -420,15 +420,26 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
 	// or modified client, or a ?reply= deep link. Mirror the read-path reply-eligibility check:
 	// a rippling_reach row exists for the post and does NOT contain the replier's location.
+	//
+	// This only governs a User2User reply to the POSTER — the flow reply-eligibility is about. A
+	// refmsgid-bearing message to mods (User2Mod) must NEVER be reach-gated: reporting a post has
+	// to work regardless of where you are. Reports carry refmsgid (to link the post) and so are
+	// typed CHAT_MESSAGE_INTERESTED, so without this scope a report of a rippled post 403s when the
+	// reporter is outside the post's reach polygon (Discourse #9852). Restricting to User2User does
+	// not weaken reply-eligibility, since genuine Interested replies are always User2User.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		latlng := user.GetLatLng(myid)
-		if latlng.Lat != 0 || latlng.Lng != 0 {
-			var blocked int
-			// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
-			if err := db.Raw("SELECT COUNT(*) FROM rippling_reach WHERE msgid = ? "+
-				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				*payload.Refmsgid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error; err == nil && blocked > 0 {
-				return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+		var roomType string
+		db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", id).Scan(&roomType)
+		if roomType == utils.CHAT_TYPE_USER2USER {
+			latlng := user.GetLatLng(myid)
+			if latlng.Lat != 0 || latlng.Lng != 0 {
+				var blocked int
+				// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
+				if err := db.Raw("SELECT COUNT(*) FROM rippling_reach WHERE msgid = ? "+
+					"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+					*payload.Refmsgid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error; err == nil && blocked > 0 {
+					return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+				}
 			}
 		}
 	}
