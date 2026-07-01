@@ -278,17 +278,28 @@ describe('JobOne', () => {
       )
     })
 
-    it('navigates to /jobs when not already on jobs page', async () => {
-      const wrapper = createWrapper()
+    it('emits clicked with the job id when a job is clicked', async () => {
+      const wrapper = createWrapper({ id: 123 })
       await wrapper.find('.job-item').trigger('click')
-      expect(mockRouter.push).toHaveBeenCalledWith('/jobs')
+      expect(wrapper.emitted('clicked')).toBeTruthy()
+      expect(wrapper.emitted('clicked')[0]).toEqual([123])
     })
 
-    it('does not navigate when already on jobs page', async () => {
-      mockRouter.currentRoute = { value: { path: '/jobs', name: 'jobs' } }
+    it('does not call router.push to navigate to /jobs', async () => {
+      // Navigation to /jobs was removed in Phase 3; the follow-up modal
+      // takes over as the "more jobs" mechanism from the parent (JobsDaSlot).
       const wrapper = createWrapper()
       await wrapper.find('.job-item').trigger('click')
       expect(mockRouter.push).not.toHaveBeenCalled()
+    })
+
+    it('contains no link or navigation to /jobs in the template', () => {
+      const wrapper = createWrapper()
+      // No anchor href pointing to /jobs in the rendered output.
+      const links = wrapper.findAll('a')
+      links.forEach((link) => {
+        expect(link.attributes('href')).not.toBe('/jobs')
+      })
     })
   })
 
