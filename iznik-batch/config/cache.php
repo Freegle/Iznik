@@ -22,9 +22,34 @@ return [
     | Scheduler Lock Store
     |--------------------------------------------------------------------------
     |
-    | This option controls the lock mechanism used for scheduler mutexes.
-    | 'flock' uses OS-level file locks that auto-release on process death.
-    | 'cache' uses Laravel's default cache-based locks with TTL expiry.
+    | Backend for the scheduler's withoutOverlapping() mutexes (see
+    | App\Console\SchedulerMutex).
+    |
+    | 'flock' (default) uses OS-level file locks that auto-release on process
+    | death. Caveat: our jobs all run ->runInBackground(), so the flock is held
+    | only by the short-lived schedule:run tick — it is released seconds after a
+    | job is *spawned*, NOT when it finishes, giving no real overlap protection
+    | across ticks. A hung/slow job (e.g. during a DB stall) is therefore spawned
+    | again every tick and can pile up.
+    |
+    | 'redis' (or any other DEFINED cache store name) uses a fail-open cache mutex
+    | (App\Console\ResilientCacheEventMutex) pointed at that store: a TTL lock that
+    | lives in the store (redis), so it persists across the per-tick schedule:run
+    | processes and genuinely blocks a second spawn while the first is still
+    | running, and is independent of the primary DB that can stall. The bounded
+    | withoutOverlapping() expiries in routes/console.php cap the TTL so a killed
+    | job self-heals in minutes, not the 24h default that originally motivated
+    | flock. Note the TTL BOUNDS but does not fully eliminate pileup: a stall
+    | longer than a job's expiry lets its lock expire mid-run and a second copy
+    | start — capped by TTL/cadence (e.g. ~4/hour for a 15min-bucket everyMinute
+    | job) rather than the unbounded every-tick pileup flock allowed.
+    |
+    | The value must be a store defined in 'stores' below; an unknown/mis-cased
+    | value (e.g. 'Redis') falls back to flock with a logged warning rather than
+    | crashing every overlap check. If the store is briefly unreachable the mutex
+    | fails open (logs + runs the job) instead of aborting the whole schedule:run.
+    |
+    | Recommended in production (batch): LOCK_STORE=redis.
     |
     */
 
