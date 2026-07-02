@@ -83,16 +83,6 @@
             />
             <datalist id="rippling-catchment-grouplist"></datalist>
           </label>
-          <label class="rpl-layer-toggle"
-            ><input id="rippling-catchment-friction" type="checkbox" checked />
-            Connectivity friction</label
-          >
-          <label
-            class="rpl-layer-toggle"
-            title="Flip the willingness basis: gate the catchment by the GROUP's own travel norm instead of each incomer's. A dense group expects short trips, so far corridor incomers drop out — simulating residents treating travellers-in from a long way as unexpected."
-            ><input id="rippling-catchment-flip" type="checkbox" />
-            Community view (far incomers unexpected)</label
-          >
         </div>
 
         <!-- Inbound: "What's in the digest" group — controls which posts -->
@@ -348,12 +338,6 @@
             <label class="rpl-layer-toggle"
               ><input id="rippling-tog-groups" type="checkbox" checked />
               Groups</label
-            >
-            <label
-              class="rpl-layer-toggle"
-              title="Overlay reach shaped by DfT transport connectivity (dense areas ripple tighter, sparse areas wider; rural collectors travel further than urban)"
-              ><input id="rippling-tog-friction" type="checkbox" />
-              Connectivity friction</label
             >
           </div>
         </div>

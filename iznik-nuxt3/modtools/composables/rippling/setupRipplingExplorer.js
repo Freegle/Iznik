@@ -64,8 +64,6 @@ export async function setupRipplingExplorer({
   let currentLat = null
   let currentLng = null
   let currentMode = 'drive'
-  // Dashed overlay for the connectivity-friction reach (toggled by #rippling-tog-friction).
-  let frictionLayer = null
   // Catchment tab: the selected group's own area (blue) + its inbound catchment (green).
   let catchmentGroupLayer = null
   let catchmentAreaLayer = null
@@ -221,10 +219,6 @@ export async function setupRipplingExplorer({
   function clearOutboundLayers() {
     Object.values(layers).forEach((l) => map.removeLayer(l))
     layers = {}
-    if (frictionLayer) {
-      map.removeLayer(frictionLayer)
-      frictionLayer = null
-    }
     // freeglersMarkers is declared later in the script (temporal dead zone),
     // so we can't reference it by name from here.  Instead, fire a custom
     // event that the freeglers-clearing block listens for.
@@ -300,8 +294,6 @@ export async function setupRipplingExplorer({
     if (marker) marker.setLatLng([g.lat, g.lng])
     syncUrl()
     const minutes = parseInt(timeSlider.value)
-    const friction = !!document.getElementById('rippling-catchment-friction')?.checked
-    const flip = !!document.getElementById('rippling-catchment-flip')?.checked
     showStatus('Computing catchment for ' + g.name + '…', true)
 
     // The group's own area (blue) — from the nearby-groups query at its centroid.
@@ -329,10 +321,10 @@ export async function setupRipplingExplorer({
 
     // The inbound catchment (green) — seeded from the whole GROUP AREA (groupid), not the
     // centroid, so corridor reach into the group's edges shows (e.g. M62 offers into Hull's
-    // western strip). Plain or connectivity-shaped per the toggle.
+    // western strip).
     fetch(
       apiUrl(
-        `/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive${friction ? '&friction=1' : ''}${flip ? '&willflip=1' : ''}`
+        `/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive`
       )
     )
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
@@ -350,10 +342,7 @@ export async function setupRipplingExplorer({
           fillOpacity: 0.12,
         })
           .addTo(map)
-          .bindTooltip(
-            'Catchment — posts could ripple IN from here' +
-              (friction ? ' (connectivity-shaped)' : ' (plain travel time)')
-          )
+          .bindTooltip('Catchment — posts could ripple IN from here')
         if (catchmentGroupLayer) catchmentGroupLayer.bringToFront()
         const b = catchmentAreaLayer.getBounds()
         if (b.isValid()) map.fitBounds(b.pad(0.1), { maxZoom: 12, animate: false })
@@ -656,17 +645,9 @@ export async function setupRipplingExplorer({
       if (showQuintiles) requestAnimationFrame(updateFairnessClip)
     })
 
-  document
-    .getElementById('rippling-tog-friction')
-    .addEventListener('change', updateFrictionOverlay)
-
-  // Catchment tab: group picker (datalist selection fires 'change') + connectivity toggle.
+  // Catchment tab: group picker (datalist selection fires 'change').
   const catchmentGroupInput = document.getElementById('rippling-catchment-group')
   if (catchmentGroupInput) catchmentGroupInput.addEventListener('change', drawCatchment)
-  const catchmentFrictionCb = document.getElementById('rippling-catchment-friction')
-  if (catchmentFrictionCb) catchmentFrictionCb.addEventListener('change', drawCatchment)
-  const catchmentFlipCb = document.getElementById('rippling-catchment-flip')
-  if (catchmentFlipCb) catchmentFlipCb.addEventListener('change', drawCatchment)
 
   document
     .getElementById('rippling-tog-freeglers')
@@ -1018,7 +999,6 @@ export async function setupRipplingExplorer({
         drawFreeglersLayer()
         updateFreeglersInside(data)
         drawGroupsOverlay()
-        updateFrictionOverlay()
         showStatus('Done', false)
       })
       .catch((err) => {
@@ -1027,45 +1007,6 @@ export async function setupRipplingExplorer({
           'rippling-stats'
         ).innerHTML = `<div class="rpl-tip" style="color:#c00">${err.message}</div>`
       })
-  }
-
-  // Connectivity-friction reach overlay (dashed purple): the reach reshaped by the DfT
-  // transport-connectivity model, drawn alongside the red standard reach so mods can see
-  // where connectivity shrinks (dense/urban) or widens (sparse/rural) the ripple. Uses the
-  // current travel mode. Off unless #rippling-tog-friction is checked.
-  function updateFrictionOverlay() {
-    const cb = document.getElementById('rippling-tog-friction')
-    if (frictionLayer) {
-      map.removeLayer(frictionLayer)
-      frictionLayer = null
-    }
-    if (!cb || !cb.checked || currentLat === null) return
-    const minutes = parseInt(timeSlider.value)
-    const gen = isochroneGeneration
-    fetch(
-      apiUrl(
-        `/v1/isochrone?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
-          6
-        )}&minutes=${minutes}&friction=1`
-      )
-    )
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('friction ' + r.status))))
-      .then((data) => {
-        if (gen !== isochroneGeneration) return // location/mode/time moved on
-        const poly = data && data[currentMode]
-        const ring = poly && poly.geometry && poly.geometry.coordinates[0]
-        if (!ring) return
-        if (frictionLayer) map.removeLayer(frictionLayer)
-        frictionLayer = L.polygon(geoToLeaflet(ring), {
-          color: '#7b2ff7',
-          weight: 2.5,
-          dashArray: '6 5',
-          fill: false,
-        })
-          .addTo(map)
-          .bindTooltip('Connectivity-friction reach (' + currentMode + ')')
-      })
-      .catch(() => {})
   }
 
   let lastIsoData = null

@@ -823,10 +823,6 @@ services:
       # the container stays up for routing-go tests without the 2.5GB UK graph.
       - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
       - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
-      # DfT transport-connectivity for the connectivity-friction reach model. Unscored
-      # nodes (Conn=0, e.g. Scotland) fall back to the plain isochrone. See
-      # iznik-routing-go/data/build-connectivity/ for how this CSV is regenerated.
-      - CONNECTIVITY_CSV=${CONNECTIVITY_CSV:-/data/uk_lsoa_connectivity.csv}
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
       - MYSQL_USER=root
@@ -1003,9 +999,6 @@ services:
       - SPATIAL_KNN_URL=http://spatial-knn-live:8194
       - OSM_PBF_PATH=/data/uk-latest.osm.pbf
       - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
-      # Connectivity-friction data (same as the dev-local `spatial` service) — without this,
-      # friction=1 falls back to the plain isochrone on dev-live (reach never changes).
-      - CONNECTIVITY_CSV=${CONNECTIVITY_CSV:-/data/uk_lsoa_connectivity.csv}
       - MYSQL_HOST=db-live
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
       - MYSQL_USER=${LIVE_DB_USER:-root}

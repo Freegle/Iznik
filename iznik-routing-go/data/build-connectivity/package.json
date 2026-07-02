@@ -1,9 +1,0 @@
-{
-  "name": "build-connectivity",
-  "private": true,
-  "description": "Build-time-only deps for the uk_lsoa_connectivity.csv pipeline (not shipped, not committed — see .gitignore).",
-  "dependencies": {
-    "proj4": "^2.20.9",
-    "xlsx": "^0.18.5"
-  }
-}

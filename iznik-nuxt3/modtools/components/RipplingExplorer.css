@@ -195,13 +195,15 @@
   margin-bottom: 14px;
 }
 .rpl-mode-btn {
-  flex: 1;
-  padding: 7px 4px;
+  flex: 1 1 0;
+  min-width: 0; /* let flex:1 distribute width equally; without this the long labels
+                   force each button to content width and the 3rd tab overflows */
+  padding: 7px 3px;
   border: 1.5px solid #ddd;
   border-radius: 6px;
   background: #fafafa;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: #555;
   transition: all 0.15s;
@@ -209,10 +211,12 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  text-align: center;
+  line-height: 1.1;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .rpl-icon {
-  font-size: 18px;
+  font-size: 16px;
 }
 .rpl-mode-btn:hover {
   border-color: #61ae24;

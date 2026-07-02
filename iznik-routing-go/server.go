@@ -24,41 +24,7 @@ type isochroneResponse struct {
 	Drive GeoJSONPolygon `json:"drive"`
 }
 
-// frictionParamsFromQuery reads the connectivity-friction knobs from the query string.
-// Enabled by friction=1. Defaults are principled starting points — NOT calibrated, since
-// the algorithm changes what people see and therefore collect (chicken & egg), so historical
-// collection distances cannot validate it. Tunable via ref/traverse/willing for exploration.
-func frictionParamsFromQuery(c *fiber.Ctx) (FrictionParams, bool) {
-	if c.Query("friction") != "1" && c.Query("friction") != "true" {
-		return FrictionParams{}, false
-	}
-	qf := func(name string, def float64) float32 {
-		if v, err := strconv.ParseFloat(c.Query(name), 64); err == nil {
-			return float32(v)
-		}
-		return float32(def)
-	}
-	return FrictionParams{
-		// Ref = national median LSOA connectivity (2025 data: 67) → friction ≈ 1 at a
-		// typical area.
-		Ref:      qf("ref", 67),
-		Traverse: qf("traverse", 1),
-		// Traversal friction only ADDS impedance in well-connected areas (Min=1): dense
-		// ground slows the wavefront (tighter reach); sparse ground stays at baseline
-		// rather than speeding up. Without this floor, low-connectivity edges sped the
-		// front up AND willingness widened it, compounding into absurd (40×) drive reach.
-		Min:      1.0,
-		Max:      4,
-		Willing:  qf("willing", 1),
-		// Willingness caps the collector-side asymmetry to [0.6, 1.5]× the base budget:
-		// urban collectors ~0.6× (won't travel far), rural ~1.5× (travel further). Kept
-		// modest so a car reach can't balloon.
-		WMin: 0.6,
-		WMax: 1.5,
-	}, true
-}
-
-// handleIsochrone handles GET /v1/isochrone?lat=&lng=&minutes=  (optional: friction=1)
+// handleIsochrone handles GET /v1/isochrone?lat=&lng=&minutes=
 func handleIsochrone(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
@@ -75,8 +41,6 @@ func handleIsochrone(g *Graph) fiber.Handler {
 		}
 		secs := float32(minutes * 60)
 
-		fp, useFriction := frictionParamsFromQuery(c)
-
 		type result struct {
 			mode Mode
 			poly GeoJSONPolygon
@@ -85,12 +49,7 @@ func handleIsochrone(g *Graph) fiber.Handler {
 
 		for _, m := range []Mode{Walk, Cycle, Drive} {
 			go func(m Mode) {
-				var iso IsochroneResult
-				if useFriction {
-					iso = FrictionIsochrone(g, lat, lng, secs, m, fp)
-				} else {
-					iso = Isochrone(g, lat, lng, secs, m)
-				}
+				iso := Isochrone(g, lat, lng, secs, m)
 				res := AutoResolution(secs, m)
 				ch <- result{m, IsochronePolygon(g, iso.ReachedNodes, res)}
 			}(m)
@@ -156,9 +115,9 @@ func parseMode(s string) Mode {
 
 // handleCatchment handles GET /v1/catchment?lat=&lng=&minutes=&mode=&friction=1
 // Returns the inbound catchment polygon for a group: the area from which posts would ripple
-// far enough to reach it. With friction=1 it applies the connectivity model (a rural group
-// pulls from further than an urban one); without, it's a plain isochrone from the group —
-// the "without ripple reach" baseline the per-group tab compares against.
+// far enough to reach it — seeded from the group's whole boundary (via groupid) so corridor
+// reach into the group's edges is captured (a centroid-only seed misses e.g. an M62 offer
+// clipping HullFreegle's western strip).
 func handleCatchment(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "30"), 64)
@@ -167,34 +126,22 @@ func handleCatchment(g *Graph) fiber.Handler {
 		}
 		secs := float32(minutes * 60)
 		mode := parseMode(c.Query("mode", "drive"))
-		fp, useFriction := frictionParamsFromQuery(c)
 
-		// Preferred form: catchment of a whole GROUP, seeded from its boundary so corridor
-		// reach into the group's edges is captured (a centroid-only seed misses e.g. an M62
-		// offer clipping HullFreegle's western strip).
 		if gidStr := c.Query("groupid"); gidStr != "" {
 			gid, err := strconv.ParseInt(gidStr, 10, 64)
 			if err != nil {
 				return fiber.NewError(fiber.StatusBadRequest, "invalid groupid")
 			}
-			seeds, conn, ok := groupSeedNodesAndConn(g, gid, mode)
+			seeds, ok := groupSeedNodes(g, gid, mode)
 			if !ok {
 				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 			}
-			var iso IsochroneResult
-			if useFriction {
-				// willflip=1 flips the willingness basis to the GROUP's own (tight, dense-area
-				// "far incomers are suspicious") norm; default gates each incomer by its own.
-				flipCommunity := c.Query("willflip") == "1"
-				iso = CatchmentFromNodes(g, seeds, conn, secs, mode, fp, flipCommunity)
-			} else {
-				iso = frictionIsochroneFromNodes(g, seeds, secs, mode, FrictionParams{})
-			}
+			iso := multiSourceIsochrone(g, seeds, secs, mode)
 			poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
 			return c.JSON(fiber.Map{"catchment": poly, "seeds": len(seeds)})
 		}
 
-		// Point form (kept for ad-hoc use): catchment of a single location.
+		// Point form (ad-hoc): catchment of a single location.
 		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
 		if err != nil || lat == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "lat or groupid required")
@@ -203,12 +150,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 		if err != nil || lng == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
-		var iso IsochroneResult
-		if useFriction {
-			iso = CatchmentIsochrone(g, lat, lng, secs, mode, fp)
-		} else {
-			iso = Isochrone(g, lat, lng, secs, mode)
-		}
+		iso := Isochrone(g, lat, lng, secs, mode)
 		poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
 		return c.JSON(fiber.Map{"catchment": poly})
 	}

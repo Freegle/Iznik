@@ -32,10 +32,6 @@ const noNode NodeID = 0
 type Node struct {
 	Lat, Lng float32
 	Quintile Quintile
-	// Conn is the DfT overall transport-connectivity score (0-100) of the area
-	// this node sits in; 0 = unknown (e.g. Scotland/NI, outside England & Wales).
-	// Used by the connectivity-friction reach model.
-	Conn uint8
 }
 
 // Edge is a directed graph edge.
