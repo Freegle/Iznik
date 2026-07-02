@@ -150,7 +150,7 @@ Schedule::command('ripple:release-replies')
 // gates it; withoutOverlapping keeps a slow run from stacking).
 Schedule::command('ripple:proximity-notes')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
