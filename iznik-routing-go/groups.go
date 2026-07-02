@@ -313,3 +313,47 @@ func handleNearbyGroups() fiber.Handler {
 		return c.JSON(groupsCollection{Type: "FeatureCollection", Features: features})
 	}
 }
+
+// groupListItem is one entry in the catchment tab's searchable group selector.
+type groupListItem struct {
+	ID   int64   `json:"id"`
+	Name string  `json:"name"`
+	Lat  float64 `json:"lat"`
+	Lng  float64 `json:"lng"`
+}
+
+// handleGroupsList returns every publishable Freegle group (id, short name, polygon
+// centroid) for the catchment tab's group picker. Requires MySQL; returns [] without it.
+// polyindex stores degree values tagged SRID 3857, so ST_X/ST_Y give lng/lat directly.
+func handleGroupsList() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		db := ensureGroupsDB()
+		if db == nil {
+			return c.JSON([]groupListItem{})
+		}
+		rows, err := db.Query("SELECT id, nameshort, " +
+			"ST_Y(ST_Centroid(polyindex)) AS lat, ST_X(ST_Centroid(polyindex)) AS lng " +
+			"FROM `groups` WHERE publish = 1 AND listable = 1 AND polyindex IS NOT NULL " +
+			"ORDER BY nameshort")
+		if err != nil {
+			log.Printf("groups list query: %v", err)
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer rows.Close()
+
+		items := []groupListItem{}
+		for rows.Next() {
+			var it groupListItem
+			var lat, lng sql.NullFloat64
+			if err := rows.Scan(&it.ID, &it.Name, &lat, &lng); err != nil {
+				continue
+			}
+			if !lat.Valid || !lng.Valid {
+				continue
+			}
+			it.Lat, it.Lng = lat.Float64, lng.Float64
+			items = append(items, it)
+		}
+		return c.JSON(items)
+	}
+}

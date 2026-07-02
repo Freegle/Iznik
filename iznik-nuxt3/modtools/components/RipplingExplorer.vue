@@ -23,6 +23,9 @@
           <button class="rpl-mode-btn" data-view="inbound">
             <span class="rpl-icon">📥</span>Digest preview
           </button>
+          <button class="rpl-mode-btn" data-view="catchment">
+            <span class="rpl-icon">🎯</span>Group catchment
+          </button>
         </div>
 
         <div id="rippling-search-wrap">
@@ -48,6 +51,42 @@
           Drop a marker. The map shows what would appear in a digest sent to a
           member at that spot — every post within their reach (the radius below)
           over the last 24 hours, in the order set by the sliders further down.
+        </div>
+        <div
+          id="rippling-intro-catchment"
+          class="rpl-intro"
+          style="display: none"
+        >
+          Pick a group. The map shows the group's own area (blue) and — outside it
+          — the catchment (green): the area from which posts could in theory ripple
+          IN to that group. Toggle connectivity to see how the transport-connectivity
+          model reshapes that catchment.
+        </div>
+        <div
+          id="rippling-catchment-panel"
+          class="rpl-sim-group"
+          style="display: none"
+        >
+          <div class="rpl-sim-group-title">Group catchment</div>
+          <label
+            class="rpl-slider-label"
+            style="display: block; margin-bottom: 8px"
+          >
+            <span>Group</span>
+            <input
+              id="rippling-catchment-group"
+              list="rippling-catchment-grouplist"
+              type="text"
+              placeholder="Type a group name…"
+              autocomplete="off"
+              style="width: 100%; margin-top: 2px"
+            />
+            <datalist id="rippling-catchment-grouplist"></datalist>
+          </label>
+          <label class="rpl-layer-toggle"
+            ><input id="rippling-catchment-friction" type="checkbox" checked />
+            Connectivity friction</label
+          >
         </div>
 
         <!-- Inbound: "What's in the digest" group — controls which posts -->
@@ -309,12 +348,6 @@
               title="Overlay reach shaped by DfT transport connectivity (dense areas ripple tighter, sparse areas wider; rural collectors travel further than urban)"
               ><input id="rippling-tog-friction" type="checkbox" />
               Connectivity friction</label
-            >
-            <label
-              class="rpl-layer-toggle"
-              title="Show this location's inbound catchment: the area from which posts would ripple IN to a group here (connectivity-shaped)"
-              ><input id="rippling-tog-catchment" type="checkbox" />
-              Catchment (in)</label
             >
           </div>
         </div>

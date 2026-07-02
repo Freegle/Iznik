@@ -66,8 +66,10 @@ export async function setupRipplingExplorer({
   let currentMode = 'drive'
   // Dashed overlay for the connectivity-friction reach (toggled by #rippling-tog-friction).
   let frictionLayer = null
-  // Filled overlay for the inbound catchment (toggled by #rippling-tog-catchment).
-  let catchmentLayer = null
+  // Catchment tab: the selected group's own area (blue) + its inbound catchment (green).
+  let catchmentGroupLayer = null
+  let catchmentAreaLayer = null
+  let catchmentGroupsByName = null // lower-cased group name -> {id,name,lat,lng}, loaded once
   let marker = null
   let layers = {}
   // Minimal mode only: when the isochrone covers >=90% of the home group,
@@ -147,8 +149,10 @@ export async function setupRipplingExplorer({
 
   function applyViewMode() {
     const inbound = viewMode === 'inbound'
-    // Hide outbound-only controls in inbound mode — except the time
-    // slider, which both views need to control the maximum reach.
+    const catchment = viewMode === 'catchment'
+    const outbound = viewMode === 'outbound'
+    // Outbound-only sliders/rows. The time slider ("Maximum reach") applies to all three
+    // views (it's the catchment's minutes too); the inbound-row is inbound-only.
     document
       .querySelectorAll(
         '#rippling-panel-body > .rpl-slider-row, .rpl-ripple-row, #rippling-freegler-bar'
@@ -159,48 +163,57 @@ export async function setupRipplingExplorer({
           el.style.display = '' // always shown
           return
         }
-        el.style.display = inbound ? 'none' : ''
+        el.style.display = outbound ? '' : 'none'
       })
-    // Hide the deprivation/freeglers/groups toggles in inbound mode — they
-    // describe outbound layers.
+    // Deprivation/freeglers/groups + connectivity-friction toggles: outbound only.
     const layerToggles = document.querySelector(
       '#rippling-panel-body > div[style*="flex-wrap"]'
     )
-    if (layerToggles) layerToggles.style.display = inbound ? 'none' : ''
-    // Also the walk/cycle/drive travel-mode row is outbound-only.
+    if (layerToggles) layerToggles.style.display = outbound ? '' : 'none'
+    // Walk/cycle/drive travel-mode row: outbound only.
     const travelModeRow = document.querySelector(
       '#rippling-panel-body > .rpl-mode-row:not(#rippling-view-mode)'
     )
-    if (travelModeRow) travelModeRow.style.display = inbound ? 'none' : ''
+    if (travelModeRow) travelModeRow.style.display = outbound ? '' : 'none'
     inboundRow.style.display = inbound ? '' : 'none'
-    // Swap the legend via the reactive Vue component.
-    legendMode.value = inbound ? 'inbound' : 'outbound'
-    // The swingometer / fairness stats panel and the groups sidebar list
-    // are outbound-only — hide them when switching to inbound.
+    // Legend: reach-style for both non-outbound views.
+    legendMode.value = outbound ? 'outbound' : 'inbound'
     const statsEl = document.getElementById('rippling-stats')
-    if (statsEl) statsEl.style.display = inbound ? 'none' : ''
+    if (statsEl) statsEl.style.display = outbound ? '' : 'none'
     const groupsSection = document.getElementById('rippling-groups-section')
-    if (groupsSection && inbound) groupsSection.style.display = 'none'
-    // Swap the intro text.
+    if (groupsSection && !outbound) groupsSection.style.display = 'none'
+    // Intros.
     const introOutbound = document.getElementById('rippling-intro-outbound')
     const introInbound = document.getElementById('rippling-intro-inbound')
-    if (introOutbound) introOutbound.style.display = inbound ? 'none' : ''
+    const introCatchment = document.getElementById('rippling-intro-catchment')
+    if (introOutbound) introOutbound.style.display = outbound ? '' : 'none'
     if (introInbound) introInbound.style.display = inbound ? '' : 'none'
-    // Show the "What's in the digest" / "Sort order" group wrappers in
-    // inbound mode only.
+    if (introCatchment) introCatchment.style.display = catchment ? '' : 'none'
+    // Inbound-only "what's in the digest" / sort wrappers.
     const contentsBox = document.getElementById('rippling-sim-contents')
     const pieWrap = document.getElementById('rippling-sim-pie-wrap')
     const sortTitle = document.getElementById('rippling-sim-sort-title')
     if (contentsBox) contentsBox.style.display = inbound ? '' : 'none'
     if (pieWrap) pieWrap.style.display = inbound ? '' : 'none'
     if (sortTitle) sortTitle.style.display = inbound ? '' : 'none'
+    // Catchment-tab panel (searchable group picker + connectivity toggle).
+    const catchmentPanel = document.getElementById('rippling-catchment-panel')
+    if (catchmentPanel) catchmentPanel.style.display = catchment ? '' : 'none'
 
     if (inbound) {
       clearOutboundLayers()
+      clearCatchmentLayers()
       if (ripplePlaying || rippleFrames.length > 0) stopRipple()
       if (currentLat !== null) fetchInbox()
+    } else if (catchment) {
+      clearOutboundLayers()
+      clearInboundLayers()
+      if (ripplePlaying || rippleFrames.length > 0) stopRipple()
+      loadCatchmentGroups()
+      drawCatchment() // redraw if a group is already chosen
     } else {
       clearInboundLayers()
+      clearCatchmentLayers()
       if (currentLat !== null) scheduleUpdate()
     }
   }
@@ -211,10 +224,6 @@ export async function setupRipplingExplorer({
     if (frictionLayer) {
       map.removeLayer(frictionLayer)
       frictionLayer = null
-    }
-    if (catchmentLayer) {
-      map.removeLayer(catchmentLayer)
-      catchmentLayer = null
     }
     // freeglersMarkers is declared later in the script (temporal dead zone),
     // so we can't reference it by name from here.  Instead, fire a custom
@@ -231,6 +240,130 @@ export async function setupRipplingExplorer({
       map.removeLayer(inboxIsoLayer)
       inboxIsoLayer = null
     }
+  }
+
+  // ── Group-catchment tab ────────────────────────────────────────────
+  // "Where could posts ripple IN to this group from?" Pick a group; we draw its own area
+  // (blue) and its inbound catchment (green) — the area outside the group from which an
+  // offer would ripple far enough to reach it. A connectivity toggle shows the effect of
+  // the transport-connectivity model on that catchment.
+  function clearCatchmentLayers() {
+    if (catchmentGroupLayer) {
+      map.removeLayer(catchmentGroupLayer)
+      catchmentGroupLayer = null
+    }
+    if (catchmentAreaLayer) {
+      map.removeLayer(catchmentAreaLayer)
+      catchmentAreaLayer = null
+    }
+  }
+
+  // Fetch the full group list once and populate the searchable <datalist>.
+  let catchmentGroupsLoading = false
+  function loadCatchmentGroups() {
+    if (catchmentGroupsByName || catchmentGroupsLoading) return
+    catchmentGroupsLoading = true
+    fetch(apiUrl('/v1/groups/list'))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('groups ' + r.status))))
+      .then((list) => {
+        catchmentGroupsByName = new Map()
+        const dl = document.getElementById('rippling-catchment-grouplist')
+        if (dl) dl.innerHTML = ''
+        for (const g of list) {
+          if (!g || !g.name) continue
+          catchmentGroupsByName.set(g.name.toLowerCase(), g)
+          if (dl) {
+            const o = document.createElement('option')
+            o.value = g.name
+            dl.appendChild(o)
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        catchmentGroupsLoading = false
+      })
+  }
+
+  // Draw the currently-selected group's area + catchment. No-op if no valid group chosen.
+  function drawCatchment() {
+    if (viewMode !== 'catchment') return
+    clearCatchmentLayers()
+    const input = document.getElementById('rippling-catchment-group')
+    const g =
+      catchmentGroupsByName && input
+        ? catchmentGroupsByName.get(input.value.trim().toLowerCase())
+        : null
+    if (!g) return
+    currentLat = g.lat
+    currentLng = g.lng
+    if (marker) marker.setLatLng([g.lat, g.lng])
+    syncUrl()
+    const minutes = parseInt(timeSlider.value)
+    const friction = !!document.getElementById('rippling-catchment-friction')?.checked
+    showStatus('Computing catchment for ' + g.name + '…', true)
+
+    // The group's own area (blue) — from the nearby-groups query at its centroid.
+    fetch(apiUrl(`/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('nearby ' + r.status))))
+      .then((fc) => {
+        const feats = (fc && fc.features) || []
+        const f =
+          feats.find((x) => x.properties && x.properties.id === g.id) ||
+          feats.find((x) => x.properties && x.properties.contains)
+        if (f && f.geometry && f.geometry.coordinates[0]) {
+          if (catchmentGroupLayer) map.removeLayer(catchmentGroupLayer)
+          catchmentGroupLayer = L.polygon(geoToLeaflet(f.geometry.coordinates[0]), {
+            color: '#005bb5',
+            weight: 2,
+            fillColor: '#005bb5',
+            fillOpacity: 0.18,
+          })
+            .addTo(map)
+            .bindTooltip(g.name + ' — group area')
+          catchmentGroupLayer.bringToFront()
+        }
+      })
+      .catch(() => {})
+
+    // The inbound catchment (green) — plain or connectivity-shaped per the toggle.
+    fetch(
+      apiUrl(
+        `/v1/catchment?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}&minutes=${minutes}&mode=drive${friction ? '&friction=1' : ''}`
+      )
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
+      .then((d) => {
+        const ring = d && d.catchment && d.catchment.geometry && d.catchment.geometry.coordinates[0]
+        if (!ring) {
+          showStatus('No catchment', false)
+          return
+        }
+        if (catchmentAreaLayer) map.removeLayer(catchmentAreaLayer)
+        catchmentAreaLayer = L.polygon(geoToLeaflet(ring), {
+          color: '#0a8f3c',
+          weight: 2.5,
+          fillColor: '#0a8f3c',
+          fillOpacity: 0.12,
+        })
+          .addTo(map)
+          .bindTooltip(
+            'Catchment — posts could ripple IN from here' +
+              (friction ? ' (connectivity-shaped)' : ' (plain travel time)')
+          )
+        if (catchmentGroupLayer) catchmentGroupLayer.bringToFront()
+        const b = catchmentAreaLayer.getBounds()
+        if (b.isValid()) map.fitBounds(b.pad(0.1), { maxZoom: 12, animate: false })
+        showStatus('Done', false)
+      })
+      .catch((e) => showStatus('Error: ' + e.message, false))
+  }
+
+  // Debounced redraw for the time slider while in catchment mode.
+  let catchmentDebounce = null
+  function scheduleCatchment() {
+    clearTimeout(catchmentDebounce)
+    catchmentDebounce = setTimeout(drawCatchment, 250)
   }
 
   function renderPie(slices) {
@@ -488,6 +621,10 @@ export async function setupRipplingExplorer({
   }
 
   timeSlider.addEventListener('input', () => {
+    if (viewMode === 'catchment') {
+      scheduleCatchment()
+      return
+    }
     if (currentLat === null) return
     if (viewMode === 'inbound') scheduleInboundUpdate()
     else scheduleUpdate()
@@ -520,9 +657,11 @@ export async function setupRipplingExplorer({
     .getElementById('rippling-tog-friction')
     .addEventListener('change', updateFrictionOverlay)
 
-  document
-    .getElementById('rippling-tog-catchment')
-    .addEventListener('change', updateCatchmentOverlay)
+  // Catchment tab: group picker (datalist selection fires 'change') + connectivity toggle.
+  const catchmentGroupInput = document.getElementById('rippling-catchment-group')
+  if (catchmentGroupInput) catchmentGroupInput.addEventListener('change', drawCatchment)
+  const catchmentFrictionCb = document.getElementById('rippling-catchment-friction')
+  if (catchmentFrictionCb) catchmentFrictionCb.addEventListener('change', drawCatchment)
 
   document
     .getElementById('rippling-tog-freeglers')
@@ -875,7 +1014,6 @@ export async function setupRipplingExplorer({
         updateFreeglersInside(data)
         drawGroupsOverlay()
         updateFrictionOverlay()
-        updateCatchmentOverlay()
         showStatus('Done', false)
       })
       .catch((err) => {
@@ -921,45 +1059,6 @@ export async function setupRipplingExplorer({
         })
           .addTo(map)
           .bindTooltip('Connectivity-friction reach (' + currentMode + ')')
-      })
-      .catch(() => {})
-  }
-
-  // Inbound catchment overlay (filled green): the area from which posts would ripple IN to a
-  // group at the current location (connectivity-shaped — a rural group pulls from further than
-  // an urban one). This is the per-group "where do posts ripple in from?" view, point-anchored.
-  function updateCatchmentOverlay() {
-    const cb = document.getElementById('rippling-tog-catchment')
-    if (catchmentLayer) {
-      map.removeLayer(catchmentLayer)
-      catchmentLayer = null
-    }
-    if (!cb || !cb.checked || currentLat === null) return
-    const minutes = parseInt(timeSlider.value)
-    const gen = isochroneGeneration
-    fetch(
-      apiUrl(
-        `/v1/catchment?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
-          6
-        )}&minutes=${minutes}&mode=${currentMode}&friction=1`
-      )
-    )
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
-      .then((data) => {
-        if (gen !== isochroneGeneration) return
-        const ring =
-          data && data.catchment && data.catchment.geometry &&
-          data.catchment.geometry.coordinates[0]
-        if (!ring) return
-        if (catchmentLayer) map.removeLayer(catchmentLayer)
-        catchmentLayer = L.polygon(geoToLeaflet(ring), {
-          color: '#0a8f3c',
-          weight: 2,
-          fillColor: '#0a8f3c',
-          fillOpacity: 0.12,
-        })
-          .addTo(map)
-          .bindTooltip('Inbound catchment — posts ripple in from here (' + currentMode + ')')
       })
       .catch(() => {})
   }
