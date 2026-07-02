@@ -363,7 +363,6 @@ export default defineNuxtConfig({
       NETLIFY_DEPLOY_ID: process.env.DEPLOY_ID,
       NETLIFY_SITE_NAME: process.env.SITE_NAME,
       NETLIFY_BRANCH: process.env.BRANCH,
-      MATOMO_HOST: process.env.MATOMO_HOST,
       COOKIEYES: config.COOKIEYES,
       USE_COOKIES: config.USE_COOKIES,
       TRUSTPILOT_LINK: config.TRUSTPILOT_LINK,
