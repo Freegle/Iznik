@@ -4523,6 +4523,62 @@ func TestMessageHistory_NoDuplicatesOnRepost(t *testing.T) {
 		"exactly one messagehistory entry per (msgID, groupID) regardless of repost count")
 }
 
+// TestMessageHistory_NoDuplicatesOnRipple: a post rippled OUT to other groups gets
+// an extra messages_groups row (rippled_in=1) per receiving group. The posting
+// history must count the origin only, so a widely-rippled post appears ONCE - not
+// once per group (Discourse #9851 / the 23x Posting History for a bulk offer).
+func TestMessageHistory_NoDuplicatesOnRipple(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_ripple")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Table", 55.9533, -3.1883)
+
+	// Rippling-out: an Approved messages_groups row (rippled_in=1) on a receiving group.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var count int
+	for _, h := range history {
+		if h.ID == msgID {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count,
+		"a post rippled to another group appears once in posting history, not per group")
+}
+
+// TestUserInfo_OfferCountNotInflatedByRipple guards the COUNT(DISTINCT) fix in
+// GetUserInfo: a post rippled to N groups counts as ONE offer, not N (Discourse
+// #9851 - offer/wanted numbers showing incorrectly on chitchat).
+func TestUserInfo_OfferCountNotInflatedByRipple(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("info_ripple")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Chair", 55.9533, -3.1883)
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	info := user2.GetUserInfo(userID, 0)
+	assert.Equal(t, uint64(1), info.Offers,
+		"a post rippled to another group counts as one offer, not per group")
+}
+
 // TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary covers Discourse #9783/7.
 //
 // "Strange case": a post is in Pending state (collection='Pending', mg.deleted=0,
