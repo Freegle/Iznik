@@ -457,10 +457,13 @@ describe('PostFilters', () => {
       expect(wrapper.find('.range-slider-stub').exists()).toBe(false)
     })
 
-    it('hides the slider outside the nearby view', () => {
+    it('shows the slider in the mygroups view when the viewer has a location', () => {
+      // The mygroups feed now carries a per-post distance (server-side), so the slider
+      // narrows any "Show posts from" view - not just Nearby - as long as we know where
+      // the viewer is.
       mockMe.value = meWithLocation({ browseView: 'mygroups' })
       const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.find('.range-slider-stub').exists()).toBe(false)
+      expect(wrapper.find('.range-slider-stub').exists()).toBe(true)
     })
 
     it('scales the slider max to the farthest distance in the feed (rounded up)', () => {

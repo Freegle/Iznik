@@ -117,7 +117,12 @@ Schedule::command('messages:contentcheck')
 // all, so no reach is computed, nothing is rippled into new groups, and every reach consumer stays
 // inert. This lets the whole feature ship dark and be turned on later with just RIPPLE_ENABLED=true.
 if (config('freegle.ripple.enabled')) {
-    Schedule::command('ripple:expand')
+    // --limit=500: the ExpandCommand default is 50 (a conservative memory-pressure floor). Running
+    // network-wide the reach population reaches ~11k expanding rows generating ~185 due-advances per
+    // tick; initialiseNew and advanceDue each take the full limit, so 500 clears steady-state advances
+    // with headroom and drains any initialisation backlog quickly, while staying well under the
+    // routing-server load the rollout sustained. Tune via historical due-rate if the routing host strains.
+    Schedule::command('ripple:expand', ['--limit' => 500])
         ->everyMinute()
         ->withoutOverlapping(15)
         ->sendOutputTo(cronLog('ripple:expand'))
@@ -130,7 +135,11 @@ if (config('freegle.ripple.enabled')) {
 // run with RIPPLE_ENABLED=false and RIPPLE_WITHIN_GROUPS set, so only this scoped cron is active.
 $rippleWithinGroups = (array) config('freegle.ripple.within_groups', []);
 if (!empty($rippleWithinGroups)) {
-    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups)])
+    // --limit=200: at scoped-experiment scale the reach population is ~3.6k expanding rows generating
+    // ~60 due-advances per tick, so the default 50 budget is fully consumed advancing and starves new
+    // initialisation (the new-group backlog stops draining). 200 leaves headroom for both advances and
+    // new inits without over-driving the routing server. Tune up if due-advances approach the limit.
+    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups), '--limit' => 200])
         ->everyMinute()
         ->withoutOverlapping(15)
         ->sendOutputTo(cronLog('ripple:expand-experiment'))
