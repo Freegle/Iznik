@@ -121,6 +121,26 @@ func frictionIsochroneFromNodes(g *Graph, origins []NodeID, limitSeconds float32
 	return IsochroneResult{ReachedNodes: reached}
 }
 
+// CatchmentFromNodes computes a group's inbound catchment, seeded from `seeds` (the group
+// boundary). The willingness BASIS is flippable:
+//
+//   flipCommunity=false ("traveller" — default): gate each incomer by ITS OWN willingness, so
+//     far rural residents who happily travel are included. This is "who is able/willing to come".
+//   flipCommunity=true ("community"): gate every incomer by the GROUP's own (uniform) willingness
+//     — a dense group's short travel norm — so far incomers fall outside it. This simulates
+//     dense-area residents finding far travellers-in unexpected/"suspicious".
+func CatchmentFromNodes(g *Graph, seeds []NodeID, groupConn uint8, limitSeconds float32, mode Mode, p FrictionParams, flipCommunity bool) IsochroneResult {
+	if flipCommunity {
+		budget := limitSeconds * willingness(groupConn, p)
+		pu := p
+		pu.Willing = 0 // uniform group norm applied to the budget, not per-incomer
+		return frictionIsochroneFromNodes(g, seeds, budget, mode, pu)
+	}
+	// Per-incomer willingness (p.Willing stays on): each reached node is kept iff
+	// cost ≤ limit × willingness(that node), so willing rural incomers reach from further.
+	return frictionIsochroneFromNodes(g, seeds, limitSeconds, mode, p)
+}
+
 // CatchmentIsochrone is the per-group inbound catchment: the area from which posts would
 // ripple far enough to reach a group at (lat,lng). An origin O is in the catchment iff a
 // collector at the group would travel to O — i.e. cost(O→group) ≤ base × willingness(group).

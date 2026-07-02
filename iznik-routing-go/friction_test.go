@@ -116,6 +116,39 @@ func TestFrictionIsochrone_Willingness_AsymmetricUrbanRural(t *testing.T) {
 	}
 }
 
+// Willingness-basis flip: for a DENSE group, the "community" view (gate incomers by the
+// group's own short travel norm) is TIGHTER than the "traveller" view (gate each incomer by
+// its own norm, so far rural incomers who travel come in). This simulates dense-Hull residents
+// treating far incomers as unexpected.
+func TestCatchmentFromNodes_CommunityFlipTightensDenseGroup(t *testing.T) {
+	g := makeTestGrid(nil)
+	for i := NodeID(1); i < NodeID(len(g.Nodes)); i++ {
+		n := g.Nodes[i]
+		if mathAbs(float64(n.Lat)-51.4545) < 0.006 && mathAbs(float64(n.Lng)+2.5879) < 0.006 {
+			g.Nodes[i].Conn = 95 // dense group core
+		} else {
+			g.Nodes[i].Conn = 30 // sparser surroundings (residents there travel further)
+		}
+	}
+	seed := nearestNodeForMode(g, 51.4545, -2.5879, Drive)
+	p := FrictionParams{Ref: 67, Traverse: 1, Min: 1, Max: 4, Willing: 1, WMin: 0.6, WMax: 1.5}
+
+	community := CatchmentFromNodes(g, []NodeID{seed}, 95, 15*60, Drive, p, true)  // group's norm
+	traveller := CatchmentFromNodes(g, []NodeID{seed}, 95, 15*60, Drive, p, false) // each incomer's norm
+
+	if !(len(traveller.ReachedNodes) > len(community.ReachedNodes)) {
+		t.Errorf("traveller catchment should be wider than the flipped community catchment: traveller=%d community=%d",
+			len(traveller.ReachedNodes), len(community.ReachedNodes))
+	}
+}
+
+func mathAbs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 // Multi-source seeding: a catchment seeded from the whole group boundary (not just the
 // centroid) must include areas reachable from ANY seed. A single-source isochrone from one
 // end misses the far end within a tight budget; seeding both ends covers both.

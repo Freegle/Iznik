@@ -87,6 +87,12 @@
             ><input id="rippling-catchment-friction" type="checkbox" checked />
             Connectivity friction</label
           >
+          <label
+            class="rpl-layer-toggle"
+            title="Flip the willingness basis: gate the catchment by the GROUP's own travel norm instead of each incomer's. A dense group expects short trips, so far corridor incomers drop out — simulating residents treating travellers-in from a long way as unexpected."
+            ><input id="rippling-catchment-flip" type="checkbox" />
+            Community view (far incomers unexpected)</label
+          >
         </div>
 
         <!-- Inbound: "What's in the digest" group — controls which posts -->

@@ -301,6 +301,7 @@ export async function setupRipplingExplorer({
     syncUrl()
     const minutes = parseInt(timeSlider.value)
     const friction = !!document.getElementById('rippling-catchment-friction')?.checked
+    const flip = !!document.getElementById('rippling-catchment-flip')?.checked
     showStatus('Computing catchment for ' + g.name + '…', true)
 
     // The group's own area (blue) — from the nearby-groups query at its centroid.
@@ -331,7 +332,7 @@ export async function setupRipplingExplorer({
     // western strip). Plain or connectivity-shaped per the toggle.
     fetch(
       apiUrl(
-        `/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive${friction ? '&friction=1' : ''}`
+        `/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive${friction ? '&friction=1' : ''}${flip ? '&willflip=1' : ''}`
       )
     )
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
@@ -664,6 +665,8 @@ export async function setupRipplingExplorer({
   if (catchmentGroupInput) catchmentGroupInput.addEventListener('change', drawCatchment)
   const catchmentFrictionCb = document.getElementById('rippling-catchment-friction')
   if (catchmentFrictionCb) catchmentFrictionCb.addEventListener('change', drawCatchment)
+  const catchmentFlipCb = document.getElementById('rippling-catchment-flip')
+  if (catchmentFlipCb) catchmentFlipCb.addEventListener('change', drawCatchment)
 
   document
     .getElementById('rippling-tog-freeglers')

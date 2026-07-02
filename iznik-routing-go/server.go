@@ -183,11 +183,10 @@ func handleCatchment(g *Graph) fiber.Handler {
 			}
 			var iso IsochroneResult
 			if useFriction {
-				// The group's own (uniform) willingness scales the budget; per-node willingness off.
-				budget := secs * willingness(conn, fp)
-				fpu := fp
-				fpu.Willing = 0
-				iso = frictionIsochroneFromNodes(g, seeds, budget, mode, fpu)
+				// willflip=1 flips the willingness basis to the GROUP's own (tight, dense-area
+				// "far incomers are suspicious") norm; default gates each incomer by its own.
+				flipCommunity := c.Query("willflip") == "1"
+				iso = CatchmentFromNodes(g, seeds, conn, secs, mode, fp, flipCommunity)
 			} else {
 				iso = frictionIsochroneFromNodes(g, seeds, secs, mode, FrictionParams{})
 			}
