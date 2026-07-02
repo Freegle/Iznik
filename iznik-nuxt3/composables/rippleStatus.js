@@ -130,3 +130,21 @@ export function homeGroupFirst(groups) {
   copy.unshift(home)
   return copy
 }
+
+/**
+ * Is this group the post's home/origin group? Used to mark it with a home icon in the
+ * group lists. Accepts either a raw messages_groups entry ({groupid}) or a resolved
+ * group-store object ({id}); `groups` must be the raw message.groups array (it carries
+ * the rippled_in / arrival info homeGroupId needs).
+ *
+ * @param {{groupid?:number|string, id?:number|string}} group
+ * @param {Array<{groupid:number|string, arrival?:string, rippled_in?:number|boolean}>} groups
+ * @returns {boolean}
+ */
+export function isHomeGroup(group, groups) {
+  if (!group) return false
+  const homeId = homeGroupId(groups)
+  if (homeId == null) return false
+  const gid = group.groupid ?? group.id
+  return gid != null && parseInt(gid) === homeId
+}

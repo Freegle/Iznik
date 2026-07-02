@@ -3,6 +3,7 @@ import {
   isRippledInToContextGroup,
   earliestArrivalGroupId,
   homeGroupFirst,
+  isHomeGroup,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
 
@@ -277,5 +278,47 @@ describe('homeGroupFirst', () => {
       { groupid: '1', arrival: at(0) },
     ]
     expect(ids(homeGroupFirst(groups))).toEqual([1, 2])
+  })
+})
+
+// isHomeGroup marks which entry in a post's group list is the home/origin group, so the
+// UI can show a home icon next to it. It accepts a raw messages_groups entry ({groupid})
+// or a resolved group-store object ({id}).
+describe('isHomeGroup', () => {
+  const groups = [
+    { groupid: 2, arrival: at(120), rippled_in: 1 }, // rippled in
+    { groupid: 1, arrival: at(0), rippled_in: 0 }, // home/origin
+    { groupid: 3, arrival: at(120), rippled_in: 1 }, // rippled in
+  ]
+
+  it('is true only for the home/origin group (raw entry)', () => {
+    expect(isHomeGroup({ groupid: 1 }, groups)).toBe(true)
+    expect(isHomeGroup({ groupid: 2 }, groups)).toBe(false)
+    expect(isHomeGroup({ groupid: 3 }, groups)).toBe(false)
+  })
+
+  it('accepts a resolved group-store object keyed by id', () => {
+    expect(isHomeGroup({ id: 1 }, groups)).toBe(true)
+    expect(isHomeGroup({ id: 2 }, groups)).toBe(false)
+  })
+
+  it('honours rippled_in over arrival when the origin was re-stamped late', () => {
+    const g = [
+      { groupid: 2, arrival: at(30), rippled_in: 1 },
+      { groupid: 1, arrival: at(200), rippled_in: 0 }, // home, later arrival
+    ]
+    expect(isHomeGroup({ groupid: 1 }, g)).toBe(true)
+    expect(isHomeGroup({ groupid: 2 }, g)).toBe(false)
+  })
+
+  it('handles string groupids', () => {
+    expect(isHomeGroup({ groupid: '1' }, groups)).toBe(true)
+    expect(isHomeGroup({ groupid: '2' }, groups)).toBe(false)
+  })
+
+  it('is false for null/empty inputs', () => {
+    expect(isHomeGroup(null, groups)).toBe(false)
+    expect(isHomeGroup({ groupid: 1 }, [])).toBe(false)
+    expect(isHomeGroup({ groupid: 1 }, null)).toBe(false)
   })
 })

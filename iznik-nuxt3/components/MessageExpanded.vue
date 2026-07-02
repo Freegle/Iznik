@@ -328,8 +328,8 @@
             <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
             <BulkItemsInterest
               v-if="isBulk"
-              ref="bulkInterestRef"
               :id="id"
+              ref="bulkInterestRef"
               @can-register="bulkCanRegister = $event"
               @submitted="bulkSubmitted = $event"
               @had-interest="bulkHadInterest = $event"
@@ -404,7 +404,12 @@
                 On:
                 <ShowMore :items="messageGroups" :limit="3" inline>
                   <template #item="{ item }"
-                    ><NuxtLink
+                    ><v-icon
+                      v-if="item.isHome"
+                      icon="home"
+                      class="me-1 text-muted"
+                      title="Home community (where this was originally posted)"
+                    /><NuxtLink
                       no-prefetch
                       :to="'/explore/' + item.nameshort"
                       class="posted-on-group-link"
@@ -663,7 +668,7 @@ import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
-import { homeGroupFirst } from '~/composables/rippleStatus'
+import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
@@ -744,11 +749,16 @@ const {
 // out or been cross-posted). Resolve each to the group record for its display
 // name + explore link; drop any not yet in the group store.
 const messageGroups = computed(() => {
-  if (!message.value?.groups?.length) return []
+  const raw = message.value?.groups
+  if (!raw?.length) return []
   // List the home/origin group first: the list is truncated (ShowMore), so otherwise
-  // the home group could be hidden behind "more".
-  return homeGroupFirst(message.value.groups)
-    .map((g) => groupStore.get(g.groupid))
+  // the home group could be hidden behind "more". Flag it so the template can show a
+  // home icon next to it.
+  return homeGroupFirst(raw)
+    .map((g) => {
+      const grp = groupStore.get(g.groupid)
+      return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
+    })
     .filter(Boolean)
 })
 
