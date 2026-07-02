@@ -138,6 +138,37 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	return candidates
 }
 
+// markPinned flags any summary in res whose msgid has a messages_pinned row (a paid
+// bulk-offer clearance). It only MARKS; the caller floats pinned posts to the top when
+// it sorts. Because it operates on the already-visibility-filtered result set, a post is
+// only ever pinned-to-top when it already qualifies to appear on the feed ("if it would
+// appear anywhere"). The ids come from our own rows (never user input), so the IN list is
+// built directly. Fails safe: if messages_pinned is absent the scan yields nothing.
+func markPinned(db *gorm.DB, res []message.MessageSummary) {
+	if len(res) == 0 {
+		return
+	}
+	ids := make([]string, len(res))
+	for i, m := range res {
+		ids[i] = strconv.FormatUint(m.ID, 10)
+	}
+	var pinnedIDs []uint64
+	db.Raw("SELECT msgid FROM messages_pinned WHERE msgid IN (" +
+		strings.Join(ids, ",") + ")").Scan(&pinnedIDs)
+	if len(pinnedIDs) == 0 {
+		return
+	}
+	pinned := make(map[uint64]bool, len(pinnedIDs))
+	for _, id := range pinnedIDs {
+		pinned[id] = true
+	}
+	for i := range res {
+		if pinned[res[i].ID] {
+			res[i].Pinned = true
+		}
+	}
+}
+
 // Messages renders the browse feed. The endpoint is still mounted at /isochrone/message
 // (kept for client back-compat), but the default 'nearby' view is now driven by the
 // rippling-out REACH model, not per-user isochrones: a post is "nearby" when its grown
@@ -272,7 +303,14 @@ func Messages(c *fiber.Ctx) error {
 		// plus freshness/underexposure/anchor signals the pin didn't consider at all.
 		// Stable so equal-score ties beyond the arrival tie-break below keep their
 		// (reach-arm-then-own-arm, otherwise DB-order) relative position.
+		// A pinned post (a paid bulk-offer clearance) floats to the very top whenever it
+		// already qualifies to appear here — ahead of the relevance score. This only reorders
+		// within the already reach-filtered set, so it never pins a post that wouldn't appear.
+		markPinned(db, res)
 		sort.SliceStable(res, func(i, j int) bool {
+			if res[i].Pinned != res[j].Pinned {
+				return res[i].Pinned
+			}
 			if res[i].Score != res[j].Score {
 				return res[i].Score > res[j].Score
 			}
@@ -356,6 +394,13 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	for ix, r := range res {
 		res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
 	}
+
+	// Float any pinned post (a paid bulk-offer clearance) to the top of the member-group
+	// feed too. This view has no relevance score, so pinned-first is the only reordering.
+	markPinned(db, res)
+	sort.SliceStable(res, func(i, j int) bool {
+		return res[i].Pinned && !res[j].Pinned
+	})
 
 	return c.JSON(res)
 }

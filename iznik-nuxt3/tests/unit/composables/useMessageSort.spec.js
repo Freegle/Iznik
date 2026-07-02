@@ -124,4 +124,49 @@ describe('sortBrowseMessages', () => {
       expect(order(msgs, 'Whatever')).toEqual([2, 3, 1])
     })
   })
+
+  // A pinned post (a paid bulk-offer clearance) must lead the feed under every sort mode,
+  // ahead of a higher-scoring / nearer / newer post.
+  describe('pinned posts', () => {
+    it('floats a pinned post to the top under Unseen sort, ahead of a higher score', () => {
+      const msgs = [
+        { id: 1, unseen: true, score: 9 },
+        { id: 2, unseen: true, score: 1, pinned: true },
+      ]
+      expect(order(msgs, 'Unseen')).toEqual([2, 1])
+    })
+
+    it('keeps a pinned post first under Nearby sort, ahead of a nearer post', () => {
+      const centre = { lat: 51.5, lng: -0.1 }
+      const msgs = [
+        { id: 'near', lat: 51.5, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
+        {
+          id: 'pinnedFar',
+          lat: 53.0,
+          lng: -0.1,
+          arrival: '2024-01-01T00:00:00Z',
+          pinned: true,
+        },
+      ]
+      expect(order(msgs, 'Nearby', centre)).toEqual(['pinnedFar', 'near'])
+    })
+
+    it('keeps a pinned post first under Newest sort, ahead of a newer post', () => {
+      const msgs = [
+        { id: 'newer', arrival: '2024-03-01T00:00:00Z' },
+        { id: 'pinnedOlder', arrival: '2024-01-01T00:00:00Z', pinned: true },
+      ]
+      expect(order(msgs, 'Newest')).toEqual(['pinnedOlder', 'newer'])
+    })
+
+    it('orders multiple pinned posts among themselves by the normal rule', () => {
+      const msgs = [
+        { id: 1, unseen: true, score: 1, pinned: true },
+        { id: 2, unseen: true, score: 9, pinned: true },
+        { id: 3, unseen: true, score: 5 },
+      ]
+      // Both pinned lead (higher score first among them), then the unpinned post.
+      expect(order(msgs, 'Unseen')).toEqual([2, 1, 3])
+    })
+  })
 })
