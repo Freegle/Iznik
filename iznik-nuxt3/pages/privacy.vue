@@ -78,13 +78,6 @@
             necessary to make those buttons work.
           </li>
           <li>
-            We use
-            <ExternalLink href="https://matomo.org">Matomo</ExternalLink> to
-            collect information about how people use the site. This is similar
-            to Google Analytics, but more privacy-safe. We have configured this
-            not to use any cookies.
-          </li>
-          <li>
             We record information about your browser/device and how you use the
             site. This helps diagnose problems and make the site easier to use.
             We don't pass anything identifying you to other people.
