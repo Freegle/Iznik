@@ -158,6 +158,46 @@ func handleCatchment(g *Graph) fiber.Handler {
 	}
 }
 
+// handleGroupExtent returns the group's own road "diameter": the widest road drive-time between
+// two points inside the group. It sets a yardstick on the catchment view — a post rippling in
+// from no further away than the group already spans internally is unremarkable.
+func handleGroupExtent(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "groupid required")
+		}
+		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "240"), 64)
+		if minutes <= 0 || minutes > 480 {
+			minutes = 240
+		}
+		mode := parseMode(c.Query("mode", "drive"))
+
+		seeds, okS := groupSeedNodes(g, gid, mode)
+		if !okS {
+			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
+		}
+		from, to, milesBetween, ok := groupDiameter(g, seeds, mode, float32(minutes*60))
+		if !ok {
+			return c.JSON(fiber.Map{"reachable": false})
+		}
+
+		// Reverse-geocode both endpoints. Best-effort: on any failure the postcode/place fields
+		// are simply absent (omitempty) — the core reachable/minutes/miles response is unaffected.
+		db := ensureGroupsDB()
+		from.Postcode, from.Place = resolvePlace(db, from.Lat, from.Lng)
+		to.Postcode, to.Place = resolvePlace(db, to.Lat, to.Lng)
+
+		return c.JSON(fiber.Map{
+			"reachable": true,
+			"from":      from,
+			"to":        to,
+			"minutes":   to.DriveMin,
+			"miles":     milesBetween,
+		})
+	}
+}
+
 // handleGroupProximity handles GET /v1/group-proximity?groupid=&lat=&lng=&mode=&max_minutes=
 // For an offer at (lat,lng) rippling into groupid, returns the nearest in-group point P and the
 // in-group point furthest FROM P (Q), each with road drive-time, plus quicker = (offer→P < P→Q).
@@ -361,6 +401,8 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/fairness", handleFairness(g))
 	v1.Get("/catchment", handleCatchment(g))
 	v1.Get("/group-proximity", handleGroupProximity(g))
+	v1.Get("/group-extent", handleGroupExtent(g))
+	v1.Get("/group-actives", handleGroupActives())
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
 	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
 	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))
