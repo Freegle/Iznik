@@ -373,13 +373,16 @@ const feedMax = computed(() => {
   return Math.max(FEED_MAX_FLOOR, Math.ceil(Math.max(...distances)))
 })
 
-// Distance is meaningless without a known location, and for the mygroups view.
+// Distance is meaningless without a known location.
 const hasLocation = computed(() => {
   return !!(me.value && (me.value.lat || me.value.lng))
 })
 
+// Shown in every "Show posts from" view (nearby, all-my-groups, a single group), not just
+// Nearby: the mygroups feed now carries a per-post distance server-side too, so the slider
+// narrows whichever view is active. It only needs a known location to measure from.
 const showDistanceSlider = computed(() => {
-  return browseView.value === 'nearby' && hasLocation.value
+  return hasLocation.value
 })
 
 const maxDistance = computed({
