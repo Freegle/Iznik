@@ -12,10 +12,13 @@ use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 class ExpandServiceTest extends TestCase
 {
+    use SeedsSpatialIndex;
+
     private const WKT = 'POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))';
 
     protected function setUp(): void
@@ -85,6 +88,65 @@ class ExpandServiceTest extends TestCase
         Http::fake(['*ripple-schedule*' => Http::response([
             'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
         ], 200)]);
+    }
+
+    /**
+     * Fakes the routing server's /v1/group-proximity response used by
+     * ReachService::groupProximity(). Layers on top of any Http::fake() already
+     * registered (e.g. fakeRouting()'s '*ripple-schedule*' stub) rather than
+     * replacing it.
+     */
+    private function fakeGroupProximity(
+        bool $reachable,
+        bool $quicker = true,
+        float $pLat = 0,
+        float $pLng = 0,
+        float $qLat = 0,
+        float $qLng = 0,
+        int $status = 200
+    ): void {
+        if ($status !== 200) {
+            Http::fake(['*group-proximity*' => Http::response('', $status)]);
+            return;
+        }
+        if (!$reachable) {
+            Http::fake(['*group-proximity*' => Http::response(['reachable' => false], 200)]);
+            return;
+        }
+        Http::fake(['*group-proximity*' => Http::response([
+            'reachable' => true,
+            'closest' => ['lat' => $pLat, 'lng' => $pLng, 'drive_min' => 4.0],
+            'furthest' => ['lat' => $qLat, 'lng' => $qLng, 'drive_min' => 22.0],
+            'quicker' => $quicker,
+        ], 200)]);
+    }
+
+    /**
+     * Seeds a postcode location (with an associated area location it points to via
+     * areaid) into both the test DB (for Location::describeNearest's by-id enrich)
+     * and the spatial server's live "postcodes" KNN index — mirrors
+     * LocationTest::seedPostcode, extended with an area row so describeNearest()'s
+     * "POSTCODE (Area)" branch is exercised.
+     */
+    private function seedPostcodeWithArea(int $id, string $name, float $lat, float $lng, int $areaId, string $areaName): void
+    {
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $areaId], [
+            'name' => $areaName,
+            'type' => 'Point',
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+        DB::table('locations')->updateOrInsert(['id' => $id], [
+            'name' => $name,
+            'type' => 'Postcode',
+            'areaid' => $areaId,
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+        $this->seedSpatialPoint('postcodes', $id, $lat, $lng);
     }
 
     /** Master switch off: process() is inert - no reach computed, nothing rippled in (ships dark). */
@@ -573,6 +635,119 @@ class ExpandServiceTest extends TestCase
         $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($b, 'post rippled into group B');
         $this->assertSame('Pending', $b->collection, 'a positive window leaves the rippled-in row Pending for the mod-veto');
+    }
+
+    /**
+     * Task #23: quicker=true from /v1/group-proximity, plus resolvable P/Q postcodes,
+     * stores the "quicker to get to" note on the newly rippled-in messages_groups row.
+     */
+    public function test_ripple_proximity_note_set_when_quicker(): void
+    {
+        // Far-out-at-sea coordinates (well beyond the KNN's 0.32° buffer from any real
+        // postcode, per LocationTest) so the seeded P/Q are unambiguously nearest.
+        $pId = 99100001;
+        $qId = 99100002;
+        $pAreaId = 99100011;
+        $qAreaId = 99100012;
+        $pLat = 58.000;
+        $pLng = 1.000;
+        $qLat = 58.500;
+        $qLng = 1.500;
+
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, true, $pLat, $pLng, $qLat, $qLng);
+        $this->seedPostcodeWithArea($pId, 'AB10 1XG', $pLat, $pLng, $pAreaId, 'Gilcomston');
+        $this->seedPostcodeWithArea($qId, 'AB11 5QN', $qLat, $qLng, $qAreaId, 'Aberdeen');
+
+        try {
+            $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+            $groupB = $this->createTestGroup();
+            DB::statement(
+                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+            );
+
+            $this->service()->process(false, 500);
+
+            $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+            $this->assertNotNull($b, 'post rippled into group B');
+            $this->assertSame('AB10 1XG (Gilcomston)', $b->ripple_proximity_p);
+            $this->assertSame('AB11 5QN (Aberdeen)', $b->ripple_proximity_q);
+        } finally {
+            $this->removeSpatial('postcodes', [$pId, $qId]);
+            DB::table('locations')->whereIn('id', [$pId, $qId, $pAreaId, $qAreaId])->delete();
+        }
+    }
+
+    /** quicker=false from /v1/group-proximity → the note columns stay NULL. */
+    public function test_ripple_proximity_note_omitted_when_not_quicker(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, false, 58.0, 1.0, 58.5, 1.5);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'post still rippled into group B');
+        $this->assertNull($b->ripple_proximity_p, 'not quicker - no note');
+        $this->assertNull($b->ripple_proximity_q, 'not quicker - no note');
+    }
+
+    /**
+     * reachable=false from /v1/group-proximity (group outside the routing horizon) →
+     * the note columns stay NULL and the run still completes normally.
+     */
+    public function test_ripple_proximity_note_omitted_when_group_proximity_unreachable(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(false);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'post still rippled into group B');
+        $this->assertNull($b->ripple_proximity_p);
+        $this->assertNull($b->ripple_proximity_q);
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'ripple-in still counted');
+        $this->assertSame(0, $stats['errors'], 'unreachable proximity is not an error');
+    }
+
+    /**
+     * An HTTP 500 from /v1/group-proximity must never break the expander: the post
+     * still ripples into the group, and no exception propagates.
+     */
+    public function test_ripple_proximity_note_never_breaks_the_expander_on_http_failure(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, status: 500);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'post still rippled into group B despite the routing 500');
+        $this->assertSame('Approved', $b->collection);
+        $this->assertNull($b->ripple_proximity_p);
+        $this->assertNull($b->ripple_proximity_q);
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+        $this->assertSame(0, $stats['errors'], 'a routing 500 on the proximity note must not surface as an expander error');
     }
 
     /**

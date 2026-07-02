@@ -142,6 +142,45 @@ class ReachService
         return $out;
     }
 
+    /**
+     * P/Q proximity for a post rippling into a group: P = nearest in-group point to the offer,
+     * Q = the in-group point furthest FROM P, each with road drive-time. Backs the moderator
+     * "quicker to get to" line. Returns null on any failure/unreachable (never throws).
+     *
+     * @return array{closest:array{lat:float,lng:float,drive_min:float},furthest:array{lat:float,lng:float,drive_min:float},quicker:bool}|null
+     */
+    public function groupProximity(float $lat, float $lng, int $groupid): ?array
+    {
+        // Best-effort moderator note computed inline in the serial ripple:expand cron loop, so use a
+        // short dedicated timeout (not the 60s isochrone budget) — a slow/hung routing server must not
+        // stall the per-minute pass. On timeout we just skip the note (returns null).
+        $timeout = (int) config('freegle.ripple.proximity_timeout', 5);
+        try {
+            $response = Http::timeout($timeout)
+                ->get("{$this->url}/v1/group-proximity", [
+                    'groupid' => $groupid,
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'mode' => $this->mode,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: group-proximity fetch failed: {$e->getMessage()}", ['groupid' => $groupid, 'lat' => $lat, 'lng' => $lng]);
+            return null;
+        }
+
+        if (!$response->successful()) {
+            Log::warning("ripple: group-proximity HTTP {$response->status()}", ['groupid' => $groupid]);
+            return null;
+        }
+
+        $body = $response->json() ?? [];
+        if (!($body['reachable'] ?? false)) {
+            return null;
+        }
+
+        return $body;
+    }
+
     /** Query parameters for a /v1/ripple-schedule request at the given origin. */
     private function scheduleParams(float $lat, float $lng): array
     {

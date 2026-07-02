@@ -471,7 +471,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Both APPROVED and PENDING messages are visible to all users. This is not a privacy
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
-				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, ripple_proximity_p, ripple_proximity_q FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
 			}()
 
 			var messageAttachments []MessageAttachment
@@ -625,6 +625,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Fromaddr = nil
 					message.Fromip = nil
 					message.Fromcountry = nil
+					// The ripple "quicker to get to" P/Q note is a moderator-only aid.
+					for i := range message.MessageGroups {
+						message.MessageGroups[i].RippleProximityP = nil
+						message.MessageGroups[i].RippleProximityQ = nil
+					}
 				}
 
 				// Convert 2-letter country code to full name for frontend display.
