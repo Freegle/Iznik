@@ -17,11 +17,17 @@
           class="rpl-mode-row"
           style="margin-bottom: 8px"
         >
-          <button class="rpl-mode-btn rpl-active" data-view="outbound">
-            <span class="rpl-icon">📡</span>Who could see my post
+          <button class="rpl-mode-btn rpl-active" data-view="catchment">
+            <span class="rpl-icon">🎯</span
+            ><span class="rpl-mode-label">Group catchment</span>
+          </button>
+          <button class="rpl-mode-btn" data-view="outbound">
+            <span class="rpl-icon">📡</span
+            ><span class="rpl-mode-label">Who could see my post</span>
           </button>
           <button class="rpl-mode-btn" data-view="inbound">
-            <span class="rpl-icon">📥</span>Digest preview
+            <span class="rpl-icon">📥</span
+            ><span class="rpl-mode-label">Digest preview</span>
           </button>
         </div>
 
@@ -48,6 +54,85 @@
           Drop a marker. The map shows what would appear in a digest sent to a
           member at that spot — every post within their reach (the radius below)
           over the last 24 hours, in the order set by the sliders further down.
+        </div>
+        <div
+          id="rippling-intro-catchment"
+          class="rpl-intro"
+          style="display: none"
+        >
+          Pick a group. The map shows the group's own area (blue outline) and —
+          outside it — the catchment: the area from which posts could in theory ripple
+          IN to that group, heat-shaded by how quickly a post there would arrive by
+          road (see the key, bottom-left).
+        </div>
+        <div
+          id="rippling-catchment-panel"
+          class="rpl-sim-group"
+          style="display: none"
+        >
+          <div class="rpl-sim-group-title">Group catchment</div>
+          <label
+            class="rpl-slider-label"
+            style="display: block; margin-bottom: 8px"
+          >
+            <span>Group</span>
+            <input
+              id="rippling-catchment-group"
+              list="rippling-catchment-grouplist"
+              type="text"
+              placeholder="Type a group name…"
+              autocomplete="off"
+              style="width: 100%; margin-top: 2px"
+            />
+            <datalist id="rippling-catchment-grouplist"></datalist>
+          </label>
+          <div id="rippling-catchment-reach" class="rpl-reach-toggle">
+            <span class="rpl-reach-toggle-label">Reach model</span>
+            <label
+              ><input
+                type="radio"
+                name="rippling-catchment-reach"
+                value="current"
+                checked
+              />
+              Current (30-min)</label
+            >
+            <label
+              ><input
+                type="radio"
+                name="rippling-catchment-reach"
+                value="audience"
+              />
+              Possible alternative (audience-based)</label
+            >
+          </div>
+          <div
+            id="rippling-catchment-extent"
+            class="rpl-extent-card"
+            style="display: none"
+          >
+            <div class="rpl-extent-title">Widest span within this group</div>
+            <div class="rpl-extent-endpoints">
+              between <strong id="rippling-extent-a"></strong> and
+              <strong id="rippling-extent-b"></strong>
+            </div>
+            <div class="rpl-extent-distance">
+              <span id="rippling-extent-miles"></span>
+            </div>
+            <a
+              id="rippling-extent-directions"
+              href="#"
+              target="_blank"
+              rel="noopener"
+              class="rpl-extent-directions"
+              >Open directions in Google Maps →</a
+            >
+          </div>
+          <div
+            id="rippling-catchment-audience"
+            class="rpl-audience-caption"
+            style="display: none"
+          ></div>
         </div>
 
         <!-- Inbound: "What's in the digest" group — controls which posts -->
@@ -84,6 +169,10 @@
             "
           >
             <span>Short</span><span>Long</span>
+          </div>
+          <div class="rpl-slider-help" id="rippling-time-help">
+            The default setting is the reach we actually use in production now. Raise
+            it only to explore a larger, hypothetical reach.
           </div>
         </div>
 
@@ -304,7 +393,16 @@
               ><input id="rippling-tog-groups" type="checkbox" checked />
               Groups</label
             >
+            <label class="rpl-layer-toggle"
+              ><input id="rippling-tog-audience" type="checkbox" />
+              Proposed: audience-based reach</label
+            >
           </div>
+          <div
+            id="rippling-audience-caption"
+            class="rpl-audience-caption"
+            style="display: none; width: 100%"
+          ></div>
         </div>
 
         <div
@@ -334,7 +432,11 @@
       </div>
     </div>
 
-    <RipplingLegend :mode="legendMode" :minimal="minimal" />
+    <RipplingLegend
+      :mode="legendMode"
+      :minimal="minimal"
+      :bands="catchmentLegend"
+    />
 
     <!-- Minimal mode: the groups the current reach frame hits (bottom-left, above legend). -->
     <div v-if="minimal" id="rippling-reach-groups" class="rpl-reach-groups" />
@@ -370,6 +472,9 @@ import './RipplingExplorer.css'
 
 const digestModal = ref(null)
 const legendMode = ref('outbound')
+// Heatmap key for the catchment tab: [{ color, label }] per drive-time band, populated
+// by drawCatchment from the actual band minutes so the key matches what's on the map.
+const catchmentLegend = ref([])
 
 const props = defineProps({
   spatialUrl: { type: String, default: 'http://localhost:8196' },
@@ -392,7 +497,12 @@ const props = defineProps({
 
 let cleanup = null
 onMounted(async () => {
-  cleanup = await setupRipplingExplorer({ props, digestModal, legendMode })
+  cleanup = await setupRipplingExplorer({
+    props,
+    digestModal,
+    legendMode,
+    catchmentLegend,
+  })
 })
 onUnmounted(() => {
   if (cleanup) cleanup()

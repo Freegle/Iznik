@@ -33,6 +33,16 @@ class MessagesBulkOutreach extends Model
     public const STATUS_NORESPONSE = 'NoResponse';
     public const STATUS_SKIPPED = 'Skipped';
 
+    // An auto-reply / out-of-office / auto-acknowledgement, NOT a genuine human
+    // reply - set by PollGmailOutreachCommand so it isn't emitted to the FSM
+    // brain or counted as a Replied.
+    public const STATUS_AUTO_ACK = 'AutoAck';
+
+    // A delivery-failure bounce/DSN for the outreach email - set by
+    // PollGmailOutreachCommand, which also suppresses the row so the (dead)
+    // address is never re-contacted.
+    public const STATUS_BOUNCED = 'Bounced';
+
     public function user()
     {
         return $this->belongsTo(User::class, 'userid');

@@ -2144,6 +2144,92 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame([$near->id, $far->id], $ids); // near outranks far on closeness
     }
 
+    // -----------------------------------------------------------------------
+    // Pinned posts (paid bulk-offer clearances)
+    // -----------------------------------------------------------------------
+
+    public function test_daily_digest_force_includes_pinned_open_post_at_the_top(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5, 'lng' => -0.12],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // A normal, recent, in-window post.
+        $normal = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: normal recent (TestLocation)',
+            'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subHours(1),
+        ]);
+        // A PINNED post that arrived 10 days ago — OUTSIDE the first-digest 24h window, so
+        // getPostsForUser would NOT return it. Pinning must force it in, at the very top.
+        $pinnedMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: pinned clearance (TestLocation)',
+            'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $pinnedMsg->id]);
+
+        $captured = null;
+        $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
+            $captured = $mailable;
+            return 'spooled';
+        });
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertNotNull($captured, 'daily digest should have been spooled');
+        $ids = $captured->getPosts()->map(fn ($p) => $p['message']->id)->all();
+        $this->assertContains($pinnedMsg->id, $ids, 'a pinned OPEN post is force-included even though it is outside the digest window');
+        $this->assertContains($normal->id, $ids, 'the normal in-window post is still included');
+        $this->assertSame($pinnedMsg->id, $ids[0], 'the pinned post is at the very top of the digest');
+    }
+
+    public function test_daily_digest_does_not_pin_a_closed_post(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // The only post is pinned but has been TAKEN (closed). Pinning applies only while a
+        // post is open, so it must NOT be force-included, and nothing should send.
+        $pinnedTaken = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: pinned but taken (TestLocation)',
+            'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $pinnedTaken->id,
+            'outcome' => 'Taken',
+            'timestamp' => now(),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $pinnedTaken->id]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'a pinned but closed (taken) post is not force-included, so nothing sends');
+    }
+
     // ---- Decoupled, sharded reach-mail pass (sendReachDigests) -------------------
     // Reach mail used to run inline in ExpandService's serial Phase-2 loop (~75% of
     // run time). It is now a separate sharded pass over recently-changed reach rows,

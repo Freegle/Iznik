@@ -259,7 +259,6 @@ Several components have mobile-specific behavior:
 
 - **CookieYes**: App-specific version (`cookieyesapp.js`)
 - **Google AdSense**: Modified for HTTPS enforcement
-- **Matomo**: Mobile app tracking
 - **Sentry**: Error reporting with device context
 - **Ad Behavior**: Some ads disabled or modified for mobile
 

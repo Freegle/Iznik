@@ -1,5 +1,31 @@
 <template>
-  <div v-if="mode === 'inbound'" class="rpl-legend rpl-legend-inbound">
+  <!-- Catchment tab: heatmap key. Colours + minute labels come from the actual bands
+       drawn on the map (passed in via `bands`), so the key always matches. -->
+  <div v-if="mode === 'catchment'" class="rpl-legend">
+    <h4>Ripples in within</h4>
+    <div v-for="b in bands" :key="b.label" class="rpl-leg-item">
+      <div
+        class="rpl-leg-swatch"
+        :style="{ background: b.color, opacity: 0.85 }"
+      />
+      <span
+        >{{ b.label }}<br v-if="b.sub" /><small
+          v-if="b.sub"
+          style="color: #888"
+          >reached {{ b.sub }} after posting</small
+        ></span
+      >
+    </div>
+    <div
+      class="rpl-leg-item"
+      style="margin-top: 5px; padding-top: 5px; border-top: 1px solid #eee"
+    >
+      <div class="rpl-leg-swatch" style="background: none; border: 2px solid #005bb5" />
+      Group area
+    </div>
+  </div>
+
+  <div v-else-if="mode === 'inbound'" class="rpl-legend rpl-legend-inbound">
     <h4>Legend</h4>
     <div class="rpl-leg-item">
       <div style="width:14px;height:14px;border-radius:50%;background:#cc0000;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4);flex-shrink:0" />
@@ -119,12 +145,17 @@ defineProps({
   mode: {
     type: String,
     required: true,
-    validator: (v) => v === 'outbound' || v === 'inbound',
+    validator: (v) => v === 'outbound' || v === 'inbound' || v === 'catchment',
   },
   // Minimal legend for the per-post reach modal: only what that static view draws.
   minimal: {
     type: Boolean,
     default: false,
+  },
+  // Catchment heatmap key: [{ color, label }] per drive-time band (catchment mode only).
+  bands: {
+    type: Array,
+    default: () => [],
   },
 })
 </script>

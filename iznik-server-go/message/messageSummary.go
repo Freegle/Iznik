@@ -27,4 +27,8 @@ type MessageSummary struct {
 	// a meaningful "very close" value there too, so this field is never
 	// omitted).
 	Distance float64 `json:"distance"`
+	// Pinned is true when this post has a messages_pinned row (a paid bulk-offer
+	// clearance): the browse feed floats it to the top whenever it already qualifies
+	// to appear. Only set on the browse feed; omitted (false) elsewhere.
+	Pinned bool `json:"pinned,omitempty" gorm:"-"`
 }

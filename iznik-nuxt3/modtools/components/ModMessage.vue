@@ -207,6 +207,15 @@
                   can still reject it for the usual reasons (spam, breaks the
                   rules), just not for being "out of area".
                 </span>
+                <span
+                  v-if="rippleProximity"
+                  class="d-block mt-1"
+                  data-test="ripple-proximity-note"
+                >
+                  This post is quicker to get to for Freeglers in
+                  {{ rippleProximity.p }} than {{ rippleProximity.p }} is to
+                  {{ rippleProximity.q }}.
+                </span>
                 <a href="#" @click.prevent="ripplingExplanationModal?.show()">
                   Learn more
                 </a>
@@ -1079,6 +1088,17 @@ const reachArrival = computed(() => {
 const isRippledInToContextGroup = computed(() =>
   isRippledIn(message.value?.groups, currentGroupid.value)
 )
+
+// Task #23: the P/Q "quicker to get to" note for the copy on currentGroupid - only present
+// (both fields non-null) when the routing server said quicker=true at ripple-in time.
+const rippleProximity = computed(() => {
+  const gid = currentGroupid.value
+  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
+    return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
+  }
+  return null
+})
 
 const messageHistory = computed(() => {
   return fromUser.value?.messagehistory || []

@@ -1135,12 +1135,13 @@ class ExpandService
 
             $n = 0;
             foreach ($targetGroups as $g) {
-                $n += DB::affectingStatement(
+                $inserted = DB::affectingStatement(
                     "INSERT IGNORE INTO messages_groups
                         (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
                      VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
                     [$msgid, $g->id, $msg->type]
                 );
+                $n += $inserted;
             }
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
@@ -1166,6 +1167,13 @@ class ExpandService
         }
     }
 
+    /**
+     * Best-effort: computes and stores the "quicker to get to" moderator note for a freshly
+     * rippled-in (msgid,groupid) pair. Silently no-ops (leaves the columns NULL) when the
+     * routing/KNN calls fail, the group is unreachable within the routing horizon, or
+     * quicker is false — a missing note simply means the notice line is not shown. Never
+     * throws: a failure here must never break the expander or the caller's insert loop.
+     */
     /**
      * Add the poster as a member of every group their post has rippled into (role Member,
      * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
