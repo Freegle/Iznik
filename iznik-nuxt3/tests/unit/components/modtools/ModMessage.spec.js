@@ -1351,6 +1351,60 @@ describe('ModMessage', () => {
       expect(warning.text()).toContain('out of area')
     })
 
+    // Task #23: the P/Q "quicker to get to" note. Wording (fixed by product spec) is
+    // "...in {P} than {P} is to {Q}" — P (nearest in-group point to the offer) appears twice,
+    // Q (furthest in-group point from P) once. This test locks that exact structure so the
+    // repeated {P} can't be "corrected" to {Q} and the note can't silently regress.
+    it('renders the ripple proximity note with P and Q in the specified positions', () => {
+      const p = 'DN14 8HH (Whitgift)'
+      const q = 'HU12 0UH (Kilnsea)'
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              arrival: rippleLater,
+              ripple_proximity_p: p,
+              ripple_proximity_q: q,
+            },
+          ],
+        }
+      )
+      const note = wrapper.find('[data-test="ripple-proximity-note"]')
+      expect(note.exists()).toBe(true)
+      const text = note.text().replace(/\s+/g, ' ').trim()
+      expect(text).toBe(
+        `This post is quicker to get to for Freeglers in ${p} than ${p} is to ${q}.`
+      )
+    })
+
+    it('omits the ripple proximity note when only one endpoint is present', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              arrival: rippleLater,
+              ripple_proximity_p: 'DN14 8HH (Whitgift)',
+              // ripple_proximity_q intentionally absent → note must not render
+            },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(
+        wrapper.find('[data-test="ripple-proximity-note"]').exists()
+      ).toBe(false)
+    })
+
     it('does not warn when the post has not rippled in', () => {
       const wrapper = mountComponent(
         { contextGroupid: 789 },

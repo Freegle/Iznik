@@ -219,8 +219,14 @@
   font-size: 16px;
 }
 .rpl-mode-label {
+  display: block;
   width: 100%;
-  overflow-wrap: anywhere; /* wrap the label within the narrow tab instead of clipping */
+  /* modtools' global buttons.scss sets `button { white-space: nowrap !important }`,
+     which the label inherits and which clips these narrow tabs. Force normal wrapping
+     (with !important to beat that inherited nowrap) so the label wraps to 2-3 lines. */
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   text-align: center;
 }
 .rpl-mode-btn:hover {
@@ -262,6 +268,70 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid #f0f0f0;
+}
+
+/* Explanation under the Maximum-reach slider: the default is production behaviour. */
+.rpl-slider-help {
+  font-size: 9.5px;
+  color: #888;
+  line-height: 1.35;
+  margin-top: 5px;
+  padding: 4px 6px;
+  background: #f6f9f1;
+  border-left: 2px solid #61ae24;
+  border-radius: 3px;
+}
+
+/* Task #21: widest-span-within-group card — prominent, not a tiny help note. */
+.rpl-extent-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #fff7f0;
+  border: 1.5px solid #f0c9a8;
+  border-radius: 6px;
+}
+.rpl-extent-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+.rpl-extent-endpoints {
+  font-size: 12.5px;
+  color: #333;
+  line-height: 1.4;
+}
+.rpl-extent-distance {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #c0392b; /* RED, per task requirement */
+}
+.rpl-extent-directions {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #1a73e8;
+  text-decoration: none;
+}
+.rpl-extent-directions:hover {
+  text-decoration: underline;
+}
+
+/* Task #26: audience-based reach caption — amber, distinct from the green production-default
+   styling used elsewhere (.rpl-slider-help, .rpl-intro) so it visually reads as "proposed". */
+.rpl-audience-caption {
+  font-size: 10.5px;
+  color: #7a5200;
+  line-height: 1.4;
+  margin-top: 6px;
+  padding: 5px 7px;
+  background: #fff8e6;
+  border-left: 2px solid #e6a817;
+  border-radius: 3px;
 }
 
 .rpl-ripple-row {

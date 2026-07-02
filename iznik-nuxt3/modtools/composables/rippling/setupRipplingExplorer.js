@@ -22,11 +22,13 @@ import {
 } from './polygon.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
+import { driveMinForAudience, clampAudienceMinutes } from './audience.js'
 
 export async function setupRipplingExplorer({
   props,
   digestModal,
   legendMode,
+  catchmentLegend,
 }) {
   await import('leaflet/dist/leaflet.css')
   const L = (await import('leaflet')).default
@@ -67,6 +69,9 @@ export async function setupRipplingExplorer({
   // Catchment tab: the selected group's own area (blue) + its inbound catchment (green).
   let catchmentGroupLayer = null
   let catchmentAreaLayer = null
+  let catchmentRenderer = null // dedicated L.svg renderer for the heat, so we can clip it
+  let catchmentClipSeq = 0 // unique clipPath ids across redraws
+  let catchmentDrawToken = 0 // guards async extent/catchment results against group switches
   let catchmentGroupsByName = null // lower-cased group name -> {id,name,lat,lng}, loaded once
   let marker = null
   let layers = {}
@@ -74,6 +79,11 @@ export async function setupRipplingExplorer({
   // this layer draws the home-group polygon in the reach (red) style so the
   // display matches the engine's union behaviour.
   let homeGroupReachLayer = null
+  // Task #26: "Proposed: audience-based reach" — an amber dashed boundary at the
+  // drive-time the ripple-schedule curve first reaches the containing group's nstar
+  // audience target, shown only when the toggle is checked (outbound view only).
+  let audienceLayer = null
+  let showAudienceReach = false
   let debounceTimer = null
   let isochroneGeneration = 0
   // Bumped on every location change. Any async fetch tied to a location captures
@@ -109,7 +119,9 @@ export async function setupRipplingExplorer({
   // Outbound (default): "who'd see my post" — the rippling-out animation.
   // Inbound:            "what would I see" — dots for posts I'd be eligible
   //                     to see in my digest for a given day.
-  let viewMode = 'outbound'
+  // Group catchment is the default landing view (first tab). The per-post reach modal
+  // overrides this via initial-view="outbound"; bookmarkable URLs can pass ?view=.
+  let viewMode = 'catchment'
   let inboxLayer = null
   let inboxIsoLayer = null
   let lastDigestData = null // last digest-simulator response, used by the mock-up modal
@@ -132,11 +144,24 @@ export async function setupRipplingExplorer({
   function syncUrl() {
     const params = new URLSearchParams(window.location.search)
     params.set('view', viewMode)
-    if (currentLat !== null && currentLng !== null) {
-      params.set('lat', currentLat.toFixed(6))
-      params.set('lng', currentLng.toFixed(6))
+    if (viewMode === 'catchment') {
+      // Catchment is identified by group, not a point — bookmark ?view=catchment&group=Name.
+      const gi = document.getElementById('rippling-catchment-group')
+      const name = gi && gi.value.trim()
+      if (name) params.set('group', name)
+      else params.delete('group')
+      params.delete('lat')
+      params.delete('lng')
       params.delete('postcode')
       params.delete('q')
+    } else {
+      params.delete('group')
+      if (currentLat !== null && currentLng !== null) {
+        params.set('lat', currentLat.toFixed(6))
+        params.set('lng', currentLng.toFixed(6))
+        params.delete('postcode')
+        params.delete('q')
+      }
     }
     const newUrl =
       window.location.pathname + (params.toString() ? '?' + params : '')
@@ -174,8 +199,11 @@ export async function setupRipplingExplorer({
     )
     if (travelModeRow) travelModeRow.style.display = outbound ? '' : 'none'
     inboundRow.style.display = inbound ? '' : 'none'
-    // Legend: reach-style for both non-outbound views.
-    legendMode.value = outbound ? 'outbound' : 'inbound'
+    // Legend: outbound reach / inbound digest / catchment heatmap key.
+    legendMode.value = outbound ? 'outbound' : catchment ? 'catchment' : 'inbound'
+    // Search-by-location box: not relevant in catchment (group picker is used instead).
+    const searchWrap = document.getElementById('rippling-search-wrap')
+    if (searchWrap) searchWrap.style.display = catchment ? 'none' : ''
     const statsEl = document.getElementById('rippling-stats')
     if (statsEl) statsEl.style.display = outbound ? '' : 'none'
     const groupsSection = document.getElementById('rippling-groups-section')
@@ -223,6 +251,17 @@ export async function setupRipplingExplorer({
     // so we can't reference it by name from here.  Instead, fire a custom
     // event that the freeglers-clearing block listens for.
     document.dispatchEvent(new CustomEvent('rippling-clear-freeglers'))
+    clearAudienceBoundary()
+  }
+
+  // Task #26: tear down the amber "audience-based reach" boundary + caption.
+  function clearAudienceBoundary() {
+    if (audienceLayer) {
+      map.removeLayer(audienceLayer)
+      audienceLayer = null
+    }
+    const cap = document.getElementById('rippling-audience-caption')
+    if (cap) cap.style.display = 'none'
   }
 
   function clearInboundLayers() {
@@ -250,14 +289,23 @@ export async function setupRipplingExplorer({
       map.removeLayer(catchmentAreaLayer)
       catchmentAreaLayer = null
     }
+    if (catchmentRenderer) {
+      map.removeLayer(catchmentRenderer)
+      catchmentRenderer = null
+    }
+    const extentEl = document.getElementById('rippling-catchment-extent')
+    if (extentEl) extentEl.style.display = 'none'
+    const audEl = document.getElementById('rippling-catchment-audience')
+    if (audEl) audEl.style.display = 'none'
+    if (catchmentLegend) catchmentLegend.value = []
   }
 
-  // Fetch the full group list once and populate the searchable <datalist>.
-  let catchmentGroupsLoading = false
+  // Fetch the full group list once and populate the searchable <datalist>. Returns a
+  // cached promise resolving to the name→group map, so load-from-URL can await it.
+  let catchmentGroupsPromise = null
   function loadCatchmentGroups() {
-    if (catchmentGroupsByName || catchmentGroupsLoading) return
-    catchmentGroupsLoading = true
-    fetch(apiUrl('/v1/groups/list'))
+    if (catchmentGroupsPromise) return catchmentGroupsPromise
+    catchmentGroupsPromise = fetch(apiUrl('/v1/groups/list'))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('groups ' + r.status))))
       .then((list) => {
         catchmentGroupsByName = new Map()
@@ -272,10 +320,101 @@ export async function setupRipplingExplorer({
             dl.appendChild(o)
           }
         }
+        return catchmentGroupsByName
       })
-      .catch(() => {})
-      .finally(() => {
-        catchmentGroupsLoading = false
+      .catch(() => {
+        catchmentGroupsPromise = null // allow a retry on the next entry to the tab
+        return null
+      })
+    return catchmentGroupsPromise
+  }
+
+  // Populate the group picker from a URL ?group= value (name), then draw its catchment.
+  async function applyCatchmentGroupFromUrl(name) {
+    await loadCatchmentGroups()
+    const input = document.getElementById('rippling-catchment-group')
+    const g =
+      catchmentGroupsByName &&
+      catchmentGroupsByName.get(String(name).trim().toLowerCase())
+    if (input && g) {
+      input.value = g.name
+      drawCatchment()
+      return true
+    }
+    return false
+  }
+
+  // Show the group's own road "width" (widest drive-time between two of its points), PROMINENTLY:
+  // the two endpoints as postcode/place, the road distance in miles (in red), and a Google
+  // Directions link between the two postcodes. `token` guards against group switches.
+  function drawGroupExtent(g, token) {
+    const el = document.getElementById('rippling-catchment-extent')
+    if (!el) return
+    el.style.display = 'none' // hide until we have real data — no "measuring…" flash on a card this prominent
+    fetch(apiUrl(`/v1/group-extent?groupid=${g.id}&mode=drive`))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('extent ' + r.status))))
+      .then((d) => {
+        if (token !== catchmentDrawToken || viewMode !== 'catchment') return
+        if (!d || !d.reachable || !d.from || !d.to) {
+          el.style.display = 'none'
+          return
+        }
+        const labelFor = (pt) =>
+          pt.place && pt.postcode
+            ? `${pt.postcode} (${pt.place})`
+            : pt.postcode || pt.place || `${pt.lat.toFixed(3)}, ${pt.lng.toFixed(3)}`
+        document.getElementById('rippling-extent-a').textContent = labelFor(d.from)
+        document.getElementById('rippling-extent-b').textContent = labelFor(d.to)
+        const milesEl = document.getElementById('rippling-extent-miles')
+        if (typeof d.miles === 'number') {
+          milesEl.textContent = `${d.miles.toFixed(1)} miles by road`
+          milesEl.style.display = ''
+        } else {
+          milesEl.style.display = 'none' // backend hasn't populated miles yet — degrade gracefully, don't show 0
+        }
+        const dirEl = document.getElementById('rippling-extent-directions')
+        if (d.from.postcode && d.to.postcode) {
+          dirEl.href =
+            'https://www.google.com/maps/dir/?api=1' +
+            `&origin=${encodeURIComponent(d.from.postcode)}` +
+            `&destination=${encodeURIComponent(d.to.postcode)}` +
+            '&travelmode=driving'
+        } else {
+          // Fall back to lat/lng pairs so the link still works before postcodes are wired up.
+          dirEl.href =
+            'https://www.google.com/maps/dir/?api=1' +
+            `&origin=${d.from.lat},${d.from.lng}` +
+            `&destination=${d.to.lat},${d.to.lng}` +
+            '&travelmode=driving'
+        }
+        el.style.display = ''
+      })
+      .catch(() => {
+        if (token === catchmentDrawToken) el.style.display = 'none'
+      })
+  }
+
+  // Task #26 (catchment tab): "Proposed audience target" — the nstar figure a group's
+  // active-member count implies, per /v1/group-actives. Independent of drawGroupExtent
+  // (different metric, different endpoint) so it shows/hides/errors on its own.
+  function drawGroupAudience(g, token) {
+    const el = document.getElementById('rippling-catchment-audience')
+    if (!el) return
+    el.style.display = 'none'
+    fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('actives ' + r.status))))
+      .then((d) => {
+        if (token !== catchmentDrawToken || viewMode !== 'catchment') return
+        if (!d || d.nstar == null || d.actives == null) {
+          el.style.display = 'none'
+          return
+        }
+        el.textContent =
+          `Proposed audience target: ${d.nstar.toLocaleString()} (from ${d.actives.toLocaleString()} active members)`
+        el.style.display = ''
+      })
+      .catch(() => {
+        if (token === catchmentDrawToken) el.style.display = 'none'
       })
   }
 
@@ -289,46 +428,42 @@ export async function setupRipplingExplorer({
         ? catchmentGroupsByName.get(input.value.trim().toLowerCase())
         : null
     if (!g) return
+    const token = ++catchmentDrawToken
     currentLat = g.lat
     currentLng = g.lng
     if (marker) marker.setLatLng([g.lat, g.lng])
     syncUrl()
     const minutes = parseInt(timeSlider.value)
     showStatus('Computing catchment for ' + g.name + '…', true)
+    drawGroupExtent(g, token)
+    drawGroupAudience(g, token)
 
-    // The group's own area (blue) — from the nearby-groups query at its centroid.
-    fetch(apiUrl(`/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`))
+    // Fetch the group's own boundary ring (for the outline + to cut out of the heatmap) and
+    // the inbound catchment in parallel; render together so the group area can be punched out
+    // of every band as a hole (we don't shade inside the group — it isn't part of its own
+    // catchment). Catchment is seeded from the whole GROUP AREA (groupid), not the centroid,
+    // so corridor reach into the group's edges shows (e.g. M62 offers into Hull's western strip).
+    const groupRingP = fetch(
+      apiUrl(`/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`)
+    )
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('nearby ' + r.status))))
       .then((fc) => {
         const feats = (fc && fc.features) || []
         const f =
           feats.find((x) => x.properties && x.properties.id === g.id) ||
           feats.find((x) => x.properties && x.properties.contains)
-        if (f && f.geometry && f.geometry.coordinates[0]) {
-          if (catchmentGroupLayer) map.removeLayer(catchmentGroupLayer)
-          catchmentGroupLayer = L.polygon(geoToLeaflet(f.geometry.coordinates[0]), {
-            color: '#005bb5',
-            weight: 2,
-            fillColor: '#005bb5',
-            fillOpacity: 0.18,
-          })
-            .addTo(map)
-            .bindTooltip(g.name + ' — group area')
-          catchmentGroupLayer.bringToFront()
-        }
+        return f && f.geometry && f.geometry.coordinates[0]
+          ? f.geometry.coordinates[0]
+          : null
       })
-      .catch(() => {})
+      .catch(() => null)
 
-    // The inbound catchment (green) — seeded from the whole GROUP AREA (groupid), not the
-    // centroid, so corridor reach into the group's edges shows (e.g. M62 offers into Hull's
-    // western strip).
-    fetch(
-      apiUrl(
-        `/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive`
-      )
-    )
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
-      .then((d) => {
+    const catchmentP = fetch(
+      apiUrl(`/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive`)
+    ).then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
+
+    Promise.all([groupRingP, catchmentP])
+      .then(([groupRing, d]) => {
         const bands = (d && d.bands) || []
         const fullRing =
           d && d.catchment && d.catchment.geometry && d.catchment.geometry.coordinates[0]
@@ -336,7 +471,11 @@ export async function setupRipplingExplorer({
           showStatus('No catchment', false)
           return
         }
-        if (catchmentAreaLayer) map.removeLayer(catchmentAreaLayer)
+        clearCatchmentLayers()
+        // Dedicated SVG renderer for the heat bands so we can clip ONLY the heat (below) to
+        // (catchment − group), leaving the basemap and everything else untouched.
+        catchmentRenderer = L.svg({ padding: 2 })
+        map.addLayer(catchmentRenderer)
         const grp = L.layerGroup()
 
         // Heatmap: colour the catchment by how RAPIDLY a post from each area would ripple in
@@ -345,37 +484,89 @@ export async function setupRipplingExplorer({
         const usable = bands.filter(
           (b) => b.polygon && b.polygon.geometry && b.polygon.geometry.coordinates[0]
         )
+        let outerRing = null
         if (usable.length) {
           const n = usable.length
+          const hueFor = (i) => (120 * i) / Math.max(1, n - 1) // fastest→red(0°), slowest→green(120°)
           usable
             .map((b, i) => ({ b, i }))
             .sort((a, z) => z.b.minutes - a.b.minutes)
             .forEach(({ b, i }) => {
-              const hue = (120 * i) / Math.max(1, n - 1) // fastest→red(0°), slowest→green(120°)
               L.polygon(geoToLeaflet(b.polygon.geometry.coordinates[0]), {
+                renderer: catchmentRenderer,
                 stroke: false,
-                fillColor: `hsl(${hue.toFixed(0)},75%,48%)`,
+                fillColor: `hsl(${hueFor(i).toFixed(0)},75%,48%)`,
                 fillOpacity: 0.5,
               })
                 .bindTooltip('Ripples in within ~' + Math.round(b.minutes) + ' min')
                 .addTo(grp)
             })
+          // Legend key: fastest (innermost) band first, matching the map colours.
+          if (catchmentLegend) {
+            catchmentLegend.value = usable.map((b, i) => ({
+              color: `hsl(${hueFor(i).toFixed(0)},75%,48%)`,
+              label: '~' + Math.round(b.minutes) + ' min',
+            }))
+          }
+          outerRing = usable.reduce((a, z) => (z.minutes > a.minutes ? z : a)).polygon
+            .geometry.coordinates[0]
         } else if (fullRing) {
           L.polygon(geoToLeaflet(fullRing), {
+            renderer: catchmentRenderer,
             color: '#0a8f3c',
             weight: 2,
             fillColor: '#0a8f3c',
             fillOpacity: 0.12,
           }).addTo(grp)
+          outerRing = fullRing
+        }
+        catchmentAreaLayer = grp.addTo(map)
+
+        // Punch a real transparent hole for the group so the BASEMAP shows through and only the
+        // heat is removed inside it (the group isn't part of its own catchment). A per-band even-
+        // odd hole fails — the inner bands are smaller than the group — so instead clip the whole
+        // heat layer to (outer catchment ring − group ring). The clip source is one even-odd
+        // polygon that Leaflet keeps re-projected on zoom/pan, so the hole tracks the map.
+        if (groupRing && outerRing) {
+          const clipSrc = L.polygon(
+            [geoToLeaflet(outerRing), geoToLeaflet(groupRing)],
+            { renderer: catchmentRenderer, stroke: false, fill: false }
+          ).addTo(grp)
+          const svg = catchmentRenderer._container
+          if (svg && clipSrc._path) {
+            const NS = 'http://www.w3.org/2000/svg'
+            const clipId = 'rpl-catch-clip-' + ++catchmentClipSeq
+            clipSrc._path.setAttribute('id', clipId + '-src')
+            clipSrc._path.setAttribute('clip-rule', 'evenodd')
+            let defs = svg.querySelector('defs')
+            if (!defs) {
+              defs = document.createElementNS(NS, 'defs')
+              svg.appendChild(defs)
+            }
+            const cp = document.createElementNS(NS, 'clipPath')
+            cp.setAttribute('id', clipId)
+            cp.setAttribute('clipPathUnits', 'userSpaceOnUse')
+            const use = document.createElementNS(NS, 'use')
+            use.setAttribute('href', '#' + clipId + '-src')
+            use.setAttributeNS('http://www.w3.org/1999/xlink', 'href', '#' + clipId + '-src')
+            cp.appendChild(use)
+            defs.appendChild(cp)
+            catchmentRenderer._rootGroup.setAttribute('clip-path', 'url(#' + clipId + ')')
+          }
         }
 
-        catchmentAreaLayer = grp.addTo(map)
-        if (catchmentGroupLayer) catchmentGroupLayer.bringToFront()
+        // Group boundary — outline only, on the default (unclipped) pane so it stays crisp.
+        if (groupRing) {
+          catchmentGroupLayer = L.polygon(geoToLeaflet(groupRing), {
+            color: '#005bb5',
+            weight: 2,
+            fill: false,
+          })
+            .addTo(map)
+            .bindTooltip(g.name + ' — group area')
+          catchmentGroupLayer.bringToFront()
+        }
 
-        const outerRing = usable.length
-          ? usable.reduce((a, z) => (z.minutes > a.minutes ? z : a)).polygon.geometry
-              .coordinates[0]
-          : fullRing
         if (outerRing) {
           const bounds = L.polygon(geoToLeaflet(outerRing)).getBounds()
           if (bounds.isValid()) map.fitBounds(bounds.pad(0.1), { maxZoom: 12, animate: false })
@@ -707,6 +898,14 @@ export async function setupRipplingExplorer({
       }
     })
 
+  document
+    .getElementById('rippling-tog-audience')
+    .addEventListener('change', function () {
+      showAudienceReach = this.checked
+      if (showAudienceReach) updateAudienceBoundary()
+      else clearAudienceBoundary()
+    })
+
   const searchBox = document.getElementById('rippling-search-box')
   const searchResults = document.getElementById('rippling-search-results')
   let searchTimer = null
@@ -784,11 +983,22 @@ export async function setupRipplingExplorer({
   const seededFromProps = props.initialLat != null && props.initialLng != null
 
   async function applyUrlInit() {
-    if (pendingView === 'inbound' || pendingView === 'outbound') {
+    if (
+      pendingView === 'inbound' ||
+      pendingView === 'outbound' ||
+      pendingView === 'catchment'
+    ) {
       const btn = document.querySelector(
         `.rpl-mode-btn[data-view="${pendingView}"]`
       )
       if (btn) btn.click()
+    }
+    // Catchment ?group=Name — populate the picker and draw (no lat/lng needed).
+    const isCatchment =
+      pendingView === 'catchment' || (!pendingView && viewMode === 'catchment')
+    const pendingGroup = urlParams.get('group')
+    if (isCatchment && pendingGroup) {
+      return await applyCatchmentGroupFromUrl(pendingGroup)
     }
     if (!isNaN(pendingLat) && !isNaN(pendingLng)) {
       setLocation(pendingLat, pendingLng, true)
@@ -822,6 +1032,10 @@ export async function setupRipplingExplorer({
   // Defer until after onMounted's synchronous setup completes (so all the
   // let-bindings further down are reached) — setTimeout(0) is enough.
   setTimeout(async () => {
+    // Reflect the default view (catchment) in the DOM before URL/props may switch it —
+    // applyViewMode is otherwise only called on a tab click, and the markup default view
+    // is catchment (its panel starts hidden until applyViewMode shows it).
+    if (!pendingView) applyViewMode()
     const urlSetLocation = await applyUrlInit()
     if (!urlSetLocation && navigator.geolocation && currentLat === null) {
       navigator.geolocation.getCurrentPosition(
@@ -1580,8 +1794,103 @@ export async function setupRipplingExplorer({
         if (f.properties.contains) homeGroupIds.add(f.properties.id)
       })
       drawGroupsOverlay()
+      // groupFeatures/contains is now known for the new location — refresh the
+      // audience-based-reach boundary if the toggle is on (task #26).
+      if (showAudienceReach) updateAudienceBoundary()
     } catch (e) {
       /* no group data — silently skip */
+    }
+  }
+
+  // Task #26: resolve the pin's containing group from groupFeatures (populated by
+  // fetchAndDrawGroups), fetch its actives/nstar + the ripple-schedule tick curve, find the
+  // nstar crossing, clamp to [10,30] min, and draw an amber dashed boundary at that reach —
+  // reusing the same /v1/fairness isochrone fetch/draw pattern updateIsochrone() uses for the
+  // standard (red) outbound reach boundary. Guarded by locationGeneration the same way every
+  // other async-then-repaint path in this file is, so a slow response after the pin has moved
+  // can't paint over the new location.
+  async function updateAudienceBoundary() {
+    const cap = document.getElementById('rippling-audience-caption')
+    if (!showAudienceReach || viewMode !== 'outbound' || currentLat === null) {
+      clearAudienceBoundary()
+      return
+    }
+    const gen = locationGeneration
+    const containing = groupFeatures.find((f) => f.properties && f.properties.contains)
+    if (!containing) {
+      clearAudienceBoundary()
+      if (cap) {
+        cap.textContent =
+          'No Freegle group contains this point — audience-based reach needs a home group.'
+        cap.style.display = ''
+      }
+      return
+    }
+    try {
+      const [actives, scheduleResp] = await Promise.all([
+        fetch(apiUrl(`/v1/group-actives?groupid=${containing.properties.id}`)).then((r) =>
+          r.ok ? r.json() : null
+        ),
+        // Deliberately NO target_users cap here (unlike fetchRippleSchedule) — capping would
+        // flatten/truncate the curve before it reaches nstar for a well-populated group; we
+        // want the natural curve.
+        fetch(
+          apiUrl(
+            `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}` +
+              `&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${
+                RIPPLE_FRAMES * RIPPLE_STEP_MINS
+              }&curve=step-70`
+          )
+        ).then((r) => (r.ok ? r.json() : null)),
+      ])
+      if (gen !== locationGeneration) return
+      if (!actives || actives.nstar == null || !scheduleResp || !scheduleResp.schedule) {
+        clearAudienceBoundary()
+        return
+      }
+      const ticks = scheduleResp.schedule.map((e) => ({
+        drive_min: e.drive_min,
+        cumulative_users: e.cumulative_users,
+      }))
+      const rawMinutes = driveMinForAudience(ticks, actives.nstar)
+      const minutes = clampAudienceMinutes(rawMinutes)
+      if (minutes === null) {
+        clearAudienceBoundary()
+        return
+      }
+
+      // Reuse the existing outbound isochrone fetch/draw pattern (see updateIsochrone) to get
+      // the boundary polygon for the clamped minutes.
+      const isoResp = await fetch(
+        apiUrl(
+          `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}` +
+            `&minutes=${minutes}&mode=${currentMode}&fairness=0`
+        )
+      ).then((r) => (r.ok ? r.json() : null))
+      if (gen !== locationGeneration || !showAudienceReach) return
+      if (!isoResp || !hasRing(isoResp.standard)) {
+        clearAudienceBoundary()
+        return
+      }
+
+      if (audienceLayer) map.removeLayer(audienceLayer)
+      audienceLayer = L.polygon(geoToLeaflet(isoResp.standard.geometry.coordinates[0]), {
+        color: '#e6a817',
+        weight: 2.5,
+        dashArray: '6 4',
+        fill: false,
+      })
+        .bindTooltip(`Audience-based reach: ~${minutes.toFixed(0)} min`)
+        .addTo(map)
+
+      if (cap) {
+        cap.textContent =
+          `Stops after reaching ~${actives.nstar.toLocaleString()} nearby freeglers ` +
+          `(~${Math.round(minutes)} min) - group has ${actives.actives.toLocaleString()} active members`
+        cap.style.display = ''
+      }
+    } catch (e) {
+      if (gen === locationGeneration) clearAudienceBoundary()
     }
   }
 
