@@ -282,6 +282,33 @@
   border-radius: 3px;
 }
 
+/* Catchment reach-model toggle: compare the current 30-min reach against the proposed
+   audience-based reach by redrawing the catchment at each basis. */
+.rpl-reach-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+  font-size: 11.5px;
+  color: #555;
+}
+.rpl-reach-toggle-label {
+  font-weight: 600;
+  color: #555;
+  width: 100%;
+}
+.rpl-reach-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.rpl-reach-toggle input[type='radio'] {
+  accent-color: #61ae24;
+  cursor: pointer;
+}
+
 /* Task #21: widest-span-within-group card — prominent, not a tiny help note. */
 .rpl-extent-card {
   margin-top: 8px;

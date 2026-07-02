@@ -86,6 +86,26 @@
             />
             <datalist id="rippling-catchment-grouplist"></datalist>
           </label>
+          <div id="rippling-catchment-reach" class="rpl-reach-toggle">
+            <span class="rpl-reach-toggle-label">Reach model</span>
+            <label
+              ><input
+                type="radio"
+                name="rippling-catchment-reach"
+                value="current"
+                checked
+              />
+              Current (30-min)</label
+            >
+            <label
+              ><input
+                type="radio"
+                name="rippling-catchment-reach"
+                value="audience"
+              />
+              Proposed (audience-based)</label
+            >
+          </div>
           <div
             id="rippling-catchment-extent"
             class="rpl-extent-card"

@@ -72,6 +72,7 @@ export async function setupRipplingExplorer({
   let catchmentRenderer = null // dedicated L.svg renderer for the heat, so we can clip it
   let catchmentClipSeq = 0 // unique clipPath ids across redraws
   let catchmentDrawToken = 0 // guards async extent/catchment results against group switches
+  let catchmentReachBasis = 'current' // 'current' (30-min) | 'audience' (proposed N* reach)
   let catchmentGroupsByName = null // lower-cased group name -> {id,name,lat,lng}, loaded once
   let marker = null
   let layers = {}
@@ -419,6 +420,47 @@ export async function setupRipplingExplorer({
   }
 
   // Draw the currently-selected group's area + catchment. No-op if no valid group chosen.
+  // Resolve the drive-time (minutes) the catchment should be drawn at under the "proposed
+  // audience-based" reach basis: the drive-time at which this group's own outward reach first
+  // reaches ~N* nearby freeglers (clamped [10,30]), so the catchment can be compared old-vs-new.
+  // Also sets the caption. Returns the minutes, or null on failure (caller falls back to 30-min).
+  function catchmentAudienceMinutes(g, token) {
+    const el = document.getElementById('rippling-catchment-audience')
+    return Promise.all([
+      fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`)).then((r) => (r.ok ? r.json() : null)),
+      fetch(
+        apiUrl(
+          `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}` +
+            `&mode=drive&ticks=${RIPPLE_FRAMES}&max_minutes=${RIPPLE_FRAMES * RIPPLE_STEP_MINS}&curve=step-70`
+        )
+      ).then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([actives, sched]) => {
+        if (token !== catchmentDrawToken || viewMode !== 'catchment') return null
+        if (!actives || actives.nstar == null || !sched || !sched.schedule) {
+          if (el) el.style.display = 'none'
+          return null
+        }
+        const ticks = sched.schedule.map((e) => ({
+          drive_min: e.drive_min,
+          cumulative_users: e.cumulative_users,
+        }))
+        const mins = clampAudienceMinutes(driveMinForAudience(ticks, actives.nstar))
+        if (el) {
+          el.textContent =
+            `Proposed audience-based reach: ~${Math.round(mins)} min` +
+            ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
+            ` (group has ${actives.actives.toLocaleString()} active members).`
+          el.style.display = ''
+        }
+        return mins
+      })
+      .catch(() => {
+        if (el && token === catchmentDrawToken) el.style.display = 'none'
+        return null
+      })
+  }
+
   function drawCatchment() {
     if (viewMode !== 'catchment') return
     clearCatchmentLayers()
@@ -433,10 +475,17 @@ export async function setupRipplingExplorer({
     currentLng = g.lng
     if (marker) marker.setLatLng([g.lat, g.lng])
     syncUrl()
-    const minutes = parseInt(timeSlider.value)
+    const sliderMinutes = parseInt(timeSlider.value)
     showStatus('Computing catchment for ' + g.name + '…', true)
     drawGroupExtent(g, token)
-    drawGroupAudience(g, token)
+    // Reach basis: current fixed 30-min, or proposed audience-based (recomputes the catchment at
+    // the N* reach time so the two can be compared by flipping the toggle). The caption comes from
+    // drawGroupAudience (informational N* target) under 'current', or catchmentAudienceMinutes
+    // (the resolved reach time) under 'audience'.
+    const minutesP =
+      catchmentReachBasis === 'audience'
+        ? catchmentAudienceMinutes(g, token).then((m) => (m != null ? m : sliderMinutes))
+        : (drawGroupAudience(g, token), Promise.resolve(sliderMinutes))
 
     // Fetch the group's own boundary ring (for the outline + to cut out of the heatmap) and
     // the inbound catchment in parallel; render together so the group area can be punched out
@@ -458,9 +507,11 @@ export async function setupRipplingExplorer({
       })
       .catch(() => null)
 
-    const catchmentP = fetch(
-      apiUrl(`/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive`)
-    ).then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
+    const catchmentP = minutesP.then((m) =>
+      fetch(apiUrl(`/v1/catchment?groupid=${g.id}&minutes=${m}&mode=drive`)).then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))
+      )
+    )
 
     Promise.all([groupRingP, catchmentP])
       .then(([groupRing, d]) => {
@@ -873,6 +924,19 @@ export async function setupRipplingExplorer({
   // Catchment tab: group picker (datalist selection fires 'change').
   const catchmentGroupInput = document.getElementById('rippling-catchment-group')
   if (catchmentGroupInput) catchmentGroupInput.addEventListener('change', drawCatchment)
+
+  // Catchment reach-model toggle: flip between the current 30-min reach and the proposed
+  // audience-based reach, redrawing the catchment at each so the two areas can be compared.
+  document
+    .querySelectorAll('input[name="rippling-catchment-reach"]')
+    .forEach((radio) => {
+      radio.addEventListener('change', function () {
+        if (this.checked) {
+          catchmentReachBasis = this.value
+          drawCatchment()
+        }
+      })
+    })
 
   document
     .getElementById('rippling-tog-freeglers')
