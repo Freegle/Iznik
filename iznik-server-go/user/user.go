@@ -491,7 +491,13 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 		"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome "+
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
+		// rippled_in = 0: a post rippled OUT gets an extra messages_groups row
+		// (rippled_in = 1) per receiving group. Without this filter the join fans
+		// out to one history entry per group, so a post reaching N groups showed
+		// N identical rows (Discourse #9851 / the 23x Posting History). Restricting
+		// to origin rows shows the post once (still per group for genuine
+		// cross-posts, matching pre-rippling behaviour).
+		"WHERE m.fromuser = ? AND mg.deleted = 0 AND mg.rippled_in = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
 		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
 
 	now := time.Now()
