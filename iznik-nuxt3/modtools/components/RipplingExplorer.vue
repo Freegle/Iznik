@@ -103,7 +103,7 @@
                 name="rippling-catchment-reach"
                 value="audience"
               />
-              Proposed (audience-based)</label
+              Possible alternative (audience-based)</label
             >
           </div>
           <div

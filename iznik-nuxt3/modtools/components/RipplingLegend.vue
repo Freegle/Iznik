@@ -8,7 +8,13 @@
         class="rpl-leg-swatch"
         :style="{ background: b.color, opacity: 0.85 }"
       />
-      {{ b.label }}
+      <span
+        >{{ b.label }}<br v-if="b.sub" /><small
+          v-if="b.sub"
+          style="color: #888"
+          >reached {{ b.sub }} after posting</small
+        ></span
+      >
     </div>
     <div
       class="rpl-leg-item"

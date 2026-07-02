@@ -73,6 +73,9 @@ export async function setupRipplingExplorer({
   let catchmentClipSeq = 0 // unique clipPath ids across redraws
   let catchmentDrawToken = 0 // guards async extent/catchment results against group switches
   let catchmentReachBasis = 'current' // 'current' (30-min) | 'audience' (proposed N* reach)
+  // Per-group cache of catchment responses + group ring, keyed by group id, so flipping the
+  // reach toggle re-renders from memory instead of re-hitting the routing server (the slow bit).
+  let catchmentCache = { key: null, ring: undefined, byMinutes: {} }
   let catchmentGroupsByName = null // lower-cased group name -> {id,name,lat,lng}, loaded once
   let marker = null
   let layers = {}
@@ -395,80 +398,112 @@ export async function setupRipplingExplorer({
       })
   }
 
-  // Task #26 (catchment tab): "Proposed audience target" — the nstar figure a group's
-  // active-member count implies, per /v1/group-actives. Independent of drawGroupExtent
-  // (different metric, different endpoint) so it shows/hides/errors on its own.
-  function drawGroupAudience(g, token) {
-    const el = document.getElementById('rippling-catchment-audience')
-    if (!el) return
-    el.style.display = 'none'
-    fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`))
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('actives ' + r.status))))
-      .then((d) => {
-        if (token !== catchmentDrawToken || viewMode !== 'catchment') return
-        if (!d || d.nstar == null || d.actives == null) {
-          el.style.display = 'none'
-          return
-        }
-        el.textContent =
-          `Proposed audience target: ${d.nstar.toLocaleString()} (from ${d.actives.toLocaleString()} active members)`
-        el.style.display = ''
-      })
-      .catch(() => {
-        if (token === catchmentDrawToken) el.style.display = 'none'
-      })
+  // Rippling doesn't reach its full drive-distance instantly: it expands on a hazard schedule of
+  // elapsed HOURS after posting (step-70 curve — ~70% of the pool in the first hour, the outer
+  // edge only after up to 7 days). These are the elapsed hours for the 9 ticks the routing server
+  // returns for ticks=9, used to annotate the catchment key with "how long before we ripple that far".
+  const HAZARD_HOURS = [1, 3, 6, 12, 24, 48, 72, 120, 168]
+  function fmtRippleDelay(hours) {
+    if (hours == null) return null
+    if (hours <= 1.5) return '~1 hour'
+    if (hours < 24) return `~${Math.round(hours)} hours`
+    const days = hours / 24
+    return days <= 1.5 ? '~1 day' : `~${Math.round(days)} days`
+  }
+  // For a band at driveMin, the elapsed delay before the outward ripple first reaches that far
+  // (first hazard tick whose reach covers driveMin); hazard = [{drive, hours}] ascending by drive.
+  function rippleDelayForDrive(hazard, driveMin) {
+    if (!hazard || !hazard.length) return null
+    for (const h of hazard) if (h.drive >= driveMin - 0.01) return h.hours
+    return hazard[hazard.length - 1].hours
   }
 
-  // Draw the currently-selected group's area + catchment. No-op if no valid group chosen.
-  // Resolve the drive-time (minutes) the catchment should be drawn at under the "proposed
-  // audience-based" reach basis: the drive-time at which this group's own outward reach first
-  // reaches ~N* nearby freeglers (clamped [10,30]), so the catchment can be compared old-vs-new.
-  // Also sets the caption. Returns the minutes, or null on failure (caller falls back to 30-min).
+  // Fetch the group's boundary ring (for the outline + to punch out of the heatmap). Best-effort.
+  function fetchGroupRing(g) {
+    return fetch(
+      apiUrl(`/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`)
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('nearby ' + r.status))))
+      .then((fc) => {
+        const feats = (fc && fc.features) || []
+        const f =
+          feats.find((x) => x.properties && x.properties.id === g.id) ||
+          feats.find((x) => x.properties && x.properties.contains)
+        return f && f.geometry && f.geometry.coordinates[0] ? f.geometry.coordinates[0] : null
+      })
+      .catch(() => null)
+  }
+
+  // Fetch the inbound catchment (seeded from the whole GROUP AREA, not the centroid, so corridor
+  // reach into the group's edges shows) at a given reach in minutes.
+  function fetchCatchmentData(g, m) {
+    return fetch(
+      apiUrl(`/v1/catchment?groupid=${g.id}&minutes=${m}&mode=drive`)
+    ).then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
+  }
+
+  // Resolve the drive-time the catchment should use under the "Possible alternative" (audience-
+  // based) reach: the drive-time at which the group's own outward reach first hits ~N* nearby
+  // freeglers (clamped [10,30]). Also sets the caption. Cached per group so flipping is instant.
+  // Returns the minutes, or null on failure (caller falls back to the 30-min slider value).
   function catchmentAudienceMinutes(g, token) {
     const el = document.getElementById('rippling-catchment-audience')
+    const apply = (a) => {
+      if (el && token === catchmentDrawToken && viewMode === 'catchment') {
+        if (a && a.caption) {
+          el.textContent = a.caption
+          el.style.display = ''
+        } else {
+          el.style.display = 'none'
+        }
+      }
+      return a ? a.mins : null
+    }
+    if (catchmentCache.key === g.id && catchmentCache.audience) {
+      return Promise.resolve(apply(catchmentCache.audience))
+    }
     return Promise.all([
       fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`)).then((r) => (r.ok ? r.json() : null)),
       fetch(
         apiUrl(
           `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}` +
-            `&mode=drive&ticks=${RIPPLE_FRAMES}&max_minutes=${RIPPLE_FRAMES * RIPPLE_STEP_MINS}&curve=step-70`
+            `&mode=drive&ticks=9&max_minutes=30&curve=step-70`
         )
       ).then((r) => (r.ok ? r.json() : null)),
     ])
       .then(([actives, sched]) => {
-        if (token !== catchmentDrawToken || viewMode !== 'catchment') return null
-        if (!actives || actives.nstar == null || !sched || !sched.schedule) {
-          if (el) el.style.display = 'none'
-          return null
-        }
+        if (!actives || actives.nstar == null || !sched || !sched.schedule) return apply(null)
         const ticks = sched.schedule.map((e) => ({
           drive_min: e.drive_min,
           cumulative_users: e.cumulative_users,
         }))
         const mins = clampAudienceMinutes(driveMinForAudience(ticks, actives.nstar))
-        // Does the group's outward reach ever hit its audience target within the 30-min ceiling?
-        // Sparse groups don't (total pool < N*), so their proposed reach stays at 30 min = the
-        // current reach — the catchment is IDENTICAL by design. Say so, or it looks like a no-op.
+        // Hazard timing: elapsed hours after posting at which the ripple reaches each drive-time
+        // (the 9 ticks map to HAZARD_HOURS) — used to annotate the catchment key with the delay.
+        const hazard = sched.schedule.map((e, i) => ({
+          drive: e.drive_min,
+          hours: HAZARD_HOURS[i] != null ? HAZARD_HOURS[i] : HAZARD_HOURS[HAZARD_HOURS.length - 1],
+        }))
         const total = sched.total_freeglers || 0
-        if (el) {
-          el.textContent =
-            total >= actives.nstar
-              ? `Proposed audience-based reach: ~${Math.round(mins)} min` +
-                ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
-                ` (group has ${actives.actives.toLocaleString()} active members).`
-              : `Proposed reach: unchanged (~30 min). This group only reaches about ` +
-                `${total.toLocaleString()} freeglers within 30 min — below its ` +
-                `${actives.nstar.toLocaleString()} target — so it stays at the ceiling, same as ` +
-                `now. Sparse groups aren't tightened; try a dense city group to see the difference.`
-          el.style.display = ''
-        }
-        return mins
+        // Sparse groups never reach N* within the 30-min ceiling, so the alternative reach stays at
+        // 30 min = the current reach (identical by design) — say so, or it looks like a no-op.
+        const caption =
+          total >= actives.nstar
+            ? `Possible alternative reach (audience-based): ~${Math.round(mins)} min` +
+              ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
+              ` (group has ${actives.actives.toLocaleString()} active members).`
+            : `Possible alternative: unchanged (~30 min). This group only reaches about ` +
+              `${total.toLocaleString()} freeglers within 30 min — below its ` +
+              `${actives.nstar.toLocaleString()} target — so it stays at the ceiling, same as now. ` +
+              `Sparse groups aren't tightened; try a dense city group to see the difference.`
+        const a = { mins, caption, hazard }
+        if (catchmentCache.key === g.id) catchmentCache.audience = a
+        return apply(a)
       })
-      .catch(() => {
-        if (el && token === catchmentDrawToken) el.style.display = 'none'
-        return null
-      })
+      .catch(() => apply(null))
   }
+
+  // Draw the currently-selected group's area + catchment. No-op if no valid group chosen.
 
   function drawCatchment() {
     if (viewMode !== 'catchment') return
@@ -487,43 +522,42 @@ export async function setupRipplingExplorer({
     const sliderMinutes = parseInt(timeSlider.value)
     showStatus('Computing catchment for ' + g.name + '…', true)
     drawGroupExtent(g, token)
-    // Reach basis: current fixed 30-min, or proposed audience-based (recomputes the catchment at
-    // the N* reach time so the two can be compared by flipping the toggle). The caption comes from
-    // drawGroupAudience (informational N* target) under 'current', or catchmentAudienceMinutes
-    // (the resolved reach time) under 'audience'.
-    const minutesP =
-      catchmentReachBasis === 'audience'
-        ? catchmentAudienceMinutes(g, token).then((m) => (m != null ? m : sliderMinutes))
-        : (drawGroupAudience(g, token), Promise.resolve(sliderMinutes))
-
-    // Fetch the group's own boundary ring (for the outline + to cut out of the heatmap) and
-    // the inbound catchment in parallel; render together so the group area can be punched out
-    // of every band as a hole (we don't shade inside the group — it isn't part of its own
-    // catchment). Catchment is seeded from the whole GROUP AREA (groupid), not the centroid,
-    // so corridor reach into the group's edges shows (e.g. M62 offers into Hull's western strip).
-    const groupRingP = fetch(
-      apiUrl(`/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`)
-    )
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('nearby ' + r.status))))
-      .then((fc) => {
-        const feats = (fc && fc.features) || []
-        const f =
-          feats.find((x) => x.properties && x.properties.id === g.id) ||
-          feats.find((x) => x.properties && x.properties.contains)
-        return f && f.geometry && f.geometry.coordinates[0]
-          ? f.geometry.coordinates[0]
-          : null
+    // Per-group catchment cache: reset on group change, kept across reach-toggle flips so
+    // switching Current <-> Possible alternative re-renders from memory (the /v1/catchment routing
+    // call is the slow bit). The group ring is punched out of the heatmap as a hole; the catchment
+    // is seeded from the whole GROUP AREA so corridor reach into the group's edges shows.
+    if (catchmentCache.key !== g.id) {
+      catchmentCache = { key: g.id, ring: undefined, byMinutes: {}, audience: null }
+    }
+    const ringP =
+      catchmentCache.ring !== undefined
+        ? Promise.resolve(catchmentCache.ring)
+        : fetchGroupRing(g).then((r) => {
+            if (catchmentCache.key === g.id) catchmentCache.ring = r // ignore late arrivals
+            return r
+          })
+    const getCatchment = (m) => {
+      const k = m.toFixed(1)
+      if (catchmentCache.byMinutes[k]) return Promise.resolve(catchmentCache.byMinutes[k])
+      return fetchCatchmentData(g, m).then((d) => {
+        if (catchmentCache.key === g.id) catchmentCache.byMinutes[k] = d // ignore late arrivals
+        return d
       })
-      .catch(() => null)
+    }
 
-    const catchmentP = minutesP.then((m) =>
-      fetch(apiUrl(`/v1/catchment?groupid=${g.id}&minutes=${m}&mode=drive`)).then((r) =>
-        r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))
-      )
-    )
-
-    Promise.all([groupRingP, catchmentP])
+    // Resolve the alternative reach (sets the caption; cached), then render the active basis from
+    // cache-or-fetch and warm the OTHER basis in the background so the next flip is instant.
+    catchmentAudienceMinutes(g, token)
+      .then((alt) => {
+        const altMinutes = alt != null ? alt : sliderMinutes
+        const activeMinutes = catchmentReachBasis === 'audience' ? altMinutes : sliderMinutes
+        const otherMinutes = catchmentReachBasis === 'audience' ? sliderMinutes : altMinutes
+        if (Math.abs(otherMinutes - activeMinutes) > 0.05) getCatchment(otherMinutes)
+        return Promise.all([ringP, getCatchment(activeMinutes)])
+      })
       .then(([groupRing, d]) => {
+        // Ignore a render that a newer group selection / toggle has superseded.
+        if (token !== catchmentDrawToken || viewMode !== 'catchment') return
         const bands = (d && d.bands) || []
         const fullRing =
           d && d.catchment && d.catchment.geometry && d.catchment.geometry.coordinates[0]
@@ -548,24 +582,35 @@ export async function setupRipplingExplorer({
         if (usable.length) {
           const n = usable.length
           const hueFor = (i) => (120 * i) / Math.max(1, n - 1) // fastest→red(0°), slowest→green(120°)
+          const hazard =
+            (catchmentCache.audience && catchmentCache.audience.hazard) || null
+          const delayFor = (mins) => fmtRippleDelay(rippleDelayForDrive(hazard, mins))
           usable
             .map((b, i) => ({ b, i }))
             .sort((a, z) => z.b.minutes - a.b.minutes)
             .forEach(({ b, i }) => {
+              const delay = delayFor(b.minutes)
               L.polygon(geoToLeaflet(b.polygon.geometry.coordinates[0]), {
                 renderer: catchmentRenderer,
                 stroke: false,
                 fillColor: `hsl(${hueFor(i).toFixed(0)},75%,48%)`,
                 fillOpacity: 0.5,
               })
-                .bindTooltip('Ripples in within ~' + Math.round(b.minutes) + ' min')
+                .bindTooltip(
+                  '~' +
+                    Math.round(b.minutes) +
+                    ' min by road' +
+                    (delay ? ' · reached ' + delay + ' after posting' : '')
+                )
                 .addTo(grp)
             })
-          // Legend key: fastest (innermost) band first, matching the map colours.
+          // Legend key: fastest (innermost) band first, matching the map colours. Each band shows
+          // the drive-time AND the delay before the ripple reaches that far (hazard schedule).
           if (catchmentLegend) {
             catchmentLegend.value = usable.map((b, i) => ({
               color: `hsl(${hueFor(i).toFixed(0)},75%,48%)`,
-              label: '~' + Math.round(b.minutes) + ' min',
+              label: '~' + Math.round(b.minutes) + ' min by road',
+              sub: delayFor(b.minutes),
             }))
           }
           outerRing = usable.reduce((a, z) => (z.minutes > a.minutes ? z : a)).polygon
