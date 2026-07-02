@@ -446,11 +446,20 @@ export async function setupRipplingExplorer({
           cumulative_users: e.cumulative_users,
         }))
         const mins = clampAudienceMinutes(driveMinForAudience(ticks, actives.nstar))
+        // Does the group's outward reach ever hit its audience target within the 30-min ceiling?
+        // Sparse groups don't (total pool < N*), so their proposed reach stays at 30 min = the
+        // current reach — the catchment is IDENTICAL by design. Say so, or it looks like a no-op.
+        const total = sched.total_freeglers || 0
         if (el) {
           el.textContent =
-            `Proposed audience-based reach: ~${Math.round(mins)} min` +
-            ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
-            ` (group has ${actives.actives.toLocaleString()} active members).`
+            total >= actives.nstar
+              ? `Proposed audience-based reach: ~${Math.round(mins)} min` +
+                ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
+                ` (group has ${actives.actives.toLocaleString()} active members).`
+              : `Proposed reach: unchanged (~30 min). This group only reaches about ` +
+                `${total.toLocaleString()} freeglers within 30 min — below its ` +
+                `${actives.nstar.toLocaleString()} target — so it stays at the ceiling, same as ` +
+                `now. Sparse groups aren't tightened; try a dense city group to see the difference.`
           el.style.display = ''
         }
         return mins
