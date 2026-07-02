@@ -325,6 +325,13 @@ return [
         // Per-request timeout (seconds) for a /v1/ripple-schedule call. A dense-origin post can
         // take tens of seconds; the pool path uses this so one slow post does not abort the chunk.
         'request_timeout' => (int) env('RIPPLE_REQUEST_TIMEOUT', 60),
+        // ripple:proximity-notes (moderator "quicker to get to" note) — computed out of the hot
+        // ripple:expand cron, so a slacker timeout is fine. Slow calls (> proximity_slow_ms) and
+        // failures are reported to Sentry. proximity_notes gates the whole feature (kill switch
+        // independent of RIPPLE_ENABLED).
+        'proximity_notes' => filter_var(env('RIPPLE_PROXIMITY_NOTES', true), FILTER_VALIDATE_BOOLEAN),
+        'proximity_timeout' => (int) env('RIPPLE_PROXIMITY_TIMEOUT', 15),
+        'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
         // chat_messages.refmsgid = msgid) stops expanding - it already has plenty of interest, so

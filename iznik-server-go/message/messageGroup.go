@@ -35,4 +35,11 @@ type MessageGroup struct {
 	// it to show the "rippled out / rippled in" banner authoritatively rather than guessing
 	// from arrival times, which the approve path (arrival=NOW()) can scramble. (9808/303)
 	RippledIn uint8 `json:"rippled_in"`
+
+	// RippleProximityP/Q are the human place names for the P/Q "quicker to get to" moderator
+	// note (see ExpandService::recordRippleProximity), set only when quicker=true. Absent
+	// (omitempty) means either this copy was not rippled-in, or it was not quicker, or the
+	// routing/KNN calls failed at ripple-in time — the frontend shows nothing in all three cases.
+	RippleProximityP *string `json:"ripple_proximity_p,omitempty"`
+	RippleProximityQ *string `json:"ripple_proximity_q,omitempty"`
 }

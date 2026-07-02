@@ -94,19 +94,149 @@ func handleFairness(g *Graph) fiber.Handler {
 			fairness = 1
 		}
 
-		modeStr := c.Query("mode", "walk")
-		var mode Mode
-		switch modeStr {
-		case "cycle":
-			mode = Cycle
-		case "drive":
-			mode = Drive
-		default:
-			mode = Walk
-		}
+		mode := parseMode(c.Query("mode", "walk"))
 
 		result := FairnessIsochrone(g, lat, lng, float32(minutes*60), mode, float32(fairness))
 		return c.JSON(result)
+	}
+}
+
+// parseMode maps a mode query value to a Mode, defaulting to Walk.
+func parseMode(s string) Mode {
+	switch s {
+	case "cycle":
+		return Cycle
+	case "drive":
+		return Drive
+	default:
+		return Walk
+	}
+}
+
+// handleCatchment handles GET /v1/catchment?lat=&lng=&minutes=&mode=&friction=1
+// Returns the inbound catchment polygon for a group: the area from which posts would ripple
+// far enough to reach it — seeded from the group's whole boundary (via groupid) so corridor
+// reach into the group's edges is captured (a centroid-only seed misses e.g. an M62 offer
+// clipping HullFreegle's western strip).
+func handleCatchment(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		minutes, _ := strconv.ParseFloat(c.Query("minutes", "30"), 64)
+		if minutes <= 0 || minutes > 120 {
+			minutes = 30
+		}
+		secs := float32(minutes * 60)
+		mode := parseMode(c.Query("mode", "drive"))
+
+		if gidStr := c.Query("groupid"); gidStr != "" {
+			gid, err := strconv.ParseInt(gidStr, 10, 64)
+			if err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "invalid groupid")
+			}
+			seeds, ok := groupSeedNodes(g, gid, mode)
+			if !ok {
+				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
+			}
+			iso := multiSourceIsochrone(g, seeds, secs, mode)
+			poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
+			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
+			bands := catchmentBands(g, iso, secs, mode, 6)
+			return c.JSON(fiber.Map{"catchment": poly, "bands": bands, "seeds": len(seeds)})
+		}
+
+		// Point form (ad-hoc): catchment of a single location.
+		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
+		if err != nil || lat == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat or groupid required")
+		}
+		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
+		if err != nil || lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lng required")
+		}
+		iso := Isochrone(g, lat, lng, secs, mode)
+		poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
+		return c.JSON(fiber.Map{"catchment": poly})
+	}
+}
+
+// handleGroupExtent returns the group's own road "diameter": the widest road drive-time between
+// two points inside the group. It sets a yardstick on the catchment view — a post rippling in
+// from no further away than the group already spans internally is unremarkable.
+func handleGroupExtent(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "groupid required")
+		}
+		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "240"), 64)
+		if minutes <= 0 || minutes > 480 {
+			minutes = 240
+		}
+		mode := parseMode(c.Query("mode", "drive"))
+
+		seeds, okS := groupSeedNodes(g, gid, mode)
+		if !okS {
+			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
+		}
+		from, to, milesBetween, ok := groupDiameter(g, seeds, mode, float32(minutes*60))
+		if !ok {
+			return c.JSON(fiber.Map{"reachable": false})
+		}
+
+		// Reverse-geocode both endpoints. Best-effort: on any failure the postcode/place fields
+		// are simply absent (omitempty) — the core reachable/minutes/miles response is unaffected.
+		db := ensureGroupsDB()
+		from.Postcode, from.Place = resolvePlace(db, from.Lat, from.Lng)
+		to.Postcode, to.Place = resolvePlace(db, to.Lat, to.Lng)
+
+		return c.JSON(fiber.Map{
+			"reachable": true,
+			"from":      from,
+			"to":        to,
+			"minutes":   to.DriveMin,
+			"miles":     milesBetween,
+		})
+	}
+}
+
+// handleGroupProximity handles GET /v1/group-proximity?groupid=&lat=&lng=&mode=&max_minutes=
+// For an offer at (lat,lng) rippling into groupid, returns the nearest in-group point P and the
+// in-group point furthest FROM P (Q), each with road drive-time, plus quicker = (offer→P < P→Q).
+// Backs the moderator "this post is quicker to get to for Freeglers in {P} than {P} is to {Q}"
+// line, which is shown only when quicker is true.
+func handleGroupProximity(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
+		if err != nil || lat == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat required")
+		}
+		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
+		if err != nil || lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lng required")
+		}
+		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "groupid required")
+		}
+		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "120"), 64)
+		if minutes <= 0 || minutes > 240 {
+			minutes = 120
+		}
+		mode := parseMode(c.Query("mode", "drive"))
+
+		seeds, okS := groupSeedNodes(g, gid, mode)
+		if !okS {
+			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
+		}
+		closest, furthest, ok := groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+		if !ok {
+			return c.JSON(fiber.Map{"reachable": false})
+		}
+		return c.JSON(fiber.Map{
+			"reachable": true,
+			"closest":   closest,
+			"furthest":  furthest,
+			"quicker":   closest.DriveMin < furthest.DriveMin,
+		})
 	}
 }
 
@@ -269,12 +399,17 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	}
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
+	v1.Get("/catchment", handleCatchment(g))
+	v1.Get("/group-proximity", handleGroupProximity(g))
+	v1.Get("/group-extent", handleGroupExtent(g))
+	v1.Get("/group-actives", handleGroupActives())
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
 	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
 	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))
 	v1.Get("/posts-for-member", handlePostsForMember(g, spatialURL))
 	v1.Get("/digest-simulator", handleDigestSimulator(g, spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
+	v1.Get("/groups/list", handleGroupsList())
 
 	// Swagger UI (Redoc) — mirrors the v2 Go API pattern.
 	app.Get("/swagger", func(c *fiber.Ctx) error {

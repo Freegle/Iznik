@@ -472,6 +472,29 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+
+				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
+				// table (off the hot messages_groups path). Best-effort: only for mods, and a
+				// missing table / query error just means no note — so apiv2 can ship before the
+				// table exists without affecting message loading.
+				if isMod && len(messageGroups) > 0 {
+					var notes []struct {
+						Groupid uint64
+						P       string
+						Q       string
+					}
+					if err := db.Raw("SELECT groupid, p, q FROM rippling_proximity WHERE msgid = ?", id).Scan(&notes).Error; err == nil {
+						for _, nt := range notes {
+							for i := range messageGroups {
+								if messageGroups[i].Groupid == nt.Groupid {
+									p, q := nt.P, nt.Q
+									messageGroups[i].RippleProximityP = &p
+									messageGroups[i].RippleProximityQ = &q
+								}
+							}
+						}
+					}
+				}
 			}()
 
 			var messageAttachments []MessageAttachment

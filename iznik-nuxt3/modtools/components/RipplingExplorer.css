@@ -195,13 +195,15 @@
   margin-bottom: 14px;
 }
 .rpl-mode-btn {
-  flex: 1;
-  padding: 7px 4px;
+  flex: 1 1 0;
+  min-width: 0; /* let flex:1 distribute width equally; without this the long labels
+                   force each button to content width and the 3rd tab overflows */
+  padding: 7px 3px;
   border: 1.5px solid #ddd;
   border-radius: 6px;
   background: #fafafa;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: #555;
   transition: all 0.15s;
@@ -209,10 +211,23 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  text-align: center;
+  line-height: 1.1;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .rpl-icon {
-  font-size: 18px;
+  font-size: 16px;
+}
+.rpl-mode-label {
+  display: block;
+  width: 100%;
+  /* modtools' global buttons.scss sets `button { white-space: nowrap !important }`,
+     which the label inherits and which clips these narrow tabs. Force normal wrapping
+     (with !important to beat that inherited nowrap) so the label wraps to 2-3 lines. */
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
 }
 .rpl-mode-btn:hover {
   border-color: #61ae24;
@@ -253,6 +268,97 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid #f0f0f0;
+}
+
+/* Explanation under the Maximum-reach slider: the default is production behaviour. */
+.rpl-slider-help {
+  font-size: 9.5px;
+  color: #888;
+  line-height: 1.35;
+  margin-top: 5px;
+  padding: 4px 6px;
+  background: #f6f9f1;
+  border-left: 2px solid #61ae24;
+  border-radius: 3px;
+}
+
+/* Catchment reach-model toggle: compare the current 30-min reach against the proposed
+   audience-based reach by redrawing the catchment at each basis. */
+.rpl-reach-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+  font-size: 11.5px;
+  color: #555;
+}
+.rpl-reach-toggle-label {
+  font-weight: 600;
+  color: #555;
+  width: 100%;
+}
+.rpl-reach-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.rpl-reach-toggle input[type='radio'] {
+  accent-color: #61ae24;
+  cursor: pointer;
+}
+
+/* Task #21: widest-span-within-group card — prominent, not a tiny help note. */
+.rpl-extent-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #fff7f0;
+  border: 1.5px solid #f0c9a8;
+  border-radius: 6px;
+}
+.rpl-extent-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+.rpl-extent-endpoints {
+  font-size: 12.5px;
+  color: #333;
+  line-height: 1.4;
+}
+.rpl-extent-distance {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #c0392b; /* RED, per task requirement */
+}
+.rpl-extent-directions {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #1a73e8;
+  text-decoration: none;
+}
+.rpl-extent-directions:hover {
+  text-decoration: underline;
+}
+
+/* Task #26: audience-based reach caption — amber, distinct from the green production-default
+   styling used elsewhere (.rpl-slider-help, .rpl-intro) so it visually reads as "proposed". */
+.rpl-audience-caption {
+  font-size: 10.5px;
+  color: #7a5200;
+  line-height: 1.4;
+  margin-top: 6px;
+  padding: 5px 7px;
+  background: #fff8e6;
+  border-left: 2px solid #e6a817;
+  border-radius: 3px;
 }
 
 .rpl-ripple-row {

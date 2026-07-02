@@ -228,6 +228,52 @@ func TestNearbyGroups_NoDBReturnsEmptyCollection(t *testing.T) {
 	}
 }
 
+// TestGroupExtentEndpoint_UnknownGroup404 verifies /v1/group-extent 404s when the group can't be
+// seeded (here: no MySQL configured, so groupSeedNodes fails) — this is a DB-free HTTP-level
+// assertion, matching the existing pattern for this handler family, since seeding the group
+// normally needs the `groups` table which isn't available in this package's standalone go test.
+func TestGroupExtentEndpoint_UnknownGroup404(t *testing.T) {
+	t.Setenv("MYSQL_HOST", "")
+	groupsDB = nil
+	app := newInternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/group-extent?groupid=1", nil)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 404 {
+		t.Errorf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+// TestGroupActives_NoDBReturns503 verifies /v1/group-actives degrades to 503 (not a
+// misleadingly-confident zero/floor response) when no MySQL is configured.
+func TestGroupActives_NoDBReturns503(t *testing.T) {
+	t.Setenv("MYSQL_HOST", "")
+	groupsDB = nil
+	app := newInternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/group-actives?groupid=123", nil)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 503 {
+		t.Errorf("expected 503, got %d", resp.StatusCode)
+	}
+}
+
+func TestGroupActives_MissingGroupidReturns400(t *testing.T) {
+	app := newInternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/group-actives", nil)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 // TestWktPolygonToCoords_DegreeCoords verifies that WKT coordinates in degree
 // range (as stored in the production polyindex) are returned as-is without
 // Mercator conversion.
