@@ -42,6 +42,14 @@ export function sortBrowseMessages(messages, selectedSort, centre) {
   }))
 
   decorated.sort((a, b) => {
+    // A pinned post (a paid bulk-offer clearance) always leads the feed, whatever the
+    // sort mode - the server floats it to the top and the client must not undo that when
+    // it re-sorts by distance/recency (which ignore the server's score).
+    const apin = a.m.pinned ? 1 : 0
+    const bpin = b.m.pinned ? 1 : 0
+    if (apin !== bpin) {
+      return bpin - apin
+    }
     if (selectedSort === 'Unseen') {
       // Unseen first, then by descending rippling relevance score. Successful posts are
       // not treated as unseen so they don't bob to the top. Missing score -> 0.

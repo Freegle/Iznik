@@ -13,6 +13,7 @@ use App\Services\Ripple\DigestPostScorer;
 use App\Services\Ripple\DistancePreferenceFilter;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -1103,7 +1104,16 @@ class UnifiedDigestService
         // flags; partition here rather than re-querying.
         $allPosts = $this->getPostsForUser($user, $digestTracker, $mode);
 
-        if ($allPosts->isEmpty()) {
+        // Pinned posts (paid bulk-offer clearances) are force-included at the TOP of every
+        // DAILY digest while they are still open, independent of the cursor window and the
+        // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
+        // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
+        // $allPosts), so a pinned post never suppresses itself on the next run.
+        $pinnedCards = $mode === self::MODE_DAILY
+            ? $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user))
+            : collect();
+
+        if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
             return ['status' => 'no_posts', 'count' => 0];
         }
 
@@ -1139,7 +1149,7 @@ class UnifiedDigestService
             ? $this->deduplicateCompletedPosts($allPosts->filter(fn ($p) => $p->has_success)->values())
             : collect();
 
-        if ($posts->isEmpty()) {
+        if ($posts->isEmpty() && $pinnedCards->isEmpty()) {
             // No live posts to send. Still advance the cursor past everything
             // examined (incl. completed/withdrawn) so they don't re-surface,
             // and don't send a completed-only digest.
@@ -1152,7 +1162,7 @@ class UnifiedDigestService
         // Deduplicate cross-posted items.
         $deduplicatedPosts = $this->deduplicatePosts($posts);
 
-        if ($deduplicatedPosts->isEmpty()) {
+        if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
             // Nothing to send, but still advance the tracker past these posts
             // so the next tick doesn't re-fetch and re-filter the same set.
             if (!$dryRun) {
@@ -1204,6 +1214,18 @@ class UnifiedDigestService
             }
 
             return ['status' => 'sent', 'count' => $sent];
+        }
+
+        // Put the pinned posts (paid bulk-offer clearances) at the very TOP of the daily
+        // digest, dropping any that also appear in the normal window set so they are not
+        // shown twice. Pinned posts are always shown while open, regardless of the cursor.
+        if ($pinnedCards->isNotEmpty()) {
+            $pinnedIds = $pinnedCards->pluck('message.id')->all();
+            $deduplicatedPosts = $pinnedCards->concat(
+                $deduplicatedPosts->reject(
+                    fn ($c) => in_array($c['message']->id, $pinnedIds, true)
+                )
+            )->values();
         }
 
         // Daily mode: one rolled-up digest. $completedPosts (the "came and
@@ -1350,6 +1372,56 @@ class UnifiedDigestService
         }
 
         return $query->with(['attachments', 'fromUser', 'groups'])->get();
+    }
+
+    /**
+     * Open pinned posts (paid bulk-offer clearances) on any of the recipient's approved groups,
+     * to be force-included at the TOP of their daily digest.
+     *
+     * "Open" mirrors getPostsForUser: Approved on the group, not deleted, an Offer/Wanted, and
+     * with NO outcome (Taken/Received/Withdrawn/Expired). Deliberately NOT window-limited and NOT
+     * reach-gated, so a pinned post recurs in every daily digest until it closes. Inert (returns
+     * empty) until the messages_pinned table exists, so it can never break digests before the
+     * migration has run.
+     *
+     * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
+     */
+    private function getPinnedOpenPostsForUser(User $user): Collection
+    {
+        if (!Schema::hasTable('messages_pinned')) {
+            return collect();
+        }
+
+        $groupIds = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->pluck('groupid');
+
+        if ($groupIds->isEmpty()) {
+            return collect();
+        }
+
+        return Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+            // Live posts only: no outcome (so has_outcome/has_success are constant 0 — the caller
+            // treats these as available, matching the flags getPostsForUser computes).
+            ->selectRaw('0 AS has_outcome')
+            ->selectRaw('0 AS has_success')
+            ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
+            ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->join('messages_pinned', 'messages_pinned.msgid', '=', 'messages.id')
+            ->whereIn('messages_groups.groupid', $groupIds)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_outcomes')
+                    ->whereColumn('messages_outcomes.msgid', 'messages.id');
+            })
+            ->orderBy('messages_groups.arrival', 'desc')
+            ->with(['attachments', 'fromUser', 'groups'])
+            ->get();
     }
 
     /**
