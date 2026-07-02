@@ -326,10 +326,12 @@ export async function setupRipplingExplorer({
       })
       .catch(() => {})
 
-    // The inbound catchment (green) — plain or connectivity-shaped per the toggle.
+    // The inbound catchment (green) — seeded from the whole GROUP AREA (groupid), not the
+    // centroid, so corridor reach into the group's edges shows (e.g. M62 offers into Hull's
+    // western strip). Plain or connectivity-shaped per the toggle.
     fetch(
       apiUrl(
-        `/v1/catchment?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}&minutes=${minutes}&mode=drive${friction ? '&friction=1' : ''}`
+        `/v1/catchment?groupid=${g.id}&minutes=${minutes}&mode=drive${friction ? '&friction=1' : ''}`
       )
     )
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))

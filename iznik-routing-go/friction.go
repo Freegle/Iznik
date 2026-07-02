@@ -68,6 +68,59 @@ func maxWillingness(p FrictionParams) float32 {
 	return 3 // sane bound when uncapped
 }
 
+// frictionIsochroneFromNodes is the multi-source core: it seeds Dijkstra with every node in
+// `origins` at cost 0 and expands with the same traversal-friction + willingness rules as
+// FrictionIsochrone. Used for the per-group catchment, which must be seeded from the whole
+// group boundary (not a single centroid) so corridor reach into the group's edges is captured.
+// (No single-origin physical-distance prune here — there are many sources; the cost budget
+// bounds the search.)
+func frictionIsochroneFromNodes(g *Graph, origins []NodeID, limitSeconds float32, mode Mode, p FrictionParams) IsochroneResult {
+	exploreLimit := limitSeconds * maxWillingness(p)
+	dist := make(map[NodeID]float32, 4096)
+	q := &pq{}
+	for _, o := range origins {
+		if o == noNode {
+			continue
+		}
+		if _, seen := dist[o]; !seen {
+			dist[o] = 0
+			heap.Push(q, &item{id: o, cost: 0})
+		}
+	}
+
+	for q.Len() > 0 {
+		cur := heap.Pop(q).(*item)
+		if cur.cost > dist[cur.id] {
+			continue
+		}
+		if cur.cost > exploreLimit {
+			break
+		}
+		for _, e := range g.EdgesFrom(cur.id) {
+			base := e.Seconds[mode]
+			if base < 0 {
+				continue
+			}
+			newCost := cur.cost + base*edgeFriction(g.Nodes[e.To].Conn, p)
+			if newCost > exploreLimit {
+				continue
+			}
+			if prev, seen := dist[e.To]; !seen || newCost < prev {
+				dist[e.To] = newCost
+				heap.Push(q, &item{id: e.To, cost: newCost})
+			}
+		}
+	}
+
+	reached := make(map[NodeID]float32, len(dist))
+	for id, cost := range dist {
+		if cost <= limitSeconds*willingness(g.Nodes[id].Conn, p) {
+			reached[id] = cost
+		}
+	}
+	return IsochroneResult{ReachedNodes: reached}
+}
+
 // CatchmentIsochrone is the per-group inbound catchment: the area from which posts would
 // ripple far enough to reach a group at (lat,lng). An origin O is in the catchment iff a
 // collector at the group would travel to O — i.e. cost(O→group) ≤ base × willingness(group).

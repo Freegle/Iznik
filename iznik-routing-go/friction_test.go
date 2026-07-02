@@ -116,6 +116,31 @@ func TestFrictionIsochrone_Willingness_AsymmetricUrbanRural(t *testing.T) {
 	}
 }
 
+// Multi-source seeding: a catchment seeded from the whole group boundary (not just the
+// centroid) must include areas reachable from ANY seed. A single-source isochrone from one
+// end misses the far end within a tight budget; seeding both ends covers both.
+func TestFrictionIsochroneFromNodes_MultiSourceCoversAllSeeds(t *testing.T) {
+	g := makeLineGraph(7) // NodeIDs 1..7 west→east
+	p := FrictionParams{Ref: 67} // Traverse=0, Willing=0 → plain isochrone behaviour
+	// Budget = cost to reach node 3 from node 1 (so a single source from node 1 stops at ~3).
+	budget := Isochrone(g, float64(g.Nodes[1].Lat), float64(g.Nodes[1].Lng), 1e9, Walk).ReachedNodes[3]
+	if budget <= 0 {
+		t.Fatal("degenerate line graph")
+	}
+	single := frictionIsochroneFromNodes(g, []NodeID{1}, budget, Walk, p)
+	multi := frictionIsochroneFromNodes(g, []NodeID{1, 7}, budget, Walk, p)
+
+	if _, ok := single.ReachedNodes[7]; ok {
+		t.Error("single-source from node 1 should NOT reach node 7 within the tight budget")
+	}
+	if _, ok := multi.ReachedNodes[7]; !ok {
+		t.Error("multi-source seeded at node 7 must include node 7")
+	}
+	if _, ok := multi.ReachedNodes[5]; !ok {
+		t.Error("multi-source should reach node 5 (near the node-7 seed)")
+	}
+}
+
 // Per-group catchment: the area from which posts ripple INTO a group. A rural group (whose
 // members travel far to collect) has a LARGER catchment than an urban group (whose members
 // won't). Catchment uses the group's own willingness as a uniform budget.

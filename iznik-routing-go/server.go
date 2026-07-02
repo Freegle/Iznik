@@ -161,22 +161,49 @@ func parseMode(s string) Mode {
 // the "without ripple reach" baseline the per-group tab compares against.
 func handleCatchment(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
-		if err != nil || lat == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "lat required")
-		}
-		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
-		if err != nil || lng == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "lng required")
-		}
 		minutes, _ := strconv.ParseFloat(c.Query("minutes", "30"), 64)
 		if minutes <= 0 || minutes > 120 {
 			minutes = 30
 		}
 		secs := float32(minutes * 60)
 		mode := parseMode(c.Query("mode", "drive"))
-
 		fp, useFriction := frictionParamsFromQuery(c)
+
+		// Preferred form: catchment of a whole GROUP, seeded from its boundary so corridor
+		// reach into the group's edges is captured (a centroid-only seed misses e.g. an M62
+		// offer clipping HullFreegle's western strip).
+		if gidStr := c.Query("groupid"); gidStr != "" {
+			gid, err := strconv.ParseInt(gidStr, 10, 64)
+			if err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "invalid groupid")
+			}
+			seeds, conn, ok := groupSeedNodesAndConn(g, gid, mode)
+			if !ok {
+				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
+			}
+			var iso IsochroneResult
+			if useFriction {
+				// The group's own (uniform) willingness scales the budget; per-node willingness off.
+				budget := secs * willingness(conn, fp)
+				fpu := fp
+				fpu.Willing = 0
+				iso = frictionIsochroneFromNodes(g, seeds, budget, mode, fpu)
+			} else {
+				iso = frictionIsochroneFromNodes(g, seeds, secs, mode, FrictionParams{})
+			}
+			poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
+			return c.JSON(fiber.Map{"catchment": poly, "seeds": len(seeds)})
+		}
+
+		// Point form (kept for ad-hoc use): catchment of a single location.
+		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
+		if err != nil || lat == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat or groupid required")
+		}
+		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
+		if err != nil || lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lng required")
+		}
 		var iso IsochroneResult
 		if useFriction {
 			iso = CatchmentIsochrone(g, lat, lng, secs, mode, fp)

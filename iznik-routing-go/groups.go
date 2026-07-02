@@ -314,6 +314,52 @@ func handleNearbyGroups() fiber.Handler {
 	}
 }
 
+// groupSeedNodesAndConn loads a group's boundary and returns graph nodes to seed a catchment
+// from — the nearest node to each exterior-ring vertex plus the centroid — along with a
+// representative connectivity score (the centroid's) for the group's willingness. Seeding the
+// whole boundary (not just the centroid) is what lets the catchment capture corridor reach
+// into the group's edges (e.g. an M62 offer clipping HullFreegle's western strip). ok=false
+// when the group or its polygon is missing.
+func groupSeedNodesAndConn(g *Graph, groupID int64, mode Mode) ([]NodeID, uint8, bool) {
+	db := ensureGroupsDB()
+	if db == nil {
+		return nil, 0, false
+	}
+	var wkt string
+	var clat, clng float64
+	err := db.QueryRow("SELECT ST_AsText(polyindex), ST_Y(ST_Centroid(polyindex)), "+
+		"ST_X(ST_Centroid(polyindex)) FROM `groups` WHERE id = ?", groupID).Scan(&wkt, &clat, &clng)
+	if err != nil {
+		return nil, 0, false
+	}
+	rings, err := wktPolygonToCoords(wkt) // rings of [lng, lat]
+	if err != nil || len(rings) == 0 {
+		return nil, 0, false
+	}
+
+	seen := make(map[NodeID]bool)
+	var seeds []NodeID
+	add := func(lat, lng float64) {
+		n := nearestNodeForMode(g, lat, lng, mode)
+		if n != noNode && !seen[n] {
+			seen[n] = true
+			seeds = append(seeds, n)
+		}
+	}
+	for _, ring := range rings {
+		for _, pt := range ring {
+			add(pt[1], pt[0]) // pt = [lng, lat]
+		}
+	}
+	add(clat, clng) // centroid ensures interior coverage for small budgets
+
+	var conn uint8
+	if cn := nearestNodeForMode(g, clat, clng, mode); cn != noNode {
+		conn = g.Nodes[cn].Conn
+	}
+	return seeds, conn, len(seeds) > 0
+}
+
 // groupListItem is one entry in the catchment tab's searchable group selector.
 type groupListItem struct {
 	ID   int64   `json:"id"`
