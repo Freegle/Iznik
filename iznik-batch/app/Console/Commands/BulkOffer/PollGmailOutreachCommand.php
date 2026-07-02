@@ -16,13 +16,68 @@ use Illuminate\Support\Facades\Log;
  * For each unread inbox thread that matches a Sent outreach row (by gmail_thread_id):
  *  - an unsubscribe (sent to the +unsub address, or body/subject says UNSUBSCRIBE)
  *    sets suppressed_until far in the future and marks the row Declined (PECR);
+ *  - a delivery-failure bounce (mailer-daemon/postmaster, a DSN subject, or a
+ *    multipart/report + message/delivery-status MIME part) marks the row Bounced
+ *    and suppresses it far in the future, so a dead address is never re-contacted;
+ *  - an auto-reply / out-of-office / auto-acknowledgement (RFC 3834
+ *    Auto-Submitted header, Precedence: bulk/auto_reply/junk, X-Autoreply /
+ *    X-Autorespond, or the usual OOO subject/body patterns) marks the row
+ *    AutoAck - it is NOT a genuine human reply, so it is not emitted to the FSM;
  *  - any other reply marks the row Replied and is emitted (as JSON) for the FSM;
- *  - the thread's messages are marked read so they are not re-emitted next poll.
+ *  - the thread's messages are marked read so they are not re-emitted next poll,
+ *    regardless of which of the above applies.
  *
  * Emits a JSON array of reply threads to stdout so the gmail FSM driver can act.
  */
 class PollGmailOutreachCommand extends Command
 {
+    /**
+     * Subject substrings that indicate an auto-reply / OOO / auto-acknowledgement.
+     * Mirrors App\Services\Mail\Incoming\ParsedEmail::isAutoReply() - kept as a
+     * small, deliberate duplication here rather than reworking ParsedEmail (which
+     * parses raw MIME, not the Gmail API thread/message JSON this command reads).
+     */
+    private const AUTO_REPLY_SUBJECT_PATTERNS = [
+        'Auto Response', 'Autoresponder', 'If your enquiry is urgent',
+        'Thankyou for your enquiry', 'Thanks for your email',
+        'Thanks for contacting', 'Thank you for your enquiry',
+        'Many thanks for your', 'Automatic reply', 'Automated reply',
+        'Auto-Reply', 'Out of Office', 'maternity leave', 'paternity leave',
+        'return to the office', 'due to return', 'annual leave',
+        'on holiday', 'vacation reply', 'YOUR ORDER MANAGEMENT REQUEST',
+    ];
+
+    /** Body substrings that indicate an auto-reply / OOO / auto-acknowledgement. */
+    private const AUTO_REPLY_BODY_PATTERNS = [
+        'I aim to respond within', 'Our team aims to respond',
+        'reply as soon as possible', 'with clients right now',
+        'Automated response', 'Please note his new address',
+        'THIS IS AN AUTO-RESPONSE MESSAGE', 'out of the office',
+        'on annual leave', 'Thank you so much for your email enquiry',
+        "Thanks for your email enquiry", "don't check this very often",
+        'below to complete the verification process',
+        'We respond to emails as quickly as we can',
+        'this email address is no longer in use', 'away from the office',
+        "I won't be able to check any emails until after",
+        "I'm on leave at the moment",
+        "We'll get back to you as soon as possible",
+        'currently on leave', 'To complete this verification',
+        'I am currently away from my computer, but will reply to your message as soon as I return',
+        "E-mails to personal mailboxes aren't monitored",
+        'I am currently unavailable',
+        'We appreciate your patience while we get back to you.',
+    ];
+
+    /**
+     * Subject substrings that indicate a delivery-failure bounce/DSN. Mirrors (a
+     * subset of) App\Services\Mail\Incoming\MailParserService::isBounceSubject(),
+     * per the same "small duplication over cross-service coupling" rationale.
+     */
+    private const BOUNCE_SUBJECT_PATTERNS = [
+        'Delivery Status Notification', 'Undelivered', 'Mail delivery failed',
+        'failure notice', 'Returned mail', 'Address not found',
+    ];
+
     protected $signature = 'bulkoffer:poll-outreach
                             {--msgid= : Only poll replies for this bulk offer}
                             {--query=in:inbox is:unread newer_than:60d : Gmail search for candidate threads}';
@@ -77,7 +132,8 @@ class PollGmailOutreachCommand extends Command
                 continue;
             }
 
-            // Mark every message in the thread read so it isn't re-emitted.
+            // Mark every message in the thread read so it isn't re-emitted, no
+            // matter how it classifies below.
             foreach (($thread['messages'] ?? []) as $m) {
                 if (! empty($m['id'])) {
                     try {
@@ -88,6 +144,8 @@ class PollGmailOutreachCommand extends Command
                 }
             }
 
+            $headers = $latest['headers'] ?? [];
+
             if ($this->isUnsubscribe($latest, $unsubAddress)) {
                 DB::table('messages_bulk_outreach')->where('id', $row->id)->update([
                     'status' => MessagesBulkOutreach::STATUS_DECLINED,
@@ -96,6 +154,27 @@ class PollGmailOutreachCommand extends Command
                     'updated_at' => now(),
                 ]);
                 $this->info("Outreach #{$row->id}: unsubscribe recorded, suppressed.");
+
+                continue;
+            }
+
+            if ($this->isBounce($latest, $headers)) {
+                DB::table('messages_bulk_outreach')->where('id', $row->id)->update([
+                    'status' => MessagesBulkOutreach::STATUS_BOUNCED,
+                    'suppressed_until' => now()->addYears(100)->toDateString(),
+                    'updated_at' => now(),
+                ]);
+                $this->info("Outreach #{$row->id}: delivery-failure bounce, suppressed.");
+
+                continue;
+            }
+
+            if ($this->isAutoReply($latest, $headers)) {
+                DB::table('messages_bulk_outreach')->where('id', $row->id)->update([
+                    'status' => MessagesBulkOutreach::STATUS_AUTO_ACK,
+                    'updated_at' => now(),
+                ]);
+                $this->info("Outreach #{$row->id}: auto-reply/OOO detected, not a genuine reply.");
 
                 continue;
             }
@@ -123,9 +202,10 @@ class PollGmailOutreachCommand extends Command
 
     /**
      * The most recent message in the thread that wasn't sent by us (an inbound
-     * reply), reduced to {from, subject, body, to}.
+     * reply), reduced to {from, to, subject, body} plus the handful of raw
+     * headers/MIME signals the auto-reply and bounce classifiers need.
      *
-     * @return array<string,string>|null
+     * @return array<string,mixed>|null
      */
     private function latestInbound(array $thread): ?array
     {
@@ -143,6 +223,17 @@ class PollGmailOutreachCommand extends Command
                 'to' => $headers['to'] ?? '',
                 'subject' => $headers['subject'] ?? '',
                 'body' => $this->plainBody($m['payload'] ?? []),
+                'is_delivery_report' => $this->isDeliveryReportMime($m['payload'] ?? []),
+                // Raw headers the isAutoReply()/isBounce() classifiers key off,
+                // kept alongside (not instead of) the flattened fields above.
+                'headers' => [
+                    'auto-submitted' => $headers['auto-submitted'] ?? '',
+                    'precedence' => $headers['precedence'] ?? '',
+                    'x-autoreply' => $headers['x-autoreply'] ?? '',
+                    'x-autorespond' => $headers['x-autorespond'] ?? '',
+                    'return-path' => $headers['return-path'] ?? '',
+                    'list-id' => $headers['list-id'] ?? '',
+                ],
             ];
         }
 
@@ -183,6 +274,27 @@ class PollGmailOutreachCommand extends Command
         return '';
     }
 
+    /**
+     * Does this (possibly multipart) Gmail payload carry a delivery-status
+     * report part (multipart/report + message/delivery-status), the MIME shape
+     * of an RFC 3464 bounce/DSN? Mirrors the MIME check in
+     * App\Services\Mail\Incoming\MailParserService::extractBounceInfo().
+     */
+    private function isDeliveryReportMime(array $payload): bool
+    {
+        $mime = strtolower((string) ($payload['mimeType'] ?? ''));
+        if ($mime === 'multipart/report' || $mime === 'message/delivery-status') {
+            return true;
+        }
+        foreach (($payload['parts'] ?? []) as $part) {
+            if ($this->isDeliveryReportMime($part)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function decode(string $data): string
     {
         return (string) base64_decode(strtr($data, '-_', '+/'));
@@ -197,5 +309,69 @@ class PollGmailOutreachCommand extends Command
         $haystack = strtolower(($latest['subject'] ?? '').' '.($latest['body'] ?? ''));
 
         return str_contains($haystack, 'unsubscribe') || preg_match('/\bstop\b/', $haystack) === 1;
+    }
+
+    /**
+     * Is this an auto-reply / out-of-office / auto-acknowledgement rather than a
+     * genuine human reply? Mirrors
+     * App\Services\Mail\Incoming\ParsedEmail::isAutoReply(): the RFC 3834
+     * Auto-Submitted header (present and not "no"), common bulk/auto Precedence
+     * values, the non-standard X-Autoreply/X-Autorespond headers some MTAs send,
+     * and the legacy subject/body substring patterns.
+     */
+    private function isAutoReply(array $latest, array $headers): bool
+    {
+        $autoSubmitted = strtolower(trim($headers['auto-submitted'] ?? ''));
+        if ($autoSubmitted !== '' && $autoSubmitted !== 'no') {
+            return true;
+        }
+
+        $precedence = strtolower(trim($headers['precedence'] ?? ''));
+        if (in_array($precedence, ['auto_reply', 'bulk', 'junk'], true)) {
+            return true;
+        }
+
+        if (trim($headers['x-autoreply'] ?? '') !== '' || trim($headers['x-autorespond'] ?? '') !== '') {
+            return true;
+        }
+
+        $subject = $latest['subject'] ?? '';
+        foreach (self::AUTO_REPLY_SUBJECT_PATTERNS as $pattern) {
+            if (stripos($subject, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        $body = $latest['body'] ?? '';
+        foreach (self::AUTO_REPLY_BODY_PATTERNS as $pattern) {
+            if (stripos($body, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Is this a delivery-failure bounce/DSN rather than a genuine human reply?
+     * Mirrors App\Services\Mail\Incoming\MailParserService::extractBounceInfo():
+     * a mailer-daemon/postmaster sender, a DSN-style subject, or a
+     * multipart/report + message/delivery-status MIME part.
+     */
+    private function isBounce(array $latest, array $headers): bool
+    {
+        $from = strtolower($latest['from'] ?? '');
+        if (str_contains($from, 'mailer-daemon') || str_contains($from, 'postmaster')) {
+            return true;
+        }
+
+        $subject = $latest['subject'] ?? '';
+        foreach (self::BOUNCE_SUBJECT_PATTERNS as $pattern) {
+            if (stripos($subject, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return ! empty($latest['is_delivery_report']);
     }
 }
