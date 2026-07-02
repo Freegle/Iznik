@@ -18,13 +18,16 @@
           style="margin-bottom: 8px"
         >
           <button class="rpl-mode-btn rpl-active" data-view="outbound">
-            <span class="rpl-icon">📡</span>Who could see my post
+            <span class="rpl-icon">📡</span
+            ><span class="rpl-mode-label">Who could see my post</span>
           </button>
           <button class="rpl-mode-btn" data-view="inbound">
-            <span class="rpl-icon">📥</span>Digest preview
+            <span class="rpl-icon">📥</span
+            ><span class="rpl-mode-label">Digest preview</span>
           </button>
           <button class="rpl-mode-btn" data-view="catchment">
-            <span class="rpl-icon">🎯</span>Group catchment
+            <span class="rpl-icon">🎯</span
+            ><span class="rpl-mode-label">Group catchment</span>
           </button>
         </div>
 

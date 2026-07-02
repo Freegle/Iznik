@@ -138,7 +138,9 @@ func handleCatchment(g *Graph) fiber.Handler {
 			}
 			iso := multiSourceIsochrone(g, seeds, secs, mode)
 			poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
-			return c.JSON(fiber.Map{"catchment": poly, "seeds": len(seeds)})
+			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
+			bands := catchmentBands(g, iso, secs, mode, 6)
+			return c.JSON(fiber.Map{"catchment": poly, "bands": bands, "seeds": len(seeds)})
 		}
 
 		// Point form (ad-hoc): catchment of a single location.
@@ -153,6 +155,48 @@ func handleCatchment(g *Graph) fiber.Handler {
 		iso := Isochrone(g, lat, lng, secs, mode)
 		poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
 		return c.JSON(fiber.Map{"catchment": poly})
+	}
+}
+
+// handleGroupProximity handles GET /v1/group-proximity?groupid=&lat=&lng=&mode=&max_minutes=
+// For an offer at (lat,lng) rippling into groupid, returns the nearest in-group point P and the
+// in-group point furthest FROM P (Q), each with road drive-time, plus quicker = (offer→P < P→Q).
+// Backs the moderator "this post is quicker to get to for Freeglers in {P} than {P} is to {Q}"
+// line, which is shown only when quicker is true.
+func handleGroupProximity(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
+		if err != nil || lat == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat required")
+		}
+		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
+		if err != nil || lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lng required")
+		}
+		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "groupid required")
+		}
+		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "120"), 64)
+		if minutes <= 0 || minutes > 240 {
+			minutes = 120
+		}
+		mode := parseMode(c.Query("mode", "drive"))
+
+		seeds, okS := groupSeedNodes(g, gid, mode)
+		if !okS {
+			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
+		}
+		closest, furthest, ok := groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+		if !ok {
+			return c.JSON(fiber.Map{"reachable": false})
+		}
+		return c.JSON(fiber.Map{
+			"reachable": true,
+			"closest":   closest,
+			"furthest":  furthest,
+			"quicker":   closest.DriveMin < furthest.DriveMin,
+		})
 	}
 }
 
@@ -316,6 +360,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
 	v1.Get("/catchment", handleCatchment(g))
+	v1.Get("/group-proximity", handleGroupProximity(g))
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
 	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
 	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))

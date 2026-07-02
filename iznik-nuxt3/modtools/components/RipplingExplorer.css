@@ -218,6 +218,11 @@
 .rpl-icon {
   font-size: 16px;
 }
+.rpl-mode-label {
+  width: 100%;
+  overflow-wrap: anywhere; /* wrap the label within the narrow tab instead of clipping */
+  text-align: center;
+}
 .rpl-mode-btn:hover {
   border-color: #61ae24;
   color: #61ae24;

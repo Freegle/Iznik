@@ -329,23 +329,57 @@ export async function setupRipplingExplorer({
     )
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
       .then((d) => {
-        const ring = d && d.catchment && d.catchment.geometry && d.catchment.geometry.coordinates[0]
-        if (!ring) {
+        const bands = (d && d.bands) || []
+        const fullRing =
+          d && d.catchment && d.catchment.geometry && d.catchment.geometry.coordinates[0]
+        if (!bands.length && !fullRing) {
           showStatus('No catchment', false)
           return
         }
         if (catchmentAreaLayer) map.removeLayer(catchmentAreaLayer)
-        catchmentAreaLayer = L.polygon(geoToLeaflet(ring), {
-          color: '#0a8f3c',
-          weight: 2.5,
-          fillColor: '#0a8f3c',
-          fillOpacity: 0.12,
-        })
-          .addTo(map)
-          .bindTooltip('Catchment — posts could ripple IN from here')
+        const grp = L.layerGroup()
+
+        // Heatmap: colour the catchment by how RAPIDLY a post from each area would ripple in
+        // (drive-time to the group). Draw slowest→fastest so the fastest (hottest) band paints
+        // on top; each point then shows the smallest band covering it = its quickest ripple-in.
+        const usable = bands.filter(
+          (b) => b.polygon && b.polygon.geometry && b.polygon.geometry.coordinates[0]
+        )
+        if (usable.length) {
+          const n = usable.length
+          usable
+            .map((b, i) => ({ b, i }))
+            .sort((a, z) => z.b.minutes - a.b.minutes)
+            .forEach(({ b, i }) => {
+              const hue = (120 * i) / Math.max(1, n - 1) // fastest→red(0°), slowest→green(120°)
+              L.polygon(geoToLeaflet(b.polygon.geometry.coordinates[0]), {
+                stroke: false,
+                fillColor: `hsl(${hue.toFixed(0)},75%,48%)`,
+                fillOpacity: 0.5,
+              })
+                .bindTooltip('Ripples in within ~' + Math.round(b.minutes) + ' min')
+                .addTo(grp)
+            })
+        } else if (fullRing) {
+          L.polygon(geoToLeaflet(fullRing), {
+            color: '#0a8f3c',
+            weight: 2,
+            fillColor: '#0a8f3c',
+            fillOpacity: 0.12,
+          }).addTo(grp)
+        }
+
+        catchmentAreaLayer = grp.addTo(map)
         if (catchmentGroupLayer) catchmentGroupLayer.bringToFront()
-        const b = catchmentAreaLayer.getBounds()
-        if (b.isValid()) map.fitBounds(b.pad(0.1), { maxZoom: 12, animate: false })
+
+        const outerRing = usable.length
+          ? usable.reduce((a, z) => (z.minutes > a.minutes ? z : a)).polygon.geometry
+              .coordinates[0]
+          : fullRing
+        if (outerRing) {
+          const bounds = L.polygon(geoToLeaflet(outerRing)).getBounds()
+          if (bounds.isValid()) map.fitBounds(bounds.pad(0.1), { maxZoom: 12, animate: false })
+        }
         showStatus('Done', false)
       })
       .catch((e) => showStatus('Error: ' + e.message, false))
