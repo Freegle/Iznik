@@ -471,7 +471,30 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Both APPROVED and PENDING messages are visible to all users. This is not a privacy
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
-				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, ripple_proximity_p, ripple_proximity_q FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+
+				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
+				// table (off the hot messages_groups path). Best-effort: only for mods, and a
+				// missing table / query error just means no note — so apiv2 can ship before the
+				// table exists without affecting message loading.
+				if isMod && len(messageGroups) > 0 {
+					var notes []struct {
+						Groupid uint64
+						P       string
+						Q       string
+					}
+					if err := db.Raw("SELECT groupid, p, q FROM rippling_proximity WHERE msgid = ?", id).Scan(&notes).Error; err == nil {
+						for _, nt := range notes {
+							for i := range messageGroups {
+								if messageGroups[i].Groupid == nt.Groupid {
+									p, q := nt.P, nt.Q
+									messageGroups[i].RippleProximityP = &p
+									messageGroups[i].RippleProximityQ = &q
+								}
+							}
+						}
+					}
+				}
 			}()
 
 			var messageAttachments []MessageAttachment
@@ -625,11 +648,6 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Fromaddr = nil
 					message.Fromip = nil
 					message.Fromcountry = nil
-					// The ripple "quicker to get to" P/Q note is a moderator-only aid.
-					for i := range message.MessageGroups {
-						message.MessageGroups[i].RippleProximityP = nil
-						message.MessageGroups[i].RippleProximityQ = nil
-					}
 				}
 
 				// Convert 2-letter country code to full name for frontend display.

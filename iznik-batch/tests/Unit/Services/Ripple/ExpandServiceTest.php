@@ -638,8 +638,9 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Task #23: quicker=true from /v1/group-proximity, plus resolvable P/Q postcodes,
-     * stores the "quicker to get to" note on the newly rippled-in messages_groups row.
+     * Task #23: after a post rippled in, ripple:proximity-notes (out of the hot expander) resolves
+     * quicker=true from /v1/group-proximity + the P/Q postcodes and stores the note in
+     * rippling_proximity. The expander itself no longer computes or stores the note.
      */
     public function test_ripple_proximity_note_set_when_quicker(): void
     {
@@ -668,18 +669,22 @@ class ExpandServiceTest extends TestCase
             );
 
             $this->service()->process(false, 500);
-
+            // The note is computed out-of-band, not by the expander.
             $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
             $this->assertNotNull($b, 'post rippled into group B');
-            $this->assertSame('AB10 1XG (Gilcomston)', $b->ripple_proximity_p);
-            $this->assertSame('AB11 5QN (Aberdeen)', $b->ripple_proximity_q);
+            $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+            $note = DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+            $this->assertNotNull($note, 'proximity note written for the rippled-in copy');
+            $this->assertSame('AB10 1XG (Gilcomston)', $note->p);
+            $this->assertSame('AB11 5QN (Aberdeen)', $note->q);
         } finally {
             $this->removeSpatial('postcodes', [$pId, $qId]);
             DB::table('locations')->whereIn('id', [$pId, $qId, $pAreaId, $qAreaId])->delete();
         }
     }
 
-    /** quicker=false from /v1/group-proximity → the note columns stay NULL. */
+    /** quicker=false from /v1/group-proximity → no rippling_proximity row is written. */
     public function test_ripple_proximity_note_omitted_when_not_quicker(): void
     {
         $this->fakeRouting(1);
@@ -692,16 +697,21 @@ class ExpandServiceTest extends TestCase
         );
 
         $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post still rippled into group B'
+        );
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
 
-        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
-        $this->assertNotNull($b, 'post still rippled into group B');
-        $this->assertNull($b->ripple_proximity_p, 'not quicker - no note');
-        $this->assertNull($b->ripple_proximity_q, 'not quicker - no note');
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'not quicker - no note'
+        );
     }
 
     /**
-     * reachable=false from /v1/group-proximity (group outside the routing horizon) →
-     * the note columns stay NULL and the run still completes normally.
+     * reachable=false from /v1/group-proximity (group outside the routing horizon) → no note, and
+     * both the expander run AND the notes command complete normally.
      */
     public function test_ripple_proximity_note_omitted_when_group_proximity_unreachable(): void
     {
@@ -715,20 +725,20 @@ class ExpandServiceTest extends TestCase
         );
 
         $stats = $this->service()->process(false, 500);
-
-        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
-        $this->assertNotNull($b, 'post still rippled into group B');
-        $this->assertNull($b->ripple_proximity_p);
-        $this->assertNull($b->ripple_proximity_q);
         $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'ripple-in still counted');
-        $this->assertSame(0, $stats['errors'], 'unreachable proximity is not an error');
+        $this->assertSame(0, $stats['errors'], 'expander no longer calls proximity, so no error either way');
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first()
+        );
     }
 
     /**
-     * An HTTP 500 from /v1/group-proximity must never break the expander: the post
-     * still ripples into the group, and no exception propagates.
+     * An HTTP 500 from /v1/group-proximity must never break ripple:proximity-notes: it writes no
+     * note for that row and exits cleanly (best-effort, so a slow/erroring routing server is safe).
      */
-    public function test_ripple_proximity_note_never_breaks_the_expander_on_http_failure(): void
+    public function test_ripple_proximity_note_never_breaks_on_http_failure(): void
     {
         $this->fakeRouting(1);
         $this->fakeGroupProximity(true, status: 500);
@@ -739,15 +749,12 @@ class ExpandServiceTest extends TestCase
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
         );
 
-        $stats = $this->service()->process(false, 500);
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0); // must not throw on the 500
 
-        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
-        $this->assertNotNull($b, 'post still rippled into group B despite the routing 500');
-        $this->assertSame('Approved', $b->collection);
-        $this->assertNull($b->ripple_proximity_p);
-        $this->assertNull($b->ripple_proximity_q);
-        $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
-        $this->assertSame(0, $stats['errors'], 'a routing 500 on the proximity note must not surface as an expander error');
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first()
+        );
     }
 
     /**

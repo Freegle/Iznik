@@ -2,7 +2,6 @@
 
 namespace App\Services\Ripple;
 
-use App\Models\Location;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -1134,11 +1133,6 @@ class ExpandService
                 [$reachWkt, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
-            // Origin (degrees) for the P/Q "quicker to get to" moderator note — the same row
-            // written by initialiseNew/advanceDue just before they called us. A single indexed
-            // PK lookup; negligible next to the routing call it feeds.
-            $origin = DB::table('rippling_reach')->where('msgid', $msgid)->select('lat', 'lng')->first();
-
             $n = 0;
             foreach ($targetGroups as $g) {
                 $inserted = DB::affectingStatement(
@@ -1148,10 +1142,6 @@ class ExpandService
                     [$msgid, $g->id, $msg->type]
                 );
                 $n += $inserted;
-
-                if ($inserted > 0 && $origin) {
-                    $this->recordRippleProximity($msgid, (int) $g->id, (float) $origin->lat, (float) $origin->lng);
-                }
             }
             if ($n > 0) {
                 $stats['rippled_in'] += $n;
@@ -1184,28 +1174,6 @@ class ExpandService
      * quicker is false — a missing note simply means the notice line is not shown. Never
      * throws: a failure here must never break the expander or the caller's insert loop.
      */
-    private function recordRippleProximity(int $msgid, int $groupid, float $lat, float $lng): void
-    {
-        try {
-            $prox = $this->reach->groupProximity($lat, $lng, $groupid);
-            if ($prox === null || !($prox['quicker'] ?? false)) {
-                return; // not quicker, or routing unreachable — no note, matches "omit entirely"
-            }
-
-            $p = Location::describeNearest((float) $prox['closest']['lat'], (float) $prox['closest']['lng']);
-            $q = Location::describeNearest((float) $prox['furthest']['lat'], (float) $prox['furthest']['lng']);
-            if ($p === null || $q === null) {
-                return;
-            }
-
-            DB::table('messages_groups')
-                ->where('msgid', $msgid)->where('groupid', $groupid)
-                ->update(['ripple_proximity_p' => $p, 'ripple_proximity_q' => $q]);
-        } catch (\Throwable $e) {
-            Log::warning("ripple: proximity note failed for msg {$msgid} group {$groupid}: {$e->getMessage()}");
-        }
-    }
-
     /**
      * Add the poster as a member of every group their post has rippled into (role Member,
      * collection Approved), marked rippled=1. Email settings come from the poster's home/origin

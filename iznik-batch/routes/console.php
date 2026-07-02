@@ -138,6 +138,15 @@ Schedule::command('ripple:release-replies')
     ->sendOutputTo(cronLog('ripple:release-replies'))
     ->runInBackground();
 
+// Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot
+// ripple:expand cron so its routing/KNN calls can't slow rippling (freegle.ripple.proximity_notes
+// gates it; withoutOverlapping keeps a slow run from stacking).
+Schedule::command('ripple:proximity-notes')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('ripple:proximity-notes'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.

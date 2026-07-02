@@ -151,10 +151,11 @@ class ReachService
      */
     public function groupProximity(float $lat, float $lng, int $groupid): ?array
     {
-        // Best-effort moderator note computed inline in the serial ripple:expand cron loop, so use a
-        // short dedicated timeout (not the 60s isochrone budget) — a slow/hung routing server must not
-        // stall the per-minute pass. On timeout we just skip the note (returns null).
-        $timeout = (int) config('freegle.ripple.proximity_timeout', 5);
+        // Best-effort moderator note, computed OUT of the hot ripple:expand cron (by the
+        // ripple:proximity-notes command), so a slacker timeout is fine here. Slow or failed calls
+        // are surfaced to Sentry for visibility rather than silently swallowed. Never throws.
+        $timeout = (int) config('freegle.ripple.proximity_timeout', 15);
+        $started = microtime(true);
         try {
             $response = Http::timeout($timeout)
                 ->get("{$this->url}/v1/group-proximity", [
@@ -164,14 +165,16 @@ class ReachService
                     'mode' => $this->mode,
                 ]);
         } catch (\Throwable $e) {
-            Log::warning("ripple: group-proximity fetch failed: {$e->getMessage()}", ['groupid' => $groupid, 'lat' => $lat, 'lng' => $lng]);
+            $this->reportProximityTiming($groupid, (microtime(true) - $started) * 1000, $e->getMessage());
             return null;
         }
 
+        $elapsedMs = (microtime(true) - $started) * 1000;
         if (!$response->successful()) {
-            Log::warning("ripple: group-proximity HTTP {$response->status()}", ['groupid' => $groupid]);
+            $this->reportProximityTiming($groupid, $elapsedMs, "HTTP {$response->status()}");
             return null;
         }
+        $this->reportProximityTiming($groupid, $elapsedMs, null);
 
         $body = $response->json() ?? [];
         if (!($body['reachable'] ?? false)) {
@@ -179,6 +182,26 @@ class ReachService
         }
 
         return $body;
+    }
+
+    /**
+     * Report a slow or failed group-proximity call to Sentry (and the log) for monitoring. The note
+     * is best-effort so we never fail on it, but a routing server that is slow/erroring for proximity
+     * is worth surfacing. Fast, successful calls are silent.
+     */
+    private function reportProximityTiming(int $groupid, float $ms, ?string $error): void
+    {
+        $slowMs = (float) config('freegle.ripple.proximity_slow_ms', 3000);
+        if ($error === null && $ms < $slowMs) {
+            return;
+        }
+        $msg = $error !== null
+            ? 'ripple: group-proximity failed after ' . round($ms) . 'ms (groupid=' . $groupid . '): ' . $error
+            : 'ripple: slow group-proximity ' . round($ms) . 'ms (groupid=' . $groupid . ')';
+        Log::warning($msg);
+        if (function_exists('\Sentry\captureMessage')) {
+            \Sentry\captureMessage($msg);
+        }
     }
 
     /** Query parameters for a /v1/ripple-schedule request at the given origin. */
