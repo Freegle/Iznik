@@ -537,12 +537,14 @@ export const useMessageStore = defineStore({
       const nearbyStore = useNearbyStore()
       nearbyStore.markSeen(ids)
 
-      // Also update local cache to prevent watcher loop in MessageList.vue
-      const idSet = new Set(ids)
-      Object.keys(this.list).forEach((key) => {
-        const id = parseInt(key)
-        if (idSet.has(id) && this.list[id]) {
-          this.list[id].unseen = false
+      // Also update local cache to prevent watcher loop in MessageList.vue. Index the
+      // ids directly rather than scanning the whole message cache, which grows for the
+      // lifetime of the session (a long infinite-scroll made this an O(cache) scan per
+      // mark-seen, i.e. trending to O(total^2) over a session).
+      ids.forEach((id) => {
+        const cached = this.list[id]
+        if (cached) {
+          cached.unseen = false
         }
       })
 
