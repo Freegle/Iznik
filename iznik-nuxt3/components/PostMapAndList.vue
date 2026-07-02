@@ -130,6 +130,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
 import { filterMessagesByDistance } from '~/composables/useDistance'
+import { sortBrowseMessages } from '~/composables/useMessageSort'
 import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import { useNearbyStore } from '~/stores/nearby'
 
@@ -395,56 +396,12 @@ const filteredMessages = computed(() => {
   return ret
 })
 
-// Helper function to sort messages
+// Helper function to sort messages. Delegates to the pure sortBrowseMessages, which
+// computes each message's distance and arrival sort key ONCE (a Schwartzian transform)
+// instead of re-deriving getDistance (haversine/trig) and Date parsing on every
+// comparison - a big saving on large feeds. Ordering is unchanged.
 function sortMessages(messages) {
-  // Rippling-out (#1): the "Nearby" sort orders nearest-first from the viewer's
-  // location. Falls back to recency if we don't have a centre (no known location).
-  const nearbyRef =
-    props.selectedSort === 'Nearby' &&
-    centre.value?.lat != null &&
-    centre.value?.lng != null
-      ? [centre.value.lat, centre.value.lng]
-      : null
-
-  return messages.slice().sort((a, b) => {
-    if (props.selectedSort === 'Unseen') {
-      // Unseen messages first, then by descending date/time. But we don't want to treat successful posts as
-      // unseen otherwise they bob up to the top.
-      const aunseen = a.unseen && !a.successful
-      const bunseen = b.unseen && !b.successful
-
-      if (aunseen && !bunseen) {
-        return -1
-      } else if (!aunseen && bunseen) {
-        return 1
-      } else {
-        // Within each bucket (unseen, then seen), order by the server's rippling
-        // relevance score rather than raw recency, so the most relevant posts (a mix
-        // of closeness, freshness and quietness) come first rather than just the
-        // newest. Missing score (e.g. an API not yet returning it) treats as 0, so
-        // everything still sorts stably rather than breaking.
-        return (b.score ?? 0) - (a.score ?? 0)
-      }
-    } else if (nearbyRef) {
-      // Nearby: nearest-first, then recency as a tiebreak. Posts with no
-      // coordinates sort last.
-      const da =
-        a.lat != null && a.lng != null
-          ? getDistance(nearbyRef, [a.lat, a.lng])
-          : Infinity
-      const db =
-        b.lat != null && b.lng != null
-          ? getDistance(nearbyRef, [b.lat, b.lng])
-          : Infinity
-      if (da !== db) {
-        return da - db
-      }
-      return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
-    } else {
-      // Descending date/time (Newest posted; also Nearby with no known location).
-      return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
-    }
-  })
+  return sortBrowseMessages(messages, props.selectedSort, centre.value)
 }
 
 const sortedMessagesOnMap = computed(() => {

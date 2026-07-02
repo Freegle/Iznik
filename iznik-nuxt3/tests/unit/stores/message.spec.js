@@ -9,8 +9,10 @@ const mockSave = vi.fn()
 const mockFetch = vi.fn()
 const mockSearch = vi.fn()
 const mockFetchMessages = vi.fn()
-const mockFetchMT = vi.fn()
 const mockView = vi.fn()
+const mockMarkSeen = vi.fn()
+const mockCount = vi.fn()
+const mockNearbyMarkSeen = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -21,6 +23,8 @@ vi.mock('~/api', () => ({
       search: mockSearch,
       fetchMessages: mockFetchMessages,
       view: mockView,
+      markSeen: mockMarkSeen,
+      count: mockCount,
     },
   }),
 }))
@@ -38,7 +42,7 @@ vi.mock('~/stores/user', () => ({
 }))
 
 vi.mock('~/stores/nearby', () => ({
-  useNearbyStore: () => ({}),
+  useNearbyStore: () => ({ markSeen: mockNearbyMarkSeen }),
 }))
 
 const mockMiscStore = { modtools: false }
@@ -291,10 +295,7 @@ describe('message store - searchMT()', () => {
 
   it('handles fetchMT failure for individual results gracefully', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockSearch.mockResolvedValue([
-      { id: 201 },
-      { id: 202 },
-    ])
+    mockSearch.mockResolvedValue([{ id: 201 }, { id: 202 }])
 
     const store = useMessageStore()
     store.fetchMT = vi.fn().mockImplementation(({ id }) => {
@@ -447,5 +448,43 @@ describe('message store - fetchMessagesMT() pagination context', () => {
     })
 
     expect(mockFetchMessages.mock.calls[0][0].context).toBeNull()
+  })
+})
+
+describe('message store - markSeen()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockCount.mockResolvedValue({ count: 0 })
+  })
+
+  it('marks only the given ids as seen in the local cache', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.list = {
+      1: { id: 1, unseen: true },
+      2: { id: 2, unseen: true },
+      3: { id: 3, unseen: true },
+    }
+
+    await store.markSeen([1, 3])
+
+    expect(mockMarkSeen).toHaveBeenCalledWith([1, 3])
+    expect(mockNearbyMarkSeen).toHaveBeenCalledWith([1, 3])
+    expect(store.list[1].unseen).toBe(false)
+    expect(store.list[2].unseen).toBe(true) // untouched
+    expect(store.list[3].unseen).toBe(false)
+  })
+
+  it('ignores ids that are not in the cache', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.list = { 1: { id: 1, unseen: true } }
+
+    await store.markSeen([1, 999])
+
+    expect(store.list[1].unseen).toBe(false)
+    expect(store.list[999]).toBeUndefined()
   })
 })

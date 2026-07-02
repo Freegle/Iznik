@@ -152,6 +152,10 @@ import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
 import { useScrollDepth } from '~/composables/useScrollDepth'
+import {
+  deduplicateMessages,
+  findDuplicates,
+} from '~/composables/useMessageDedup'
 
 const OurMessage = defineAsyncComponent(() =>
   import('~/components/OurMessage.vue')
@@ -450,78 +454,19 @@ function isOnMyGroup(message) {
   return message.groups.some((g) => myGroupIdSet.value.has(parseInt(g.groupid)))
 }
 
-const deDuplicatedMessages = computed(() => {
-  let ret = []
-  const dups = []
-  const ids = {}
-  const seen = new Set()
-
-  filteredMessagesToShow.value
-    .filter((m) => !failedIds.value.has(m.id))
-    .forEach((m) => {
-      if (seen.has(m.id)) {
-        return
-      }
-
-      const message = filteredMessagesInStore.value[m.id]
-
-      if (!message) {
-        seen.add(m.id)
-        ret.push(m)
-      } else if (m.id in ids) {
-        // Already got this id
-      } else if (m.id !== props.exclude) {
-        ids[m.id] = true
-        // Strip trailing (location) so that "bike (Bethnal Green)" and "bike (Bethel)"
-        // from the same poster collapse to one entry (Discourse 9733/7).
-        const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
-        let key = message.fromuser + '|' + stripLocation(message.subject)
-        const p = message.subject.indexOf(':')
-
-        if (p !== -1) {
-          key =
-            message.fromuser +
-            '|' +
-            message.type +
-            stripLocation(message.subject.substring(p))
-        }
-
-        const already = key in dups
-
-        if (m.id === props.firstSeenMessage) {
-          if (already) {
-            ret = ret.filter((m) => m.id !== dups[key])
-          }
-          ret.push(m)
-          dups[key] = m.id
-        } else if (!already) {
-          ret.push(m)
-          dups[key] = m.id
-        } else {
-          // Duplicate of one we're already showing (same poster + item, e.g. a
-          // crosspost or a re-post on another group). Prefer the copy on a group
-          // the user is already a member of: otherwise we'd dedup to a non-member
-          // group and replying to it would silently sign them up to that group
-          // (Discourse 9733 / 9729). firstSeenMessage always wins and is never
-          // replaced here.
-          const keptId = dups[key]
-          if (
-            keptId !== props.firstSeenMessage &&
-            isOnMyGroup(message) &&
-            !isOnMyGroup(filteredMessagesInStore.value[keptId])
-          ) {
-            const idx = ret.findIndex((x) => x.id === keptId)
-            if (idx !== -1) {
-              ret[idx] = m
-            }
-            dups[key] = m.id
-          }
-        }
-      }
-    })
-
-  return ret
-})
+// Collapse a poster's crosspost/repost of the same item to one entry, preferring the copy
+// on a group the viewer belongs to (Discourse 9733 / 9729); firstSeenMessage always wins.
+// Delegates to the pure deduplicateMessages, whose member-group swap is O(1) (id->index
+// Map) rather than the previous ret.findIndex() scan.
+const deDuplicatedMessages = computed(() =>
+  deduplicateMessages(filteredMessagesToShow.value, {
+    getMessage: (id) => filteredMessagesInStore.value[id],
+    exclude: props.exclude,
+    firstSeenMessage: props.firstSeenMessage,
+    isOnMyGroup,
+    failedIds: failedIds.value,
+  })
+)
 
 const unseenMessages = computed(() => {
   return deDuplicatedMessages.value.filter((m) => m.unseen)
@@ -531,17 +476,11 @@ const seenMessages = computed(() => {
   return deDuplicatedMessages.value.filter((m) => !m.unseen)
 })
 
-const duplicates = computed(() => {
-  const ret = []
-
-  filteredMessagesToShow.value.forEach((m) => {
-    if (!deDuplicatedMessages.value.find((d) => d.id === m.id)) {
-      ret.push(m)
-    }
-  })
-
-  return ret
-})
+const duplicates = computed(() =>
+  // The items dropped by deduplication. O(n) via a Set of kept ids rather than the
+  // previous O(n^2) find()-per-item scan over deDuplicatedMessages.
+  findDuplicates(filteredMessagesToShow.value, deDuplicatedMessages.value)
+)
 
 const noneFound = computed(() => {
   return !props.loading && !deDuplicatedMessages.value?.length
