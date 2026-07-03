@@ -3,6 +3,7 @@ import { useReplyStore } from '~/stores/reply'
 import { useMessageStore } from '~/stores/message'
 import { useMe } from '~/composables/useMe'
 import { action } from '~/composables/useClientLog'
+import { trackConversion } from '~/composables/useTrackConversion'
 
 export function useReplyToPost() {
   const replyStore = useReplyStore()
@@ -87,6 +88,11 @@ export function useReplyToPost() {
       replyStore.replyingAt = Date.now()
 
       action('reply_to_post_success', {
+        message_id: replySent,
+      })
+
+      // Success-point conversion event for Google Ads (taker engagement).
+      trackConversion('Reply Sent', {
         message_id: replySent,
       })
 
