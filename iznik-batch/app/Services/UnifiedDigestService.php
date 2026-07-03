@@ -34,6 +34,9 @@ class UnifiedDigestService
     /** Per-run cache of post reach radius in metres, keyed by msgid. */
     private array $reachRadiusCache = [];
 
+    /** Memoized once per run: whether the optional messages_pinned table exists. */
+    private ?bool $messagesPinnedTableExists = null;
+
     /**
      * Digest mode constants.
      */
@@ -602,7 +605,7 @@ class UnifiedDigestService
         }
 
         try {
-            $msg = Message::with(['attachments', 'fromUser', 'groups'])->find($msgid);
+            $msg = Message::with($this->digestPostEagerLoads())->find($msgid);
             if ($msg === null) {
                 return 0;
             }
@@ -794,7 +797,7 @@ class UnifiedDigestService
             // Bound the per-tick scan; the cursor advances to the last processed message so
             // the next tick continues. Prevents an unbounded window on a busy group.
             ->limit(500)
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with($this->digestPostEagerLoads())
             ->get();
     }
 
@@ -965,7 +968,14 @@ class UnifiedDigestService
         // An explicit --user bypasses this. Immediate mode shards by group
         // inside sendImmediateDigests instead, so don't double-shard here.
         if ($mode === self::MODE_DAILY && !$userId && $shards > 1) {
-            $query->whereRaw('users.id % ? = ?', [$shards, $shard]);
+            // Hash the id, don't MOD it directly. Under Galera/Percona the auto-increment
+            // stride equals the cluster size (auto_increment_increment, 3 on a 3-node
+            // cluster) and each node has a different offset, so users.id is NOT contiguous.
+            // MOD(users.id, shards) then skews hard whenever shards shares a factor with the
+            // cluster size (e.g. 3/6/9 → almost everyone lands on one shard). CRC32 gives a
+            // uniform spread for ANY shard count and is immune to the stride / a cluster-size
+            // change. Disjoint partitions still hold (each id maps to exactly one shard).
+            $query->whereRaw('CRC32(users.id) % ? = ?', [$shards, $shard]);
         }
 
         // V1 parity (iznik-server/include/mail/Digest.php:418): per-group
@@ -1324,6 +1334,28 @@ class UnifiedDigestService
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @return Collection
      */
+    /**
+     * Column-constrained eager-load spec for digest posts, shared by every digest
+     * query so they load the same lean set.
+     *
+     * - groups: only the display-name columns. The default (groups.*) pulls each
+     *   group's boundary polygons (poly/polyofficial/polyindex) plus settings/
+     *   welcomemail/description — none of which a digest renders — and that was
+     *   ~27% of per-user DB time. The digest only needs id + nameshort/namefull
+     *   (namedisplay derives from those).
+     * - attachments: only the primary-photo pointer columns. The digest shows one
+     *   photo per post (getPrimaryAttachment), so externalmods/data are dead weight.
+     *   msgid is required for the hasMany to match rows to their message.
+     */
+    private function digestPostEagerLoads(): array
+    {
+        return [
+            'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived'),
+            'fromUser',
+            'groups' => fn ($q) => $q->select('groups.id', 'groups.nameshort', 'groups.namefull'),
+        ];
+    }
+
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
@@ -1392,7 +1424,7 @@ class UnifiedDigestService
         // runs (updateDigestTracker advances the cursor past exactly what is returned here)
         // instead of loading days of posts at once and exhausting memory. Normal daily volume
         // is well under the cap, so steady-state digests are unchanged.
-        return $query->with(['attachments', 'fromUser', 'groups'])->limit(self::DIGEST_LOAD_CAP)->get();
+        return $query->with($this->digestPostEagerLoads())->limit(self::DIGEST_LOAD_CAP)->get();
     }
 
     /**
@@ -1409,7 +1441,10 @@ class UnifiedDigestService
      */
     private function getPinnedOpenPostsForUser(User $user): Collection
     {
-        if (!Schema::hasTable('messages_pinned')) {
+        if ($this->messagesPinnedTableExists === null) {
+            $this->messagesPinnedTableExists = Schema::hasTable('messages_pinned');
+        }
+        if (!$this->messagesPinnedTableExists) {
             return collect();
         }
 
@@ -1441,7 +1476,7 @@ class UnifiedDigestService
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
             ->orderBy('messages_groups.arrival', 'desc')
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with($this->digestPostEagerLoads())
             ->get();
     }
 
@@ -1559,17 +1594,72 @@ class UnifiedDigestService
             return $this->reachRadiusCache[$msgid] = $default;
         }
 
-        // Parse the WKT exterior ring in PHP and take the greatest great-circle
-        // distance (metres) from the origin to any vertex. Parsing in PHP is more
-        // portable than MySQL geometry functions and avoids SRID-transform issues.
-        // WKT form: POLYGON((lng1 lat1,lng2 lat2,...,lng1 lat1)) — x is lng, y is lat.
-        $oLng = (float) $row->ox;
-        $oLat = (float) $row->oy;
-        $wkt = $row->poly_wkt;
+        return $this->reachRadiusCache[$msgid] =
+            $this->reachRadiusFromWkt((float) $row->ox, (float) $row->oy, $row->poly_wkt, $default);
+    }
 
-        // Extract the coordinate pairs from the exterior ring.
-        if (!preg_match('/POLYGON\s*\(\s*\(([^)]+)\)/', $wkt, $m)) {
-            return $this->reachRadiusCache[$msgid] = $default;
+    /**
+     * Prime {@see $reachRadiusCache} for a whole batch of posts in a SINGLE query.
+     *
+     * scoreAndSortAvailable() scores every candidate post for a recipient, and each
+     * post needs its reach radius. Fetching them one msgid at a time (the fallback in
+     * reachRadiusMetres) is one remote-DB round-trip per post — ~100+ round-trips for
+     * one recipient, and the daily digest is DB-round-trip-bound, so that dominated
+     * throughput. This collapses the uncached msgids into one IN(...) lookup. msgids
+     * with no rippling_reach row are cached to the default so they are never re-queried.
+     */
+    private function primeReachRadiusCache(Collection $posts): void
+    {
+        $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
+
+        $ids = [];
+        foreach ($posts as $post) {
+            $mid = (int) $post->id;
+            if (!array_key_exists($mid, $this->reachRadiusCache)) {
+                $ids[$mid] = true;
+            }
+        }
+        if (empty($ids)) {
+            return;
+        }
+        $ids = array_keys($ids);
+
+        foreach (array_chunk($ids, 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $rows = DB::select(
+                "SELECT rr.msgid, rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
+                   FROM rippling_reach rr WHERE rr.msgid IN ($placeholders)",
+                $chunk
+            );
+            foreach ($rows as $row) {
+                $this->reachRadiusCache[(int) $row->msgid] = $row->poly_wkt === null
+                    ? $default
+                    : $this->reachRadiusFromWkt((float) $row->ox, (float) $row->oy, $row->poly_wkt, $default);
+            }
+        }
+
+        // Any requested msgid with no rippling_reach row (rippling dark, or backlog
+        // posts before go-live): cache the default so it isn't re-queried per recipient.
+        foreach ($ids as $mid) {
+            if (!array_key_exists($mid, $this->reachRadiusCache)) {
+                $this->reachRadiusCache[$mid] = $default;
+            }
+        }
+    }
+
+    /**
+     * Reach radius in metres from a reach origin and its polygon WKT: the greatest
+     * great-circle distance from the origin to any exterior-ring vertex. Shared by the
+     * single-row {@see reachRadiusMetres} and the batch {@see primeReachRadiusCache}.
+     *
+     * Parsing the WKT ring in PHP is more portable than MySQL geometry functions and
+     * avoids SRID-transform issues. WKT form: POLYGON((lng1 lat1,lng2 lat2,...)) — x is
+     * lng, y is lat. Falls back to $default when the WKT can't be parsed.
+     */
+    private function reachRadiusFromWkt(float $oLng, float $oLat, ?string $wkt, float $default): float
+    {
+        if ($wkt === null || !preg_match('/POLYGON\s*\(\s*\(([^)]+)\)/', $wkt, $m)) {
+            return $default;
         }
 
         $maxDist = 0.0;
@@ -1586,8 +1676,7 @@ class UnifiedDigestService
             }
         }
 
-        $r = $maxDist > 0 ? $maxDist : $default;
-        return $this->reachRadiusCache[$msgid] = $r;
+        return $maxDist > 0 ? $maxDist : $default;
     }
 
     /**
@@ -1610,6 +1699,10 @@ class UnifiedDigestService
             'window_hours' => (float) config('freegle.ripple.score.window_hours', 24),
             'budget_decay' => (float) config('freegle.ripple.score.budget_decay', 25),
         ];
+
+        // Load every candidate post's reach radius in ONE query rather than one
+        // round-trip per post (the daily digest is DB-round-trip-bound).
+        $this->primeReachRadiusCache($posts);
 
         $now = now();
         foreach ($posts as $post) {

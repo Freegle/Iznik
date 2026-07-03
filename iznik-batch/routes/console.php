@@ -455,30 +455,47 @@ Schedule::command('tn:sync')
 // guard turns every later tick into a no-op, and withoutOverlapping stops a
 // second start while the multi-hour run is still going. A missed 07:00 thus
 // self-heals at 07:30/08:00/… instead of being lost for the day.
-Schedule::command('mail:digest:unified --mode=daily')
-    ->timezone(config('freegle.timezone'))
-    ->everyThirtyMinutes()
-    ->between('7:00', '12:00')
-    ->withoutOverlapping(300)
-    ->sendOutputTo(cronLog('mail:digest:unified.daily'))
-    ->runInBackground();
-
-// Daily sharding (commented until the full cutover): once the allowlist is
-// '*' the single worker above won't keep up with the whole userbase, so
-// partition users by MOD(users.id, shards) across N parallel workers — the
-// same disjoint-partition model immediate mode uses below, but sharded by
-// user instead of group. Replace the single entry above with this loop:
-//
-// $dailyShardCount = 4;
-// foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
-//     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
-//         ->timezone(config('freegle.timezone'))
-//         ->everyThirtyMinutes()
-//         ->between('7:00', '12:00')
-//         ->withoutOverlapping()
-//         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
-//         ->runInBackground();
-// }
+// Sharded (full cutover, allowlist '*'). A single worker reaches only a fraction of the
+// ~78k daily members inside the 5-hour 07:00-12:00 window, so the rest perpetually
+// backlog. Partition users across parallel workers by CRC32(users.id) % shards — a HASH,
+// not MOD(id): under Galera the auto-increment stride equals the cluster size so raw ids
+// skew a MOD-based split (see UnifiedDigestService). Same disjoint-partition model
+// immediate mode uses, sharded by user instead of group. Each shard has its own flock via
+// lockKeySuffix() (mode+shard keyed), so a still-running multi-hour shard self-bounces the
+// next 30-min tick and shards never block each other or the immediate/reach shards.
+// Per-shard memory is bounded by DIGEST_LOAD_CAP. Profiling the workers (2026-07-03, 8-core
+// box) showed each shard runs at only ~42% of a core — the per-user cost is PHP compute +
+// several REMOTE-prod-DB round trips (getPostsForUser/reach-gate/scoring), so a worker spends
+// ~58% of its time waiting on the DB, not on any shared local service (it does NOT call the
+// routing server; MJML is the in-process mrml engine). That makes it embarrassingly parallel:
+// extra shards mostly overlap DB latency for near-free, and the box sits ~60% idle with 4.
+// So 8 (matches immediate) to drain the catch-up ~2x faster; safe to raise further while CPU
+// idle stays high. (The earlier load-40 "saturation" at 8 was the post-reboot boot storm —
+// spatial graph rebuild + immediate backlog — not steady state.)
+$dailyShardCount = 8;
+foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
+    Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
+        ->timezone(config('freegle.timezone'))
+        // everyMinute (not everyThirtyMinutes): a daily sweep of a shard's eligible
+        // users takes as long as it takes; when it finishes, the very next tick
+        // relaunches it so residual backlog / newly-due users drain within ~60s
+        // instead of idling up to 30 minutes. Overlap is prevented by the command's
+        // own flock (PreventsOverlapping, keyed per mode+shard) — a tick that fires
+        // while the previous sweep is still running just logs "Already running,
+        // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
+        // every post-send tick a cheap no-op, so this is safe to run continuously.
+        ->everyMinute()
+        // 07:00–23:59 (London): the once-per-London-day guard means each recipient
+        // still gets at most one daily digest, so a wide window only affects WHEN a
+        // slow day's tail is sent, not whether. In normal (non-backlog) days the fast
+        // morning sweep clears everyone well before evening, so nobody actually gets a
+        // late send; the wide end bound only bites during a large catch-up backlog,
+        // letting it drain the same day instead of stalling overnight (measured drain
+        // is variable ~116-177/min, so a 20:00 or even 23:00 cutoff can strand the tail).
+        ->between('7:00', '23:59')
+        ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
+        ->runInBackground();
+}
 
 // Daily new-posts push notification (push:daily-posts).
 //

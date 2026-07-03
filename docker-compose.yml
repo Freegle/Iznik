@@ -836,7 +836,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 300s
+      start_period: 600s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.spatial.rule=Host(`spatial.localhost`)"
@@ -1658,6 +1658,15 @@ services:
       mjml:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # The scheduler fires spatial-dependent jobs (digest reach-gate, ripple, spatial
+      # index) the moment it starts, so it MUST wait for the spatial servers to finish
+      # their multi-minute graph/index rebuild — otherwise those jobs hang on a not-ready
+      # spatial, spin, hold their flocks and produce nothing (observed on the 2026-07-03
+      # reboot). Both have /health healthchecks that only pass once loaded.
+      spatial:
+        condition: service_healthy
+      spatial-knn:
         condition: service_healthy
     restart: unless-stopped
     environment:

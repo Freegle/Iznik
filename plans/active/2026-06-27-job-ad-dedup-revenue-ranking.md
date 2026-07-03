@@ -14,11 +14,14 @@ Decision: do NOT port V1's bodyhash>50 *deletion* — those nationwide roles are
 ## Status
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | Branch + plan | ✅ | this file |
-| 2 | Lever 1: bodyhash dedup in spatial-knn (`dataset_jobs.go` Extra + `jobsDedupKey`) + test | ⬜ | iznik-spatial-go |
-| 3 | Lever 2: replace uniform `shuffle()` with score-weighted variety in `Job::nearLocation` + test | ⬜ | iznik-batch |
-| 4 | Housekeeper: remove dead `cleanup:whatjobs-spam` entry (`housekeeper.go:306`) | ⬜ | iznik-server-go; status restart on deploy |
-| 5 | Quality review + PR | ⬜ | |
+| 1 | Branch + plan | ✅ | committed master 2a41855f9 |
+| 2 | Lever 1: bodyhash dedup in spatial-knn (`dataset_jobs.go` Extra + `jobsDedupKey`) + test | ✅ | NB loadJobs Extra map (full-rebuild path) needed the bodyhash key too — caught in verify |
+| 3 | Lever 2: replace uniform `shuffle()` with score-weighted variety in `Job::nearLocation` + test | ✅ | live in batch-prod via bind mount |
+| 4 | Housekeeper: remove dead `cleanup:whatjobs-spam` entry (`housekeeper.go:306`) | ✅ | needs apiv2 rebuild + status restart to show |
+| 5 | Local digest deploy + verify | ✅ | spatial-knn container rebuilt, jobs index rebuilt with bodyhash, 50/50 distinct bodyhash, digests relaunched on new code |
+| 6 | Push to origin/master + CI | ✅ | build-and-test=success (06f28689e); Coveralls upload failures ignored per user. CI infra (registry-cache 500 / apiv1 composer 400) fixed by user. |
+| 7 | Website deploy: native iznik-spatial-go on db1/2/3 (lever 1 for /api/job) | ✅ | db1/2/3 rebuilt + jobs index rebuilt with bodyhash; all 30/30 distinct, 0 repeats; /api/job 47→46 distinct. Gotchas: must `go build -o iznik-spatial-go .`; rm `.building` variants; db3 hit the monit-restart-race partial .building → SQLite 522 → fixed via unmonitor/kill/clean/manual-start/monitor. See reference_prod_deploy_procedure. |
+| 8 | (optional) apiv2 rebuild on db1/2/3 for housekeeper console entry | ⬜ | cosmetic (MT console mirror); not data-affecting |
 
 ## Deploy (separate step — NOT part of this PR)
 - spatial-knn change → rebuild BOTH targets: native db1/2/3 (web path) AND local `freegledocker-spatial-knn` container (batch digest path).

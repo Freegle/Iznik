@@ -575,10 +575,17 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         });
 
-        // Render AMP variant if enabled. (Rendered for all recipients; whether
-        // it's COUNTED as usable AMP is gated on provider support - see
-        // ampForRecipient()/has_amp tracking.)
-        if ($this->isAmpEnabled()) {
+        // Render the AMP variant only for recipients whose provider can actually
+        // display AMP for Email (Gmail/Yahoo/AOL/Mail.ru/Yandex — see
+        // AmpEmailSupport::isSupported via ampForRecipient()). Rendering it for
+        // everyone was ~130ms of wasted Blade CPU per non-supporting recipient
+        // (~43% of daily recipients) whose AMP part is never usable, and it also
+        // attached a dead text/x-amp-html part to their email. has_amp tracking is
+        // computed separately from ampForRecipient() (see getTracking()), so gating
+        // the render here does not change what has_amp records; and applyAmpToMessage
+        // already no-ops when ampHtml is null, so unsupported recipients simply get
+        // the HTML/text parts they always used.
+        if ($this->ampForRecipient()) {
             $ampPosts = $this->prepareAmpPosts();
 
             // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to

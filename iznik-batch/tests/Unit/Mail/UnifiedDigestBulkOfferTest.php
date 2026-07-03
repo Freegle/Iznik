@@ -85,7 +85,9 @@ class UnifiedDigestBulkOfferTest extends TestCase
         config(['freegle.amp.enabled' => true]);
         config(['freegle.amp.secret' => 'test-secret-key']);
 
-        $user = $this->createTestUser();
+        // Recipient must be on an AMP-supporting provider (Gmail) — the AMP part is
+        // only rendered for those recipients now (see UnifiedDigest::ampForRecipient).
+        $user = $this->createTestUser(['email_preferred' => 'bulkoffer@gmail.com']);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 

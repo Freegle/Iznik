@@ -18,14 +18,19 @@ ModTools `/rippling` preview (RipplingExplorer) shows "Top picks (195)" = the ra
 ## Status
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | Plan + parity capture | 🔄 | this file |
-| 2 | Go simulator: add tnpostid/locationid/textbody/has_outcome/has_success to pool query | ⬜ | digest_simulator.go |
-| 3 | Go: implement dedup (getDeduplicationKey+normalizeSubject+normalizeBody+bodiesMatch parity), merge groupids, top-scoring representative | ⬜ | |
-| 4 | Go: section into topPicks(available, cap 65)/cameAndWent(has_success, deduped); per-section counts + title count | ⬜ | drop pool_size as headline; report deduped counts |
-| 5 | Go: compile-check (go build on a db node) | ⬜ | no local toolchain |
-| 6 | Frontend RipplingExplorer.vue: render Top picks(N)/Came and went(N) sections, same order/format, deduped+capped, header count matches | ⬜ | drop preview-only "Promised" (fold into Top picks) |
-| 7 | Tests (Go dedup unit; vitest if feasible) | ⬜ | |
-| 8 | Commit master + push (CI) | ⬜ | NO deploy (routing native dance + Netlify are separate) |
+| 1 | Plan + parity capture | ✅ | |
+| 2 | Go simulator: query cols (tnpostid/locationid/textbody/has_outcome/has_success) | ✅ | |
+| 3 | Go: cross-post dedup (content key + bodiesMatch parity), merge groups, top-scoring rep | ✅ | |
+| 4 | Go: sections topPicks(cap 65)/cameAndWent + deduped counts | ✅ | pool_size now debug-only |
+| 5 | Go: compile-check + tests on db1 | ✅ | BUILD_EXIT=0, tests ok |
+| 6 | Frontend match (sections/format/counts, drop Promised) | ✅ | agent: RipplingDigestModal.vue + composables, commit c49e2ba32 (Netlify deploys) |
+| 9 | DEPLOY routing-go (digest sim) to db1/2/3 | ✅ | all 3: BUILD_EXIT=0, came_and_went marker, health 200, NEW, re-monitored (graph reload ~5min/node). Endpoint auth-gated (401 raw) = expected. |
+| 7 | Tests (Go dedup parity unit) | ✅ | digest_simulator_dedup_test.go |
+| 8 | Commit master + push (CI) | ✅ | 423c6b0e6 (backend); frontend agent commits separately |
+| + | BONUS: #233 send dedup fix (drop tnpostid short-circuit) | ✅ | live via bind mount; in 423c6b0e6 |
+
+## #233 mail-dedup root cause (agent-confirmed)
+getDeduplicationKey short-circuited on tnpostid; TN reposts get a NEW tnpostid/day → 4 distinct keys → content fallback never used → 4 copies in daily digest (website dedups by content → 1). "Small lamp" user 44780510 = 4 msgids/4 tnpostids/identical content; 27 such items in 4 days. Fixed: always key on content; bodiesMatch handles tnpostid + body. Secondary (not yet fixed): immediate path (processGroupImmediate) has NO cross-group dedup — mails once per group.
 
 ## Deploy (SEPARATE — not part of this)
 - iznik-routing-go → native db1/2/3 via unmonitor/SIGINT/monitor dance (graph reload ~5min).

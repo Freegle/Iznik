@@ -380,9 +380,11 @@ class UnifiedDigestTest extends TestCase
 
     public function test_build_renders_amp_when_enabled(): void
     {
-        // With AMP enabled, build() renders the AMP variant. (The variant is
-        // rendered for every recipient; provider support only governs the has_amp
-        // tracking flag, not whether the AMP part is built.)
+        // With AMP enabled AND the recipient on an AMP-supporting provider (Gmail),
+        // build() renders the AMP variant. (The variant is now built only for
+        // recipients whose provider can display it — see ampForRecipient() — because
+        // rendering it for everyone wasted ~130ms of Blade CPU per non-supporting
+        // recipient on an AMP part they can never use.)
         config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
 
         $mail = $this->digestForRecipientEmail('recipient@gmail.com');
@@ -410,6 +412,28 @@ class UnifiedDigestTest extends TestCase
         $ref->setAccessible(true);
 
         $this->assertNull($ref->getValue($mail), 'No AMP should be rendered when AMP is disabled');
+    }
+
+    public function test_build_skips_amp_for_recipient_whose_provider_is_unsupported(): void
+    {
+        // AMP is globally enabled, but the recipient is on a provider that cannot
+        // display AMP for Email (example.com — not Gmail/Yahoo/AOL/Mail.ru/Yandex).
+        // build() must NOT render the AMP variant for them: rendering it was ~130ms
+        // of wasted Blade CPU per non-supporting recipient (~43% of daily recipients)
+        // on an AMP part their client would never use. The HTML/text parts are
+        // unaffected. Counterpart to test_build_renders_amp_when_enabled (Gmail).
+        config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
+
+        $mail = $this->digestForRecipientEmail('recipient@example.com');
+        $mail->build();
+
+        $ref = new \ReflectionProperty($mail, 'ampHtml');
+        $ref->setAccessible(true);
+
+        $this->assertNull(
+            $ref->getValue($mail),
+            'AMP variant must not be rendered for a provider that cannot display AMP'
+        );
     }
 
     /**

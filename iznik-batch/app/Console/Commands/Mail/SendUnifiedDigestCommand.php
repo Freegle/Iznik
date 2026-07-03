@@ -228,11 +228,16 @@ class SendUnifiedDigestCommand extends Command
      */
     protected function lockKeySuffix(): ?string
     {
+        // Key the flock by MODE as well as shard. daily, immediate and reach are now
+        // all sharded, and a bare "shard-0-of-8" would make daily shard 0 and immediate
+        // shard 0 share one lock file and block each other. Mode-keying keeps every
+        // (mode, shard) partition on its own flock so no two ever contend.
+        $mode = (string) $this->option('mode');
         $shards = max(1, (int) $this->option('shards'));
         if ($shards === 1) {
-            return null; // single-shard runs use the default unsuffixed lock
+            return $mode; // single-shard run: mode-specific lock (e.g. an ad-hoc --mode=daily)
         }
         $shard = (int) $this->option('shard');
-        return "shard-{$shard}-of-{$shards}";
+        return "{$mode}-shard-{$shard}-of-{$shards}";
     }
 }
