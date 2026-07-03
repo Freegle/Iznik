@@ -14,6 +14,8 @@ const mockLostPassword = vi.fn()
 const mockUnsubscribe = vi.fn()
 const mockSave = vi.fn()
 const mockSetAppOutOfDate = vi.fn()
+const mockSignUp = vi.fn()
+const mockTrackConversion = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -26,7 +28,14 @@ vi.mock('~/api', () => ({
       unsubscribe: mockUnsubscribe,
       save: mockSave,
     },
+    user: {
+      signUp: mockSignUp,
+    },
   }),
+}))
+
+vi.mock('~/composables/useTrackConversion', () => ({
+  trackConversion: (...args) => mockTrackConversion(...args),
 }))
 
 vi.mock('~/api/BaseAPI', () => ({
@@ -231,6 +240,76 @@ describe('auth store', () => {
       ).rejects.toThrow('Bad creds')
       expect(store.loginCount).toBe(0)
     })
+
+    it('fires Register with Website when a social login creates the account', async () => {
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      // Account created moments ago - this social login IS the registration.
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1, added: new Date().toISOString() },
+        groups: [],
+      })
+
+      await store.login({ googlejwt: 'tok', googlelogin: true })
+
+      expect(mockTrackConversion).toHaveBeenCalledWith('Register with Website')
+    })
+
+    it('does not fire Register with Website for a returning social login', async () => {
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1, added: '2020-01-01T00:00:00Z' },
+        groups: [],
+      })
+
+      await store.login({ fblogin: 1, fbaccesstoken: 'tok' })
+
+      expect(mockTrackConversion).not.toHaveBeenCalled()
+    })
+
+    it('does not fire Register with Website for an email login even to a fresh account', async () => {
+      // Native signups are tracked in signUp(); a fresh email login must not
+      // double-count (e.g. the auto-login right after posting anonymously).
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({
+        me: { id: 1, added: new Date().toISOString() },
+        groups: [],
+      })
+
+      await store.login({ email: 'a@b.com', password: 'x' })
+
+      expect(mockTrackConversion).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('signUp', () => {
+    it('fires Register with Website only after the server confirms signup', async () => {
+      mockSignUp.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+
+      await store.signUp({
+        fullname: 'Test User',
+        email: 'new@test.com',
+        password: 'pw',
+      })
+
+      expect(mockTrackConversion).toHaveBeenCalledWith('Register with Website')
+    })
+
+    it('does not fire Register with Website when signup fails', async () => {
+      mockSignUp.mockRejectedValue({
+        response: { status: 409, data: { message: 'Email in use' } },
+      })
+
+      await expect(
+        store.signUp({
+          fullname: 'Test User',
+          email: 'dup@test.com',
+          password: 'pw',
+        })
+      ).rejects.toThrow()
+
+      expect(mockTrackConversion).not.toHaveBeenCalled()
+    })
   })
 
   describe('logout', () => {
@@ -360,12 +439,12 @@ describe('auth store', () => {
       // Simulate the production scenario: the server returns 401 for the
       // PATCH. BaseAPI's real implementation would wipe auth before the
       // error propagates up to the store — emulate that here.
-      mockSave.mockImplementation(async () => {
+      mockSave.mockImplementation(() => {
         store.setAuth(null, null)
         store.setUser(null)
         const err = new Error('Unauthorized')
         err.response = { status: 401 }
-        throw err
+        return Promise.reject(err)
       })
 
       await expect(

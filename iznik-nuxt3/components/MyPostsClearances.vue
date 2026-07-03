@@ -19,7 +19,7 @@
     >
       <div class="myposts-clearances__detail">
         <span class="myposts-clearances__subject">{{ c.subject }}</span>
-        <b-badge variant="light">{{ c.bulkcount }} items</b-badge>
+        <b-badge variant="info">{{ c.available }} available</b-badge>
         <b-badge v-if="c.interested" variant="info" class="ms-1">
           {{ c.interested }} interested
         </b-badge>
@@ -58,10 +58,21 @@ const clearances = computed(() =>
     .map((p) => {
       const full = messageStore.byId(p.id)
       const bulkcount = full?.bulkcount ?? full?.bulkitems?.length ?? 0
+      // Total quantity still available (matches the post / browse "N available"),
+      // not the number of catalogue rows. Falls back to summing item quantities.
+      const available =
+        full?.availablenow ||
+        (full?.bulkitems
+          ? full.bulkitems.reduce(
+              (s, i) => s + (parseInt(i.quantity, 10) || 0),
+              0
+            )
+          : 0)
       return {
         id: p.id,
         subject: full?.subject || p.subject,
         bulkcount,
+        available,
         interested: full?.bulkitems
           ? distinctInterestedUsers(full.bulkitems)
           : 0,

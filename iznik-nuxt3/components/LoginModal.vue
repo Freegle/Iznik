@@ -199,7 +199,6 @@ import {
   onBeforeUnmount,
   onMounted,
   nextTick,
-  getCurrentInstance,
 } from 'vue'
 import { storeToRefs } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
@@ -227,7 +226,6 @@ const miscStore = useMiscStore()
 const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
 const router = useRouter()
-const { gtm } = getCurrentInstance().appContext.config.globalProperties
 const { me, loggedIn } = useMe()
 const mobileStore = useMobileStore()
 
@@ -394,14 +392,9 @@ function hide() {
   pleaseShowModal.value = false
 }
 
-function gtmRegister() {
-  if (gtm?.enabled()) {
-    gtm.trackEvent({
-      event: 'Register with Website',
-      label: 'EcEMCPvav7kZELy618UD',
-    })
-  }
-}
+// The 'Register with Website' conversion event fires on confirmed signup
+// success in stores/auth.js (signUp for email, login for social), not on
+// button click.
 
 function loginNative(e) {
   loginType.value = 'email/password'
@@ -427,8 +420,6 @@ function loginNative(e) {
     if (!fullname.value || emailError.value || !password.value) {
       nativeLoginError.value = 'Please fill out the form.'
     } else {
-      gtmRegister()
-
       authStore
         .signUp({
           fullname: fullname.value,
