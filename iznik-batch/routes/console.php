@@ -485,12 +485,14 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
         // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
         // every post-send tick a cheap no-op, so this is safe to run continuously.
         ->everyMinute()
-        // 07:00–23:00 (London): the once-per-London-day guard means each recipient
+        // 07:00–23:59 (London): the once-per-London-day guard means each recipient
         // still gets at most one daily digest, so a wide window only affects WHEN a
-        // slow day's tail is sent, not whether. Widened from 20:00 so a large catch-up
-        // backlog drains the same evening instead of stalling overnight and resuming at
-        // 07:00 (measured drain ~150/min can leave 15k+ pending at a 20:00 cutoff).
-        ->between('7:00', '23:00')
+        // slow day's tail is sent, not whether. In normal (non-backlog) days the fast
+        // morning sweep clears everyone well before evening, so nobody actually gets a
+        // late send; the wide end bound only bites during a large catch-up backlog,
+        // letting it drain the same day instead of stalling overnight (measured drain
+        // is variable ~116-177/min, so a 20:00 or even 23:00 cutoff can strand the tail).
+        ->between('7:00', '23:59')
         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
         ->runInBackground();
 }
