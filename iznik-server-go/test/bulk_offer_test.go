@@ -239,6 +239,56 @@ func TestBulkInterest(t *testing.T) {
 	assert.Equal(t, 400, resp.StatusCode, "cannot be interested in your own post")
 }
 
+// TestBulkInterestCreatesRoster is a regression test for the bug where registering
+// interest in a bulk offer created the chat_rooms row (via findOrCreateUser2UserRoom)
+// but NO chat_roster rows. With no roster row for the offerer the reply showed
+// permanently unread and "mark all read" (handleAllSeen) could never clear it — it
+// UPDATEs existing roster rows only and has no INSERT fallback for User2User chats.
+// The fix makes findOrCreateUser2UserRoom create a roster row for BOTH participants,
+// matching GetOrCreateChatRoom on the normal reply path.
+func TestBulkInterestCreatesRoster(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkroster")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
+
+	wanterToken := getToken(t, wanterID)
+	body := map[string]interface{}{
+		"action": "BulkInterest",
+		"id":     msgID,
+		"bulkinterest": []map[string]interface{}{
+			{"bulkitemid": chairID, "quantity": 1, "cancollect": "Any time"},
+		},
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/message?jwt="+wanterToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Resolve the chat the interest created/linked.
+	var chatID uint64
+	db.Raw("SELECT chatid FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Scan(&chatID)
+	require.NotZero(t, chatID, "bulk interest should have created/linked a chat")
+
+	// BOTH participants must have a chat_roster row so the chat is clearable.
+	var rosterCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_roster WHERE chatid = ? AND userid IN (?, ?)", chatID, ownerID, wanterID).Scan(&rosterCount)
+	assert.Equal(t, int64(2), rosterCount, "both offerer and replier must have a chat_roster row")
+
+	// The offerer (recipient) row specifically — this is the one that was missing and
+	// left the reply stuck as un-clearable unread.
+	var offererRoster int64
+	db.Raw("SELECT COUNT(*) FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, ownerID).Scan(&offererRoster)
+	assert.Equal(t, int64(1), offererRoster, "offerer must have a roster row so mark-all-read can clear the reply")
+}
+
 // TestBulkInterestMessageIsStructured checks the consolidated Interested chat
 // reply is structured with the catalogue reference numbers (#n) — so it's
 // unambiguous when items share a name and machine-parseable by the Freegle

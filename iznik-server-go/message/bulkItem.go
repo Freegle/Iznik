@@ -408,24 +408,44 @@ func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 	var chatID uint64
 	db.Raw("SELECT id FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) LIMIT 1",
 		utils.CHAT_TYPE_USER2USER, a, b, b, a).Scan(&chatID)
-	if chatID != 0 {
-		return chatID
+
+	if chatID == 0 {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return 0
+		}
+		res, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = NOW()",
+			a, b, utils.CHAT_TYPE_USER2USER)
+		if err != nil {
+			return 0
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return 0
+		}
+		chatID = uint64(id)
 	}
 
-	sqlDB, err := db.DB()
-	if err != nil {
+	if chatID == 0 {
 		return 0
 	}
-	res, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = NOW()",
-		a, b, utils.CHAT_TYPE_USER2USER)
-	if err != nil {
-		return 0
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0
-	}
-	return uint64(id)
+
+	// Ensure BOTH participants have a chat_roster row. Without one the chat has no
+	// seen-pointer for that user, so it shows permanently unread to the offerer and
+	// "mark all read" (handleAllSeen) can never clear it — handleAllSeen UPDATEs
+	// existing roster rows only and has no INSERT fallback for User2User chats.
+	// GetOrCreateChatRoom (the normal reply path) already creates both roster rows;
+	// this bulk-offer-interest path previously created the room WITHOUT them, which
+	// stranded the offerer's reply as un-clearable unread. Idempotent
+	// (ON DUPLICATE KEY UPDATE no-op) so it also heals a pre-existing roster-less room.
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW()) "+
+		"ON DUPLICATE KEY UPDATE date = date",
+		chatID, a, utils.CHAT_STATUS_ONLINE)
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW()) "+
+		"ON DUPLICATE KEY UPDATE date = date",
+		chatID, b, utils.CHAT_STATUS_ONLINE)
+
+	return chatID
 }
 
 // upsertBulkItems replaces the catalogue for a message from the supplied input.

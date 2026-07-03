@@ -374,6 +374,52 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent'], 'must send once the last digest was a prior day');
     }
 
+    public function test_daily_digest_streams_most_overdue_first(): void
+    {
+        // The daily bulk run must process recipients MOST-OVERDUE-FIRST: never-sent users, then
+        // oldest lastsent. When the send window can't clear the whole population, id-order
+        // (the old lazyById streaming) permanently starves the same high-id tail; overdue-first
+        // rotates the lag fairly. Regression for streamDailyOverdueFirst.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $this->createTestMessage($poster, $group);
+
+        $mk = function () use ($group) {
+            $u = $this->createTestUser();
+            $u->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+            $u->lastaccess = now();
+            $u->save();
+            $this->createMembership($u, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+            return $u->fresh();
+        };
+
+        $neverSent = $mk();
+        $old = $mk();
+        $recent = $mk();
+
+        $prior = fn ($days) => \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays($days)->setTimezone('UTC');
+        // never-sent: deliberately NO users_digests row (NULL lastsent → most overdue).
+        UserDigest::create(['userid' => $old->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0, 'lastsent' => $prior(10)]);
+        UserDigest::create(['userid' => $recent->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0, 'lastsent' => $prior(1)]);
+
+        // Invoke the protected streamer directly and capture the yielded order.
+        $ref = new \ReflectionMethod($this->service, 'getUsersForDigest');
+        $ref->setAccessible(true);
+        $stream = $ref->invoke($this->service, UnifiedDigestService::MODE_DAILY);
+        $ids = $stream->pluck('id')->all();
+
+        // Other fixture users may share the stream — assert only the RELATIVE order of our three.
+        $ourOrder = array_values(array_filter($ids, fn ($id) => in_array($id, [$neverSent->id, $old->id, $recent->id], true)));
+        $this->assertEquals(
+            [$neverSent->id, $old->id, $recent->id],
+            $ourOrder,
+            'daily stream must yield never-sent first, then oldest lastsent, then most recent'
+        );
+    }
+
     public function test_format_posted_to_multiple_groups(): void
     {
         $group1 = $this->createTestGroup();

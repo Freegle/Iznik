@@ -485,17 +485,53 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
         // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
         // every post-send tick a cheap no-op, so this is safe to run continuously.
         ->everyMinute()
-        // 07:00–23:59 (London): the once-per-London-day guard means each recipient
-        // still gets at most one daily digest, so a wide window only affects WHEN a
-        // slow day's tail is sent, not whether. In normal (non-backlog) days the fast
-        // morning sweep clears everyone well before evening, so nobody actually gets a
-        // late send; the wide end bound only bites during a large catch-up backlog,
-        // letting it drain the same day instead of stalling overnight (measured drain
-        // is variable ~116-177/min, so a 20:00 or even 23:00 cutoff can strand the tail).
-        ->between('7:00', '23:59')
+        // 08:00–12:00 UK local time (Europe/London, so BST-correct). This is the intended
+        // member-facing window — digests arrive in the morning. The daily population (~79k,
+        // ~tripled by rippling) can't fully clear in 4h at current throughput, so the run is
+        // ordered MOST-OVERDUE-FIRST (see streamDailyOverdueFirst): the window sends as many
+        // of the most-lagged recipients as it can each morning and the lag rotates fairly
+        // across everyone — no one is permanently starved, and as throughput rises the window
+        // reaches further until it completes daily. A 13:00 "still lagging" check
+        // (mail:digest:daily-lag-check below) alerts if a large backlog remains after the window.
+        ->between('8:00', '12:00')
         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
         ->runInBackground();
 }
+
+// "Still lagging" alert — one hour after the 08:00-12:00 daily window closes, check whether the
+// morning run kept up. Counts recently-active daily recipients (sent within the last 7 days, so
+// this excludes the permanently-inactive who never get a digest and the never-sent) who did NOT
+// get today's digest. In steady state the morning window clears them and this is ~0; a large
+// count means we're under capacity and the lag is rotating (see streamDailyOverdueFirst) — the
+// signal to add throughput/hardware. Logged at error level so it reaches Sentry; fires daily
+// until capacity catches up, which is the intended KPI, not noise.
+Schedule::call(function () {
+    $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
+    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(7)->setTimezone('UTC')->toDateTimeString();
+
+    $lagging = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->where('mode', 'daily')
+        ->where('lastsent', '>=', $activeSinceUtc)
+        ->where('lastsent', '<', $londonDayStartUtc)
+        ->count();
+
+    $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
+    if ($lagging > $threshold) {
+        \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 08:00-12:00 window', [
+            'lagging_active_recipients' => $lagging,
+            'threshold' => $threshold,
+            'checked_at' => 'London 13:00',
+        ]);
+    } else {
+        \Illuminate\Support\Facades\Log::info('Daily digest kept up with the morning window', [
+            'lagging_active_recipients' => $lagging,
+        ]);
+    }
+})
+    ->name('mail:digest:daily-lag-check')
+    ->timezone(config('freegle.timezone'))
+    ->dailyAt('13:00')
+    ->withoutOverlapping(60);
 
 // Daily new-posts push notification (push:daily-posts).
 //

@@ -1099,7 +1099,92 @@ class UnifiedDigestService
         // Stream in keyset-paginated chunks with eager loads applied per chunk — these
         // are full User models with relations, so a single get() over the 90-day-active
         // userbase exhausts memory. The caller's take($limit) stays lazy.
+        //
+        // Daily: drain MOST-OVERDUE-FIRST (never-sent, then oldest lastsent) instead of the
+        // default user-id order. When the send window can't clear the whole population in one
+        // day (rippling ~tripled it), id-order permanently starves the same high-id tail — it
+        // never gets a turn — while lower ids get re-sent. Overdue-first rotates the lag fairly
+        // across everyone and self-corrects: as throughput rises (optimisation/hardware) the
+        // window reaches further down the queue until it completes. See streamDailyOverdueFirst.
+        if ($mode === self::MODE_DAILY && !$userId) {
+            return $this->streamDailyOverdueFirst($query, 500);
+        }
+
         return $query->with(['emails', 'memberships'])->lazyById(500);
+    }
+
+    /**
+     * Stream daily-digest recipients most-overdue-first: never-sent users (no daily
+     * users_digests row, or NULL lastsent) first, then by lastsent ascending.
+     *
+     * Memory-safe (chunked eager loads, like lazyById) and revisit-safe: both phases advance a
+     * strictly-forward keyset cursor, so a user whose lastsent we stamp to "today" mid-run — or a
+     * no-post user whose lastsent we don't stamp (updateDigestTracker only stamps when posts were
+     * sent) — is never re-fetched within the run. The once-per-London-day guard already in $query
+     * excludes anyone sent today, so phase 2's "previously sent" means sent on a PRIOR day.
+     */
+    protected function streamDailyOverdueFirst(\Illuminate\Database\Eloquent\Builder $query, int $chunk): \Illuminate\Support\LazyCollection
+    {
+        $eager = ['emails', 'memberships'];
+        $joinDaily = function ($j) {
+            $j->on('ud_ord.userid', '=', 'users.id')->where('ud_ord.mode', '=', self::MODE_DAILY);
+        };
+
+        return \Illuminate\Support\LazyCollection::make(function () use ($query, $chunk, $eager, $joinDaily) {
+            // Phase 1 — never sent (most overdue): id keyset so an un-stamped no-post user isn't revisited.
+            $lastId = 0;
+            while (true) {
+                $rows = (clone $query)
+                    ->leftJoin('users_digests as ud_ord', $joinDaily)
+                    ->whereNull('ud_ord.lastsent')
+                    ->where('users.id', '>', $lastId)
+                    ->orderBy('users.id')
+                    ->select('users.*')
+                    ->with($eager)
+                    ->limit($chunk)
+                    ->get();
+                if ($rows->isEmpty()) {
+                    break;
+                }
+                foreach ($rows as $u) {
+                    yield $u;
+                }
+                $lastId = (int) $rows->last()->id;
+            }
+
+            // Phase 2 — previously sent: composite (lastsent, id) keyset, oldest first.
+            $curSent = null;
+            $curId = 0;
+            while (true) {
+                $b = (clone $query)
+                    ->leftJoin('users_digests as ud_ord', $joinDaily)
+                    ->whereNotNull('ud_ord.lastsent');
+                if ($curSent !== null) {
+                    $b->where(function ($w) use ($curSent, $curId) {
+                        $w->where('ud_ord.lastsent', '>', $curSent)
+                            ->orWhere(function ($w2) use ($curSent, $curId) {
+                                $w2->where('ud_ord.lastsent', '=', $curSent)->where('users.id', '>', $curId);
+                            });
+                    });
+                }
+                $rows = $b->orderBy('ud_ord.lastsent')
+                    ->orderBy('users.id')
+                    ->select('users.*')
+                    ->addSelect('ud_ord.lastsent as _ord_lastsent')
+                    ->with($eager)
+                    ->limit($chunk)
+                    ->get();
+                if ($rows->isEmpty()) {
+                    break;
+                }
+                foreach ($rows as $u) {
+                    yield $u;
+                }
+                $last = $rows->last();
+                $curSent = $last->_ord_lastsent;
+                $curId = (int) $last->id;
+            }
+        });
     }
 
     /**
