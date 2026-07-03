@@ -38,13 +38,18 @@ vi.mock('~/stores/group', () => ({
   useGroupStore: () => ({ get: mockGetGroup }),
 }))
 
-// Server distance lookup (nearby store). Same Map reference throughout so tests mutate
-// it via .set()/.clear() and the composable sees the change. Empty by default -> the
-// distance badge falls back to the client-side milesAway calc, as off the browse feed.
+// Nearby store lookups (server distance + pinned ids). Same Map/Set references throughout
+// so tests mutate them via .set()/.add()/.clear() and the composable sees the change.
+// Empty by default -> the distance badge falls back to the client-side milesAway calc and
+// isPinned is false, as off the browse feed.
 const mockNearbyDistances = new Map()
+const mockNearbyPinned = new Set()
 
 vi.mock('~/stores/nearby', () => ({
-  useNearbyStore: () => ({ distanceById: mockNearbyDistances }),
+  useNearbyStore: () => ({
+    distanceById: mockNearbyDistances,
+    pinnedIds: mockNearbyPinned,
+  }),
 }))
 
 // mockMe must be a ref so the composable's `me.value` lookup works
@@ -94,6 +99,7 @@ function make(msgData, opts = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   mockNearbyDistances.clear()
+  mockNearbyPinned.clear()
   mockMe.value = null
   mockByIdUser.mockReturnValue(null)
   mockGetGroup.mockReturnValue(null)
@@ -531,6 +537,31 @@ describe('useMessageDisplay', () => {
       mockMe.value = { lat: 51.5, lng: -0.1 }
       const c = make({ id: 7, lat: 51.6, lng: -0.1 })
       expect(c.distanceText.value).toBe('6mi')
+    })
+  })
+
+  describe('isPinned', () => {
+    it('is true when this id is in the nearby store pinned set', () => {
+      mockNearbyPinned.add(7)
+      const c = make({ id: 7 })
+      expect(c.isPinned.value).toBe(true)
+    })
+
+    it('is false for a post that is not pinned', () => {
+      mockNearbyPinned.add(999)
+      const c = make({ id: 7 })
+      expect(c.isPinned.value).toBe(false)
+    })
+
+    it('is false off the feed (empty pinned set)', () => {
+      const c = make({ id: 7 })
+      expect(c.isPinned.value).toBe(false)
+    })
+
+    it('matches a string id against the numeric pinned set', () => {
+      mockNearbyPinned.add(7)
+      const c = make({ id: '7' })
+      expect(c.isPinned.value).toBe(true)
     })
   })
 

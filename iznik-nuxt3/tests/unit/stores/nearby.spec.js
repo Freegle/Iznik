@@ -199,4 +199,29 @@ describe('nearby store', () => {
       expect(store.distanceById.size).toBe(0)
     })
   })
+
+  describe('pinnedIds getter', () => {
+    it('collects the ids of pinned posts as numbers', () => {
+      const store = useNearbyStore()
+      store.messageList = [
+        { id: 1, pinned: true },
+        { id: '2', pinned: true },
+        { id: 3, pinned: false },
+        { id: 4 },
+      ]
+
+      expect(store.pinnedIds.has(1)).toBe(true)
+      expect(store.pinnedIds.has(2)).toBe(true)
+      expect(store.pinnedIds.has(3)).toBe(false)
+      expect(store.pinnedIds.has(4)).toBe(false)
+      expect(store.pinnedIds.size).toBe(2)
+    })
+
+    it('is empty when there are no messages', () => {
+      const store = useNearbyStore()
+      store.messageList = []
+
+      expect(store.pinnedIds.size).toBe(0)
+    })
+  })
 })
