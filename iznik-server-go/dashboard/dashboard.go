@@ -36,12 +36,20 @@ func GetDashboard(c *fiber.Ctx) error {
 	// Heatmap: return location data for recent successful messages.
 	if c.Query("heatmap") == "true" || c.Query("heatmap") == "1" {
 		type HeatmapPoint struct {
-			Lat float64 `json:"lat"`
-			Lng float64 `json:"lng"`
+			Lat   float64 `json:"lat"`
+			Lng   float64 `json:"lng"`
+			Count int     `json:"count"`
 		}
 
+		// Aggregate successful posts into ~1km cells (2 dp ≈ 1.1km) and return a count
+		// per cell. The client weights the heatmap by `count` (log-scaled), so every
+		// point MUST carry one - returning raw points with no count left the client's
+		// weighting NaN and the map blank. Rounding also blurs exact locations (the page
+		// states locations are approximate for privacy) and shrinks the payload.
 		var points []HeatmapPoint
-		db.Raw("SELECT ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_spatial WHERE arrival > DATE_SUB(NOW(), INTERVAL 31 DAY) AND successful = 1").Scan(&points)
+		db.Raw("SELECT ROUND(ST_Y(point), 2) AS lat, ROUND(ST_X(point), 2) AS lng, COUNT(*) AS count " +
+			"FROM messages_spatial WHERE arrival > DATE_SUB(NOW(), INTERVAL 31 DAY) AND successful = 1 " +
+			"GROUP BY ROUND(ST_Y(point), 2), ROUND(ST_X(point), 2)").Scan(&points)
 
 		if points == nil {
 			points = make([]HeatmapPoint, 0)
