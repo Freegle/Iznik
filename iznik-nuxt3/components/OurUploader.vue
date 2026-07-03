@@ -65,6 +65,7 @@ import { useMobileStore } from '@/stores/mobile' // APP...
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMiscStore } from '~/stores/misc'
+import { action } from '~/composables/useClientLog'
 
 const runtimeConfig = useRuntimeConfig()
 
@@ -410,6 +411,12 @@ onMounted(() => {
     .use(Compressor)
   uppy.on('file-added', (file) => {
     console.log('Added file', file)
+    // Ships to Loki (event_type=action) so we can distinguish "opened the picker but
+    // never selected a photo" from "selected a photo, upload then failed/stalled".
+    action('upload_file_selected', {
+      file_size: file?.size,
+      file_type: file?.type,
+    })
   })
   uppy.on('files-added', (files) => {
     console.log('Added files', files)
@@ -442,6 +449,7 @@ onMounted(() => {
   })
   uppy.on('upload', (uploadID, files) => {
     console.log('Upload started', uploadID, files)
+    action('upload_started', { file_count: files?.length })
   })
   uppy.on('complete', (result) => {
     if (uppyTimer) {
@@ -456,6 +464,8 @@ onMounted(() => {
       uppyTimer = setTimeout(() => {
         console.log('Uppy timed out')
         Sentry.captureMessage('Uppy timed out')
+        // NB this only means the modal has been open >30s, NOT that an upload failed.
+        action('upload_modal_open_30s', {})
       }, 30000)
     }
   })
@@ -465,9 +475,14 @@ onMounted(() => {
   })
   uppy.on('upload-success', (file, response) => {
     console.log('Upload success', file, response)
+    action('upload_succeeded', {
+      file_size: file?.size,
+      file_type: file?.type,
+    })
   })
   uppy.on('error', (error) => {
     console.error('Upload error, retry', error)
+    action('upload_failed', { reason: error?.message })
     if (uppyTimer) {
       clearTimeout(uppyTimer)
       uppyTimer = null
@@ -479,12 +494,21 @@ onMounted(() => {
   })
   uppy.on('upload-stalled', (error, files) => {
     console.log('upload seems stalled', error, files)
+    action('upload_stalled', {
+      reason: error?.message,
+      file_count: files?.length,
+    })
   })
   uppy.on('retry-all', (fileIDs) => {
     console.log('upload retried:', fileIDs)
   })
   uppy.on('restriction-failed', (file, error) => {
     console.log('Restriction failed', file, error)
+    action('upload_rejected', {
+      reason: error?.message,
+      file_type: file?.type,
+      file_size: file?.size,
+    })
   })
   uppy.on('dashboard:modal-closed', () => {
     console.log('Uploader modal is closed')
