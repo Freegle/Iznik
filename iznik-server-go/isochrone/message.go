@@ -329,6 +329,27 @@ func Messages(c *fiber.Ctx) error {
 			}
 			return res[i].Arrival.After(res[j].Arrival)
 		})
+
+		// Apply the SAME distance filter the unread count uses (nearbyCount ->
+		// resolveMaxDistance, which reads ?maxDistance= else the member's saved
+		// browseMaxDistance). Without this the feed returned every in-reach post
+		// regardless of the member's distance preference while the count honoured it, so
+		// the unread badge (e.g. 3) and the unseen posts the client shows above its
+		// "You're up to date" divider (e.g. 9) drifted apart. Own posts have a blurred
+		// distance of ~0 from the viewer (it's their own location) so they always pass;
+		// only far reach posts drop. We match nearbyCount exactly — no pinned exemption —
+		// so the two never disagree; a pinned clearance beyond the slider is out of scope
+		// for that viewer just as it is uncounted.
+		maxDist := resolveMaxDistance(c, db, myid)
+		if maxDist < BrowseDistanceUnlimited {
+			kept := res[:0]
+			for _, m := range res {
+				if m.Distance <= maxDist {
+					kept = append(kept, m)
+				}
+			}
+			res = kept
+		}
 	}
 
 	return c.JSON(res)

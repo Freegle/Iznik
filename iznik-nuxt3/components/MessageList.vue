@@ -529,6 +529,11 @@ function markSeen() {
     // Send markSeen once
     messageStore.markSeen(ids)
 
+    // Clear the unseen flags in the cached feed immediately so these posts drop below the
+    // "You're up to date" divider right away, rather than lingering above it until the
+    // count-poll below refreshes the feed.
+    nearbyStore.markSeen(ids)
+
     // Start polling the count - the server processes this in the background
     pollCount = 0
     pollUntilZero()
@@ -551,6 +556,13 @@ function pollUntilZero() {
     if (count > 0 && pollCount < MAX_POLL_COUNT) {
       // Keep polling until count reaches 0 or we hit the limit
       pollUntilZero()
+    } else {
+      // The server has finished processing the mark-seen (count cleared, or we hit the
+      // poll limit): refresh the cached feed so its `unseen` flags come from the server
+      // rather than stale local state. This keeps the posts shown above the divider in
+      // step with the badge - including on a second device, whose feed cache is otherwise
+      // stale after the first device marked everything seen.
+      await nearbyStore.fetchMessages(true)
     }
   }, 1000) // Poll once per second
 }
