@@ -965,7 +965,14 @@ class UnifiedDigestService
         // An explicit --user bypasses this. Immediate mode shards by group
         // inside sendImmediateDigests instead, so don't double-shard here.
         if ($mode === self::MODE_DAILY && !$userId && $shards > 1) {
-            $query->whereRaw('users.id % ? = ?', [$shards, $shard]);
+            // Hash the id, don't MOD it directly. Under Galera/Percona the auto-increment
+            // stride equals the cluster size (auto_increment_increment, 3 on a 3-node
+            // cluster) and each node has a different offset, so users.id is NOT contiguous.
+            // MOD(users.id, shards) then skews hard whenever shards shares a factor with the
+            // cluster size (e.g. 3/6/9 → almost everyone lands on one shard). CRC32 gives a
+            // uniform spread for ANY shard count and is immune to the stride / a cluster-size
+            // change. Disjoint partitions still hold (each id maps to exactly one shard).
+            $query->whereRaw('CRC32(users.id) % ? = ?', [$shards, $shard]);
         }
 
         // V1 parity (iznik-server/include/mail/Digest.php:418): per-group

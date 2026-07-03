@@ -455,30 +455,27 @@ Schedule::command('tn:sync')
 // guard turns every later tick into a no-op, and withoutOverlapping stops a
 // second start while the multi-hour run is still going. A missed 07:00 thus
 // self-heals at 07:30/08:00/… instead of being lost for the day.
-Schedule::command('mail:digest:unified --mode=daily')
-    ->timezone(config('freegle.timezone'))
-    ->everyThirtyMinutes()
-    ->between('7:00', '12:00')
-    ->withoutOverlapping(300)
-    ->sendOutputTo(cronLog('mail:digest:unified.daily'))
-    ->runInBackground();
-
-// Daily sharding (commented until the full cutover): once the allowlist is
-// '*' the single worker above won't keep up with the whole userbase, so
-// partition users by MOD(users.id, shards) across N parallel workers — the
-// same disjoint-partition model immediate mode uses below, but sharded by
-// user instead of group. Replace the single entry above with this loop:
-//
-// $dailyShardCount = 4;
-// foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
-//     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
-//         ->timezone(config('freegle.timezone'))
-//         ->everyThirtyMinutes()
-//         ->between('7:00', '12:00')
-//         ->withoutOverlapping()
-//         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
-//         ->runInBackground();
-// }
+// Sharded (full cutover, allowlist '*'). A single worker reaches only a fraction of the
+// ~78k daily members inside the 5-hour 07:00-12:00 window, so the rest perpetually
+// backlog. Partition users across parallel workers by CRC32(users.id) % shards — a HASH,
+// not MOD(id): under Galera the auto-increment stride equals the cluster size so raw ids
+// skew a MOD-based split (see UnifiedDigestService). Same disjoint-partition model
+// immediate mode uses, sharded by user instead of group. Each shard has its own flock via
+// lockKeySuffix() (mode+shard keyed), so a still-running multi-hour shard self-bounces the
+// next 30-min tick and shards never block each other or the immediate/reach shards.
+// Per-shard memory is bounded by DIGEST_LOAD_CAP. Kept at 4 (not 8): this 6-core host's
+// per-user digest cost (spatial reach-gate + MJML render) makes the throughput bottleneck
+// largely shared/downstream, so more workers mostly add contention and CPU load rather
+// than throughput — 8 saturated the box. Tune with headroom, not optimism.
+$dailyShardCount = 4;
+foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
+    Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
+        ->timezone(config('freegle.timezone'))
+        ->everyThirtyMinutes()
+        ->between('7:00', '12:00')
+        ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
+        ->runInBackground();
+}
 
 // Daily new-posts push notification (push:daily-posts).
 //
