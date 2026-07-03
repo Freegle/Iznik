@@ -45,6 +45,14 @@ export function useMessageDisplay(messageId) {
     return Number.isFinite(d) ? d : null
   })
 
+  // Whether this post is pinned (a paid bulk-offer clearance floated to the top of the
+  // feed). Like the distance, `pinned` is a feed-only flag looked up by id from the
+  // nearby store; false off the feed (search, My Posts ...).
+  const isPinned = computed(() => {
+    const id = Number(messageId?.value ?? messageId)
+    return Number.isFinite(id) && nearbyStore.pinnedIds.has(id)
+  })
+
   // Get the group for this message (first group it's posted to)
   const messageGroup = computed(() => {
     const groupId = message.value?.groups?.[0]?.groupid
@@ -263,6 +271,7 @@ export function useMessageDisplay(messageId) {
     fullTimeAgo,
     distanceText,
     distanceTextExpanded,
+    isPinned,
     replyCount,
     replyTooltip,
     isOffer,

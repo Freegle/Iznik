@@ -101,5 +101,19 @@ export const useNearbyStore = defineStore({
       }
       return map
     },
+
+    // Set of ids of pinned posts (paid bulk-offer clearances the server floats to the
+    // top). `pinned` is a feed-only flag (like distance, it isn't on the full message
+    // record fetched by the card), so the display composable reads it back by id here to
+    // decide whether to show the "Pinned" label.
+    pinnedIds: (state) => {
+      const ids = new Set()
+      for (const m of state.messageList || []) {
+        if (m && m.id != null && m.pinned) {
+          ids.add(Number(m.id))
+        }
+      }
+      return ids
+    },
   },
 })

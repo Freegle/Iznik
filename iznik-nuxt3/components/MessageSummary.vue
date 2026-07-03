@@ -85,6 +85,12 @@
         />
       </div>
 
+      <!-- Pinned (paid bulk-offer clearance) indicator. On the photo so it shows in every
+           layout - mobile portrait, tablet/desktop and mobile-landscape. -->
+      <div v-if="isPinned" class="pinned-badge">
+        <v-icon icon="thumbtack" class="pinned-icon" />Pinned
+      </div>
+
       <!-- Title/info overlay at bottom of photo (mobile only) -->
       <div class="title-overlay title-overlay-mobile">
         <div class="info-row">
@@ -178,6 +184,7 @@ const {
   timeAgoExpanded,
   distanceText,
   distanceTextExpanded,
+  isPinned,
   isOffer,
   isWanted,
   successfulText,
@@ -382,6 +389,36 @@ function expand(e) {
   border-radius: var(--radius-sm, 0.375rem);
   z-index: 5;
   height: auto;
+}
+
+/* Pinned (paid clearance) badge - top-left of the photo, above the image but below the
+   "freegled"/"promised" stamp. Solid gold reads as "featured" and stays distinct from
+   the green OFFER / blue WANTED tags. Deliberately uses only background/shadow (no
+   filters or transforms) so it renders identically with GPU acceleration disabled. */
+.pinned-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: $color-white;
+  background: $color-gold;
+  border-radius: var(--radius-sm, 0.375rem);
+  box-shadow: 0 1px 3px $color-black-opacity-50;
+  text-shadow: 0 1px 1px $color-black-opacity-30;
+  pointer-events: none;
+
+  .pinned-icon {
+    font-size: 0.72rem;
+  }
 }
 
 .status-overlay-image {
