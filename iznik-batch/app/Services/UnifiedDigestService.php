@@ -43,6 +43,22 @@ class UnifiedDigestService
     public const MODE_REACH = 'reach';
 
     /**
+     * Hard ceiling on how many posts getPostsForUser() loads into memory in one run.
+     *
+     * A digest renders at most DigestStyle::DIGEST_POST_CAP (65) posts, but the load is
+     * unbounded by nature: it fetches every post since the member's last-digest cursor.
+     * When the daily run falls behind (or a member is in many groups after rippling), that
+     * window grows to days × groups and the eager-loaded Collection (attachments/fromUser/
+     * groups) blows the PHP memory_limit — the run then dies part-way, so higher-id members
+     * are never reached, their cursor stays stale, and the next run's window is even bigger
+     * (self-amplifying). Capping the LOAD bounds per-member memory regardless of backlog:
+     * updateDigestTracker() advances the cursor past exactly what was loaded (oldest-first),
+     * so a backlogged member drains this many posts per run until caught up. Kept well above
+     * the render cap so scoring/dedup still choose from a large pool for normal daily volume.
+     */
+    public const DIGEST_LOAD_CAP = 500;
+
+    /**
      * Send unified digests to users who want them.
      *
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
@@ -1371,7 +1387,12 @@ class UnifiedDigestService
             );
         }
 
-        return $query->with(['attachments', 'fromUser', 'groups'])->get();
+        // Bound the load (see DIGEST_LOAD_CAP): oldest-first + this limit means a member who
+        // is far behind drains their backlog in DIGEST_LOAD_CAP-sized batches across successive
+        // runs (updateDigestTracker advances the cursor past exactly what is returned here)
+        // instead of loading days of posts at once and exhausting memory. Normal daily volume
+        // is well under the cap, so steady-state digests are unchanged.
+        return $query->with(['attachments', 'fromUser', 'groups'])->limit(self::DIGEST_LOAD_CAP)->get();
     }
 
     /**
