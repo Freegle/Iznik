@@ -300,4 +300,30 @@ export default class MessageAPI extends BaseAPI {
       false
     )
   }
+
+  // --- Bulk-offer ("clearance") logged-out update link ---------------------
+
+  // Mint (or fetch the existing) secret link that lets an external owner update
+  // this bulk offer's item availability/counts without logging in. Owner/mod only.
+  async bulkEditLink(id) {
+    return await this.$postv2('/message', { id, action: 'BulkEditLink' })
+  }
+
+  // Load a bulk offer's catalogue from a secret update-link token (logged out).
+  // logError defaults to false so a stale/typo'd link doesn't spam Sentry.
+  async fetchBulkEditOffer(token, logError = false) {
+    return await this.$getv2(
+      '/bulkoffer/update/' + encodeURIComponent(token),
+      {},
+      logError
+    )
+  }
+
+  // Update one item's availability and/or count from the logged-out page.
+  async updateBulkEditItem(token, itemid, changes) {
+    return await this.$postv2('/bulkoffer/update/' + encodeURIComponent(token), {
+      itemid,
+      ...changes,
+    })
+  }
 }

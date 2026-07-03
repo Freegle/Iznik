@@ -4131,6 +4131,8 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBulkInterest(c, myid, req)
 	case "BulkInterestState":
 		return handleBulkInterestState(c, myid, req)
+	case "BulkEditLink":
+		return handleBulkEditLink(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}

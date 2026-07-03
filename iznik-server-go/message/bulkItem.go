@@ -25,6 +25,9 @@ type BulkItem struct {
 	Position    uint    `json:"position"`
 	Name        string  `json:"name"`
 	Quantity    uint    `json:"quantity"`
+	// Available is the owner's per-item on-offer flag: false once they mark the
+	// item taken/gone (here or via the logged-out secret-link update page).
+	Available   bool    `json:"available"`
 	Condition   string  `json:"condition"`
 	Dimensions  *string `json:"dimensions"`
 	Photourl    *string `json:"photourl,omitempty"`
@@ -96,7 +99,7 @@ func saveAccessInstructions(db *gorm.DB, msgid uint64, instructions string) {
 // non-bulk message so the JSON field is omitted.
 func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, attachments []MessageAttachment) []BulkItem {
 	var items []BulkItem
-	db.Raw("SELECT id, msgid, position, name, quantity, `condition`, dimensions, photourl, description "+
+	db.Raw("SELECT id, msgid, position, name, quantity, available, `condition`, dimensions, photourl, description "+
 		"FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&items)
 
 	if len(items) == 0 {
@@ -343,6 +346,41 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// handleBulkEditLink mints (or returns the existing) secret token that lets an
+// external item-owner update this bulk offer's item availability/counts from a
+// logged-out page, without a Freegle login. Owner or moderator only. The token
+// authorises ONLY availability/count edits to this one offer (see bulkEdit.go).
+func handleBulkEditLink(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	var fromuser uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
+	if fromuser == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found")
+	}
+	if fromuser != myid && !isModForMessage(db, myid, req.ID) {
+		return fiber.NewError(fiber.StatusForbidden, "Not your post")
+	}
+
+	// Only a bulk offer (one with catalogue items) can have an update link.
+	var items int64
+	db.Raw("SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?", req.ID).Scan(&items)
+	if items == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Not a bulk offer")
+	}
+
+	token := ensureBulkEditToken(db, req.ID)
+	if token == "" {
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not create link")
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "token": token})
 }
 
 // sendAccessInstructions delivers the offer's private access instructions to a
