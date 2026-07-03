@@ -605,7 +605,7 @@ class UnifiedDigestService
         }
 
         try {
-            $msg = Message::with(['attachments', 'fromUser', 'groups'])->find($msgid);
+            $msg = Message::with($this->digestPostEagerLoads())->find($msgid);
             if ($msg === null) {
                 return 0;
             }
@@ -797,7 +797,7 @@ class UnifiedDigestService
             // Bound the per-tick scan; the cursor advances to the last processed message so
             // the next tick continues. Prevents an unbounded window on a busy group.
             ->limit(500)
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with($this->digestPostEagerLoads())
             ->get();
     }
 
@@ -1334,6 +1334,28 @@ class UnifiedDigestService
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @return Collection
      */
+    /**
+     * Column-constrained eager-load spec for digest posts, shared by every digest
+     * query so they load the same lean set.
+     *
+     * - groups: only the display-name columns. The default (groups.*) pulls each
+     *   group's boundary polygons (poly/polyofficial/polyindex) plus settings/
+     *   welcomemail/description — none of which a digest renders — and that was
+     *   ~27% of per-user DB time. The digest only needs id + nameshort/namefull
+     *   (namedisplay derives from those).
+     * - attachments: only the primary-photo pointer columns. The digest shows one
+     *   photo per post (getPrimaryAttachment), so externalmods/data are dead weight.
+     *   msgid is required for the hasMany to match rows to their message.
+     */
+    private function digestPostEagerLoads(): array
+    {
+        return [
+            'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived'),
+            'fromUser',
+            'groups' => fn ($q) => $q->select('groups.id', 'groups.nameshort', 'groups.namefull'),
+        ];
+    }
+
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
@@ -1402,7 +1424,7 @@ class UnifiedDigestService
         // runs (updateDigestTracker advances the cursor past exactly what is returned here)
         // instead of loading days of posts at once and exhausting memory. Normal daily volume
         // is well under the cap, so steady-state digests are unchanged.
-        return $query->with(['attachments', 'fromUser', 'groups'])->limit(self::DIGEST_LOAD_CAP)->get();
+        return $query->with($this->digestPostEagerLoads())->limit(self::DIGEST_LOAD_CAP)->get();
     }
 
     /**
@@ -1454,7 +1476,7 @@ class UnifiedDigestService
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
             ->orderBy('messages_groups.arrival', 'desc')
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with($this->digestPostEagerLoads())
             ->get();
     }
 
