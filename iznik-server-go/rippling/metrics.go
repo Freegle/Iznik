@@ -290,26 +290,38 @@ func Metrics(c *fiber.Ctx) error {
 		return append(a, start, end)
 	}
 
-	// replyRateArgs orders args to match the SQL: optional group filter, then the fr-subquery
-	// window (start, end), then the outer arrival window (start, end).
+	// replyRateArgs orders args to match the SQL: optional group filter, then the `rip`
+	// subquery lower bound (start), then the fr-subquery window (start, end), then the
+	// outer arrival window (start, end).
 	// Parallel in structure to takenRateArgs — keep the two in sync.
+	//
+	// The rip subquery (first ripple per msgid) is bounded to windowStart rather than a
+	// fixed NOW()-100 DAY: a post only appears in the outer set when its ORIGIN
+	// (rippled_in=0) row's arrival is in [start, end), and a ripple can only happen after
+	// the post is posted, so first_ripple >= origin arrival >= start. Bounding to start
+	// therefore never drops a first_ripple for an in-window post, but lets the optimiser
+	// use the arrival index (a selective range) instead of scanning most of
+	// messages_groups via the deleted index to find the ~1.6% of rows that are
+	// rippled_in=1 — the difference between this query taking ~20s and ~4s.
 	replyRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
 		a := []interface{}{}
 		if groupID > 0 {
 			a = append(a, groupID)
 		}
-		return append(a, windowStart, windowEnd, windowStart, windowEnd)
+		return append(a, windowStart, windowStart, windowEnd, windowStart, windowEnd)
 	}
 
-	// takenRateArgs orders args to match the SQL: optional group filter, then the outcomes
-	// subquery lower bound (start), then the outer arrival window (start, end).
-	// Parallel in structure to replyRateArgs — keep the two in sync.
+	// takenRateArgs orders args to match the SQL: optional group filter, then the `rip`
+	// subquery lower bound (start), then the outcomes subquery lower bound (start), then
+	// the outer arrival window (start, end).
+	// Parallel in structure to replyRateArgs — keep the two in sync. See replyRateArgs for
+	// why the rip subquery is bounded to windowStart.
 	takenRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
 		a := []interface{}{}
 		if groupID > 0 {
 			a = append(a, groupID)
 		}
-		return append(a, windowStart, windowStart, windowEnd)
+		return append(a, windowStart, windowStart, windowStart, windowEnd)
 	}
 
 	// ---- Declare all result variables up front so goroutines can capture them --------
@@ -450,7 +462,7 @@ func Metrics(c *fiber.Ctx) error {
 			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
-			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= NOW() - INTERVAL 100 DAY GROUP BY msgid) rip ON rip.msgid = m.id
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= ? GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (
 			        SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
 			        WHERE type = 'Interested' AND date >= ? AND date < (? + INTERVAL 36 HOUR) GROUP BY refmsgid
@@ -485,7 +497,7 @@ func Metrics(c *fiber.Ctx) error {
 			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
-			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= NOW() - INTERVAL 100 DAY GROUP BY msgid) rip ON rip.msgid = m.id
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= ? GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN chat_messages cm
 			           ON cm.refmsgid = m.id AND cm.type = 'Interested'
 			          AND cm.date >= ? AND cm.date < (? + INTERVAL 36 HOUR)
@@ -573,7 +585,7 @@ func Metrics(c *fiber.Ctx) error {
 			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
 			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
-			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= NOW() - INTERVAL 100 DAY GROUP BY msgid) rip ON rip.msgid = m.id
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= ? GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes
 			               WHERE outcome IN ('Taken','Received') AND timestamp >= ?) o
 			           ON o.msgid = m.id
