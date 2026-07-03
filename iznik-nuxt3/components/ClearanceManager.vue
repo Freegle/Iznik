@@ -144,6 +144,48 @@
         </b-button>
       </div>
 
+      <!-- A secret link so an external owner (e.g. someone giving items away
+           through other channels too) can keep availability up to date without
+           a Freegle login. Only the item list + counts are exposed - no replies. -->
+      <div
+        class="clearance-manager__sharelink mb-3"
+        data-testid="clearance-sharelink-section"
+      >
+        <b-button
+          v-if="!shareLink"
+          variant="outline-primary"
+          size="sm"
+          :disabled="shareLoading"
+          data-testid="clearance-sharelink-get"
+          @click="getShareLink"
+        >
+          <b-spinner v-if="shareLoading" small class="me-1" />
+          <v-icon v-else icon="link" /> Get an update link to share
+        </b-button>
+        <div v-else data-testid="clearance-sharelink-ready">
+          <label class="small text-muted d-block mb-1">
+            Send this to whoever manages the items - they can update what's left
+            (available/taken and how many) without logging in:
+          </label>
+          <div class="d-flex gap-2 align-items-center">
+            <b-form-input
+              :model-value="shareLink"
+              readonly
+              class="flex-grow-1"
+              data-testid="clearance-sharelink-input"
+              @focus="selectAll"
+            />
+            <b-button
+              variant="outline-secondary"
+              data-testid="clearance-sharelink-copy"
+              @click="copyShareLink"
+            >
+              {{ shareCopied ? 'Copied!' : 'Copy' }}
+            </b-button>
+          </div>
+        </div>
+      </div>
+
       <ClearanceManageItem
         v-for="(item, idx) in items"
         :key="item.id"
@@ -159,7 +201,7 @@
 
 <script setup>
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from '#imports'
+import { useRouter, useRuntimeConfig, useNuxtApp } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
@@ -180,6 +222,45 @@ const messageStore = useMessageStore()
 const userStore = useUserStore()
 const { myid } = useMe()
 const router = useRouter()
+const runtimeConfig = useRuntimeConfig()
+const { $api } = useNuxtApp()
+
+// Secret update-link sharing (for an external item-owner).
+const shareLink = ref('')
+const shareLoading = ref(false)
+const shareCopied = ref(false)
+
+async function getShareLink() {
+  shareLoading.value = true
+  try {
+    const res = await $api.message.bulkEditLink(props.id)
+    if (res?.token) {
+      const base =
+        runtimeConfig.public?.USER_SITE || 'https://www.ilovefreegle.org'
+      shareLink.value = base + '/clearance/update/' + res.token
+    }
+  } catch (e) {
+    console.error('Failed to get update link', e)
+  } finally {
+    shareLoading.value = false
+  }
+}
+
+async function copyShareLink() {
+  try {
+    await navigator.clipboard.writeText(shareLink.value)
+    shareCopied.value = true
+    setTimeout(() => {
+      shareCopied.value = false
+    }, 2000)
+  } catch (e) {
+    // Clipboard blocked (e.g. insecure context) - the field is selectable to copy manually.
+  }
+}
+
+function selectAll(e) {
+  e.target.select()
+}
 
 // Open the create/edit form pre-loaded with this clearance for editing.
 function goEdit() {
@@ -370,6 +451,11 @@ defineExpose({
   onResolve,
   localAccessInstructions,
   saveAccessInstructions,
+  shareLink,
+  shareLoading,
+  shareCopied,
+  getShareLink,
+  copyShareLink,
 })
 </script>
 
