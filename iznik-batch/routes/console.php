@@ -472,7 +472,7 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
         ->timezone(config('freegle.timezone'))
         ->everyThirtyMinutes()
-        ->between('7:00', '12:00')
+        ->between('7:00', '20:00')
         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
         ->runInBackground();
 }
