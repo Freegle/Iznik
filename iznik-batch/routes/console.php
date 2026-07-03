@@ -476,7 +476,15 @@ $dailyShardCount = 8;
 foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
         ->timezone(config('freegle.timezone'))
-        ->everyThirtyMinutes()
+        // everyMinute (not everyThirtyMinutes): a daily sweep of a shard's eligible
+        // users takes as long as it takes; when it finishes, the very next tick
+        // relaunches it so residual backlog / newly-due users drain within ~60s
+        // instead of idling up to 30 minutes. Overlap is prevented by the command's
+        // own flock (PreventsOverlapping, keyed per mode+shard) — a tick that fires
+        // while the previous sweep is still running just logs "Already running,
+        // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
+        // every post-send tick a cheap no-op, so this is safe to run continuously.
+        ->everyMinute()
         ->between('7:00', '20:00')
         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
         ->runInBackground();
