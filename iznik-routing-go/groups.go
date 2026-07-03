@@ -128,7 +128,16 @@ type groupsCollection struct {
 }
 
 var groupsDB *sql.DB
-var groupsDBMu sync.Mutex
+var groupsDBMu sync.RWMutex
+
+// configureGroupsPool sizes the shared pool so concurrent group-proximity requests
+// get pooled connections instead of contending. The server is GOMAXPROCS=NumCPU and
+// handles requests on many goroutines, so it needs more than the default 2 idle conns.
+func configureGroupsPool(db *sql.DB) {
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(16)
+	db.SetConnMaxLifetime(5 * time.Minute)
+}
 
 // groupsDSN builds the MySQL DSN from environment variables.
 func groupsDSN() string {
@@ -168,6 +177,7 @@ func initGroupsDB() {
 		db.Close()
 		return
 	}
+	configureGroupsPool(db)
 	groupsDB = db
 	host := os.Getenv("MYSQL_HOST")
 	port := os.Getenv("MYSQL_PORT")
@@ -184,15 +194,22 @@ func initGroupsDB() {
 // ensureGroupsDB returns the groups DB connection, reconnecting lazily if
 // the initial startup connection failed (e.g. the DB tunnel was not yet up).
 func ensureGroupsDB() *sql.DB {
+	// Hot path: shared RLock, no Ping. *sql.DB is a concurrency-safe pool that
+	// transparently reopens broken connections on the next query, so pinging on every
+	// call — while holding an EXCLUSIVE lock across a remote round trip — was both
+	// unnecessary and serialized the whole (GOMAXPROCS=NumCPU) server to ~1 core.
+	groupsDBMu.RLock()
+	db := groupsDB
+	groupsDBMu.RUnlock()
+	if db != nil {
+		return db
+	}
+	// Slow path: connect once under the exclusive lock (initGroupsDB failed at
+	// startup, e.g. the DB tunnel wasn't up yet). The pool self-heals thereafter.
 	groupsDBMu.Lock()
 	defer groupsDBMu.Unlock()
 	if groupsDB != nil {
-		if err := groupsDB.Ping(); err == nil {
-			return groupsDB
-		}
-		// Stale connection — close and reconnect.
-		groupsDB.Close()
-		groupsDB = nil
+		return groupsDB
 	}
 	dsn := groupsDSN()
 	if dsn == "" {
@@ -208,6 +225,7 @@ func ensureGroupsDB() *sql.DB {
 		db.Close()
 		return nil
 	}
+	configureGroupsPool(db)
 	groupsDB = db
 	host := os.Getenv("MYSQL_HOST")
 	port := os.Getenv("MYSQL_PORT")
