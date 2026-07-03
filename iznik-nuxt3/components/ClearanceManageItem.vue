@@ -19,8 +19,13 @@
       </button>
       <div class="clearance-item__title">
         <span class="clearance-item__ref">#{{ index + 1 }}</span>
-        <span class="clearance-item__name">{{ item.name }}</span>
-        <b-badge variant="light">{{ item.quantity }} available</b-badge>
+        <span
+          class="clearance-item__name"
+          :class="{ 'clearance-item__name--gone': !isAvailable }"
+          >{{ item.name }}</span
+        >
+        <b-badge v-if="!isAvailable" variant="danger">No longer available</b-badge>
+        <b-badge v-else variant="light">{{ item.quantity }} available</b-badge>
         <b-badge
           v-if="item.condition && item.condition !== 'Unknown'"
           variant="info"
@@ -280,8 +285,13 @@ const inactiveRows = computed(() =>
 const activeRows = computed(() => [...allocatedRows.value, ...poolRows.value])
 
 const allocated = computed(() => allocatedQuantity(interest.value))
+// The owner (or an external owner via the secret update link) can mark an item
+// as no longer available; then there's nothing left to allocate.
+const isAvailable = computed(() => props.item.available !== false)
 const remaining = computed(() =>
-  Math.max(0, (props.item.quantity || 0) - allocated.value)
+  isAvailable.value
+    ? Math.max(0, (props.item.quantity || 0) - allocated.value)
+    : 0
 )
 
 const conditionLabel = computed(() =>
@@ -331,6 +341,7 @@ defineExpose({
   activeRows,
   allocated,
   remaining,
+  isAvailable,
   otherAllocationsFor,
   itemStates,
   helperStateFor,
@@ -420,6 +431,11 @@ defineExpose({
 
 .clearance-item__name {
   font-weight: 600;
+}
+
+.clearance-item__name--gone {
+  text-decoration: line-through;
+  color: $color-gray--normal;
 }
 
 .clearance-item__alloc {

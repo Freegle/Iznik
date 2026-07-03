@@ -106,8 +106,8 @@
         </div>
         <div class="title-row">
           <span class="title-subject">{{ strippedSubject }}</span>
-          <b-badge v-if="bulkCount" variant="success" class="ms-1 bulk-badge"
-            >{{ bulkCount }} items</b-badge
+          <b-badge v-if="bulkCount" variant="info" class="ms-1 bulk-badge"
+            >{{ bulkAvailable }} available</b-badge
           >
         </div>
       </div>
@@ -119,8 +119,8 @@
         <MessageTag :id="id" :inline="true" class="content-tag" />
         <div class="content-title-location">
           <span class="content-subject">{{ subjectItemName }}</span>
-          <b-badge v-if="bulkCount" variant="success" class="ms-1 bulk-badge"
-            >{{ bulkCount }} items</b-badge
+          <b-badge v-if="bulkCount" variant="info" class="ms-1 bulk-badge"
+            >{{ bulkAvailable }} available</b-badge
           >
           <span v-if="subjectLocation" class="content-location">
             {{ subjectLocation }}
@@ -192,8 +192,20 @@ const {
   categoryIcon,
 } = useMessageDisplay(idRef)
 
-// Bulk offer ("clearance"): number of catalogue items, for a list indicator.
+// Bulk offer ("clearance") indicator. bulkCount only gates the badge (is this a
+// bulk offer?); the badge itself shows the TOTAL quantity available, matching the
+// post's "N available" (message.availablenow), not the number of catalogue rows.
 const bulkCount = computed(() => message.value?.bulkitems?.length || 0)
+const bulkAvailable = computed(() => {
+  const m = message.value
+  if (!m?.bulkitems?.length) return 0
+  // Prefer availablenow (sum of quantities across items still available); fall
+  // back to summing the catalogue quantities if the list payload omits it.
+  return (
+    m.availablenow ||
+    m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
+  )
+})
 
 const miscStore = useMiscStore()
 const { isLandscape } = useOrientation()
@@ -643,6 +655,13 @@ function expand(e) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Bulk-offer count pill. Uses the standard "N available" pill styling
+   (variant="info", as on the post); the only layout fix is align-self so it hugs
+   its own text instead of stretching to the flex-column's full width. */
+.bulk-badge {
+  align-self: flex-start;
 }
 
 .content-description {

@@ -56,7 +56,10 @@
              just to the left of the choice buttons. -->
         <div class="bitem__meta">
           <span class="bitem__avail">
-            <b-badge variant="light">{{ item.quantity }} available</b-badge>
+            <b-badge v-if="item.available === false" variant="secondary"
+              >No longer available</b-badge
+            >
+            <b-badge v-else variant="light">{{ item.quantity }} available</b-badge>
           </span>
           <span class="bitem__cond">
             <b-badge
@@ -88,6 +91,7 @@
               class="bitem__choicebtn"
               :variant="picks[item.id].checked ? 'primary' : 'outline-primary'"
               :pressed="picks[item.id].checked"
+              :disabled="item.available === false"
               :data-testid="'pick-' + item.id"
               @click="setPick(item, true)"
             >
