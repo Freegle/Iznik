@@ -221,6 +221,28 @@ watch(
   { immediate: true }
 )
 
+// Same fix for sort and post-type: initialise them from the saved settings straight
+// away (mirroring PostFilters' own getters, which read settings.browseSort/browseType).
+// Without this they sat at their 'Unseen'/'All' defaults until PostFilters emitted on a
+// manual change, so a member whose saved sort is e.g. "Closest" (browseSort='Nearby')
+// saw the default Unseen/relevance order on first load and the feed ignored their sort
+// preference until they re-picked it. PostFilters is also lazily mounted inside the
+// collapsed Map & Filters panel, so its getter didn't even run until the panel was opened.
+watch(
+  () => me.value?.settings?.browseSort,
+  (newVal) => {
+    selectedSort.value = newVal || 'Unseen'
+  },
+  { immediate: true }
+)
+watch(
+  () => me.value?.settings?.browseType,
+  (newVal) => {
+    selectedType.value = newVal || 'All'
+  },
+  { immediate: true }
+)
+
 const browseView = computed(() => {
   return me.value?.settings?.browseView
     ? me.value.settings.browseView
