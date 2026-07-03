@@ -463,11 +463,16 @@ Schedule::command('tn:sync')
 // immediate mode uses, sharded by user instead of group. Each shard has its own flock via
 // lockKeySuffix() (mode+shard keyed), so a still-running multi-hour shard self-bounces the
 // next 30-min tick and shards never block each other or the immediate/reach shards.
-// Per-shard memory is bounded by DIGEST_LOAD_CAP. Kept at 4 (not 8): this 6-core host's
-// per-user digest cost (spatial reach-gate + MJML render) makes the throughput bottleneck
-// largely shared/downstream, so more workers mostly add contention and CPU load rather
-// than throughput — 8 saturated the box. Tune with headroom, not optimism.
-$dailyShardCount = 4;
+// Per-shard memory is bounded by DIGEST_LOAD_CAP. Profiling the workers (2026-07-03, 8-core
+// box) showed each shard runs at only ~42% of a core — the per-user cost is PHP compute +
+// several REMOTE-prod-DB round trips (getPostsForUser/reach-gate/scoring), so a worker spends
+// ~58% of its time waiting on the DB, not on any shared local service (it does NOT call the
+// routing server; MJML is the in-process mrml engine). That makes it embarrassingly parallel:
+// extra shards mostly overlap DB latency for near-free, and the box sits ~60% idle with 4.
+// So 8 (matches immediate) to drain the catch-up ~2x faster; safe to raise further while CPU
+// idle stays high. (The earlier load-40 "saturation" at 8 was the post-reboot boot storm —
+// spatial graph rebuild + immediate backlog — not steady state.)
+$dailyShardCount = 8;
 foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
         ->timezone(config('freegle.timezone'))
