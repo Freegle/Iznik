@@ -157,4 +157,46 @@ describe('nearby store', () => {
       expect(store.bounds).toBeNull()
     })
   })
+
+  describe('distanceById getter', () => {
+    it('maps message id -> server distance', () => {
+      const store = useNearbyStore()
+      store.messageList = [
+        { id: 1, distance: 8.3 },
+        { id: 2, distance: 0.4 },
+      ]
+
+      expect(store.distanceById.get(1)).toBe(8.3)
+      expect(store.distanceById.get(2)).toBe(0.4)
+    })
+
+    it('coerces id to a number so string/number lookups agree', () => {
+      const store = useNearbyStore()
+      store.messageList = [{ id: '5', distance: 3 }]
+
+      expect(store.distanceById.get(5)).toBe(3)
+    })
+
+    it('omits posts with no numeric distance', () => {
+      const store = useNearbyStore()
+      store.messageList = [
+        { id: 1, distance: undefined },
+        { id: 2 },
+        { id: 3, distance: null },
+        { id: 4, distance: 2 },
+      ]
+
+      expect(store.distanceById.has(1)).toBe(false)
+      expect(store.distanceById.has(2)).toBe(false)
+      expect(store.distanceById.has(3)).toBe(false)
+      expect(store.distanceById.get(4)).toBe(2)
+    })
+
+    it('is empty when there are no messages', () => {
+      const store = useNearbyStore()
+      store.messageList = []
+
+      expect(store.distanceById.size).toBe(0)
+    })
+  })
 })

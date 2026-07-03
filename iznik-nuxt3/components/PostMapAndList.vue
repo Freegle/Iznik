@@ -397,11 +397,11 @@ const filteredMessages = computed(() => {
 })
 
 // Helper function to sort messages. Delegates to the pure sortBrowseMessages, which
-// computes each message's distance and arrival sort key ONCE (a Schwartzian transform)
-// instead of re-deriving getDistance (haversine/trig) and Date parsing on every
-// comparison - a big saving on large feeds. Ordering is unchanged.
+// computes each message's distance and arrival sort key ONCE (a Schwartzian transform).
+// "Closest" now orders by the server's per-post distance (the value shown on each badge),
+// so the map centre is no longer needed here.
 function sortMessages(messages) {
-  return sortBrowseMessages(messages, props.selectedSort, centre.value)
+  return sortBrowseMessages(messages, props.selectedSort)
 }
 
 const sortedMessagesOnMap = computed(() => {

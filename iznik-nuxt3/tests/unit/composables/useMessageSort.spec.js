@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { sortBrowseMessages } from '~/composables/useMessageSort'
 
 // Small helper: sort and return the resulting id order.
-function order(messages, sort, centre) {
-  return sortBrowseMessages(messages, sort, centre).map((m) => m.id)
+function order(messages, sort) {
+  return sortBrowseMessages(messages, sort).map((m) => m.id)
 }
 
 describe('sortBrowseMessages', () => {
@@ -69,46 +69,62 @@ describe('sortBrowseMessages', () => {
     })
   })
 
-  describe('Nearby sort', () => {
-    const centre = { lat: 51.5, lng: -0.1 }
-
-    it('orders nearest-first from the centre', () => {
+  describe('Nearby (Closest) sort', () => {
+    it('orders nearest-first by the server distance', () => {
       const msgs = [
-        { id: 'far', lat: 53.0, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
-        { id: 'near', lat: 51.6, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
-        { id: 'mid', lat: 52.0, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
+        { id: 'far', distance: 12, arrival: '2024-01-01T00:00:00Z' },
+        { id: 'near', distance: 2, arrival: '2024-01-01T00:00:00Z' },
+        { id: 'mid', distance: 7, arrival: '2024-01-01T00:00:00Z' },
       ]
-      expect(order(msgs, 'Nearby', centre)).toEqual(['near', 'mid', 'far'])
+      expect(order(msgs, 'Nearby')).toEqual(['near', 'mid', 'far'])
     })
 
-    it('sorts posts with no coordinates last', () => {
+    it('follows the server distance, not a client re-derivation from lat/lng', () => {
+      // 'badgeNear' is geographically further in raw lat/lng but the server says it is
+      // closer (smaller `distance`). The list must follow the badge (server distance), so
+      // the old map-centre haversine ordering (which would put 'badgeFar' first) is gone.
       const msgs = [
         {
-          id: 'nocoord',
-          lat: null,
-          lng: null,
+          id: 'badgeFar',
+          lat: 51.5,
+          lng: -0.1,
+          distance: 9,
           arrival: '2024-01-01T00:00:00Z',
         },
-        { id: 'near', lat: 51.6, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
+        {
+          id: 'badgeNear',
+          lat: 60,
+          lng: 10,
+          distance: 2,
+          arrival: '2024-01-01T00:00:00Z',
+        },
       ]
-      expect(order(msgs, 'Nearby', centre)).toEqual(['near', 'nocoord'])
+      expect(order(msgs, 'Nearby')).toEqual(['badgeNear', 'badgeFar'])
+    })
+
+    it('sorts posts with no server distance last', () => {
+      const msgs = [
+        { id: 'nodist', arrival: '2024-01-01T00:00:00Z' },
+        { id: 'near', distance: 3, arrival: '2024-01-01T00:00:00Z' },
+      ]
+      expect(order(msgs, 'Nearby')).toEqual(['near', 'nodist'])
     })
 
     it('breaks equal-distance ties by recency (newest first)', () => {
       const msgs = [
-        { id: 'older', lat: 51.6, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
-        { id: 'newer', lat: 51.6, lng: -0.1, arrival: '2024-06-01T00:00:00Z' },
+        { id: 'older', distance: 4, arrival: '2024-01-01T00:00:00Z' },
+        { id: 'newer', distance: 4, arrival: '2024-06-01T00:00:00Z' },
       ]
-      expect(order(msgs, 'Nearby', centre)).toEqual(['newer', 'older'])
+      expect(order(msgs, 'Nearby')).toEqual(['newer', 'older'])
     })
 
-    it('falls back to recency when there is no centre', () => {
+    it('falls back to recency when no post has a server distance', () => {
       const msgs = [
-        { id: 'older', lat: 51.6, lng: -0.1, arrival: '2024-01-01T00:00:00Z' },
-        { id: 'newer', lat: 53.0, lng: -0.1, arrival: '2024-06-01T00:00:00Z' },
+        { id: 'older', arrival: '2024-01-01T00:00:00Z' },
+        { id: 'newer', arrival: '2024-06-01T00:00:00Z' },
       ]
-      // No centre -> not nearest-first; newest arrival wins regardless of distance.
-      expect(order(msgs, 'Nearby', null)).toEqual(['newer', 'older'])
+      // Nothing to sort by distance -> newest arrival wins.
+      expect(order(msgs, 'Nearby')).toEqual(['newer', 'older'])
     })
   })
 
