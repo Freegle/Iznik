@@ -135,7 +135,7 @@
           placeholder="e.g. 12 High St, side gate, buzz flat 3"
         />
         <b-button
-          class="mt-2"
+          class="mt-2 clearance-save-btn"
           variant="success"
           size="sm"
           @click="saveAccessInstructions"
@@ -478,6 +478,20 @@ defineExpose({
 
   summary {
     cursor: pointer;
+  }
+}
+
+/* Use the app's standard success green ($color-success), not Bootstrap's
+   default success (which renders a different teal-green). */
+.clearance-save-btn {
+  background-color: $color-success;
+  border-color: $color-success;
+
+  &:hover,
+  &:focus,
+  &:active {
+    background-color: $color-success-hover;
+    border-color: $color-success-hover;
   }
 }
 </style>

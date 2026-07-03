@@ -29,6 +29,12 @@
           :interestuserid="chatmessage.userid"
           class="mt-1 mb-2"
         />
+        <div
+          v-if="isBulk && interestComment"
+          class="bulk-interest-comment preline forcebreak mb-2"
+        >
+          {{ interestComment }}
+        </div>
         <div v-if="!isBulk">
           <!-- ModTools: clickable links enabled -->
           <template v-if="isModTools">
@@ -130,6 +136,12 @@
           :interestuserid="myid"
           class="mt-1 mb-2"
         />
+        <div
+          v-if="isBulk && interestComment"
+          class="bulk-interest-comment preline forcebreak mb-2"
+        >
+          {{ interestComment }}
+        </div>
         <div v-if="!isBulk">
           <!-- ModTools: clickable links enabled -->
           <template v-if="isModTools">
@@ -320,6 +332,16 @@ const refmsg = computed(() => {
 const isBulk = computed(() => {
   const m = refmsg.value
   return !!m && ((m.bulkcount || 0) > 0 || (m.bulkitems && m.bulkitems.length > 0))
+})
+
+// The replier's own free-text note is appended to the interest chat body after
+// the machine-generated item list, separated by a blank line. For a bulk offer
+// the item lines are shown by the editor, so surface just the note here (it would
+// otherwise be hidden, since the plain-text branch is !isBulk).
+const interestComment = computed(() => {
+  const m = emessage.value || ''
+  const idx = m.indexOf('\n\n')
+  return idx === -1 ? '' : m.slice(idx + 2).trim()
 })
 
 // In ModTools, we make URLs clickable. In Freegle, we don't for safety reasons.
