@@ -184,3 +184,67 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 	assert.Equal(t, limitedCount, settingBody["count"].(float64),
 		"settings.browseMaxDistance is honoured server-side, matching the explicit query param result")
 }
+
+// TestNearbyFeedHonoursDistanceLimit: the browse FEED (GET /isochrone/message) applies the
+// SAME distance filter as the count, so the posts the client shows above its "You're up to
+// date" divider match the unread badge. Without it the feed returned every reach-covered
+// post regardless of the member's browseMaxDistance while the count honoured it, so the badge
+// and the feed diverged (a Tower Hamlets moderator saw a badge of 3 with 9 posts above the
+// divider). Mirrors TestNearbyCountDistanceLimit's setup for the feed side.
+func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("nearbyfeeddist")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	near := CreateTestMessage(t, posterID, group, "OFFER: near for feed distance limit (nearbyfeeddist)", 51.5, -0.1)
+	far := CreateTestMessage(t, posterID, group, "OFFER: far but in reach for feed distance limit (nearbyfeeddist)", 51.9, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", near, far)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", near, far)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// 'near' reach polygon covers the viewer; 'far' is ~27 miles away but its large reach
+	// polygon still covers the viewer, so both are in the reach set.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.9, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
+
+	inFeed := func(url string) map[float64]bool {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var msgs []map[string]interface{}
+		json2.Unmarshal(rsp(resp), &msgs)
+		got := map[float64]bool{}
+		for _, m := range msgs {
+			if id, ok := m["id"].(float64); ok {
+				got[id] = true
+			}
+		}
+		return got
+	}
+
+	// No limit: both reach-covered posts appear in the feed.
+	unlimited := inFeed("/api/isochrone/message?jwt=" + token)
+	assert.True(t, unlimited[float64(near)], "near post appears in the feed with no distance limit")
+	assert.True(t, unlimited[float64(far)], "far (but in-reach) post appears in the feed with no distance limit")
+
+	// browseMaxDistance=10: the ~27-mile 'far' post drops from the feed, matching the count.
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseMaxDistance', 10) WHERE id = ?", viewerID)
+	limited := inFeed("/api/isochrone/message?jwt=" + token)
+	assert.True(t, limited[float64(near)], "near post still appears within the 10-mile browseMaxDistance")
+	assert.False(t, limited[float64(far)], "the ~27-mile far post is filtered out of the feed, matching the count")
+}
