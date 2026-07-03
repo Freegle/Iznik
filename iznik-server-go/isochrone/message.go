@@ -248,10 +248,23 @@ func Messages(c *fiber.Ctx) error {
 				"LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ? "+
 				"LEFT JOIN rippling_reach rr ON rr.msgid = m.id "+
 				"WHERE m.fromuser = ? AND mg.arrival >= ? AND mo.id IS NULL "+
+				// Match My Posts' active-set exactly (message.go's HAVING clause): an
+				// Approved own post only counts as live while it is still in
+				// messages_spatial. Once it is pruned from spatial - expired, withdrawn,
+				// deleted, or taken - it must drop off browse at the same moment it drops
+				// off My Posts, not linger here for up to OPEN_AGE days (approved, no
+				// outcome row yet, arrival still within the window) because this own-posts
+				// arm queries the messages table directly and so bypasses spatial pruning.
+				// Pending/Rejected posts are never in spatial, so keep showing those - that
+				// is the whole point of this arm: the poster sees their post immediately,
+				// including while it awaits moderation.
+				"AND (EXISTS (SELECT 1 FROM messages_spatial ms WHERE ms.msgid = m.id) "+
+				"OR mg.collection IN (?, ?)) "+
 				"GROUP BY m.id",
 			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
 			myid, utils.MESSAGE_LIKES_VIEW, myid, start,
+			utils.COLLECTION_PENDING, utils.COLLECTION_REJECTED,
 		).Scan(&ownCandidates)
 
 		// Apply the SAME age-based expiry the My Posts endpoint uses, so a poster's
