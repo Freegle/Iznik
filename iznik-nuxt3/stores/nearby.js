@@ -86,5 +86,20 @@ export const useNearbyStore = defineStore({
         [nelat, nelng],
       ]
     },
+
+    // Map of message id -> server-computed distance (blurred great-circle miles from the
+    // viewer) for the posts in the feed. The message-display composable looks distance up
+    // by id so a card's badge shows the SAME distance the feed sorts and filters on,
+    // instead of re-deriving it client-side from a different reference point. Rebuilt only
+    // when messageList changes (Pinia getter caching); each lookup is then O(1).
+    distanceById: (state) => {
+      const map = new Map()
+      for (const m of state.messageList || []) {
+        if (m && m.id != null && Number.isFinite(m.distance)) {
+          map.set(Number(m.id), m.distance)
+        }
+      }
+      return map
+    },
   },
 })

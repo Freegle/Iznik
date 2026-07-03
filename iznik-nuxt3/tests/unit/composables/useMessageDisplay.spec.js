@@ -38,6 +38,15 @@ vi.mock('~/stores/group', () => ({
   useGroupStore: () => ({ get: mockGetGroup }),
 }))
 
+// Server distance lookup (nearby store). Same Map reference throughout so tests mutate
+// it via .set()/.clear() and the composable sees the change. Empty by default -> the
+// distance badge falls back to the client-side milesAway calc, as off the browse feed.
+const mockNearbyDistances = new Map()
+
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => ({ distanceById: mockNearbyDistances }),
+}))
+
 // mockMe must be a ref so the composable's `me.value` lookup works
 const mockMe = ref(null)
 
@@ -84,6 +93,7 @@ function make(msgData, opts = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockNearbyDistances.clear()
   mockMe.value = null
   mockByIdUser.mockReturnValue(null)
   mockGetGroup.mockReturnValue(null)
@@ -499,6 +509,29 @@ describe('useMessageDisplay', () => {
       const c = make({ id: 1, lat: 51.6, lng: -0.1 })
       expect(c.distanceText.value).toBe('6mi')
     })
+
+    it('prefers the server distance from the nearby store when present', () => {
+      mockNearbyDistances.set(7, 8.3)
+      mockMe.value = { lat: 51.5, lng: -0.1 }
+      // area / lat-lng would give a different answer; the server value wins.
+      const c = make({ id: 7, lat: 51.9, lng: -0.5, area: 'Ignored' })
+      expect(c.distanceText.value).toBe('8mi')
+      expect(mockMilesAway).not.toHaveBeenCalled()
+    })
+
+    it('shows "<1mi" for a sub-mile server distance', () => {
+      mockNearbyDistances.set(7, 0.4)
+      const c = make({ id: 7, lat: 51.9, lng: -0.5 })
+      expect(c.distanceText.value).toBe('<1mi')
+    })
+
+    it('falls back to the client calc when no server distance for this id', () => {
+      mockNearbyDistances.set(999, 3) // a different post's distance
+      mockMilesAway.mockReturnValue(5.7)
+      mockMe.value = { lat: 51.5, lng: -0.1 }
+      const c = make({ id: 7, lat: 51.6, lng: -0.1 })
+      expect(c.distanceText.value).toBe('6mi')
+    })
   })
 
   describe('distanceTextExpanded', () => {
@@ -533,6 +566,22 @@ describe('useMessageDisplay', () => {
       mockMe.value = { lat: 51.5, lng: -0.1 }
       const c = make({ id: 1, lat: 51.6, lng: -0.1 })
       expect(c.distanceTextExpanded.value).toBe('7 miles')
+    })
+
+    it('prefers the server distance (plural miles) when present', () => {
+      mockNearbyDistances.set(7, 7.4)
+      mockMe.value = { lat: 51.5, lng: -0.1 }
+      const c = make({ id: 7, lat: 51.9, lng: -0.5 })
+      expect(c.distanceTextExpanded.value).toBe('7 miles')
+      expect(mockMilesAway).not.toHaveBeenCalled()
+    })
+
+    it('server distance renders singular and sub-mile wording', () => {
+      mockNearbyDistances.set(7, 1.0)
+      expect(make({ id: 7 }).distanceTextExpanded.value).toBe('1 mile')
+      mockNearbyDistances.set(8, 0.3)
+      const subMile = make({ id: 8 }).distanceTextExpanded.value
+      expect(subMile).toBe('less than 1 mile')
     })
   })
 

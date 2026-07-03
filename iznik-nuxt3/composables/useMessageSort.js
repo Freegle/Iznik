@@ -1,32 +1,25 @@
-import { getDistance } from '~/composables/useMap'
-
 // Pure sort for the Browse feed, extracted from PostMapAndList.vue so it can be unit
 // tested and so the expensive sort keys are computed ONCE per message (a Schwartzian
 // transform) rather than re-derived on every comparator call.
 //
-// The previous inline comparator called getDistance() (a haversine with several trig
-// ops) and new Date(m.arrival).getTime() for BOTH operands on every comparison, so a
-// full sort did O(n log n) trig/date evaluations. On a large feed (a heavy-membership
-// user's list can be thousands of posts) that dominated the sort. Here each message's
-// distance and arrival timestamp are computed once - O(n) key work - leaving only cheap
-// numeric compares in the O(n log n) sort. The resulting order is identical to the old
-// comparator (same null->Infinity handling, same score/recency fallbacks, same stable
-// tie behaviour).
+// Each message's distance and arrival timestamp are computed once - O(n) key work -
+// leaving only cheap numeric compares in the O(n log n) sort.
 //
 //   messages     - array of feed summary objects
 //   selectedSort - 'Unseen' | 'Nearby' | anything else (treated as Newest-first)
-//   centre       - { lat, lng } viewer location, or null; only used for 'Nearby'
 //
 // Returns a NEW array; the input is not mutated (matches the old messages.slice()).
-export function sortBrowseMessages(messages, selectedSort, centre) {
+export function sortBrowseMessages(messages, selectedSort) {
   const list = messages || []
 
-  // Rippling-out (#1): "Nearby" orders nearest-first from the viewer's location. Only
-  // active when we actually have a centre - otherwise we fall through to recency below.
-  const nearbyRef =
-    selectedSort === 'Nearby' && centre?.lat != null && centre?.lng != null
-      ? [centre.lat, centre.lng]
-      : null
+  // "Nearby" (labelled "Closest") orders nearest-first by the SERVER's per-post distance
+  // - `m.distance`, the blurred great-circle miles from the viewer that the feed already
+  // returns and that each card's distance badge and the distance slider both use. Using
+  // that single value (rather than re-deriving distance client-side from the MAP centre,
+  // which is not the viewer's location and drifts as the map is panned/fitted) is what
+  // keeps the list order and the badges in agreement. Posts with no server distance sort
+  // last (Infinity) and then fall through to the recency tie-break.
+  const isNearby = selectedSort === 'Nearby'
 
   // 'Unseen' orders by unseen-bucket then relevance score and never consults arrival, so
   // only pay for Date parsing when a recency tiebreak/order is actually needed.
@@ -34,10 +27,7 @@ export function sortBrowseMessages(messages, selectedSort, centre) {
 
   const decorated = list.map((m) => ({
     m,
-    dist:
-      nearbyRef && m.lat != null && m.lng != null
-        ? getDistance(nearbyRef, [m.lat, m.lng])
-        : Infinity,
+    dist: isNearby && Number.isFinite(m.distance) ? m.distance : Infinity,
     ts: needsRecency ? new Date(m.arrival).getTime() : 0,
   }))
 
@@ -65,15 +55,16 @@ export function sortBrowseMessages(messages, selectedSort, centre) {
       } else {
         return (bm.score ?? 0) - (am.score ?? 0)
       }
-    } else if (nearbyRef) {
-      // Nearby: nearest-first (posts with no coordinates sort last via Infinity), then
-      // recency as a tiebreak.
+    } else if (isNearby) {
+      // Nearby: nearest-first by server distance (posts with no distance sort last via
+      // Infinity), then recency as a tiebreak. When no post has a server distance this
+      // degenerates to pure recency, matching the old "no known location" fallback.
       if (a.dist !== b.dist) {
         return a.dist - b.dist
       }
       return b.ts - a.ts
     } else {
-      // Descending date/time (Newest posted; also Nearby with no known location).
+      // Descending date/time (Newest posted).
       return b.ts - a.ts
     }
   })

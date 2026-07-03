@@ -3,6 +3,7 @@ import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 import { useGroupStore } from '~/stores/group'
+import { useNearbyStore } from '~/stores/nearby'
 import { useMe } from '~/composables/useMe'
 import {
   timeagoShort,
@@ -22,11 +23,27 @@ export function useMessageDisplay(messageId) {
   const authStore = useAuthStore()
   const userStore = useUserStore()
   const groupStore = useGroupStore()
+  const nearbyStore = useNearbyStore()
   const { me } = useMe()
 
   const message = computed(() =>
     messageStore?.byId(messageId.value || messageId)
   )
+
+  // The browse feed carries a server-computed distance per post (blurred great-circle
+  // miles from the viewer) which the feed also sorts and filters on. Prefer it for the
+  // badge so the distance shown always matches the feed's ordering and the distance
+  // slider. It lives in the nearby store keyed by id (the full message record fetched
+  // here has no such field), so look it up by id; null when this message isn't a feed
+  // post (search, My Posts, ModTools ...), in which case we fall back to a client calc.
+  const serverDistanceMiles = computed(() => {
+    const id = Number(messageId?.value ?? messageId)
+    if (!Number.isFinite(id)) {
+      return null
+    }
+    const d = nearbyStore.distanceById.get(id)
+    return Number.isFinite(d) ? d : null
+  })
 
   // Get the group for this message (first group it's posted to)
   const messageGroup = computed(() => {
@@ -139,6 +156,10 @@ export function useMessageDisplay(messageId) {
   })
 
   const distanceText = computed(() => {
+    const server = serverDistanceMiles.value
+    if (server != null) {
+      return server < 1 ? '<1mi' : `${Math.round(server)}mi`
+    }
     if (!me.value?.lat || !message.value?.lat) {
       return message.value?.area || null
     }
@@ -155,6 +176,14 @@ export function useMessageDisplay(messageId) {
   })
 
   const distanceTextExpanded = computed(() => {
+    const server = serverDistanceMiles.value
+    if (server != null) {
+      if (server < 1) {
+        return 'less than 1 mile'
+      }
+      const rounded = Math.round(server)
+      return rounded === 1 ? '1 mile' : `${rounded} miles`
+    }
     if (!me.value?.lat || !message.value?.lat) {
       return message.value?.area || null
     }
