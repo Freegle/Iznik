@@ -139,6 +139,36 @@ do_sync() {
     done <<< "$container_info"
 }
 
+# Function to propagate a deletion to the target container(s). inotifywait does
+# not sync deletes by default, so a removed source/test file would otherwise
+# linger in the dev container - e.g. a deleted unit test keeps being collected
+# and fails the run for a file that no longer exists in the tree. Mirrors
+# do_sync's target resolution, but removes the file instead of copying it.
+do_delete() {
+    local file_path="$1"
+
+    local container_info
+    container_info=$(get_container_info "$file_path")
+
+    if [[ -z "$container_info" ]]; then
+        return
+    fi
+
+    local filename=$(basename "$file_path")
+    local timestamp=$(date '+%H:%M:%S')
+
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            read -r container target_path service <<< "$line"
+            # rm -f is a no-op if the file was never synced, so this is safe even
+            # for editor temp files that briefly appear and vanish.
+            if docker exec "$container" rm -f "$target_path" 2>/dev/null; then
+                echo "[$timestamp] $service: removed $filename"
+            fi
+        fi
+    done <<< "$container_info"
+}
+
 # Background process to handle settling files
 process_pending_syncs() {
     declare -A PENDING_MTIME
@@ -246,7 +276,8 @@ SETTLE_PID=$!
 # Monitor file changes - exclude node_modules, .git, build artifacts, and migrations
 # IMPORTANT: close_write is essential - it signals when a file is fully written
 # Without it, we might sync files while they're still being written (empty/partial)
-inotifywait -m -r -e modify,create,move,close_write \
+# delete/moved_from are included so removals propagate to the containers too.
+inotifywait -m -r -e modify,create,move,close_write,delete \
     --exclude '(node_modules|\.git|\.nuxt|\.output|dist|vendor|migrations|storage/spool|~|\.tmp|\.swp|\.log)' \
     "$PROJECT_DIR/iznik-nuxt3" \
     "$PROJECT_DIR/iznik-server" \
@@ -255,6 +286,20 @@ inotifywait -m -r -e modify,create,move,close_write \
     2>/dev/null | while read -r directory events filename; do
 
     full_path="$directory$filename"
+
+    # A file was removed or renamed away (DELETE / MOVED_FROM). Propagate the
+    # removal to the container so a deleted source/test file doesn't linger.
+    # Skip directory events (rmdir) - an empty dir in the container is harmless
+    # and rm -f can't remove it. Guard on the path being genuinely gone so a
+    # rename-over / delete-then-recreate save leaves the sync path to re-copy it.
+    case ",$events," in
+        *,DELETE,*|*,MOVED_FROM,*)
+            if [[ "$events" != *ISDIR* && ! -e "$full_path" ]]; then
+                do_delete "$full_path"
+                continue
+            fi
+            ;;
+    esac
 
     # Only process regular files - queue them for sync after settling
     if [[ -f "$full_path" ]]; then

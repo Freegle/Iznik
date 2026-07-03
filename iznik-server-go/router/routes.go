@@ -924,6 +924,13 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
+		// Bulk-offer ("clearance") logged-out update page: an external item-owner
+		// toggles item available/taken and edits counts via an unguessable secret
+		// token in the URL. No JWT - the token is the sole credential and grants
+		// only availability/count edits to that one offer (see message/bulkEdit.go).
+		rg.Get("/bulkoffer/update/:token", message.GetBulkEditOffer)
+		rg.Post("/bulkoffer/update/:token", message.PostBulkEditOffer)
+
 		// Freegle Helper — cross-clearance escalated queue (ModTools). Registered
 		// before /helper/:msgid so the literal "escalated" isn't parsed as a msgid.
 		rg.Get("/helper/escalated", message.GetHelperEscalated)
