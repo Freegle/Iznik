@@ -5,8 +5,7 @@
   <section
     v-observe-visibility="{
       callback: onVisible,
-      once: true,
-      intersection: { rootMargin: '200px' },
+      options: { rootMargin: '200px' },
     }"
     class="similar-posts"
   >
@@ -40,6 +39,9 @@ const messageStore = useMessageStore()
 const { myid } = useMe()
 
 const ids = ref([])
+// The observe-visibility directive has no "once" option and re-fires on every
+// intersection change, so guard against re-entry / repeated loads ourselves.
+let loaded = false
 
 // 10% deterministic holdout: logged-in users whose id ends in 0 never see the
 // strip (and it never fetches), giving a clean control group for measuring
@@ -50,9 +52,10 @@ const inHoldout = computed(() => !!myid.value && myid.value % 10 === 0)
 const show = computed(() => ids.value.length >= MIN_RESULTS)
 
 async function onVisible(visible) {
-  if (!visible || inHoldout.value || ids.value.length) {
+  if (!visible || inHoldout.value || loaded) {
     return
   }
+  loaded = true
 
   let results
   try {
@@ -71,8 +74,9 @@ async function onVisible(visible) {
   ids.value = found.filter((id) => messageStore.list[id])
 
   if (ids.value.length >= MIN_RESULTS) {
-    // Count the impression once (source-tagged so it's attributable).
-    messageStore.markSeen(ids.value, SOURCE)
+    // Count the impression once (source-tagged so it's attributable). Fire and
+    // forget, but swallow rejections so they never surface as unhandled.
+    messageStore.markSeen(ids.value, SOURCE).catch(() => {})
   } else {
     ids.value = []
   }

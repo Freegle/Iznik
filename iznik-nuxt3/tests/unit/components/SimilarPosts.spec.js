@@ -57,6 +57,9 @@ describe('SimilarPosts', () => {
     vi.clearAllMocks()
     mockMyid.value = null
     mockList = {}
+    // markSeen is async in the real store; return a promise so the component's
+    // fire-and-forget .catch() has something to attach to.
+    mockMarkSeen.mockResolvedValue(undefined)
     // fetch() resolves and populates the store list, like the real store.
     mockFetch.mockImplementation((id) => {
       mockList[id] = { id }
