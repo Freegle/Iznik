@@ -1413,6 +1413,15 @@ class UnifiedDigestService
                 (int) $p->fromuser === (int) $user->id,
                 $this->authorMaxMiles((int) $p->fromuser)
             ))->values();
+
+            // Personal relevance ranking (flag-gated, default OFF, with a 10%
+            // holdout). Float the posts most like what this member cares about
+            // to the top. Applied here — after scoring/distance, before dedup —
+            // so the ranked order is what dedup picks its representative from and
+            // what post_msgids records (the position the click dashboard measures).
+            // A no-op (returns $posts unchanged) when the flag is off, the member
+            // is in the holdout, or they have no interest signal.
+            $posts = app(DigestRelevanceService::class)->rank((int) $user->id, $posts);
         }
 
         $completedPosts = $mode === self::MODE_DAILY
