@@ -254,3 +254,74 @@ func TestDigestPositions_CumulativeShownAcrossSizes(t *testing.T) {
 	assert.Equal(t, float64(1), p3["emails_clicked"])
 	assert.InDelta(t, 100.0, p3["ctr"].(float64), 0.01)
 }
+
+// createDigestTrackingRecordForUser is like createDigestTrackingRecord but sets
+// the recipient userid, so cohort filtering (userid % 10) can be exercised.
+func createDigestTrackingRecordForUser(t *testing.T, emailType string, sentAt time.Time, numPosts int, userid uint64) uint64 {
+	db := database.DBConn
+	id := createDigestTrackingRecord(t, emailType, sentAt, numPosts)
+	db.Exec("UPDATE email_tracking SET userid = ? WHERE id = ?", userid, id)
+	return id
+}
+
+// TestDigestPositions_CohortSplit verifies the ranked/holdout cohort filter
+// (userid % 10) partitions the click data: a holdout recipient's clicks appear
+// only under cohort=holdout, a ranked recipient's only under cohort=ranked, and
+// both under no cohort.
+func TestDigestPositions_CohortSplit(t *testing.T) {
+	prefix := uniquePrefix("dpcohort")
+	userID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, userID)
+
+	now := time.Now()
+	etype := uniqueDigestType()
+
+	// Synthetic high userids with no matching users row (LEFT JOIN → tnuserid
+	// NULL → passes the cohort's tnuserid filter). 990000000 % 10 == 0 (holdout);
+	// 990000001 % 10 == 1 (ranked).
+	const holdoutUser = uint64(990000000)
+	const rankedUser = uint64(990000001)
+
+	// Holdout recipient: 2-post digest, clicks position 0.
+	idHold := createDigestTrackingRecordForUser(t, etype, now, 2, holdoutUser)
+	// Ranked recipient: 2-post digest, clicks position 1.
+	idRank := createDigestTrackingRecordForUser(t, etype, now, 2, rankedUser)
+	defer cleanupTestTrackingByID([]uint64{idHold, idRank})
+
+	createPositionClick(t, idHold, "post_0", now)
+	createPositionClick(t, idRank, "post_1", now)
+
+	start := now.AddDate(0, 0, -1).Format("2006-01-02")
+	end := now.AddDate(0, 0, 1).Format("2006-01-02")
+	base := "/api/modtools/email/stats/digestpositions?jwt=" + token + "&type=" + etype + "&start=" + start + "&end=" + end
+
+	// clicksAt returns emails_clicked at a given position for a cohort query.
+	clicksAt := func(cohort string, pos int) float64 {
+		url := base
+		if cohort != "" {
+			url += "&cohort=" + cohort
+		}
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		data, _ := result["data"].([]interface{})
+		if pos >= len(data) {
+			return 0
+		}
+		p := data[pos].(map[string]interface{})
+		return p["emails_clicked"].(float64)
+	}
+
+	// Holdout cohort sees only the holdout recipient's position-0 click.
+	assert.Equal(t, float64(1), clicksAt("holdout", 0), "holdout: pos0 clicked")
+	assert.Equal(t, float64(0), clicksAt("holdout", 1), "holdout: pos1 not clicked (that was the ranked user)")
+
+	// Ranked cohort sees only the ranked recipient's position-1 click.
+	assert.Equal(t, float64(0), clicksAt("ranked", 0), "ranked: pos0 not clicked (that was the holdout user)")
+	assert.Equal(t, float64(1), clicksAt("ranked", 1), "ranked: pos1 clicked")
+
+	// No cohort sees both.
+	assert.Equal(t, float64(1), clicksAt("", 0), "all: pos0 clicked")
+	assert.Equal(t, float64(1), clicksAt("", 1), "all: pos1 clicked")
+}
