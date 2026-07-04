@@ -255,7 +255,6 @@ async function loadMore($state) {
       const ids = await messageStore.searchMT({
         term: messageTerm.value,
         groupid: groupid.value,
-        searchmode: 'vector',
       })
       if (ids) {
         ids.forEach((id) => modMessages.listingIds.value.add(id))

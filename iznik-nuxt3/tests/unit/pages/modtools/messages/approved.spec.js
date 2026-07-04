@@ -63,15 +63,6 @@ vi.mock('@/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
-const mockMiscStore = {
-  get: vi.fn(),
-  set: vi.fn(),
-}
-
-vi.mock('@/stores/misc', () => ({
-  useMiscStore: () => mockMiscStore,
-}))
-
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
@@ -463,7 +454,6 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
           expect.objectContaining({
             term: 'test search',
             groupid: 123,
-            searchmode: 'vector',
           })
         )
         expect(mockState.complete).toHaveBeenCalled()
