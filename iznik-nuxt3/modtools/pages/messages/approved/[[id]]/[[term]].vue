@@ -19,14 +19,6 @@
       />
       <span v-else class="mt-2"> Select a community to search messages. </span>
       <ModtoolsViewControl misckey="modtoolsMessagesApprovedSummary" />
-      <b-form-checkbox
-        v-model="vectorSearchEnabled"
-        switch
-        size="sm"
-        class="mt-2 ms-2"
-      >
-        Semantic search
-      </b-form-checkbox>
     </div>
     <div>
       <NoticeMessage v-if="loaded && !messages.length && !busy" class="mt-2">
@@ -64,17 +56,11 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { useMessageStore } from '@/stores/message'
-import { useMiscStore } from '@/stores/misc'
 import { setupModMessages } from '@/composables/useModMessages'
 import { useMe } from '~/composables/useMe'
 
-// Persisted (localStorage-backed) key for the semantic-search toggle so it
-// survives group changes, searches and remounts.
-const SEMANTIC_SEARCH_KEY = 'modtoolsSemanticSearch'
-
 // Stores
 const messageStore = useMessageStore()
-const miscStore = useMiscStore()
 
 // Composables
 const modMessages = setupModMessages(true)
@@ -101,10 +87,6 @@ const {
 // Local state (formerly data())
 const chosengroupid = ref(0)
 const bump = ref(0)
-const vectorSearchEnabled = ref(miscStore.get(SEMANTIC_SEARCH_KEY) ?? false)
-const searchmode = computed(() =>
-  vectorSearchEnabled.value ? 'vector' : 'keyword'
-)
 const urlOverride = ref(false)
 const loaded = ref(false)
 const highlightMsgId = ref(null)
@@ -187,9 +169,6 @@ onMounted(() => {
     messageTerm.value = route.params.term
     highlightMsgId.value = parseInt(route.params.term)
   }
-  if (route.query.searchmode) {
-    vectorSearchEnabled.value = route.query.searchmode === 'vector'
-  }
   if (messageTerm.value) {
     // Clear existing messages and reset state for fresh search.
     // Without this, the store may have old messages that get shown
@@ -218,8 +197,8 @@ function searchedMessage(term) {
   // messages from other sources (notably a prior "messages from member"
   // lookup, whose historical posts are not in any search index), and the
   // listing is filtered by listingIds.  Without resetting here, those leaked
-  // results stay visible during the search — mirrors searchedMember() and the
-  // vectorSearchEnabled watcher, which already reset this state.
+  // results stay visible during the search — mirrors searchedMember(), which
+  // already resets this state.
   show.value = 0
   context.value = null
   memberTerm.value = null
@@ -235,17 +214,6 @@ function searchedMessage(term) {
     router.push('/messages/approved/')
   }
 }
-
-watch(vectorSearchEnabled, () => {
-  // Persist the choice so it sticks across group changes, searches and remounts.
-  miscStore.set({ key: SEMANTIC_SEARCH_KEY, value: vectorSearchEnabled.value })
-  show.value = 0
-  context.value = null
-  modMessages.listingIds.value = new Set()
-  modMessages.listingIdOrder.value = []
-  messageStore.clear()
-  bump.value++
-})
 
 function searchedMember(term) {
   show.value = 0
@@ -281,8 +249,9 @@ async function loadMore($state) {
 
     let params
 
-    if (messageTerm.value && searchmode.value === 'vector') {
-      // Vector search uses the V2 search API via searchMT
+    if (messageTerm.value) {
+      // Message-term search is always semantic now: it goes through the V2
+      // vector search API via searchMT (the keyword toggle has been retired).
       const ids = await messageStore.searchMT({
         term: messageTerm.value,
         groupid: groupid.value,
@@ -294,19 +263,12 @@ async function loadMore($state) {
       }
       show.value = messages.value.length
       $state.complete()
-      // The vector branch returns early, so it must clear the loading state
-      // itself — otherwise `loaded` never becomes true and the "Please wait..."
-      // banner stays up even though the semantic-search results have rendered.
+      // This branch returns early, so it must clear the loading state itself —
+      // otherwise `loaded` never becomes true and the "Please wait..." banner
+      // stays up even though the search results have rendered.
       busy.value = false
       loaded.value = true
       return
-    } else if (messageTerm.value) {
-      params = {
-        subaction: 'searchall',
-        search: messageTerm.value,
-        exactonly: true,
-        groupid: groupid.value,
-      }
     } else if (memberTerm.value) {
       params = {
         subaction: 'searchmemb',
