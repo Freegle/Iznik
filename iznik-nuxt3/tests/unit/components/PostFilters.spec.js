@@ -505,6 +505,29 @@ describe('PostFilters', () => {
       expect(Number(input.element.value)).toBe(3)
     })
 
+    // Discourse 9844: the server pre-filters the feed to the saved browseMaxDistance, so after
+    // a narrow distance is saved the farthest loaded post - and hence the feed-derived max -
+    // collapses to roughly that distance. Without headroom the thumb (at the saved distance)
+    // would pin to the far right, indistinguishable from "Further", while the blue coverage area
+    // stayed small. The slider max must keep headroom so a narrow setting still reads as narrow.
+    it('keeps headroom above a finite saved distance when the pre-filtered feed collapses', () => {
+      // Feed pre-filtered to ~5mi (farthest post 4.8) while the member saved a 5mi limit.
+      mockMe.value = meWithLocation({ browseMaxDistance: 5 })
+      mockNearbyMessageList.value = [
+        { id: 1, distance: 1.1 },
+        { id: 2, distance: 4.8 },
+      ]
+      const wrapper = createWrapper({ forceShowFilters: true })
+      const input = wrapper.find('.range-slider-stub')
+      const max = Number(input.attributes('max'))
+      const value = Number(input.element.value)
+      // ceil(5 * 1.25) = 7, so the scale extends past the saved distance...
+      expect(max).toBe(7)
+      // ...and the thumb sits at the saved 5, NOT pinned to the far right (the bug).
+      expect(value).toBe(5)
+      expect(value).toBeLessThan(max)
+    })
+
     it('stores BROWSE_DISTANCE_UNLIMITED (not the feed max) when dragged to the rightmost stop', async () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')

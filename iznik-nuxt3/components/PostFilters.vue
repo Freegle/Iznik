@@ -366,11 +366,28 @@ const feedMax = computed(() => {
     .map((m) => m.distance)
     .filter((d) => typeof d === 'number' && isFinite(d))
 
-  if (!distances.length) {
-    return FEED_MAX_FLOOR
-  }
+  const dataMax = distances.length
+    ? Math.max(FEED_MAX_FLOOR, Math.ceil(Math.max(...distances)))
+    : FEED_MAX_FLOOR
 
-  return Math.max(FEED_MAX_FLOOR, Math.ceil(Math.max(...distances)))
+  // The server PRE-FILTERS the feed to the member's saved browseMaxDistance (so the feed
+  // matches the unread count). That means once a narrow distance is saved, the farthest loaded
+  // post - and hence dataMax - collapses down to roughly that distance, so the thumb (positioned
+  // at the saved distance) would pin to the far right, indistinguishable from "Further"/unlimited.
+  // A member who pulled the slider in then came back saw a SMALL blue coverage area but the thumb
+  // at maximum (Discourse 9844). Keep headroom above a finite saved distance so a narrow setting
+  // still reads as narrow, with room to widen. When the feed is NOT pre-filtered (dataMax already
+  // exceeds the saved distance) the Math.max leaves the true feed extent untouched.
+  const saved = me.value?.settings?.browseMaxDistance
+  const savedFinite =
+    typeof saved === 'number' && saved > 0 && saved < BROWSE_DISTANCE_UNLIMITED
+      ? saved
+      : 0
+  const withHeadroom = savedFinite
+    ? Math.max(savedFinite + 1, Math.ceil(savedFinite * 1.25))
+    : 0
+
+  return Math.max(FEED_MAX_FLOOR, dataMax, withHeadroom)
 })
 
 // Distance is meaningless without a known location.

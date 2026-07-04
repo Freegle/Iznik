@@ -141,6 +141,75 @@ describe('sortBrowseMessages', () => {
     })
   })
 
+  // Discourse 9844: "Newest posted" must order by ORIGINAL post time (`posted`), not the
+  // reach-feed `arrival` (messages_spatial.arrival), which rippling bumps forward every time
+  // a post's reach grows. Ordering by arrival floated days-old posts to the top of "Newest".
+  describe('"Newest posted" uses posted (original), not the ripple-bumped arrival', () => {
+    it('orders by posted even when arrival says otherwise', () => {
+      // `old` was posted first but rippled MOST recently (newest arrival); `new` was posted
+      // later but has an older arrival. Newest-posted must put `new` first.
+      const msgs = [
+        {
+          id: 'old',
+          posted: '2024-01-01T00:00:00Z',
+          arrival: '2024-06-01T00:00:00Z',
+        },
+        {
+          id: 'new',
+          posted: '2024-05-01T00:00:00Z',
+          arrival: '2024-02-01T00:00:00Z',
+        },
+      ]
+      expect(order(msgs, 'Newest')).toEqual(['new', 'old'])
+    })
+
+    it('uses posted for the Nearby equal-distance recency tiebreak too', () => {
+      const msgs = [
+        {
+          id: 'postedOlder',
+          distance: 4,
+          posted: '2024-01-01T00:00:00Z',
+          arrival: '2024-09-01T00:00:00Z',
+        },
+        {
+          id: 'postedNewer',
+          distance: 4,
+          posted: '2024-06-01T00:00:00Z',
+          arrival: '2024-02-01T00:00:00Z',
+        },
+      ]
+      expect(order(msgs, 'Nearby')).toEqual(['postedNewer', 'postedOlder'])
+    })
+
+    it('falls back to arrival when posted is absent (older cached feed)', () => {
+      const msgs = [
+        { id: 1, arrival: '2024-01-01T00:00:00Z' },
+        { id: 2, arrival: '2024-03-01T00:00:00Z' },
+      ]
+      expect(order(msgs, 'Newest')).toEqual([2, 1])
+    })
+
+    it('ignores the Go zero-time sentinel (year 0001) and falls back to arrival', () => {
+      // A feed path that did not populate posted serialises Go's zero time as year 0001,
+      // which parses to a large NEGATIVE epoch. Treating that as the post time would wrongly
+      // sink the post; we must fall back to its real arrival instead.
+      const msgs = [
+        {
+          id: 'zeroPosted',
+          posted: '0001-01-01T00:00:00Z',
+          arrival: '2024-06-01T00:00:00Z',
+        },
+        {
+          id: 'realPosted',
+          posted: '2024-01-01T00:00:00Z',
+          arrival: '2024-01-01T00:00:00Z',
+        },
+      ]
+      // zeroPosted falls back to its arrival (June) -> newest; realPosted (Jan) second.
+      expect(order(msgs, 'Newest')).toEqual(['zeroPosted', 'realPosted'])
+    })
+  })
+
   // A pinned post (a paid bulk-offer clearance) must lead the feed under every sort mode,
   // ahead of a higher-scoring / nearer / newer post.
   describe('pinned posts', () => {
