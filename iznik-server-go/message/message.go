@@ -410,6 +410,19 @@ func rippleEnabled() bool {
 	return v == "true" || v == "1"
 }
 
+// defaultSearchMode returns the searchmode used when the caller doesn't specify
+// one. Vector-hybrid is the default for every caller (public site, ModTools,
+// apps). VECTOR_SEARCH_DEFAULT=keyword is the no-deploy rollback lever that
+// reverts the whole site to the legacy keyword cascade. Both this env var and
+// the ?searchmode param are scheduled for removal once the keyword machinery is
+// retired.
+func defaultSearchMode() string {
+	if os.Getenv("VECTOR_SEARCH_DEFAULT") == "keyword" {
+		return "keyword"
+	}
+	return "vector"
+}
+
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
@@ -1478,7 +1491,7 @@ func Search(c *fiber.Ctx) error {
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
 	swlng, _ := strconv.ParseFloat(c.Query("swlng", "0"), 32)
 
-	searchmode := c.Query("searchmode", "keyword")
+	searchmode := c.Query("searchmode", defaultSearchMode())
 
 	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
 	// array is resized.  So as a workaround we create slices with capacity, then filter out the empty ones at
