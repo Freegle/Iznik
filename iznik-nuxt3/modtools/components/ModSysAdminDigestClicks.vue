@@ -19,6 +19,19 @@
       @fetch="onFilterFetch"
     />
 
+    <!-- Relevance-ranking experiment cohort split. Compare the ranked group's
+         position curve against the 10% holdout: if ranking helps, the ranked
+         curve should be steeper (more clicks concentrated at the top). -->
+    <div class="d-flex align-items-center mb-3">
+      <label class="me-2 mb-0">Cohort</label>
+      <b-form-select
+        v-model="cohort"
+        :options="cohortOptions"
+        style="width: auto"
+        @change="fetchData"
+      />
+    </div>
+
     <!-- Error -->
     <NoticeMessage
       v-if="emailTrackingStore.digestPositionsError"
@@ -83,6 +96,14 @@ const endDate = ref('')
 // Daily digest only - immediate digests are single-post (always position 1), so position
 // analysis is meaningless for them. Fixed, not user-selectable.
 const digestType = ref('UnifiedDigestDaily')
+
+// Recipient cohort for the digest relevance-ranking experiment.
+const cohort = ref('')
+const cohortOptions = [
+  { value: '', text: 'All recipients' },
+  { value: 'ranked', text: 'Ranked (relevance)' },
+  { value: 'holdout', text: 'Holdout (unranked)' },
+]
 
 // Minimum number of digests that must have shown a post at a position for its
 // click-through rate to be trustworthy. Deep positions appear in very few
@@ -168,6 +189,7 @@ function fetchData() {
     type: digestType.value,
     start: startDate.value,
     end: endDate.value,
+    cohort: cohort.value,
   })
   emailTrackingStore.fetchDigestPositions()
 }

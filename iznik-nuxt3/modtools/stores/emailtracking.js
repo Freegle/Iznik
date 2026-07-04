@@ -42,6 +42,10 @@ export const useEmailTrackingStore = defineStore({
       type: '',
       start: '',
       end: '',
+      // Recipient cohort for the digest relevance-ranking experiment:
+      // '' = all, 'ranked' = users who get relevance ranking, 'holdout' = the
+      // 10% who always get the unranked order.
+      cohort: '',
     },
 
     // Current user ID or email being viewed.
@@ -224,6 +228,9 @@ export const useEmailTrackingStore = defineStore({
         }
         if (this.filters.end) {
           params.end = this.filters.end
+        }
+        if (this.filters.cohort) {
+          params.cohort = this.filters.cohort
         }
 
         const response = await api(
