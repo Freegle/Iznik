@@ -7,7 +7,7 @@
       :min="min"
       :max="max"
       :step="step"
-      :value="modelValue"
+      :value="localValue"
       :aria-label="ariaLabel"
       @input="onInput"
       @change="onChange"
@@ -19,6 +19,7 @@
   </div>
 </template>
 <script setup>
+import { ref, watch } from '#imports'
 // Generic, accessible native-range wrapper. Lifted out of the inline sliders that used
 // to be duplicated in MyPostsDonationAsk.vue/DonationAskStripe.vue (identical
 // .amount-slider/.slider-labels SCSS) so new sliders (e.g. the browse distance filter)
@@ -29,7 +30,7 @@
 // next to the component. Emits update:modelValue on every drag tick (for an instant
 // visual) and a separate change event only when the drag/keypress ends, so callers can
 // debounce anything expensive (e.g. persisting to the server) on change alone.
-defineProps({
+const props = defineProps({
   modelValue: {
     type: Number,
     required: true,
@@ -72,12 +73,40 @@ defineProps({
 
 const emit = defineEmits(['update:modelValue', 'change'])
 
+// The native <input type="range"> drag must NOT be fought by parent reactivity. If we bind
+// :value directly to modelValue, then every parent re-render during a drag (e.g. a recomputed
+// feedMax, a store update, the [maxDistance,feedMax] watch) rewrites the input's value and
+// yanks the thumb back to an earlier position - the janky "clicking back" drag members saw.
+//
+// So we keep an internal localValue that DRIVES the input, update it locally on every drag
+// tick, and only accept modelValue from the PARENT when it differs from the value we last
+// emitted (a genuine external change - a reset, a clamp, a programmatic set). Echoes of our
+// own drag are ignored, so the native drag is never interrupted.
+const localValue = ref(props.modelValue)
+let lastEmitted = props.modelValue
+
+watch(
+  () => props.modelValue,
+  (v) => {
+    if (v !== lastEmitted) {
+      localValue.value = v
+      lastEmitted = v
+    }
+  }
+)
+
 function onInput(e) {
-  emit('update:modelValue', parseFloat(e.target.value))
+  const v = parseFloat(e.target.value)
+  localValue.value = v
+  lastEmitted = v
+  emit('update:modelValue', v)
 }
 
 function onChange(e) {
-  emit('change', parseFloat(e.target.value))
+  const v = parseFloat(e.target.value)
+  localValue.value = v
+  lastEmitted = v
+  emit('change', v)
 }
 </script>
 <style scoped lang="scss">
