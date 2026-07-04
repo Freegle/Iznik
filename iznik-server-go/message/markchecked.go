@@ -61,23 +61,62 @@ func MarkChecked(c *fiber.Ctx) error {
 	// proper moderation decision. Setting collection=Pending removes them from
 	// messages_spatial (so rippling stops drawing them), and heldby blocks the
 	// auto-approve cron from immediately re-publishing them. Targeted only — there is
-	// no bulk "reject the whole bucket" (that would be far too blunt).
+	// no bulk "reject the whole bucket" (that would be far too blunt). rippled_in = 0:
+	// oversight actions apply to a post's ORIGIN row only — rippled-in copies are the
+	// origin community's responsibility and are retracted by the reach engine, never
+	// yanked directly from another group's queue.
 	if req.Reject {
 		if len(req.IDs) == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "reject requires specific ids")
 		}
+
+		// Snapshot the rows the reject will hit, so the log rows and the reach stop
+		// below apply to exactly the posts actually rejected (not e.g. ids the mod
+		// lacks permission for, which the WHERE filters out).
+		var hit []struct {
+			Msgid    uint64
+			Groupid  uint64
+			Fromuser uint64
+		}
+		db.Raw("SELECT mg.msgid, mg.groupid, m.fromuser FROM messages_groups mg "+
+			"INNER JOIN messages m ON m.id = mg.msgid "+
+			"WHERE mg.msgid IN ? AND mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0",
+			req.IDs, groupIDs, utils.COLLECTION_APPROVED).Scan(&hit)
+
 		r := db.Exec("UPDATE messages_groups SET collection = ?, heldby = ?, checkedat = NULL "+
-			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0",
+			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND rippled_in = 0",
 			utils.COLLECTION_PENDING, myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
+
+		for _, h := range hit {
+			// The Rejected log row is load-bearing, not just audit: the moderation-stats
+			// "rejected" analytic counts these, and AutoApproveCleanService's danger-signal
+			// veto (recent negative moderation logs) is what stops this member's NEXT post
+			// from auto-publishing.
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, msgid, groupid, user, byuser) "+
+				"VALUES (NOW(), 'Message', 'Rejected', ?, ?, ?, ?)",
+				h.Msgid, h.Groupid, h.Fromuser, myid)
+
+			// Halt rippling immediately rather than waiting for the spatial prune +
+			// expand tick (up to ~6 minutes) to notice the post left the browsable set —
+			// in that window the reach engine could still mail newly-reached members.
+			// advanceDue only advances status='expanding' rows, so this is a hard stop;
+			// the rippled-in copies themselves are retracted by the engine's existing
+			// stale-post retraction on its next tick.
+			db.Exec("UPDATE rippling_reach SET status = 'stopped' WHERE msgid = ?", h.Msgid)
+		}
+
 		return c.JSON(fiber.Map{"success": true, "rejected": r.RowsAffected})
 	}
 
 	var rowsAffected int64
 	if len(req.IDs) > 0 {
 		// Mark the specified posts checked — only ones still unchecked, and only
-		// on groups the mod moderates.
+		// on groups the mod moderates. rippled_in = 0 for the same reason as the
+		// bucket update below: rippled-in copies are not part of this group's
+		// oversight, and a checkedat stamped on one would corrupt the AutoModChecked
+		// analytic (it measures review of posts that auto-published HERE).
 		r := db.Exec("UPDATE messages_groups SET checkedat = NOW(), checkedby = ? "+
-			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND checkedat IS NULL",
+			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND checkedat IS NULL AND rippled_in = 0",
 			myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
 		rowsAffected = r.RowsAffected
 	} else {

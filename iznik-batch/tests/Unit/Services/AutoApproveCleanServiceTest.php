@@ -24,8 +24,12 @@ class AutoApproveCleanServiceTest extends TestCase
         parent::setUp();
         $this->service = new AutoApproveCleanService();
 
-        // Deterministic site defaults for the tests.
+        // Deterministic site defaults for the tests. The rollout gate defaults OFF in
+        // config; these tests exercise the behaviour WHEN ENABLED, so switch it on here.
+        // The gate itself is covered by the test_rollout_gate_* tests below.
         config([
+            'freegle.autoapprove.enabled' => true,
+            'freegle.autoapprove.trial_group_ids' => '',
             'freegle.autoapprove.delay_minutes' => 20,
             'freegle.autoapprove.quality_check_percent' => 0,
             'freegle.autoapprove.danger_log_days' => 90,
@@ -535,5 +539,83 @@ class AutoApproveCleanServiceTest extends TestCase
         $this->assertDatabaseMissing('background_tasks', [
             'task_type' => \App\Models\BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
         ]);
+    }
+
+    public function test_approval_seeds_spatial_index_immediately(): void
+    {
+        // Parity with the Go manual-approve path: the post must hit messages_spatial at
+        // approval time (browse/search/rippling visibility), not after the 5-min cron.
+        [$user, $group, $message] = $this->makeApprovable();
+        DB::table('messages_spatial')->where('msgid', $message->id)->delete();
+
+        $this->service->process();
+
+        $this->assertApproved($message->id, $group->id);
+        $this->assertSame(
+            1,
+            DB::table('messages_spatial')->where('msgid', $message->id)->where('groupid', $group->id)->count(),
+            'auto-approved post is in messages_spatial immediately'
+        );
+    }
+
+    // ───────────────────────── Rollout gate (dark by default) ─────────────────────────
+
+    public function test_rollout_gate_off_by_default_approves_nothing(): void
+    {
+        // The config default (enabled=false, no trial groups) must make deploying this
+        // code a no-op: an otherwise-eligible post stays in Pending untouched.
+        config(['freegle.autoapprove.enabled' => false, 'freegle.autoapprove.trial_group_ids' => '']);
+        [$user, $group, $message] = $this->makeApprovable();
+
+        $stats = $this->service->process();
+
+        $this->assertStillPending($message->id, $group->id);
+        $this->assertSame(0, array_sum($stats), 'feature dark: nothing approved, held, vetoed or skipped');
+    }
+
+    public function test_rollout_gate_trial_groups_enable_only_those_groups(): void
+    {
+        // Phased trial: with the master switch off, only posts on the listed groups
+        // auto-approve; identical posts on other groups are untouched.
+        [$userA, $groupA, $messageA] = $this->makeApprovable();
+        [$userB, $groupB, $messageB] = $this->makeApprovable();
+        config([
+            'freegle.autoapprove.enabled' => false,
+            'freegle.autoapprove.trial_group_ids' => (string) $groupA->id,
+        ]);
+
+        $this->service->process();
+
+        $this->assertApproved($messageA->id, $groupA->id);
+        $this->assertStillPending($messageB->id, $groupB->id);
+    }
+
+    public function test_rollout_gate_trial_list_tolerates_spaces_and_multiple_ids(): void
+    {
+        [$userA, $groupA, $messageA] = $this->makeApprovable();
+        [$userB, $groupB, $messageB] = $this->makeApprovable();
+        config([
+            'freegle.autoapprove.enabled' => false,
+            'freegle.autoapprove.trial_group_ids' => ' ' . $groupA->id . ' , ' . $groupB->id . ' ',
+        ]);
+
+        $this->service->process();
+
+        $this->assertApproved($messageA->id, $groupA->id);
+        $this->assertApproved($messageB->id, $groupB->id);
+    }
+
+    public function test_rollout_gate_enabled_ignores_trial_list(): void
+    {
+        // enabled=true is the master switch: the trial list no longer restricts anything.
+        [$user, $group, $message] = $this->makeApprovable();
+        config([
+            'freegle.autoapprove.enabled' => true,
+            'freegle.autoapprove.trial_group_ids' => '999999999',
+        ]);
+
+        $this->service->process();
+
+        $this->assertApproved($message->id, $group->id);
     }
 }

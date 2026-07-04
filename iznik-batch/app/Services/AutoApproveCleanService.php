@@ -52,6 +52,27 @@ class AutoApproveCleanService
     }
 
     /**
+     * Rollout gate for the clean-path auto-approve.
+     *
+     * @return int[]|null null  = enabled everywhere (subject to per-group checks);
+     *                    []    = fully off (the default — deploying this code is a no-op);
+     *                    [ids] = phased trial: enabled only for these groups.
+     */
+    public function enabledGroupIds(): ?array
+    {
+        if (config('freegle.autoapprove.enabled', false)) {
+            return null;
+        }
+
+        $csv = trim((string) config('freegle.autoapprove.trial_group_ids', ''));
+        if ($csv === '') {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('intval', explode(',', $csv))));
+    }
+
+    /**
      * Process all eligible pending messages.
      *
      * @return array{approved:int, held_quality:int, vetoed:int, skipped:int, errors:int}
@@ -59,6 +80,13 @@ class AutoApproveCleanService
     public function process(bool $dryRun = false): array
     {
         $stats = ['approved' => 0, 'held_quality' => 0, 'vetoed' => 0, 'skipped' => 0, 'errors' => 0];
+
+        $enabledGroupIds = $this->enabledGroupIds();
+        if ($enabledGroupIds === []) {
+            // Feature dark (default): posts follow the pre-existing behaviour — Pending
+            // until a moderator acts or the 48h AutoApproveService fallback fires.
+            return $stats;
+        }
 
         // The delay is per-group (settings.autoapprove.delay_minutes) with a site-wide
         // fallback, so it must be resolved in SQL — a single global threshold would ignore
@@ -102,8 +130,16 @@ class AutoApproveCleanService
             ->whereRaw(
                 '(mg.autoapprove_hold_until IS NULL OR mg.autoapprove_hold_until <= NOW())'
             )
+            // Phased trial: while the master switch is off, only the listed groups take part.
+            ->when($enabledGroupIds !== null, function ($q) use ($enabledGroupIds) {
+                $q->whereIn('mg.groupid', $enabledGroupIds);
+            })
             ->orderBy('mg.msgid')
             ->orderBy('mg.groupid')
+            // Bound the per-tick batch like the sibling every-minute crons (ripple:expand
+            // etc.): a post-outage backlog drains at 500/minute instead of one huge run
+            // outliving its overlap mutex. Oldest msgids first, so the backlog is FIFO.
+            ->limit(500)
             ->get();
 
         foreach ($candidates as $row) {
@@ -325,6 +361,28 @@ class AutoApproveCleanService
                     'data'      => json_encode(['msgid' => (int) $row->msgid]),
                 ]);
             }
+
+            // Mirror the Go manual-approve path (addApprovedMessageToSpatialIndex): seed
+            // messages_spatial now so the post appears in browse/search — and becomes
+            // visible to the rippling engine — immediately, instead of waiting up to
+            // 5 minutes for the spatial reconciler cron. Re-checks Approved so it is a
+            // no-op if anything above did not land.
+            DB::statement(
+                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+                 SELECT m.id, ST_GeomFromText(CONCAT('POINT(', m.lng, ' ', m.lat, ')'), 3857),
+                        mg.groupid, m.type, mg.arrival
+                 FROM messages m
+                 INNER JOIN messages_groups mg ON mg.msgid = m.id
+                 LEFT JOIN messages_outcomes mo ON mo.msgid = m.id
+                 WHERE m.id = ? AND mg.groupid = ? AND mg.collection = 'Approved'
+                   AND mg.deleted = 0 AND m.deleted IS NULL
+                   AND m.lat IS NOT NULL AND m.lng IS NOT NULL
+                   AND NOT (m.lat = 0 AND m.lng = 0)
+                   AND mo.id IS NULL
+                 ON DUPLICATE KEY UPDATE point = VALUES(point), msgtype = VALUES(msgtype),
+                                         arrival = VALUES(arrival)",
+                [$row->msgid, $row->groupid]
+            );
         });
 
         Log::info("AutoApproveClean: approved message #{$row->msgid} on group #{$row->groupid}");
