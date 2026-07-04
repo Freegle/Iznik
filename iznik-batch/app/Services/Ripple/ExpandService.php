@@ -298,7 +298,7 @@ class ExpandService
                 'SELECT mr.msgid AS msgid
                  FROM rippling_reach mr
                  LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
-                 WHERE ms.msgid IS NULL' . $scopeSql,
+                 WHERE ms.msgid IS NULL AND mr.status <> \'held\'' . $scopeSql,
                 $params
             );
             if (empty($stale)) {
@@ -355,7 +355,7 @@ class ExpandService
                    FROM rippling_reach mr
                    JOIN messages_groups mg
                      ON mg.msgid = mr.msgid AND mg.rippled_in = 1 AND mg.deleted = 0
-                  WHERE NOT EXISTS (
+                  WHERE mr.status <> \'held\' AND NOT EXISTS (
                           SELECT 1 FROM messages_groups o
                            WHERE o.msgid = mr.msgid AND o.rippled_in = 0
                              AND o.deleted = 0 AND o.collection = ?
@@ -455,6 +455,7 @@ class ExpandService
                JOIN `groups` g ON g.id = mg.groupid
                JOIN rippling_reach rr ON rr.msgid = mg.msgid
               WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
+                AND rr.status <> 'held'
                 AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
                 AND NOT ST_Intersects(g.polyindex, rr.polygon)",
             [$msgid]

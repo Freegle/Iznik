@@ -2409,9 +2409,20 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Also update messages.heldby for backwards compatibility.
 	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
-	// Move from Approved back to Pending for authorized groups.
-	db.Exec("UPDATE messages_groups SET collection = ?, approvedby = NULL, approvedat = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
-		utils.COLLECTION_PENDING, req.ID, authorizedGroups, utils.COLLECTION_APPROVED)
+	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
+	// any copy back to pending takes the post off the board on EVERY community it is on
+	// (home + rippled-out copies), so it is never left stranded and still visible on the
+	// neighbouring communities. Each community then approves or rejects its own copy
+	// independently. Clear approvedby/approvedat on every live copy first, then flip to
+	// Pending.
+	db.Exec("UPDATE messages_groups SET approvedby = NULL, approvedat = NULL WHERE msgid = ? AND collection = ?",
+		req.ID, utils.COLLECTION_APPROVED)
+	microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.")
+
+	// Freeze the ripple once the origin is Pending: the copies persist for per-group
+	// moderation and a later re-approval brings a copy back without re-rippling or
+	// re-notifying members.
+	microvolunteering.FreezeReachIfOriginPending(db, req.ID)
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
