@@ -14,11 +14,13 @@ import {
 const {
   mockClearReply,
   mockMessageFetch,
+  mockMessageById,
   mockFetchMeFn,
   mockReplyToPostFn,
 } = vi.hoisted(() => ({
   mockClearReply: vi.fn(),
   mockMessageFetch: vi.fn(),
+  mockMessageById: vi.fn(),
   mockFetchMeFn: vi.fn(),
   mockReplyToPostFn: vi.fn(),
 }))
@@ -76,7 +78,7 @@ vi.mock('~/stores/reply', () => ({
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetch: mockMessageFetch,
-    byId: vi.fn().mockReturnValue(null),
+    byId: mockMessageById,
   }),
 }))
 
@@ -213,6 +215,8 @@ beforeEach(() => {
     id: MSG_ID,
     groups: [{ groupid: 100 }],
   })
+  // Default: the post is reply-eligible (no reach block) unless a test overrides byId.
+  mockMessageById.mockReturnValue(null)
   mockReplyToPostFn.mockResolvedValue(MSG_ID)
 })
 
@@ -1101,5 +1105,98 @@ describe('processing timeout', () => {
     await vi.advanceTimersByTimeAsync(31000)
 
     expect(result.state.value).toBe(ReplyState.COMPOSING)
+  })
+})
+
+// ============================================================
+// Rippling-out reach gate — a post rippled to the member's community but whose reach
+// polygon has not yet reached their location: replyeligible=false (read path) and a 403
+// "not_in_reach" (write path). Must show the graceful "closest first" message and NEVER
+// force a re-login. Regression: Marc Ashby, 2026-07-04 (Henley post rippled into Reading).
+// ============================================================
+describe('reach gate (rippling-out reply eligibility)', () => {
+  async function setupLoggedIn() {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+  }
+
+  const CLOSEST = 'closest to it first'
+
+  it('proactively blocks the reply when the message is replyeligible=false, without sending', async () => {
+    await setupLoggedIn()
+    // The message the member is replying to is flagged not-yet-reachable by the server.
+    mockMessageById.mockReturnValue({ id: MSG_ID, replyeligible: false })
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    expect(result.error.value).toContain(CLOSEST)
+    // Never attempts the send, and never bounces the member to a login.
+    expect(mockReplyToPostFn).not.toHaveBeenCalled()
+    expect(mockForceLogin.value).toBe(false)
+  })
+
+  it('does NOT block when replyeligible is true / absent (normal reply proceeds)', async () => {
+    await setupLoggedIn()
+    mockMessageById.mockReturnValue({ id: MSG_ID }) // no replyeligible => eligible
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(mockReplyToPostFn).toHaveBeenCalled()
+    expect(result.error.value === null || !result.error.value.includes(CLOSEST)).toBe(true)
+  })
+
+  it('reactively shows the reach message (not a login) on a 403 not_in_reach from the send', async () => {
+    await setupLoggedIn()
+    // Server body is { error: 403, message: "not_in_reach" } (see main.go ErrorHandler).
+    const reachErr = Object.assign(new Error('Request failed'), {
+      status: 403,
+      response: { status: 403, data: { error: 403, message: 'not_in_reach' } },
+    })
+    mockReplyToPostFn.mockRejectedValue(reachErr)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    expect(result.error.value).toContain(CLOSEST)
+    // The bug being fixed: a reach 403 must NOT force a re-login.
+    expect(mockForceLogin.value).toBe(false)
+  })
+
+  it('does NOT treat other 403s (e.g. banned) as a reach block', async () => {
+    await setupLoggedIn()
+    const bannedErr = Object.assign(new Error('Request failed'), {
+      status: 403,
+      response: { status: 403, data: { error: 403, message: 'User banned from group' } },
+    })
+    mockReplyToPostFn.mockRejectedValue(bannedErr)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    // Not the reach message — a different 403 must not be mislabelled as "closest first".
+    expect(result.error.value).not.toContain(CLOSEST)
   })
 })
