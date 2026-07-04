@@ -35,7 +35,8 @@ type Store struct {
 // Global is the singleton embedding store.
 var Global Store
 
-// StartRefresh begins periodic loading of embeddings from the database.
+// StartRefresh loads embeddings from the database at startup, then keeps the
+// store current with an incremental Refresh() on each tick (see Refresh).
 func StartRefresh(interval time.Duration) {
 	if err := Global.Load(); err != nil {
 		fmt.Printf("WARNING: initial embedding load failed: %v\n", err)
@@ -44,34 +45,37 @@ func StartRefresh(interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
-			if err := Global.Load(); err != nil {
+			if err := Global.Refresh(); err != nil {
 				fmt.Printf("WARNING: embedding refresh failed: %v\n", err)
 			}
 		}
 	}()
 }
 
-// Load reads all embeddings + spatial metadata from DB.
-func (s *Store) Load() error {
+// embeddingRow mirrors the columns fetched by fetchEntries.
+type embeddingRow struct {
+	Msgid            uint64    `gorm:"column:msgid"`
+	SubjectEmbedding []byte    `gorm:"column:subject_embedding"`
+	BodyEmbedding    []byte    `gorm:"column:body_embedding"`
+	Groupid          uint64    `gorm:"column:groupid"`
+	Msgtype          string    `gorm:"column:msgtype"`
+	Lat              float64   `gorm:"column:lat"`
+	Lng              float64   `gorm:"column:lng"`
+	Subject          string    `gorm:"column:subject"`
+	Arrival          time.Time `gorm:"column:arrival"`
+}
+
+// fetchEntries runs the open-embedded-message SELECT shared by Load and
+// Refresh, optionally narrowed by extraWhere/args (e.g. "AND me.msgid IN
+// (?)"), and decodes the rows into Entries.
+func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 	db := database.DBConn
 	if db == nil {
-		return fmt.Errorf("database not initialized")
+		return nil, fmt.Errorf("database not initialized")
 	}
 
-	type row struct {
-		Msgid            uint64    `gorm:"column:msgid"`
-		SubjectEmbedding []byte    `gorm:"column:subject_embedding"`
-		BodyEmbedding    []byte    `gorm:"column:body_embedding"`
-		Groupid          uint64    `gorm:"column:groupid"`
-		Msgtype          string    `gorm:"column:msgtype"`
-		Lat              float64   `gorm:"column:lat"`
-		Lng              float64   `gorm:"column:lng"`
-		Subject          string    `gorm:"column:subject"`
-		Arrival          time.Time `gorm:"column:arrival"`
-	}
-
-	var rows []row
-	result := db.Raw(`
+	var rows []embeddingRow
+	query := `
 		SELECT me.msgid, me.subject_embedding, me.body_embedding,
 		       ms.groupid, ms.msgtype,
 		       ST_Y(ms.point) as lat, ST_X(ms.point) as lng,
@@ -79,11 +83,10 @@ func (s *Store) Load() error {
 		FROM messages_embeddings me
 		INNER JOIN messages_spatial ms ON ms.msgid = me.msgid
 		INNER JOIN messages m ON m.id = me.msgid
-		WHERE ms.successful = 0 AND ms.promised = 0
-	`).Scan(&rows)
+		WHERE ms.successful = 0 AND ms.promised = 0` + extraWhere
 
-	if result.Error != nil {
-		return fmt.Errorf("query: %w", result.Error)
+	if result := db.Raw(query, args...).Scan(&rows); result.Error != nil {
+		return nil, fmt.Errorf("query: %w", result.Error)
 	}
 
 	entries := make([]Entry, 0, len(rows))
@@ -94,9 +97,96 @@ func (s *Store) Load() error {
 		}
 		entries = append(entries, e)
 	}
+	return entries, nil
+}
+
+// Load reads all embeddings + spatial metadata from DB.
+func (s *Store) Load() error {
+	entries, err := fetchEntries("")
+	if err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	s.entries = entries
+	s.mu.Unlock()
+
+	return nil
+}
+
+// Refresh incrementally reconciles the store against the DB instead of
+// re-reading every row's BLOBs: it drops entries whose message is no longer
+// open, and fetches blobs only for open messages the store doesn't already
+// have. This replaces a periodic full Load() (measured at ~3.8s on prod for
+// ~109k rows) with a cheap id-only diff plus a small blob fetch.
+//
+// Falls back to a full Load() if the store is currently empty (startup /
+// first tick).
+//
+// Known limitation: if an existing message's embedding blob is regenerated in
+// place (e.g. `embeddings:regenerate` after a model change), Refresh() will
+// not pick up the new blob for a msgid it already holds. messages_embeddings
+// has no updated-at column suitable for a cheap diff: created_at is DEFAULT
+// CURRENT_TIMESTAMP only (no ON UPDATE CURRENT_TIMESTAMP — see migration
+// 2026_04_14_000001_create_messages_embeddings_table.php), and
+// EmbeddingService::processMessages upserts via INSERT ... ON DUPLICATE KEY
+// UPDATE that doesn't touch created_at anyway. In practice
+// embeddings:regenerate is followed by an apiv2 restart, which does a full
+// Load() and picks up the regenerated blobs.
+func (s *Store) Refresh() error {
+	if s.Count() == 0 {
+		return s.Load()
+	}
+
+	db := database.DBConn
+	if db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	var openIds []uint64
+	if err := db.Raw(`
+		SELECT me.msgid FROM messages_embeddings me
+		INNER JOIN messages_spatial ms ON ms.msgid = me.msgid
+		WHERE ms.successful = 0 AND ms.promised = 0`).Pluck("msgid", &openIds).Error; err != nil {
+		return fmt.Errorf("refresh id query: %w", err)
+	}
+
+	open := make(map[uint64]bool, len(openIds))
+	for _, id := range openIds {
+		open[id] = true
+	}
+
+	s.mu.RLock()
+	have := make(map[uint64]bool, len(s.entries))
+	for i := range s.entries {
+		have[s.entries[i].Msgid] = true
+	}
+	s.mu.RUnlock()
+
+	var added []uint64
+	for _, id := range openIds {
+		if !have[id] {
+			added = append(added, id)
+		}
+	}
+
+	var newEntries []Entry
+	if len(added) > 0 {
+		var err error
+		newEntries, err = fetchEntries(" AND me.msgid IN (?)", added)
+		if err != nil {
+			return fmt.Errorf("refresh fetch new: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	kept := make([]Entry, 0, len(s.entries)+len(newEntries))
+	for i := range s.entries {
+		if open[s.entries[i].Msgid] {
+			kept = append(kept, s.entries[i])
+		}
+	}
+	s.entries = append(kept, newEntries...)
 	s.mu.Unlock()
 
 	return nil
