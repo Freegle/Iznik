@@ -2007,6 +2007,8 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($result, 'IP used by 6 users (> 5) should be flagged');
         $this->assertEquals('IpAbuse', $result['check']);
         $this->assertStringContainsString('6', $result['detail']);
+        // userCount is exposed so ModTools can render a plain sentence without the raw IP.
+        $this->assertEquals(6, $result['userCount']);
     }
 
     public function test_ip_abuse_not_flagged_for_5_users(): void
@@ -2189,6 +2191,9 @@ class ContentCheckTest extends TestCase
         $this->assertEquals('IpAbuse', $result['check']);
         $this->assertStringContainsString('20', $result['detail']);
         $this->assertCount(20, $result['groups'], 'group list must contain only the 20 native groups');
+        // groupCount is exposed so ModTools can render a plain sentence without the raw IP; it
+        // reflects only the native (non-rippled) groups, so rippled-in rows must not inflate it.
+        $this->assertEquals(20, $result['groupCount']);
     }
 
     public function test_ip_abuse_ignores_messages_older_than_31_days(): void

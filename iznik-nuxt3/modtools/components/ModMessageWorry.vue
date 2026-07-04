@@ -105,12 +105,30 @@
         </span>
       </span>
       <span v-else-if="reason.check === 'IpAbuse'">
-        <strong>IP abuse:</strong> {{ reason.detail }}.
-        <span v-if="reason.users && reason.users.length">
-          Recent sender user IDs from this IP: {{ reason.users.join(', ') }}
+        <span v-if="reason.groupCount">
+          <strong>Posted to many communities:</strong> This member's internet
+          connection has been used to post to {{ reason.groupCount }} different
+          communities in the last month. That can be a sign of spam sent widely,
+          but is sometimes innocent. Please check the post itself; if nothing
+          looks wrong, it's fine to approve.
         </span>
-        <span v-else-if="reason.groups && reason.groups.length">
-          Group IDs posted to from this IP: {{ reason.groups.join(', ') }}
+        <span v-else>
+          <strong>Posted from a much-used connection:</strong> This post came
+          from an internet connection that
+          {{ reason.userCount || reason.users?.length }} different accounts have
+          posted from in the last month. Occasionally that's one person running
+          several accounts — but it's often completely innocent (shared wifi, a
+          mobile network, a family, a library or workplace). Please check the
+          post itself; if nothing looks wrong, it's fine to approve.
+        </span>
+        <span v-if="reason.ip" class="text-muted small d-block mt-1">
+          Connection (IP): {{ reason.ip }}.
+          <span v-if="reason.users && reason.users.length">
+            Recent sender user IDs: {{ reason.users.join(', ') }}.
+          </span>
+          <span v-else-if="reason.groups && reason.groups.length">
+            Community IDs posted to: {{ reason.groups.join(', ') }}.
+          </span>
         </span>
       </span>
       <span v-else-if="reason.check === 'NotAnItem'">
