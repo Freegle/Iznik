@@ -25,10 +25,25 @@ export function sortBrowseMessages(messages, selectedSort) {
   // only pay for Date parsing when a recency tiebreak/order is actually needed.
   const needsRecency = selectedSort !== 'Unseen'
 
+  // "Newest posted" (and the recency tiebreak) means ORIGINAL post time - `m.posted`,
+  // which the server exposes as the stable messages.arrival. We must NOT use `m.arrival`
+  // here: on the reach feed that is the messages_spatial arrival, which the reach engine
+  // bumps forward every time the post ripples into a new group, so ordering by it floats a
+  // days-old post to the top the moment its reach grows again while the card still shows the
+  // original "3 days ago" - the exact "Newest posted isn't chronological" bug (Discourse
+  // 9844). Fall back to `m.arrival` only when `posted` is absent (older cached feeds); guard
+  // against the Go zero-time sentinel (serialised as year 0001, i.e. a large negative epoch)
+  // that appears on any path that didn't populate posted.
+  const recencyTs = (m) => {
+    const posted = m.posted ? new Date(m.posted).getTime() : NaN
+    if (Number.isFinite(posted) && posted > 0) return posted
+    return new Date(m.arrival).getTime()
+  }
+
   const decorated = list.map((m) => ({
     m,
     dist: isNearby && Number.isFinite(m.distance) ? m.distance : Infinity,
-    ts: needsRecency ? new Date(m.arrival).getTime() : 0,
+    ts: needsRecency ? recencyTs(m) : 0,
   }))
 
   decorated.sort((a, b) => {

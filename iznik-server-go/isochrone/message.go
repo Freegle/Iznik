@@ -28,17 +28,29 @@ const BrowseDistanceUnlimited = 9007199254740991 // Number.MAX_SAFE_INTEGER
 // their columns to exactly these names so one struct/one scoring path serves
 // both.
 type reachCandidateRow struct {
-	Lat        float64   `gorm:"column:lat"`
-	Lng        float64   `gorm:"column:lng"`
-	ID         uint64    `gorm:"column:id"`
-	Successful bool      `gorm:"column:successful"`
-	Promised   bool      `gorm:"column:promised"`
-	Groupid    uint64    `gorm:"column:groupid"`
-	Type       string    `gorm:"column:type"`
-	Arrival    time.Time `gorm:"column:arrival"`
-	Unseen     bool      `gorm:"column:unseen"`
-	Views      int64     `gorm:"column:views"`
-	Replies    int64     `gorm:"column:replies"`
+	Lat        float64 `gorm:"column:lat"`
+	Lng        float64 `gorm:"column:lng"`
+	ID         uint64  `gorm:"column:id"`
+	Successful bool    `gorm:"column:successful"`
+	Promised   bool    `gorm:"column:promised"`
+	Groupid    uint64  `gorm:"column:groupid"`
+	Type       string  `gorm:"column:type"`
+	// Arrival is the messages_spatial arrival, which the reach engine bumps
+	// forward each time the post ripples into a new group — so it tracks "when
+	// did this most recently expand", NOT the original post time. It feeds the
+	// relevance score's freshness term (that IS what we want there) and the
+	// server-side tie-break, but it must NOT drive "Newest posted": ordering by
+	// it floats a days-old post to the top of the feed the moment its reach grows
+	// again (Discourse 9844). Use Posted for anything member-facing about "when
+	// was this posted".
+	Arrival time.Time `gorm:"column:arrival"`
+	// Posted is the ORIGINAL post arrival (messages.arrival), stable across
+	// rippling. It is what the client's "Newest posted" sort and the card's time
+	// badge mean, so exposing it lets the feed order agree with the badge.
+	Posted  time.Time `gorm:"column:posted"`
+	Unseen  bool      `gorm:"column:unseen"`
+	Views   int64     `gorm:"column:views"`
+	Replies int64     `gorm:"column:replies"`
 	// ReachLat/ReachLng/ReachWKT describe the post's rippling_reach row (the
 	// origin the reach grew from, and the current reach polygon as WKT).
 	// Empty/zero when the post has no reach row (own-posts arm only; the
@@ -94,6 +106,7 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 		Groupid:    r.Groupid,
 		Type:       r.Type,
 		Arrival:    r.Arrival,
+		Posted:     r.Posted,
 		Lat:        blurLat,
 		Lng:        blurLng,
 		Unseen:     r.Unseen,
@@ -119,12 +132,15 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	db.Raw(
 		"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
-			"ms.msgtype AS type, ms.arrival, "+
+			"ms.msgtype AS type, ms.arrival, m.arrival AS posted, "+
 			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(rr.polygon) AS reach_wkt "+
 			"FROM messages_spatial ms "+
+			// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
+			// the ripple-bumped spatial arrival, so it can't stand in for "posted".
+			"INNER JOIN messages m ON m.id = ms.msgid "+
 			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 "+
@@ -235,7 +251,7 @@ func Messages(c *fiber.Ctx) error {
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 				"ANY_VALUE(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
 				"ANY_VALUE(mg.groupid) AS groupid, m.type, "+
-				"MAX(mg.arrival) AS arrival, "+
+				"MAX(mg.arrival) AS arrival, m.arrival AS posted, "+
 				"ANY_VALUE(CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END) AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -430,12 +446,15 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		db.Raw(fmt.Sprintf(
 			"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
-				"ms.msgtype AS type, ms.arrival, "+
+				"ms.msgtype AS type, ms.arrival, m.arrival AS posted, "+
 				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(rr.polygon), '') AS reach_wkt "+
 				"FROM messages_spatial ms "+
+				// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
+				// rippling — see the reach arm above.
+				"INNER JOIN messages m ON m.id = ms.msgid "+
 				"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 				"LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
 				"WHERE ms.msgid IN (%s)",
@@ -471,6 +490,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 					Groupid:    cand.Groupid,
 					Type:       cand.Type,
 					Arrival:    cand.Arrival,
+					Posted:     cand.Posted,
 					Lat:        blurLat,
 					Lng:        blurLng,
 					Unseen:     cand.Unseen,

@@ -4,6 +4,7 @@ import (
 	json2 "encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
@@ -247,4 +248,65 @@ func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
 	limited := inFeed("/api/isochrone/message?jwt=" + token)
 	assert.True(t, limited[float64(near)], "near post still appears within the 10-mile browseMaxDistance")
 	assert.False(t, limited[float64(far)], "the ~27-mile far post is filtered out of the feed, matching the count")
+}
+
+// TestNearbyFeedPostedIsOriginalArrival: the nearby feed exposes `posted` = the ORIGINAL post
+// arrival (messages.arrival), which is stable across rippling, DISTINCT from `arrival` =
+// messages_spatial.arrival, which the reach engine bumps forward every time the post ripples
+// into a new group. The client's "Newest posted" sort orders by `posted`, so a post that merely
+// rippled again does not leap to the top of the feed with a days-old badge (Discourse 9844). This
+// guards the SQL that JOINs messages for m.arrival AS posted on the reach arm.
+func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("nearbyposted")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	msg := CreateTestMessage(t, posterID, group, "OFFER: originally posted long ago, rippled recently (nearbyposted)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msg)
+
+	// A post first offered on 2024-01-01 (messages.arrival) that has since rippled out: the reach
+	// engine bumped messages_spatial.arrival forward to its latest expansion time (2024-06-01).
+	db.Exec("UPDATE messages SET arrival = '2024-01-01 00:00:00' WHERE id = ?", msg)
+	db.Exec("UPDATE messages_spatial SET arrival = '2024-06-01 00:00:00' WHERE msgid = ?", msg)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// Reach polygon covers the viewer so the post is on the nearby feed.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", msg)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	var found *message.MessageSummary
+	for i := range msgs {
+		if msgs[i].ID == msg {
+			found = &msgs[i]
+			break
+		}
+	}
+	assert.NotNil(t, found, "the rippled post appears in the nearby feed")
+	if found != nil {
+		// posted = original messages.arrival (January); arrival = ripple-bumped spatial arrival (June).
+		assert.Equal(t, 2024, found.Posted.Year(), "posted carries the original post year")
+		assert.Equal(t, time.January, found.Posted.Month(), "posted is the original post month, not the ripple month")
+		assert.Equal(t, time.June, found.Arrival.Month(), "arrival is the ripple-bumped spatial month")
+		assert.True(t, found.Posted.Before(found.Arrival),
+			"posted (original post time) is strictly earlier than the ripple-bumped spatial arrival")
+	}
 }

@@ -193,22 +193,36 @@ deploy_apiv2() {
   run "rsh '$node' 'cd $REMOTE_APIV2_DIR && cp -a iznik-server-go iznik-server-go.bak-predeploy-$ts'"
   run "rsh '$node' 'cd $REMOTE_APIV2_DIR && timeout $BUILD_TIMEOUT $GO_BIN build -o iznik-server-go .'" || die "[$node] apiv2 build failed"
   $DRY_RUN && { warn "[$node] apiv2: dry-run, skip restart"; return; }
-  log "[$node] apiv2: monit restart + verify (proc>=binary, health, 0 panics)"
+  log "[$node] apiv2: monit restart + verify (pid cycled, health 200, 0 panics)"
   rsh "$node" '
     BIN=$(stat -c %Y '"$REMOTE_APIV2_DIR"'/iznik-server-go)
+    OLD=$(pgrep -f "[i]znik-server-go" | head -1)
     sudo monit restart iznik-server-go
     for i in $(seq 1 '"$APIV2_HEALTH_TIMEOUT"'); do
       sleep 3
-      PID=$(pgrep -f "[i]znik-server-go" | head -1); [ -z "$PID" ] && continue
-      PS=$(date -d "$(ps -o lstart= -p $PID)" +%s 2>/dev/null)
-      H=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:'"$APIV2_PORT$APIV2_HEALTH_PATH"' 2>/dev/null)
-      if [ "${PS:-0}" -ge "$BIN" ] && [ "$H" = "200" ]; then
-        P=$(tail -60 /tmp/iznik-server-go.out 2>/dev/null | grep -ciE "panic|nil pointer|fatal error")
-        [ "$P" = "0" ] && { echo "OK pid=$PID health=200 panics=0"; exit 0; }
-        echo "PANICS=$P after restart"; exit 3
-      fi
+      # `monit restart` is QUEUED and can take 20-30s to act, and the old process
+      # then drains gracefully, so old+new briefly coexist. The previous check
+      # (proc-start-mtime >= binary-mtime on pgrep|head -1) raced this window: it
+      # kept matching the still-running OLD pid (started before the new binary), so
+      # a healthy node could exhaust the loop and false-abort. Instead wait until
+      # EXACTLY ONE process runs AND its pid differs from the pre-restart pid - that
+      # is the definitive signal that monit has fully cycled to the freshly-built
+      # binary and it owns the port (apiv2 is single-process, prefork disabled).
+      PIDS=$(pgrep -f "[i]znik-server-go")
+      [ "$(echo "$PIDS" | grep -c .)" = "1" ] || continue
+      PID=$(echo "$PIDS" | head -1)
+      [ -n "$OLD" ] && [ "$PID" = "$OLD" ] && continue
+      H=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://localhost:'"$APIV2_PORT$APIV2_HEALTH_PATH"' 2>/dev/null)
+      [ "$H" = "200" ] || continue
+      P=$(tail -60 /tmp/iznik-server-go.out 2>/dev/null | grep -ciE "panic|nil pointer|fatal error")
+      [ "$P" = "0" ] && { echo "OK pid=$PID (was ${OLD:-none}) health=200 panics=0"; exit 0; }
+      echo "PANICS=$P after restart (pid=$PID)"; exit 3
     done
-    echo "apiv2 did not come healthy on new binary"; exit 2
+    # Timed out: dump the state so a false-negative is diagnosable, not opaque.
+    NOW=$(pgrep -f "[i]znik-server-go" | tr "\n" " ")
+    echo "apiv2 did not come healthy on new binary: oldpid=${OLD:-none} nowpids=[${NOW}] binary_mtime=$BIN health=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://localhost:'"$APIV2_PORT$APIV2_HEALTH_PATH"' 2>/dev/null)"
+    sudo monit summary 2>/dev/null | grep -i iznik-server-go
+    exit 2
   ' || die "[$node] apiv2 verify failed"
   monit_ensure_ok "$node" "$MONIT_APIV2_SVC"
   ok "[$node] apiv2 live on $TARGET_COMMIT"

@@ -12,10 +12,17 @@ type MessageSummary struct {
 	SpatialID  *uint64   `json:"spatialid,omitempty" gorm:"column:spatialid"`
 	Type       string    `json:"type"`
 	Arrival    time.Time `json:"arrival"`
-	Date       time.Time `json:"date"`
-	Lat        float64   `json:"lat"`
-	Lng        float64   `json:"lng"`
-	Unseen     bool      `json:"unseen"`
+	// Posted is the ORIGINAL post arrival (messages.arrival), stable across
+	// rippling. On the nearby/reach feed the client's "Newest posted" sort orders
+	// by this so a post that merely rippled again does not jump to the top with a
+	// days-old badge (Discourse 9844). Arrival, by contrast, is the reach-bumped
+	// spatial arrival used for the relevance score. Only populated on the browse
+	// feed; zero elsewhere (falls back to arrival client-side).
+	Posted time.Time `json:"posted,omitempty"`
+	Date   time.Time `json:"date"`
+	Lat    float64   `json:"lat"`
+	Lng    float64   `json:"lng"`
+	Unseen bool      `json:"unseen"`
 	// Score is the rippling relevance score (see isochrone.Score) used to
 	// order the 'nearby' browse feed. Only populated on that path; zero/
 	// omitted elsewhere.
