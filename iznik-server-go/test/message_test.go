@@ -5925,6 +5925,13 @@ func TestListMessagesMT_FilterTrusted(t *testing.T) {
 	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL WHERE msgid IN (?, ?)", checkedMsg, trustedMsg)
 	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=? WHERE msgid=?", modID, modApprovedMsg)
 
+	// A copy the rippling engine inserted (rippled_in=1) from a member who happens to
+	// be trusted here is NOT this group's oversight work and must not appear.
+	otherGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledMsg := CreateTestMessage(t, defaultPoster, otherGroup, prefix+" rippled in", 52.0, -1.0)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", rippledMsg, groupID)
+
 	resp, err := getApp().Test(httptest.NewRequest("GET",
 		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=trusted&jwt=%s", groupID, modToken), nil))
 	assert.NoError(t, err)
@@ -5933,7 +5940,7 @@ func TestListMessagesMT_FilterTrusted(t *testing.T) {
 	var body map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&body)
 	msgs, _ := body["messages"].([]interface{})
-	foundChecked, foundTrusted, foundMod := false, false, false
+	foundChecked, foundTrusted, foundMod, foundRippled := false, false, false, false
 	for _, id := range msgs {
 		switch id {
 		case float64(checkedMsg):
@@ -5942,14 +5949,17 @@ func TestListMessagesMT_FilterTrusted(t *testing.T) {
 			foundTrusted = true
 		case float64(modApprovedMsg):
 			foundMod = true
+		case float64(rippledMsg):
+			foundRippled = true
 		}
 	}
 	assert.True(t, foundTrusted, "trusted-member post should appear under trusted")
 	assert.False(t, foundChecked, "auto-moderated NULL-member post should not appear under trusted")
 	assert.False(t, foundMod, "mod-approved post should not appear under trusted")
+	assert.False(t, foundRippled, "a rippled-in copy must not appear in the trusted oversight queue")
 
-	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg)
-	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg)
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, rippledMsg)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, rippledMsg)
 }
 
 func TestListMessagesMT_MarkChecked(t *testing.T) {

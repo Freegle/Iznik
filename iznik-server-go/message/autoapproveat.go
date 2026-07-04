@@ -3,12 +3,34 @@ package message
 import (
 	"encoding/json"
 	"hash/crc32"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
+
+// cleanPathEnabledFor mirrors the PHP rollout gate (AutoApproveCleanService::enabledGroupIds):
+// FREEGLE_AUTOAPPROVE_ENABLED truthy enables the 20-minute clean path everywhere; otherwise
+// only the groups listed in FREEGLE_AUTOAPPROVE_TRIAL_GROUPS (comma-separated ids) take part.
+// When the clean path is off for a group, the countdown falls back to the 48h estimate — a
+// countdown that will never fire must not be shown to moderators.
+func cleanPathEnabledFor(gid uint64) bool {
+	v := os.Getenv("FREEGLE_AUTOAPPROVE_ENABLED")
+	if v == "true" || v == "1" {
+		return true
+	}
+
+	for _, part := range strings.Split(os.Getenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS"), ",") {
+		if id, err := strconv.ParseUint(strings.TrimSpace(part), 10, 64); err == nil && id == gid {
+			return true
+		}
+	}
+
+	return false
+}
 
 // phpTruthy mirrors PHP's !empty(): nil, false, 0, "" and "0" are falsy; everything
 // else is truthy. Used so the Go group-allows check matches AutoApproveCleanService's
@@ -131,7 +153,8 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			}
 		}
 
-		onCleanPath := groupAllows &&
+		onCleanPath := cleanPathEnabledFor(mg.Groupid) &&
+			groupAllows &&
 			row.OurPostingStatus == nil &&
 			mg.ContentcheckCheckedAt != nil &&
 			mg.ContentcheckReasons == nil &&

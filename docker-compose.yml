@@ -759,6 +759,13 @@ services:
       # render — matching how V1 derives its base from TUS_UPLOADER.
       - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      # Auto-approve rollout gate: the Go Pending countdown (autoapproveat) must agree
+      # with the Laravel clean-path cron about whether the 20-minute path is on, or mods
+      # would see countdowns that never fire. Mirror whatever the batch env sets.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
@@ -952,6 +959,13 @@ services:
       - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
       - RIPPLE_ANALYTICS_CONCURRENCY=${RIPPLE_ANALYTICS_CONCURRENCY:-16}
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      # Auto-approve rollout gate: the Go Pending countdown (autoapproveat) must agree
+      # with the Laravel clean-path cron about whether the 20-minute path is on, or mods
+      # would see countdowns that never fire. Mirror whatever the batch env sets.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle

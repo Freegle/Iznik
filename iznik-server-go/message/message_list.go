@@ -592,8 +592,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			filterWhere = "AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL " + checkedWindow
 		case "trusted":
 			// Went live without moderation from trusted (group-settings) members.
+			// rippled_in = 0 matches "checked": a copy the rippling engine inserted
+			// (Approved, approvedby NULL) is not this group's oversight work, and the
+			// poster's trusted status on the receiving group is coincidental.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
-			filterWhere = "AND mg.approvedby IS NULL AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') " + checkedWindow
+			filterWhere = "AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') " + checkedWindow
 		}
 
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +

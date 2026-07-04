@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,9 @@ func TestListMessagesMTPendingBumpsHold(t *testing.T) {
 // moderator; clean-path posts get a time, danger-signalled posts get nil, and
 // non-mods never see it.
 func TestAutoapproveatPendingModGating(t *testing.T) {
+	// This test exercises the clean 20-minute path, which is dark by default —
+	// enable it (the rollout gate itself is covered by TestAutoapproveatRolloutGate).
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
 	prefix := uniquePrefix("autoapproveat")
 	db := database.DBConn
 
@@ -108,6 +112,62 @@ func TestAutoapproveatPendingModGating(t *testing.T) {
 	db.Exec("DELETE FROM spam_users WHERE userid=?", poster)
 	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", cleanMsg, dangerMsg)
 	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", cleanMsg, dangerMsg)
+}
+
+
+// The rollout gate (FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS)
+// mirrors AutoApproveCleanService::enabledGroupIds. With the gate off (the default) a
+// clean pending post must NOT show the 20-minute countdown — the clean path will not
+// run, so showing it would promise moderators an auto-approval that never fires. It
+// falls back to the 48h estimate instead. A trial group restores the 20-minute path
+// for that group only.
+func TestAutoapproveatRolloutGate(t *testing.T) {
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "")
+	prefix := uniquePrefix("aagate")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" gated pending", 52.0, -1.0)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msg)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+
+	parseAt := func(v interface{}) time.Time {
+		s, ok := v.(string)
+		assert.True(t, ok, "autoapproveat should be a timestamp string")
+		at, err := time.Parse(time.RFC3339, s)
+		assert.NoError(t, err)
+		return at
+	}
+
+	// Gate fully off: the countdown falls back to the 48h estimate.
+	v := getAutoapproveatField(t, msg, groupID, modToken)
+	assert.NotNil(t, v, "gate off: clean pending post still shows the 48h fallback estimate")
+	assert.True(t, parseAt(v).After(time.Now().Add(40*time.Hour)),
+		"gate off: estimate must be the 48h fallback, not the 20-minute clean path")
+
+	// This group in the trial list: the 20-minute clean path applies again.
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf(" %d ", groupID))
+	v = getAutoapproveatField(t, msg, groupID, modToken)
+	assert.NotNil(t, v)
+	assert.True(t, parseAt(v).Before(time.Now().Add(time.Hour)),
+		"trial group: the 20-minute clean-path estimate applies")
+
+	// Global switch on: clean path everywhere, trial list irrelevant.
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "999999999")
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
+	v = getAutoapproveatField(t, msg, groupID, modToken)
+	assert.NotNil(t, v)
+	assert.True(t, parseAt(v).Before(time.Now().Add(time.Hour)),
+		"global switch on: the 20-minute clean-path estimate applies")
 }
 
 // D9: markchecked with explicit ids marks only Approved rows on the mod's groups,
@@ -196,6 +256,16 @@ func TestMarkCheckedReject(t *testing.T) {
 	approved := CreateTestMessage(t, poster, groupA, prefix+" approved", 52.0, -1.0)
 	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL, checkedat=NOW(), checkedby=? WHERE msgid=?", modID, approved)
 
+	// The post is mid-ripple: an expanding reach row, and a rippled-in copy on another
+	// group. The reject must hard-stop the reach and must NOT touch the rippled-in copy
+	// (the engine's own retraction handles those).
+	groupB := CreateTestGroup(t, prefix+"_b")
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival) "+
+		"VALUES (?, 52.0, -1.0, ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857), NOW())", approved)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", approved, groupB)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid=?", approved)
+
 	// Reject requires explicit ids.
 	noIDs := fmt.Sprintf(`{"groupid": %d, "reject": true}`, groupA)
 	reqNo := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", modToken), strings.NewReader(noIDs))
@@ -218,6 +288,38 @@ func TestMarkCheckedReject(t *testing.T) {
 	assert.Equal(t, int64(1), pendingHeld, "rejected post is Pending, held by the mod, checkedat cleared")
 	assert.Equal(t, int64(0), stillChecked, "checkedat must be cleared on reject")
 
+	// The Rejected log row is what feeds the moderation-stats KPI and the clean
+	// auto-approver's danger-signal veto for this member's next post.
+	var rejectedLogs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type='Message' AND subtype='Rejected' AND msgid=? AND groupid=? AND user=? AND byuser=?",
+		approved, groupA, poster, modID).Scan(&rejectedLogs)
+	assert.Equal(t, int64(1), rejectedLogs, "reject must write a Message/Rejected log row")
+
+	// The reach engine is hard-stopped immediately, not left to expand for another tick.
+	var reachStatus string
+	db.Raw("SELECT status FROM rippling_reach WHERE msgid=?", approved).Scan(&reachStatus)
+	assert.Equal(t, "stopped", reachStatus, "reject must stop the reach row synchronously")
+
+	// The rippled-in copy on the other group is untouched (the engine retracts those).
+	var rippledCopy int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND collection='Approved' AND rippled_in=1", approved, groupB).Scan(&rippledCopy)
+	assert.Equal(t, int64(1), rippledCopy, "reject must not directly touch rippled-in copies")
+
+	// A mod of the RECEIVING group cannot reject the rippled-in copy through this
+	// endpoint either — oversight actions are origin-row only.
+	modB := CreateTestUser(t, prefix+"_modb", "User")
+	CreateTestMembership(t, modB, groupB, "Moderator")
+	_, modBToken := CreateTestSession(t, modB)
+	bodyB := fmt.Sprintf(`{"groupid": %d, "reject": true, "ids": [%d]}`, groupB, approved)
+	reqB := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", modBToken), strings.NewReader(bodyB))
+	reqB.Header.Set("Content-Type", "application/json")
+	respB, err := getApp().Test(reqB)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, respB.StatusCode)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND collection='Approved' AND rippled_in=1", approved, groupB).Scan(&rippledCopy)
+	assert.Equal(t, int64(1), rippledCopy, "a receiving-group mod's reject must not yank a rippled-in copy")
+
+	db.Exec("DELETE FROM logs WHERE type='Message' AND subtype='Rejected' AND msgid=?", approved)
 	db.Exec("DELETE FROM messages_groups WHERE msgid=?", approved)
 	db.Exec("DELETE FROM messages WHERE id=?", approved)
 }

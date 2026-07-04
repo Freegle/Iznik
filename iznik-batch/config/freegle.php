@@ -1021,6 +1021,13 @@ return [
     | delay_minutes / quality_check_percent via settings.autoapprove.* (an
     | absent or 0 delay override falls back to the site default below).
     |
+    | - enabled:                master switch for the clean-path auto-approve.
+    |                           DEFAULT OFF: merging/deploying this code changes
+    |                           nothing until the switch is deliberately flipped.
+    | - trial_group_ids:        comma-separated group ids for a phased trial while
+    |                           the master switch is off (mirrors the rippling
+    |                           group experiment: RIPPLE_WITHIN_GROUPS with
+    |                           RIPPLE_ENABLED false). Ignored when enabled=true.
     | - delay_minutes:          how long a content-check-clean post stays in
     |                           Pending before auto-approval, giving mods and
     |                           microvolunteers a chance to intervene.
@@ -1031,6 +1038,8 @@ return [
     |
     */
     'autoapprove' => [
+        'enabled'               => (bool) env('FREEGLE_AUTOAPPROVE_ENABLED', false),
+        'trial_group_ids'       => env('FREEGLE_AUTOAPPROVE_TRIAL_GROUPS', ''),
         'delay_minutes'         => (int) env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES', 20),
         'quality_check_percent' => (int) env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', 0),
         'danger_log_days'       => (int) env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS', 90),
