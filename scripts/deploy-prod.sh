@@ -196,19 +196,23 @@ deploy_apiv2() {
   log "[$node] apiv2: monit restart + verify (pid cycled, health 200, 0 panics)"
   rsh "$node" '
     BIN=$(stat -c %Y '"$REMOTE_APIV2_DIR"'/iznik-server-go)
-    OLD=$(pgrep -f "[i]znik-server-go" | head -1)
+    # Match the Go process by EXACT NAME (pgrep -x), never by full cmdline (pgrep -f).
+    # monit starts apiv2 via a `/bin/bash -c "... ./iznik-server-go ..."` wrapper AND
+    # this very verify loop runs as `bash -c "...stat .../iznik-server-go..."` - both
+    # carry the string "iznik-server-go" in their argv, so a -f match also counts those
+    # shells. That self-match kept the process count >= 2 forever, so the loop never saw
+    # "exactly one" and every node timed out despite a healthy restart. -x matches only
+    # the process whose name is exactly iznik-server-go (the Go binary).
+    OLD=$(pgrep -x iznik-server-go | head -1)
     sudo monit restart iznik-server-go
     for i in $(seq 1 '"$APIV2_HEALTH_TIMEOUT"'); do
       sleep 3
       # `monit restart` is QUEUED and can take 20-30s to act, and the old process
-      # then drains gracefully, so old+new briefly coexist. The previous check
-      # (proc-start-mtime >= binary-mtime on pgrep|head -1) raced this window: it
-      # kept matching the still-running OLD pid (started before the new binary), so
-      # a healthy node could exhaust the loop and false-abort. Instead wait until
-      # EXACTLY ONE process runs AND its pid differs from the pre-restart pid - that
-      # is the definitive signal that monit has fully cycled to the freshly-built
-      # binary and it owns the port (apiv2 is single-process, prefork disabled).
-      PIDS=$(pgrep -f "[i]znik-server-go")
+      # then drains gracefully, so old+new briefly coexist. Wait until EXACTLY ONE
+      # Go process runs AND its pid differs from the pre-restart pid - the definitive
+      # signal that monit has fully cycled to the freshly-built binary and it owns the
+      # port (apiv2 is single-process, prefork disabled).
+      PIDS=$(pgrep -x iznik-server-go)
       [ "$(echo "$PIDS" | grep -c .)" = "1" ] || continue
       PID=$(echo "$PIDS" | head -1)
       [ -n "$OLD" ] && [ "$PID" = "$OLD" ] && continue
@@ -219,7 +223,7 @@ deploy_apiv2() {
       echo "PANICS=$P after restart (pid=$PID)"; exit 3
     done
     # Timed out: dump the state so a false-negative is diagnosable, not opaque.
-    NOW=$(pgrep -f "[i]znik-server-go" | tr "\n" " ")
+    NOW=$(pgrep -x iznik-server-go | tr "\n" " ")
     echo "apiv2 did not come healthy on new binary: oldpid=${OLD:-none} nowpids=[${NOW}] binary_mtime=$BIN health=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://localhost:'"$APIV2_PORT$APIV2_HEALTH_PATH"' 2>/dev/null)"
     sudo monit summary 2>/dev/null | grep -i iznik-server-go
     exit 2
@@ -241,8 +245,12 @@ deploy_routing() {
   rsh "$node" '
     '"$MONIT_CMD"' unmonitor '"$MONIT_ROUTING_SVC"' 2>/dev/null || true   # stop monit racing the manual restart
     sudo killall -SIGINT iznik-routing-go 2>/dev/null || true
-    for i in $(seq 1 '"$STOP_GRACE"'); do pgrep -f "[i]znik-routing-go" >/dev/null || break; sleep 1; done
-    pgrep -f "[i]znik-routing-go" >/dev/null && { sudo killall -9 iznik-routing-go; sleep 2; }
+    # Liveness by EXACT process name, not -f: this very rsh shell has "iznik-routing-go"
+    # in its own argv, so pgrep -f would self-match and the grace loop would never break
+    # (always force-killing). The kernel comm truncates to 15 chars, so the name is
+    # iznik-routing-g (iznik-routing-go is 16).
+    for i in $(seq 1 '"$STOP_GRACE"'); do pgrep -x iznik-routing-g >/dev/null || break; sleep 1; done
+    pgrep -x iznik-routing-g >/dev/null && { sudo killall -9 iznik-routing-go; sleep 2; }
     cd '"$REMOTE_ROUTING_DIR"'
     sudo bash -c ". ./.env; nohup ./iznik-routing-go >> /tmp/iznik-routing-go.out 2>&1 &"
     for i in $(seq 1 '"$((GRAPH_LOAD_TIMEOUT/12))"'); do
