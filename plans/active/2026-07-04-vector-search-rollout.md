@@ -2,9 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **All build agents must be Opus-class, not Fable** (orchestrator constraint from Edward).
 
-**Goal:** Make vector (semantic) search THE search mechanism everywhere, use it for all "relevant post" recommendations (similar-posts widget, wanted→offer matching at post time, the Relevant email), instrument whether recommendations are worth showing, and retire the entire legacy keyword-index machinery (`words`, `messages_index`, `items_index`, `words_cache`, soundex/typo cascade, synonym crowd-sourcing).
+**Goal:** Make vector (semantic) search THE search mechanism everywhere, use it for all "relevant post" recommendations (similar-posts widget, wanted→offer matching at post time, digest relevance ranking), instrument whether recommendations are worth showing, and retire the entire legacy keyword-index machinery (`words`, `messages_index`, `items_index`, `words_cache`, soundex/typo cascade, synonym crowd-sourcing).
 
-**Architecture:** The prototype (PR #573) is already live in production: `nomic-embed-text-v1.5` @ 256 dims in `messages_embeddings`, an in-memory Go store (`embedding.Global`) refreshed every 2 min, a hybrid vector+keyword `/message/search/:term?searchmode=vector` path, an embedding sidecar container, and a Laravel `embeddings:generate` cron every 5 min. This plan (1) flips the server default so every caller gets hybrid vector search, and fixes the known 3.8s store-reload slow query first; (2) adds a "More like this nearby" strip on the message page powered by stored embeddings, with impression/click/reply funnel instrumentation and a 10% deterministic holdout; (3) shows matching OFFERs during and after WANTED composition (async, never blocking the posting flow); (4) rewrites the V1 PHP "Relevant" email in Laravel on top of vector search; (5) removes the keyword leg entirely (pure vector + in-memory lexical guarantee) and drops the legacy tables.
+**Architecture:** The prototype (PR #573) is already live in production: `nomic-embed-text-v1.5` @ 256 dims in `messages_embeddings`, an in-memory Go store (`embedding.Global`) refreshed every 2 min, a hybrid vector+keyword `/message/search/:term?searchmode=vector` path, an embedding sidecar container, and a Laravel `embeddings:generate` cron every 5 min. This plan (1) flips the server default so every caller gets hybrid vector search, and fixes the known 3.8s store-reload slow query first; (2) adds a "More like this nearby" strip on the message page powered by stored embeddings, with impression/click/reply funnel instrumentation and a 10% deterministic holdout; (3) shows matching OFFERs during and after WANTED composition (async, never blocking the posting flow); (4) retires the V1 PHP "Relevant" email and folds personal relevance into the existing what's-new digest as a sort-ranking signal; (5) removes the keyword leg entirely (pure vector + in-memory lexical guarantee) and drops the legacy tables.
+
+**Cross-cutting requirements (Edward, 2026-07-04):**
+- **Feature flags on every behaviour change** (env-var killswitches, `RIPPLE_ENABLED` precedent; default ON in code, `=off`/`=keyword` disables without a deploy): `VECTOR_SEARCH_DEFAULT` (Phase 1), `FEATURE_SIMILAR_POSTS` (Phase 2), `FEATURE_WANTED_MATCH` (Phase 3), `FEATURE_DIGEST_RELEVANCE` (Phase 4, Laravel — this one defaults OFF until enabled). Phase 5 (retirement) is the only unflaggable step and merges last, after the flags have proven the features in prod.
+- **Recommendations must respect rippling REACH**: never recommend a post the viewer cannot actually reply to. A post's `rippling_reach` polygon may not cover the viewer's location, and the chat reply gate (`iznik-server-go/chat/chatmessage.go:430-445`) will block the reply. Candidate filtering in Phases 2 and 3 reuses that exact eligibility logic (extract a shared helper; do not duplicate the SQL). Fail-open semantics, matching the existing guards: no reach row → eligible; viewer location unknown → no filtering.
 
 **Tech Stack:** Go (fiber, gorm) in `iznik-server-go`; Nuxt3/Vue3 + Pinia + bootstrap-vue-next in `iznik-nuxt3` (+ `iznik-nuxt3/modtools`); Laravel in `iznik-batch`; MySQL/Percona; existing embedding sidecar (Node/ONNX).
 
@@ -22,7 +26,7 @@ Scratchpad research digests (session-local copies; the facts are restated in-pla
 
 **Worktree test commands** (status API on :12021):
 - Go: `curl -s -X POST http://localhost:12021/api/tests/go` then poll `GET /api/tests/go/status`. **CAVEAT: the worktree apiv2 container is NOT auto-synced. Before running, `docker cp` every changed Go file into `freegle-vector-search-apiv2:/app/<relpath>`, and `docker exec freegle-vector-search-apiv2 sh -c 'cd /app && go build ./...'` to confirm it compiles.**
-- Laravel: `curl -s -X POST http://localhost:12021/api/tests/laravel -H 'Content-Type: application/json' -d '{"filter":"<MethodSubstring>"}'` (filter matches METHOD names). `docker cp` changed PHP files into `freegle-vector-search-batch:/var/www/html/<relpath>` first. Full suite before any push.
+- Laravel: `curl -s -X POST http://localhost:12021/api/tests/laravel -H 'Content-Type: application/json' -d '{"filter":"<MethodSubstring>"}'` (filter matches METHOD names). **Do NOT `docker cp` into `freegle-vector-search-batch` — the batch container BIND-MOUNTS `./iznik-batch` at `/var/www/html`, so host edits are already live, and docker cp onto a bind mount triggers a known file-sync race that can DELETE host files** (see the 2026-07-04 autoapprove session gotcha: file-sync.sh + inotify self-sync loop; fixed only on feature/autoapprove-delay, NOT in this worktree). If files under `iznik-batch/` ever vanish while you work, that race is why — re-create them and avoid any docker cp/exec-rm touching that path. Full suite before any push.
 - Vitest: `curl -s -X POST http://localhost:12021/api/tests/vitest -d '{"filter":"<spec>"}'` . `docker cp` changed specs/components into `freegle-vector-search-modtools-dev-local:/app/...` first (the runner container). File deletes do NOT propagate — if you delete a spec, also `docker exec ... rm` it in the container.
 - Lint PHP: `docker exec freegle-vector-search-batch php -l <container path>`. Lint JS: `docker exec freegle-vector-search-modtools-dev-local sh -c 'cd /app && npx eslint --fix <files>'`.
 
@@ -111,15 +115,29 @@ Change `StartRefresh` to call `Load()` once at startup and `Refresh()` on each t
 
 - [ ] **Step 5: Commit** `perf(embedding): incremental store refresh instead of 2-minute full blob reload`.
 
-### Task 1.2: Flip the server default to vector
+### Task 1.2: Flip the server default to vector (env-flagged)
 
 **Files:**
-- Modify: `iznik-server-go/message/message.go:1481` (one line: `searchmode := c.Query("searchmode", "vector")`)
-- Test: extend the existing search tests in `iznik-server-go/test/` (find the file containing existing `/message/search` tests, likely `messages_test.go`)
+- Modify: `iznik-server-go/message/message.go:1481` — default comes from a flag helper: `searchmode := c.Query("searchmode", defaultSearchMode())`
+- Create the helper in the `message` package (or wherever Go env flags conventionally live — grep for `os.Getenv` in iznik-server-go first and follow the pattern):
+
+```go
+// defaultSearchMode returns the searchmode used when the caller doesn't specify one.
+// VECTOR_SEARCH_DEFAULT=keyword is the no-deploy rollback switch for the vector flip;
+// both the env var and the ?searchmode param are removed in Phase 5.
+func defaultSearchMode() string {
+	if os.Getenv("VECTOR_SEARCH_DEFAULT") == "keyword" {
+		return "keyword"
+	}
+	return "vector"
+}
+```
+- Modify: root `docker-compose.yml` apiv2 service environment — document the variable (commented-out line is fine); it is the rollback lever named in the PR body.
+- Test: extend the existing search tests in `iznik-server-go/test/` (find the file containing existing `/message/search` tests, likely `messages_test.go`); include a test that with `VECTOR_SEARCH_DEFAULT=keyword` (t.Setenv) the no-param path runs the keyword cascade.
 
 - [ ] **Step 1: Write failing test**: seed the store (`embedding.Global.SetEntries(...)` — exported test helper already exists at `store.go:271`) with one entry whose subject is "Blue sofa" and a known vector; stub the query-embed path? NO — `EmbedQuery` calls the sidecar. Instead exercise the handler with `?searchmode=` ABSENT and assert the response includes the vector-store hit. In the dev/test environment the sidecar container runs, so a live embed works; if the existing test suite has no sidecar, instead assert on the OTHER observable: with store count 0 and no `searchmode`, results still come from the keyword cascade (fallback contract), plus a unit-level assertion that `c.Query("searchmode", ...)` default is "vector" via a direct handler test with a store entry seeded using a vector produced by `embedding.EmbedQuery` against the test sidecar. Check how existing vector tests in the repo seed vectors (grep `SetEntries` in `iznik-server-go/test/`) and follow that pattern exactly.
 - [ ] **Step 2: Run, verify fails** (default is still keyword).
-- [ ] **Step 3: Change the default string.** Also update the handler comment to say vector is the default and `searchmode=keyword` is a temporary escape hatch scheduled for removal.
+- [ ] **Step 3: Implement the helper and wire it in.** Update the handler comment: vector is the default; `?searchmode=keyword` is a per-request escape hatch and `VECTOR_SEARCH_DEFAULT=keyword` the global rollback, both scheduled for removal in Phase 5.
 - [ ] **Step 4: Run Go search tests green via status API.**
 - [ ] **Step 5: Commit** `feat(search): vector-hybrid search is now the default for all callers`.
 
@@ -201,6 +219,10 @@ Outcome: the message page shows a horizontal strip of genuinely similar open pos
 // TestSimilarMessageNotInStore: :id not in store but present in messages_embeddings →
 // endpoint falls back to a DB read of subject_embedding and still returns matches.
 // TestSimilarNoEmbedding: :id has no embedding row → 200 with empty list (never 500).
+// TestSimilarFlagOff: FEATURE_SIMILAR_POSTS=off (t.Setenv) → 200 with empty list.
+// TestSimilarReachFiltered: logged-in viewer with a known location; candidate whose
+// rippling_reach polygon does NOT contain that point is excluded; candidate with NO
+// reach row is kept (fail-open); anonymous request → no reach filtering at all.
 ```
 
 - [ ] **Step 2: Run, verify fail.**
@@ -218,7 +240,7 @@ const MinSimilarScore = 0.60 // exploratory surface: lower than search's 0.65,
 func Similar(c *fiber.Ctx) error { ... }
 ```
 
-Flow: parse id + limit (default 8, cap 20); find source entry in `embedding.Global` (add a small exported `FindByMsgid(id) *Entry` accessor with RLock); if absent, `SELECT subject_embedding FROM messages_embeddings WHERE msgid = ?` + decode (reuse `decodeFloats`; export a tiny `DecodeVector([]byte) ([]float32, error)` from the embedding package rather than duplicating); also read the source msgtype+fromuser+lat/lng from `messages` /`messages_spatial` in that fallback. Call `embedding.Global.Search(vec, limit*3, srcType, nil, 0,0,0,0)`, then filter out `Msgid==src`, `Fromuser==srcFromuser`, `SubjectCos < MinSimilarScore`, truncate to limit. Return `[]{id, score, lat, lng, groupid}`. Register route: `message.Group.Get("/message/:id/similar", message.Similar)` — mirror however the search route is registered in routes.go:857-866, public (no auth), ratelimited the same way.
+Flow: flag first — if `FEATURE_SIMILAR_POSTS=off` (env), return an empty 200 immediately (the FE strip then renders nothing; killswitch needs no FE deploy). Parse id + limit (default 8, cap 20); find source entry in `embedding.Global` (add a small exported `FindByMsgid(id) *Entry` accessor with RLock); if absent, `SELECT subject_embedding FROM messages_embeddings WHERE msgid = ?` + decode (reuse `decodeFloats`; export a tiny `DecodeVector([]byte) ([]float32, error)` from the embedding package rather than duplicating); also read the source msgtype+fromuser+lat/lng from `messages` /`messages_spatial` in that fallback. Call `embedding.Global.Search(vec, limit*3, srcType, nil, 0,0,0,0)`, then filter out `Msgid==src`, `Fromuser==srcFromuser`, `SubjectCos < MinSimilarScore`. **Reach filter**: if the caller is logged in and their location resolves (same resolution the chat reply gate uses), drop candidates whose `rippling_reach` polygon exists and does not contain the viewer's point — extract the reply gate's resolution+containment logic (`chat/chatmessage.go:430-445`) into a shared exported helper (e.g. `chat.ReachEligible(msgid, lat, lng)` or a new small package if import cycles bite) and call it here; fail-open when no reach row / unknown location. Truncate to limit. Return `[]{id, score, lat, lng, groupid}`. Register route: `message.Group.Get("/message/:id/similar", message.Similar)` — mirror however the search route is registered in routes.go:857-866, public (no auth), ratelimited the same way.
 
 - [ ] **Step 4: docker cp, go build, Go tests green.**
 - [ ] **Step 5: Commit** `feat(api): /message/:id/similar — stored-embedding similarity endpoint`.
@@ -295,7 +317,32 @@ holdout cohort: over the window, for users active on message pages
 
 # PHASE 3 — WANTED → existing OFFERs at post time (branch `feature/wanted-offer-match`, base = Phase 2 branch; PR notes "Merge after Phase 2 PR")
 
-Outcome: someone posting a WANTED sees existing matching OFFERs near them — during compose (async side panel, never blocking) and again on the My Posts landing after submit. Uses the existing search endpoint (`searchmode=vector&messagetype=Offer` + bbox) — no new backend.
+Outcome: someone posting a WANTED sees existing matching OFFERs near them — during compose (async side panel, never blocking) and again on the My Posts landing after submit. Backed by a small dedicated endpoint `/message/matches` that wraps the vector store search with `messagetype=Offer` + bbox, applies **reach eligibility for the poster's chosen location** (a matched OFFER whose rippling reach doesn't cover the wanted-poster's location can't be replied to and must never be shown), and carries its own killswitch (`FEATURE_WANTED_MATCH=off`).
+
+### Task 3.0: Go endpoint GET `/message/matches`
+
+**Files:**
+- Create: `iznik-server-go/message/matches.go`
+- Modify: `iznik-server-go/router/routes.go` (public route next to the similar route; compose can be pre-login, so no auth requirement)
+- Test: `iznik-server-go/test/matches_test.go`
+
+- [ ] **Step 1: Failing tests** (seeded store vectors, same technique as similar_test.go):
+
+```go
+// TestMatchesReturnsNearbyOffers: query "sofa" (stub/seed a vector for the query via
+//   the test sidecar or by seeding the LRU cache if the tests can't reach a sidecar —
+//   follow whatever existing vector search tests do for query embedding), Offer within
+//   bbox and cos>=0.65 → returned with {id, score, lat, lng, groupid}.
+// TestMatchesExcludesWanteds: same-vector Wanted → excluded.
+// TestMatchesExcludesOutOfBox: strong-cos Offer outside ±0.15° bbox → excluded.
+// TestMatchesReachFilter: Offer whose rippling_reach polygon does NOT contain the
+//   given lat/lng → excluded; Offer with NO reach row → kept (fail-open).
+// TestMatchesFlagOff: FEATURE_WANTED_MATCH=off → 200 empty list.
+// TestMatchesExcludesOwnPosts: logged-in caller's own Offer → excluded.
+```
+
+- [ ] **Step 2: fail → Step 3: implement.** Flow: flag check (`FEATURE_WANTED_MATCH=off` → empty 200); parse `query` (required, trimmed), `lat`/`lng` (required floats), `limit` (default 6, cap 12); `embedding.EmbedQuery(query)` (sidecar + LRU cache); `embedding.Global.Search(vec, limit*3, "Offer", nil, lat-0.15, lng-0.15, lat+0.15, lng+0.15)` (note arg order swlat,swlng,nelat,nelng — check the signature); filter `SubjectCos >= MinVectorScore` (0.65 — search-grade, this is a match claim, not exploration); reach-filter by the GIVEN point using the shared helper extracted in Task 2.1; if `myid > 0` exclude `Fromuser == myid`; truncate; return list.
+- [ ] **Step 4: docker cp + go build + Go tests green → Step 5: commit** `feat(api): /message/matches — reach-aware offer matching for wanted composers`.
 
 **UX spec:**
 - In-flow: on the location step (`pages/find/whereami.vue`, and mobile `pages/find/mobile/whereami.vue`), once a postcode is chosen (`postcodeSelect` in `useCompose.js:265-307` already yields lat/lng + groups), fetch matches for the draft item title(s); if ≥1 match, render a `WantedMatches.vue` panel under the postcode chooser: heading "Good news — people are offering these near you right now", up to 6 `MessageMatchCard`s (srcTag `wanted_match`), each opening in a **new tab** (`target="_blank"`) so the draft survives. A dismiss ("Not what I'm looking for — keep posting") collapses it. It must never disable or delay the Next button.
@@ -305,7 +352,7 @@ Outcome: someone posting a WANTED sees existing matching OFFERs near them — du
 ### Task 3.1: `WantedMatches.vue`
 
 **Files:**
-- Create: `iznik-nuxt3/components/WantedMatches.vue` (props: `query` string, `lat`, `lng`; internal: calls `api.message.search(query, {searchmode:'vector', messagetype:'Offer', swlat.., swlng.., nelat.., nelng..})` — extend `MessageAPI.search` to accept these as an options object if it doesn't already pass query params (check `api/MessageAPI.js:40-45`); hydrates message summaries the same way SimilarPosts does; markSeen(ids, 'wanted_match') on visibility; dismiss state local; cards target=_blank with ?src=wanted_match)
+- Create: `iznik-nuxt3/components/WantedMatches.vue` (props: `query` string, `lat`, `lng`; internal: calls a new `api.message.matches(query, lat, lng, 6)` wrapper in `api/MessageAPI.js` → GET `/message/matches`; hydrates message summaries the same way SimilarPosts does; markSeen(ids, 'wanted_match') on visibility; dismiss state local; cards target=_blank with ?src=wanted_match)
 - Test: `WantedMatches.spec.js`: no render when 0 results; renders ≤6 cards with target=_blank and src=wanted_match; dismiss hides; impression call once; never renders a disabled state for parent flow (assert it emits nothing that gates navigation).
 
 - [ ] **Steps: failing specs → implement → vitest+eslint green → commit** `feat(compose): WantedMatches panel component`.
@@ -331,47 +378,61 @@ Outcome: someone posting a WANTED sees existing matching OFFERs near them — du
 
 ---
 
-# PHASE 4 — Relevant email on vector, migrated to Laravel (branch `feature/relevant-email-vector`, base `origin/master`)
+# PHASE 4 — Digest relevance ranking + retire the Relevant email (branch `feature/digest-relevance`, base `origin/master`)
 
-Outcome: the daily "Any of these take your fancy?" mail (V1 `iznik-server/include/mail/Relevant.php` + `scripts/cron/relevant.php`, the last hard consumer of `messages_index`) is rebuilt in Laravel using the vector engine via the Go API, honouring the same opt-outs. V1 script retired.
+Outcome (per Edward 2026-07-04): similarity-to-previous-items becomes part of the existing **what's-new Unified Digest via sort ranking — NOT a separate mail**. The standalone V1 "Any of these take your fancy?" mail (`iznik-server/include/mail/Relevant.php` + `scripts/cron/relevant.php` — besides search itself, the last hard consumer of `messages_index`) is retired outright. Ranking ships behind `FEATURE_DIGEST_RELEVANCE` (default OFF) with a 10% holdout, and is measured by the EXISTING digest click-by-position dashboard — the digest already records `metadata.post_msgids` order and per-position clicks, so a ranking change is directly observable with zero new tracking.
 
-### Task 4.1: Investigate + spec parity (no code)
+### Task 4.1: Investigate current digest assembly (no code)
 
-- [ ] Read `iznik-server/include/mail/Relevant.php` fully. Document in the plan-execution notes: the exact recipient predicate (`relevantallowed=1`, lastaccess recency), interest sources (own outstanding posts 30d = MATCH_POST; recently viewed others' posts inverted-type = MATCH_VIEWED), the dedup/history mechanism (find the table it writes to record what was already suggested — grep `messages_relevant` / `relevant` INSERTs in Relevant.php — and mirror it; if it has none, add ledger table `relevant_suggestions (userid, msgid, PRIMARY KEY(userid,msgid), created_at)` via Laravel migration + idempotent `*_migration.sql`), frequency (daily), unsubscribe link semantics. Record findings as a comment block at the top of the new service.
+- [ ] Read `iznik-batch/app/Services/UnifiedDigestService.php` DAILY path end-to-end. Document as notes in the service (comment block) before coding: where the per-recipient candidate post list is assembled, what order it currently uses (arrival?), where `metadata.post_msgids` is written (that order IS the measured position), and where a per-recipient ranking hook can go. Ranking applies to the DAILY digest only — immediate digests send posts as they arrive; there is nothing to reorder.
 
-### Task 4.2: `RelevantMailService` + command (TDD)
+### Task 4.2: `DigestRelevanceService` (TDD)
 
 **Files:**
-- Create: `iznik-batch/app/Services/RelevantMailService.php`
-- Create: `iznik-batch/app/Console/Commands/Mail/SendRelevantCommand.php` (`mail:relevant`, `--dry-run` default OFF only in tests; follow the repo's existing mail command conventions — grep UnifiedDigest command for structure)
-- Create: migration for the dedup ledger if Task 4.1 found none in V1 (plus `*_migration.sql`)
-- Create: mjml/blade templates `iznik-batch/resources/views/emails/mjml/relevant.blade.php` + text fallback, subject "Any of these take your fancy?", sections "Things people are giving away" / "Things people are looking for", one-line reason per item ("Because you posted/looked at ..."), links carrying `?src=relevant_mail` and routed through the standard email-tracking redirect wrapper (grep how UnifiedDigest builds tracked links; use the same helper, link_position `rel_N`)
-- Modify: `iznik-batch/routes/console.php` (daily at 14:30, `withoutOverlapping(60)`, runInBackground, cronLog)
-- Modify: the `mail:test` command's emailTypes list (repo convention — grep `emailTypes`)
-- Test: `iznik-batch/tests/Feature/Mail/RelevantMailTest.php`
+- Create: `iznik-batch/app/Services/DigestRelevanceService.php`
+- Modify: `iznik-batch/config/freegle.php` (add `digest_relevance` flag reading env `FEATURE_DIGEST_RELEVANCE`, default false)
+- Test: `iznik-batch/tests/Unit/Services/DigestRelevanceServiceTest.php`
 
 - [ ] **Step 1: Failing tests**:
 
 ```php
-// test_selects_recipients_with_relevantallowed_and_recent_access
-// test_interest_terms_from_own_posts_and_inverted_views  (user posted WANTED "sofa"
-//   → interest Offer "sofa"; user viewed an OFFER "bike" → interest Wanted "bike")
-// test_candidates_fetched_via_go_vector_search  (Http::fake the apiv2
-//   /message/search/{term}?searchmode=vector&messagetype={type} call; assert term,
-//   type inversion, and bbox from user's location)
-// test_excludes_own_posts_and_already_suggested  (ledger row → excluded)
-// test_caps_at_ten_and_spools_one_email_with_both_sections (Mail::fake / spool
-//   assertion per repo convention)
-// test_ledger_written_after_send
-// test_no_email_when_no_candidates
+// test_interest_vectors_from_own_posts_and_views: user has a post (last 60d) and a
+//   viewed message (messages_likes type=View, last 30d) — both with rows in
+//   messages_embeddings → interests() returns 2 vectors (cap 40, newest first).
+// test_rank_orders_by_max_cosine: three candidates with hand-built subject_embedding
+//   blobs (256 little-endian float32; helper packs from a PHP float array — MUST
+//   round-trip against the Go encoding: little-endian, 1024 bytes) — candidate most
+//   similar to any interest vector ranks first; ties broken by arrival desc.
+// test_candidates_without_embeddings_rank_last_in_arrival_order.
+// test_flag_off_returns_input_order_unchanged.
+// test_holdout_user_returns_input_order_unchanged (userid % 10 === 0, flag ON).
+// test_user_with_no_interests_returns_input_order_unchanged.
 ```
 
-- [ ] **Step 2: fail → Step 3: implement** (service calls Go over the internal docker URL — grep how other Laravel services call apiv2, e.g. the spatial/KNN or routing HTTP clients, and reuse that config pattern + `Http::pool` if multiple terms) **→ Step 4: Laravel tests green via status API (docker cp files into `freegle-vector-search-batch` first) → Step 5: render to Mailpit** (`http://localhost:12045` — check `./freegle status` output for the worktree's Mailpit port) via `mail:test relevant`, eyeball HTML+text **→ commit** `feat(mail): relevant-posts email on vector search (migrates V1 relevant.php)`.
+- [ ] **Step 2: fail → Step 3: implement.** `interests(int $userid): array` — subject embeddings of (a) the user's own posts from the last 60 days, (b) messages they Viewed (messages_likes type=View) in the last 30 days; single query each joining `messages_embeddings`; unpack blobs with PHP (`unpack('g256', $blob)` — 'g' is little-endian float; VERIFY with a round-trip test against bytes produced the Go way); cap 40 vectors. `rank(int $userid, array $candidateMsgids): array` — flag off OR `$userid % 10 === 0` (holdout, same rule as the widgets) OR no interests → return input unchanged; else fetch candidate embeddings in one query, score = max cosine over interest vectors (plain PHP loop — digest candidate sets are tens of posts, interests ≤ 40: ≤ a few thousand 256-dim dot products, well under 50ms), sort score desc, tiebreak arrival desc, unembedded candidates after embedded ones in arrival order.
+- [ ] **Step 4: Laravel tests green via status API → Step 5: commit** `feat(digest): relevance ranking service (vector similarity to user's posts+views)`.
 
-### Task 4.3: Retire the V1 side
+### Task 4.3: Wire into the daily digest
 
-- [ ] Delete `iznik-server/scripts/cron/relevant.php`; leave `include/mail/Relevant.php` in place but add a header comment "RETIRED — replaced by iznik-batch mail:relevant (2026-07)" (V1 class deletion happens with the rest of V1; the cron file is what runs). Update `iznik-batch/MIGRATION-STATUS.md` line ~318 ("Relevant message matching" → Completed, with date + command name). **PR body must flag: the LIVE crontab entry for relevant.php (not tracked in-repo) needs removing at deploy time — action for Edward.**
-- [ ] Full Laravel suite green. Code review. Push. PR `feat: relevant email rebuilt on vector search in Laravel`.
+**Files:**
+- Modify: `iznik-batch/app/Services/UnifiedDigestService.php` — apply `DigestRelevanceService::rank()` to the per-recipient daily candidate list BEFORE the posts are rendered and BEFORE `metadata.post_msgids` is written (so the click-by-position dashboard measures the ranked order directly).
+- Test: extend the UnifiedDigest daily tests — flag ON: recipient with interests gets ranked order in both rendered output and metadata.post_msgids; holdout recipient keeps arrival order; flag OFF (default): byte-identical behaviour to today.
+
+- [ ] **Steps: failing tests → implement → full UnifiedDigest test classes green → render a daily digest to Mailpit (check `./freegle status` for the worktree Mailpit port) and eyeball → commit** `feat(digest): rank daily digest posts by personal relevance (flagged, 10% holdout)`.
+
+### Task 4.4: Cohort split on the digest-positions dashboard
+
+**Files:**
+- Modify: `iznik-server-go/emailtracking/emailtracking.go` `DigestClickPositions` (:1386) — add optional `cohort=holdout|ranked` query param: joins the recipient user id already on `email_tracking` (verify the column name by reading the struct/table) and filters `userid % 10 = 0` vs `<> 0`.
+- Modify: `iznik-nuxt3/modtools/components/ModSysAdminDigestClicks.vue` + its store/API — cohort selector (All / Ranked / Holdout).
+- Test: Go — seeded rows split by cohort produce different curves; vitest — selector wires the param.
+
+- [ ] **Steps: failing tests → implement → suites green → commit** `feat(modtools): cohort split on digest click positions (relevance-ranking experiment)`.
+
+### Task 4.5: Retire the V1 Relevant email
+
+- [ ] Delete `iznik-server/scripts/cron/relevant.php`; add a header comment to `iznik-server/include/mail/Relevant.php`: "RETIRED 2026-07 — replaced by digest relevance ranking (iznik-batch DigestRelevanceService); do not resurrect" (class deletion happens with the rest of V1; the cron file is what runs). Update `iznik-batch/MIGRATION-STATUS.md` (~line 318): "Relevant message matching" → Retired, folded into digest relevance ranking, with date. **PR body must flag: the LIVE crontab entry for relevant.php (not tracked in-repo) needs removing at deploy time — action for Edward.**
+- [ ] Full Laravel + Go + vitest suites green. Code review. Push. PR `feat: digest relevance ranking (flagged) + retire V1 relevant email`.
 
 ---
 
@@ -448,7 +509,7 @@ The hybrid keyword leg (GetWordsExact/Starts) currently guarantees literal match
 ```
 Phase 1 (default flip + store fix)  ──┐
 Phase 2 (similar posts + measurement) ├─ independent, any order
-Phase 4 (relevant email)            ──┘
+Phase 4 (digest relevance)          ──┘
 Phase 3 (wanted→offer)   — after Phase 2 (shares MessageMatchCard + markseen source)
 Phase 5 (retirement)     — LAST, after Phases 1 & 4 are merged; recommend letting
                            Phase 1 soak in prod ~1-2 weeks first (rollback for the
@@ -460,7 +521,8 @@ Phase 5 (retirement)     — LAST, after Phases 1 & 4 are merged; recommend lett
 
 - Similar-posts strip: after 4 weeks live — keep iff CTR (clicks/impressions) ≥ 1% AND the 10% holdout shows no reply-rate decrease among non-holdout users; expand to more surfaces iff relative reply-rate lift ≥ 2%.
 - Wanted-match panel: after 4 weeks — keep iff ≥ 0.5% of wanted-composers click a match AND attributed replies > 0. A wanted draft abandoned after a match-click that leads to a reply is a SUCCESS (deflection), not a failure.
-- All metrics visible on the ModTools sysadmin "Recommendations" tab; sources: `similar_posts`, `wanted_match`, `relevant_mail` (email clicks flow through the existing email_tracking pipeline with link_position `rel_N`).
+- Digest relevance ranking: measured on the existing digest click-by-position dashboard with the new cohort split (ranked vs `userid % 10 == 0` holdout). After 4 weeks with `FEATURE_DIGEST_RELEVANCE` on: keep iff overall digest CTR in the ranked cohort ≥ holdout CTR; expected signature is a steeper position curve (more clicks concentrated at top positions).
+- All widget metrics visible on the ModTools sysadmin "Recommendations" tab; sources: `similar_posts`, `wanted_match`. Digest clicks stay in the existing email-tracking pipeline — no new tracking needed there.
 
 ## Execution notes for the orchestrator
 
