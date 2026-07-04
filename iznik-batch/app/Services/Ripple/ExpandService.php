@@ -1378,22 +1378,56 @@ class ExpandService
      * Pending so AutoApproveService approves it after the mod-veto window.
      */
     /**
-     * Review weight for the earned-reach cap: 1 per microvol Approve on the post, plus 2 per
-     * messages_groups row with checkedat set (a mod check, on any of the post's groups). The cap
-     * lets a post ripple into N communities while weight >= 2*N.
+     * Earned-reach signals. Reach is earned by clean EXPOSURE, not by active reviewer
+     * sign-off: a per-community microvolunteer/moderator approval requirement could never
+     * keep up with post volume, so it would stall rippling for nearly every post. Instead,
+     * members who have seen the post without anyone flagging it vouch for it passively.
      */
-    private function reviewWeight(int $msgid): int
-    {
-        $microvolApproves = (int) DB::selectOne(
-            "SELECT COUNT(*) AS n FROM microactions WHERE msgid = ? AND result = 'Approve'",
-            [$msgid]
-        )->n;
-        $modChecks = (int) DB::selectOne(
-            'SELECT COUNT(*) AS n FROM messages_groups WHERE msgid = ? AND checkedat IS NOT NULL',
-            [$msgid]
-        )->n;
 
-        return $microvolApproves + 2 * $modChecks;
+    /** Distinct members other than the poster who have viewed the post (browse dwell,
+     *  expand-in-list and message-page views all record a messages_likes View row). */
+    private function cleanViews(int $msgid, int $fromuser): int
+    {
+        return (int) DB::selectOne(
+            "SELECT COUNT(DISTINCT userid) AS n FROM messages_likes
+             WHERE msgid = ? AND type = 'View' AND userid != ?",
+            [$msgid, $fromuser]
+        )->n;
+    }
+
+    /**
+     * Someone flagged the post: a member wrote to a mod team about it (a User2Mod chat
+     * message referencing the post, which is exactly what the front-end report flow sends),
+     * or a microvolunteer rejected it. Conservative on purpose - a false positive merely
+     * pauses further spread until a moderator looks.
+     */
+    private function isFlagged(int $msgid, int $fromuser): bool
+    {
+        $reported = (int) DB::selectOne(
+            "SELECT COUNT(*) AS n FROM chat_messages cm
+             INNER JOIN chat_rooms cr ON cr.id = cm.chatid AND cr.chattype = 'User2Mod'
+             WHERE cm.refmsgid = ? AND cm.userid != ?",
+            [$msgid, $fromuser]
+        )->n;
+        if ($reported > 0) {
+            return true;
+        }
+
+        return (int) DB::selectOne(
+            "SELECT COUNT(*) AS n FROM microactions WHERE msgid = ? AND result = 'Reject'",
+            [$msgid]
+        )->n > 0;
+    }
+
+    /** A moderator has looked at the post (approved or checked any of its rows) - a human
+     *  look supersedes the crowd signals and clears the gate entirely. */
+    private function modLooked(int $msgid): bool
+    {
+        return (int) DB::selectOne(
+            'SELECT COUNT(*) AS n FROM messages_groups
+             WHERE msgid = ? AND (approvedby IS NOT NULL OR checkedat IS NOT NULL)',
+            [$msgid]
+        )->n > 0;
     }
 
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
@@ -1519,25 +1553,29 @@ class ExpandService
 
             // EARNED-REACH CAP (dark unless RIPPLE_EARNED_REACH_ENABLED). An auto-published post
             // (approvedby IS NULL on its origin row) may be rippled into at most N communities
-            // while its review weight >= 2*N (weight = 1 per microvol Approve + 2 per mod check).
-            // If the weight does not cover the communities this step would reach, pause: insert
-            // nothing, stamp awaiting_review_since, count it, return. When the weight later catches
-            // up the wait is banked into awaiting_review_seconds and the stamp is cleared. A
-            // mod-approved post (approvedby NOT NULL) is trusted and never capped.
+            // while it has clean_views_per_group distinct clean views per community and nobody
+            // has flagged it. A flag (member report / microvol Reject) pauses spread outright;
+            // a moderator look (approvedby or checkedat anywhere) clears the gate entirely.
+            // While capped: insert nothing, stamp awaiting_review_since, count it, return. When
+            // exposure later catches up (or a mod looks) the wait is banked into
+            // awaiting_review_seconds and the stamp is cleared.
             if (config('freegle.ripple.earned_reach_enabled', false)) {
                 $originRow = DB::selectOne(
                     'SELECT approvedby FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC LIMIT 1',
                     [$msgid]
                 );
-                if ($originRow !== null && $originRow->approvedby === null) {
+                $viewsPerGroup = (int) config('freegle.ripple.clean_views_per_group', 5);
+                if ($originRow !== null && $originRow->approvedby === null
+                    && $viewsPerGroup > 0 && !$this->modLooked($msgid)) {
                     $candidateCount = count($targetGroups);
 
                     if ($candidateCount > 0) {
                         $alreadyRippledIn = (int) DB::table('messages_groups')
                             ->where('msgid', $msgid)->where('rippled_in', 1)->where('deleted', 0)->count();
-                        $requiredWeight = 2 * ($alreadyRippledIn + $candidateCount);
+                        $requiredViews = $viewsPerGroup * ($alreadyRippledIn + $candidateCount);
 
-                        if ($this->reviewWeight($msgid) < $requiredWeight) {
+                        if ($this->isFlagged($msgid, (int) $msg->fromuser)
+                            || $this->cleanViews($msgid, (int) $msg->fromuser) < $requiredViews) {
                             DB::statement(
                                 'UPDATE rippling_reach
                                  SET awaiting_review_since = IF(awaiting_review_since IS NULL, NOW(), awaiting_review_since),
@@ -1550,7 +1588,7 @@ class ExpandService
                             return;
                         }
 
-                        // Sufficient weight: if we were paused, bank the waited time and clear the stamp.
+                        // Sufficient exposure: if we were paused, bank the waited time and clear the stamp.
                         DB::statement(
                             'UPDATE rippling_reach
                              SET awaiting_review_seconds = awaiting_review_seconds

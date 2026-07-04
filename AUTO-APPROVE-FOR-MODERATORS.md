@@ -40,7 +40,7 @@ answers it - or does not. Post numbers refer to that thread.
 | **"Human pre-moderation is Freegle's trust differentiator - dropping it risks members' and funders' confidence."** (several moderators; posts 27, 97, 103, 158) | A judgment call, honestly labelled as such. Two facts for the scales: about half of Freegle posts already publish without pre-moderation today (trusted and unmoderated members), and that has been true for years without being the thing members or funders notice; and human oversight does not disappear - it moves after publication and stays visible and provable (every check is recorded, see the last section). Freegle remains far more moderated than any of the platforms it is compared to. |
 | **"Instant posting breeds fastest-finger-first and undermines Fair Chance."** (posts 35, 114) | The delay means posting is not instant, and nothing in this change alters reply handling or allocation. But the underlying point is fair: faster publication does reward quick responders, and leaning on a moderation delay to blunt that was always indirect. Fair Chance itself is a very old model, and a better one is worth designing in its own right - for example a short reply-gathering window on each post before the offerer chooses, so being first matters less than being suitable. Faster publication makes that work more worthwhile, not less; it deserves its own proposal rather than a footnote here. |
 | **"Pilot it properly or not at all."** (many moderators; posts 37, 49, 73, 170, 280) | That is the plan, and the code enforces it: switched off everywhere by default, an explicit trial-group list for a phased start, live error-rate measurement, and a reversible switch. No big bang. |
-| **"A bad auto-approved post won't just hit my group - rippling will spread it to my neighbours."** (posts 302, 306) | Addressed by the **earned-reach gate**: an auto-published post (one no human has looked at) waits about an hour before it starts rippling at all, and it can only keep spreading while human review keeps pace - each additional community it reaches requires sign-off from microvolunteers or a moderator check. No review, no spread: it stays local. Two microvolunteer rejections or one moderator rejection stop it and pull the copy back. Posts a moderator approved by hand are exempt, because they have had their human look. (The observation in post 302 - instant rippling with no delay - describes rippling *today*, where nearly all posts have been human-approved; the hold arrives with auto-approve, for the posts that need it.) |
+| **"A bad auto-approved post won't just hit my group - rippling will spread it to my neighbours."** (posts 302, 306) | Addressed by the **earned-reach gate**: an auto-published post (one no human has looked at) waits about an hour before it starts rippling at all, and it then spreads only as fast as clean exposure accumulates - each additional community it reaches requires that a number of members have already seen the post with nobody flagging it. A single member report, or a microvolunteer rejection, pauses further spread until a moderator looks; a moderator check clears it, and a rejection pulls it back. Posts a moderator approved by hand are exempt, because they have had their human look. (Requiring active reviewer sign-off per community was considered and dropped - review capacity could never keep up with post volume, so it would have quietly stopped rippling for most posts.) (The observation in post 302 - instant rippling with no delay - describes rippling *today*, where nearly all posts have been human-approved; the hold arrives with auto-approve, for the posts that need it.) |
 | **"Something illegal goes live - flytipped goods, kerbside free-for-alls. Who is liable? Me?"** (posts 4, 226, 238, 258) | Legal responsibility for a post sits with the person who posted it - that principle is what lets any user-content platform operate, and it does not change here. What Freegle controls is how fast a problem post is caught: the checks before publication, the hold window, your oversight queue and the one-click reject are that machinery. Groups with rules about kerbside posts keep enforcing them exactly as now - nothing about auto-approve weakens a rejection. |
 
 If you raised something in that thread that is not represented above, or the response
@@ -146,42 +146,46 @@ This is where auto-approve and rippling out meet, so it is worth understanding.
 
 A live post can **ripple out** to neighbouring communities (see the rippling guide). A
 post that auto-approved has not been looked at by a human, so we do **not** let it
-spread network-wide unchecked. Instead, **reach is earned by review**:
+spread network-wide unchecked. Instead, **reach is earned by exposure without
+complaint** - the people who have already seen the post vouch for it by not objecting:
 
 - **A head start before any spread.** A freshly auto-approved post waits about **an hour**
-  before it starts rippling at all, giving its home community's reviewers first look.
-- **Wider reach needs proportional review.** To ripple into more communities, a post has
-  to earn review in step with how far it is going. **Each new community it reaches needs
-  its own light sign-off: 2 microvolunteer approvals, or 1 moderator check, from within
-  that community's reach.** So reaching **2 new communities needs 4 microvolunteer
-  approvals or 2 moderator checks** (or a mix - a moderator check counts as two
-  microvolunteer approvals).
-- **No review means it stays local.** If a post does not earn that sign-off, it simply
-  **stops spreading** and stays close to home. It is not withdrawn - it just does not go
-  wider. Well-reviewed posts spread fast and far; unreviewed ones stay local.
-- **Stopping it is easy and does not scale.** The opposite of approval is cheap: **2
-  microvolunteer rejections, or 1 moderator rejection**, on *any* copy halts the spread and
-  pulls that copy back. Easy to stop, proportionally hard to spread.
+  before it starts rippling at all, giving its home community first look.
+- **Wider reach needs more quiet eyes.** Each additional community a post ripples into
+  requires that a number of members have **already seen it and nobody has flagged it**.
+  Views accumulate naturally as people browse, so a normal post earns its spread simply
+  by being seen; a post nobody is seeing stays local.
+- **One complaint pauses it.** A member reporting the post to the mods, or a
+  microvolunteer rejecting it, **pauses all further spread** until a moderator looks.
+  Copies it has already reached stay put; it just goes no further.
+- **A moderator look settles it.** Your check clears the gate entirely (a human look
+  outranks the crowd signal); your rejection pulls it back. Requiring active
+  microvolunteer or moderator sign-off for every community was considered and dropped:
+  review capacity could never keep pace with post volume, and rippling would have
+  quietly stopped working for most posts.
 - **Mod-approved posts are exempt.** A post you approved by hand has had its human look
   and ripples normally.
 
-The short version: **a post's reach can only run as far ahead as its review.**
+The short version: **a post spreads as far as the quiet approval of the people who have
+already seen it - and one objection stops it until a human decides.**
 
 ---
 
 ## Who does the reviewing
 
-The review that earns reach comes from two pools, and **both are drawn from inside the
-post's maximum ripple area, nearest first**:
+The earning is passive - members seeing the post as they browse. The active roles are
+the brakes and the all-clear, and both are drawn from **inside the post's maximum ripple
+area, nearest first**:
 
-- **Microvolunteers** inside the area the post can reach are asked to look, with the people
-  **closest to the post** asked first - they are the ones most likely to have useful local
-  context.
-- **Moderators** of communities inside that same area provide the moderator sign-off. A
-  moderator of a community the post will never reach does not gate it - which is only fair,
-  since it was never going to land on them.
+- **Microvolunteers** inside the area the post can reach are asked to look, with the
+  people **closest to the post** asked first - they are the ones most likely to have
+  useful local context. Their rejection pauses the post's spread.
+- **Moderators** of communities inside that same area can check a post (clearing its
+  gate) or reject it (pulling it back). A moderator of a community the post will never
+  reach is never involved - which is only fair, since it was never going to land on them.
 
-In short: we only ask the people the post can actually reach, closest first.
+In short: everyone who sees the post quietly vouches for it; the people it can actually
+reach, closest first, hold the brake.
 
 ---
 
