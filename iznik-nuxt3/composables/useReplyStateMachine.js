@@ -351,9 +351,41 @@ export function useReplyStateMachine(messageId, options = {}) {
     })
   }
 
+  // A 403 "not_in_reach" is the rippling-out reach gate, NOT an auth failure: the post has
+  // rippled out but not yet to the member's area (server sets replyeligible=false and the
+  // write path rejects the send with 403 not_in_reach). It must show the graceful "closest
+  // first" explanation and keep the typed reply — never be treated as an auth error, which
+  // forced a re-login and bounced the member out of their reply (Discourse: Marc Ashby,
+  // 2026-07-04 — replying to a Henley post rippled into his Reading community).
+  function isNotInReachError(error) {
+    if (!error) return false
+    const status = error.status || error.response?.status
+    if (status !== 403) return false
+    // The API error handler returns { error: <code>, message: <text> }, so the reach gate's
+    // "not_in_reach" arrives in error.response.data.message (we also check the Error's own
+    // message). Match that exact string so the OTHER reply 403s — "User banned from group",
+    // "Not a member of this chat" — are NOT mislabelled as a reach block.
+    const body = error.response?.data ?? error.data ?? ''
+    const bodyText = typeof body === 'string' ? body : JSON.stringify(body || '')
+    return `${error.message || ''} ${bodyText}`.includes('not_in_reach')
+  }
+
+  // Show the graceful reach explanation and keep the typed text; do NOT force a re-login.
+  function handleNotInReach(callback) {
+    transitionTo(ReplyState.ERROR, { event: ReplyEvent.ERROR_OCCURRED })
+    error.value =
+      "We're showing this post to people closest to it first — you'll be able to reply once it reaches your area."
+    action('reply_blocked_not_in_reach', { message_id: messageId })
+    callback?.()
+  }
+
   // Check if an error is an authentication error
   function isAuthError(error) {
     if (!error) return false
+
+    // A reach-gate 403 is not auth — see isNotInReachError. Only 401 (and explicit
+    // auth messages) count, so the reply flow never force-logs-in on a reach rejection.
+    if (isNotInReachError(error)) return false
 
     // Check for common auth error patterns
     const errorMessage = error.message || error.toString() || ''
@@ -361,7 +393,6 @@ export function useReplyStateMachine(messageId, options = {}) {
 
     return (
       errorStatus === 401 ||
-      errorStatus === 403 ||
       errorMessage.includes('not logged in') ||
       errorMessage.includes('unauthorized') ||
       errorMessage.includes('session expired') ||
@@ -596,6 +627,20 @@ export function useReplyStateMachine(messageId, options = {}) {
       return
     }
 
+    // Proactive reach gate. The server marks a rippled-out post the member cannot reply to
+    // yet with replyeligible === false — their location is outside the post's current reach
+    // polygon ("we're showing this to people closest first"). Honour that flag BEFORE we
+    // create a chat and send, so the member sees the explanation instead of composing a
+    // reply that the write path then rejects with 403 (which previously mis-fired a forced
+    // re-login). The catch-side isNotInReachError handling stays as a backstop for a stale
+    // cached flag, a bypassable client, or a ?reply= deep link.
+    if (messageStore.byId?.(messageId)?.replyeligible === false) {
+      log('Reply blocked proactively: post not yet in reach (replyeligible=false)')
+      action('reply_blocked_not_in_reach_proactive', { message_id: messageId })
+      handleNotInReach(callback)
+      return
+    }
+
     transitionTo(ReplyState.VALIDATING, { event: ReplyEvent.SUBMIT })
 
     // Validate form. Under CI load (and occasionally on slow devices) the BForm
@@ -753,6 +798,13 @@ export function useReplyStateMachine(messageId, options = {}) {
     } catch (e) {
       log('Registration failed:', e.message)
 
+      // A reach-gate rejection is not a failure to fix by retrying or re-logging in:
+      // surface the graceful "closest first" message and keep the typed reply.
+      if (isNotInReachError(e)) {
+        handleNotInReach(callback)
+        return
+      }
+
       if (isAuthError(e)) {
         handleAuthError()
         callback?.()
@@ -865,6 +917,13 @@ export function useReplyStateMachine(messageId, options = {}) {
     } catch (e) {
       logError('Failed to join group', e, state.value, messageId)
 
+      // A reach-gate rejection is not a failure to fix by retrying or re-logging in:
+      // surface the graceful "closest first" message and keep the typed reply.
+      if (isNotInReachError(e)) {
+        handleNotInReach(callback)
+        return
+      }
+
       if (isAuthError(e)) {
         handleAuthError()
         callback?.()
@@ -956,6 +1015,13 @@ export function useReplyStateMachine(messageId, options = {}) {
       }
     } catch (e) {
       logError('Failed to create chat', e, state.value, messageId)
+
+      // A reach-gate rejection is not a failure to fix by retrying or re-logging in:
+      // surface the graceful "closest first" message and keep the typed reply.
+      if (isNotInReachError(e)) {
+        handleNotInReach(callback)
+        return
+      }
 
       if (isAuthError(e)) {
         handleAuthError()
