@@ -941,6 +941,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.SimilarResult
 		rg.Get("/message/:id/similar", message.Similar)
 
+		// Offers matching a wanted being composed. Registered before /message/:ids
+		// so "matches" is not treated as a message id.
+		// @Router /message/matches [get]
+		// @Summary Offers matching a wanted being composed (recommendations)
+		// @Tags message
+		// @Produce json
+		// @Param query query string true "Item text of the wanted"
+		// @Param lat query number true "Poster's latitude"
+		// @Param lng query number true "Poster's longitude"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/matches", message.Matches)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen

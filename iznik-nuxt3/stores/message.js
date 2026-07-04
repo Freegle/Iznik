@@ -283,6 +283,11 @@ export const useMessageStore = defineStore({
     async similar(id, limit) {
       return await api(this.config).message.similar(id, limit)
     },
+    // Existing offers near a location matching a free-text query, for the
+    // wanted→offer "people are offering these near you" panel.
+    async matches(query, lat, lng, limit) {
+      return await api(this.config).message.matches(query, lat, lng, limit)
+    },
     async fetchMyGroups(gid) {
       let ret = null
 

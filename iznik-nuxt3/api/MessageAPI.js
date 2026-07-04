@@ -50,6 +50,18 @@ export default class MessageAPI extends BaseAPI {
     return this.$getv2('/message/' + id + '/similar', limit ? { limit } : {})
   }
 
+  // Existing OFFERs near a location matching a free-text query, for the
+  // "people are offering these near you" panel shown while composing a WANTED.
+  // Returns [{id, groupid, score, lat, lng}].
+  matches(query, lat, lng, limit) {
+    return this.$getv2('/message/matches', {
+      query,
+      lat,
+      lng,
+      ...(limit ? { limit } : {}),
+    })
+  }
+
   mygroups(gid) {
     return this.$getv2('/message/mygroups' + (gid ? '/' + gid : ''))
   }
