@@ -98,6 +98,31 @@ func TestJobClick_JSONBody(t *testing.T) {
 	assert.Equal(t, link, gotLink)
 }
 
+// TestJobClick_UserAttribution guards click->user attribution: a click from a logged-in
+// user must record their userid in logs_jobs. The handler previously read the userid from
+// c.Locals("session") - a context key nothing in this codebase ever sets - so every click,
+// web or email, was silently stored with userid=NULL. It now resolves the user via
+// user.WhoAmI, the same JWT / persistent-token path every other write handler uses.
+func TestJobClick_UserAttribution(t *testing.T) {
+	prefix := uniquePrefix("jobclick")
+	userID, token := CreateFullTestUser(t, prefix)
+	jobID := CreateTestJob(t, 52.5833189, -2.0455619)
+
+	// Post the click the way the web app does: JSON body + JWT in the Authorization header.
+	body := fmt.Sprintf(`{"id":%d,"link":"https://example.com/job/%d"}`, jobID, jobID)
+	req := httptest.NewRequest("POST", "/api/job", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", token)
+
+	resp, _ := getApp().Test(req, 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The click must be attributed to the logged-in user, not stored as NULL.
+	var gotUser uint64
+	database.DBConn.Raw("SELECT COALESCE(userid, 0) FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID).Row().Scan(&gotUser)
+	assert.Equal(t, userID, gotUser)
+}
+
 // TestJobClick_Placement guards per-placement attribution: a click records WHICH slot it came
 // from, so click-through can be measured per placement (sticky footer / sidebar / jobs page /
 // email / modal) rather than as a single global count. Covers the JSON body (web app), the query

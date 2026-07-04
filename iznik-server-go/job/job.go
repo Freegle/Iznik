@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"regexp"
@@ -274,16 +275,14 @@ func RecordJobClick(c *fiber.Ctx) error {
 		})
 	}
 
-	// Get user ID from context if authenticated (optional)
+	// Get the user ID from the JWT / persistent token if the caller is logged in (optional).
+	// The web app and digest-email links both authenticate via the standard Authorization
+	// headers, so user.WhoAmI resolves the click to a user, returning 0 when anonymous.
+	// The previous c.Locals("session") lookup read a context key that nothing in this
+	// codebase ever sets, so every click was silently logged with userid=NULL.
 	var userID *uint64
-	if c.Locals("session") != nil {
-		if session, ok := c.Locals("session").(map[string]interface{}); ok {
-			if id, exists := session["id"]; exists {
-				if idUint, ok := id.(uint64); ok {
-					userID = &idUint
-				}
-			}
-		}
+	if myid := user.WhoAmI(c); myid > 0 {
+		userID = &myid
 	}
 
 	// Don't require ID, just record what we have.
