@@ -43,8 +43,12 @@ const messageStore = useMessageStore()
 
 const ids = ref([])
 const dismissed = ref(false)
+// Monotonic token so a slow response from a superseded query/location can't
+// overwrite the results of a newer one (out-of-order response guard).
+let loadToken = 0
 
 async function load() {
+  const token = ++loadToken
   const q = (props.query || '').trim()
   if (!q || (!props.lat && !props.lng)) {
     ids.value = []
@@ -55,8 +59,11 @@ async function load() {
   try {
     results = await messageStore.matches(q, props.lat, props.lng, 6)
   } catch (e) {
-    ids.value = []
+    if (token === loadToken) ids.value = []
     return
+  }
+  if (token !== loadToken) {
+    return // a newer load() started while we awaited — discard this stale result
   }
   if (!results || !results.length) {
     ids.value = []
@@ -65,10 +72,14 @@ async function load() {
 
   const found = results.map((r) => r.id)
   await Promise.all(found.map((id) => messageStore.fetch(id).catch(() => null)))
+  if (token !== loadToken) {
+    return
+  }
   ids.value = found.filter((id) => messageStore.list[id])
 
   if (ids.value.length) {
-    messageStore.markSeen(ids.value, SOURCE)
+    // Fire and forget, but swallow rejections so they never surface as unhandled.
+    messageStore.markSeen(ids.value, SOURCE).catch(() => {})
   }
 }
 

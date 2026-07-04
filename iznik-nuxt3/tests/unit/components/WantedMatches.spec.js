@@ -41,6 +41,9 @@ describe('WantedMatches', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockList = {}
+    // markSeen is async in the real store; return a promise so the component's
+    // fire-and-forget .catch() has something to attach to.
+    mockMarkSeen.mockResolvedValue(undefined)
     mockFetch.mockImplementation((id) => {
       mockList[id] = { id }
       return Promise.resolve({ id })
