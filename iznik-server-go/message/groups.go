@@ -98,9 +98,26 @@ func Groups(c *fiber.Ctx) error {
 			myid,
 			start)...).Scan(&msgs)
 
+	// Viewer location for the per-post distance. GetLatLng reads settings.mylocation.
+	latlng := user.GetLatLng(myid)
+	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
+	hasLoc := latlng.Lat != 0 || latlng.Lng != 0
+
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
-		msgs[ix].Lat, msgs[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		blurLat, blurLng := utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		msgs[ix].Lat, msgs[ix].Lng = blurLat, blurLng
+
+		// Per-post distance in miles from the viewer to the BLURRED point, so the "All my
+		// communities" browse view can be narrowed by the client's distance slider. Computed
+		// from the blurred coords (never the real ones), matching the reach feed's privacy
+		// approach so it can't triangulate the post any more precisely than lat/lng already do.
+		// Left at 0 when the viewer has no known location - the slider is hidden client-side
+		// then. Without this the feed returned distance 0 for EVERY post, and since 0 <= any
+		// slider value the list and map were never filtered (the reported mygroups slider no-op).
+		if hasLoc {
+			msgs[ix].Distance = utils.Haversine(viewerLat, viewerLng, blurLat, blurLng)
+		}
 	}
 
 	return c.JSON(msgs)
