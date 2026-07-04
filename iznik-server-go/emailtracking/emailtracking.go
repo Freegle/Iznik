@@ -1678,6 +1678,18 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
 		AND e.sent_at BETWEEN ? AND ?`
 
+	// Optional recipient-cohort split for the digest relevance-ranking experiment:
+	//   cohort=holdout → the 10% who always get the unranked (arrival) order,
+	//   cohort=ranked  → everyone else (who get relevance ranking when enabled).
+	// Absent → all recipients (the default, pre-experiment behaviour). Same
+	// userid % 10 == 0 rule as DigestRelevanceService's holdout.
+	switch c.Query("cohort", "") {
+	case "holdout":
+		cohort += " AND e.userid IS NOT NULL AND e.userid % 10 = 0"
+	case "ranked":
+		cohort += " AND e.userid IS NOT NULL AND e.userid % 10 <> 0"
+	}
+
 	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
 	//    posts displayed positions 0..num_posts-1.
 	denomQuery := `
