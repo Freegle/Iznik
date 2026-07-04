@@ -433,10 +433,13 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 			continue
 		}
 
+		// MySQL ON DUPLICATE KEY UPDATE returns: 1=inserted, 2=updated, 0=no-op (same data).
 		if result.RowsAffected == 1 {
 			inserted++
-		} else {
+		} else if result.RowsAffected == 2 {
 			updated++
+		} else {
+			skipped++
 		}
 	}
 
