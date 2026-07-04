@@ -1,7 +1,7 @@
 # Google Ads (Ad Grants) Deep Dive & Optimization Plan
 
 **Date:** 3 July 2026
-**Account:** FreegleAds, 495-138-8253 (freegleads2@gmail.com) — **Google Ad Grants** account ("We don't bill you"), USD, created March 2012.
+**Account:** FreegleAds (Google Ad Grants) — **Google Ad Grants** account ("We don't bill you"), USD, created March 2012.
 **Author:** Claude deep-dive (account UI audit + 20-agent fact-checked research sweep).
 
 ---
@@ -51,7 +51,7 @@ Budgets deliberately sum to $327.42/day = the $10k/month grant cap, but only ~$2
 8. **Brand under-defended:** Freegle wins only **63.3% impression share on its own brand**; **freecycle.org shows on 27.4% of "freegle" auctions** and outranks Freegle 41.9% of the time when both show. (Freecycle very likely runs its own $10k Ad Grant.)
 9. **Rogue asset:** an app asset "**Snaply: Sell stuff simply**" (a third-party selling app!) attached at account level since Aug 2022.
 10. **"Rotate ads indefinitely"** set on Freegle & Freecycle campaigns (never show best ad preferentially).
-11. **Nobody home:** last substantive change 17 Feb 2025 (southwestkate@gmail.com); ~39 change-history entries in 2 years. Auto-apply recommendations: off (good). Google-AI auto-assets: on (added a structured snippet + "Find A Location" sitelink).
+11. **Nobody home:** last substantive change 17 Feb 2025 (a volunteer); ~39 change-history entries in 2 years. Auto-apply recommendations: off (good). Google-AI auto-assets: on (added a structured snippet + "Find A Location" sitelink).
 12. AI Max exists in the account UI but is not enabled (correct for now — see §3.6).
 
 ---
