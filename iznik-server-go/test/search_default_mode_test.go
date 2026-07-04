@@ -53,14 +53,27 @@ func TestSearchHandlerDefaultsToVector(t *testing.T) {
 	var results []message.SearchResult
 	json.NewDecoder(resp.Body).Decode(&results)
 
-	found := false
-	for _, r := range results {
-		if r.Msgid == vectorOnlyMsgid {
-			found = true
+	var match *message.SearchResult
+	for i := range results {
+		if results[i].Msgid == vectorOnlyMsgid {
+			match = &results[i]
 		}
 	}
-	assert.True(t, found,
+	require.NotNil(t, match,
 		"with no searchmode param the handler must default to vector search and surface the vector-only match")
+
+	// Response-shape parity: the vector-default path must populate every field
+	// the public site's search consumer (PostMap.vue) reads — id, groupid, lat,
+	// lng, type — plus the Vector attribution. If any of these regress, the
+	// frontend can't place or render the result.
+	assert.Equal(t, groupID, match.Groupid, "groupid must be populated")
+	assert.Equal(t, "Offer", match.Type, "type must be populated")
+	// lat/lng are privacy-blurred (posts' exact coordinates are fuzzed), so we
+	// assert the seeded location within the blur radius rather than exactly —
+	// enough to prove the fields are populated and correctly sourced (not 0/swapped).
+	assert.InDelta(t, 55.9533, match.Lat, 0.05, "lat must be populated near the seeded location")
+	assert.InDelta(t, -3.1883, match.Lng, 0.05, "lng must be populated near the seeded location")
+	assert.Equal(t, "Vector", match.Matchedon.Type, "vector hits must be attributed as matchedon=Vector")
 }
 
 // TestSearchDefaultModeEnvOverrideToKeyword verifies the VECTOR_SEARCH_DEFAULT
