@@ -1406,6 +1406,10 @@ class ContentCheckService
                 'category' => null,
                 'action'   => 'flag',
                 'detail'   => "IP {$fromip} recently used by {$userCount} different user accounts",
+                // userCount lets ModTools render a plain, member-facing sentence without exposing
+                // the raw IP (which the `detail` string bakes in and which means nothing to a
+                // non-technical moderator). The IP + user IDs remain available for advanced mods.
+                'userCount' => $userCount,
                 'ip'       => $fromip,
                 'users'    => $users,
             ];
@@ -1448,6 +1452,9 @@ class ContentCheckService
                 'category' => null,
                 'action'   => 'flag',
                 'detail'   => "IP {$fromip} recently used to post to {$groupCount} different groups",
+                // groupCount lets ModTools render a plain, member-facing sentence without exposing
+                // the raw IP; see the userCount note above.
+                'groupCount' => $groupCount,
                 'ip'       => $fromip,
                 'groups'   => $groups,
             ];
