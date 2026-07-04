@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -482,6 +483,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			myid, utils.COLLECTION_APPROVED, *payload.Refmsgid).Scan(&wasHome)
 		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
 			"VALUES (?, ?, NOW(), ?)", *payload.Refmsgid, myid, wasHome)
+	}
+
+	// A report from the website is a User2Mod chat message referencing the reported
+	// post (that's what the report flow sends). Treat it as a microvolunteering Reject
+	// verdict feeding the review quorum: a moderator of the reported community pulls that
+	// community's copy to Pending, and once the quorum of verdicts is reached the post is
+	// pulled to Pending on ALL its groups. The report's target community is the User2Mod
+	// chat's group. Only User2Mod refmsgid messages are reports - a User2User refmsgid
+	// message is an Interested reply to the poster, not a report. Best-effort: never
+	// blocks the report.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
+		var reportRoom struct {
+			Chattype string
+			Groupid  uint64
+		}
+		db.Raw("SELECT chattype, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&reportRoom)
+		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
+			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
+		}
 	}
 
 	if payload.Imageid != nil {
