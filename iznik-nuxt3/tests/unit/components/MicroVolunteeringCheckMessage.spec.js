@@ -7,6 +7,7 @@ import MicroVolunteeringCheckMessage from '~/components/MicroVolunteeringCheckMe
 const mockMessageById = vi.fn()
 const mockMessageFetch = vi.fn()
 const mockMicroVolunteeringRespond = vi.fn()
+const mockNotificationFetchCount = vi.fn()
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
@@ -18,6 +19,12 @@ vi.mock('~/stores/message', () => ({
 vi.mock('~/stores/microvolunteering', () => ({
   useMicroVolunteeringStore: () => ({
     respond: mockMicroVolunteeringRespond,
+  }),
+}))
+
+vi.mock('~/stores/notification', () => ({
+  useNotificationStore: () => ({
+    fetchCount: mockNotificationFetchCount,
   }),
 }))
 
@@ -145,6 +152,40 @@ describe('MicroVolunteeringCheckMessage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  describe('notification refresh after responding', () => {
+    it('refreshes the notification count after approving a post', async () => {
+      mockMicroVolunteeringRespond.mockResolvedValue(undefined)
+      mockNotificationFetchCount.mockResolvedValue(0)
+      const wrapper = createWrapper()
+      await flushPromises()
+      const approveBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes, that looks ok'))
+      await approveBtn.trigger('click')
+      await flushPromises()
+      expect(mockMicroVolunteeringRespond).toHaveBeenCalledWith(
+        expect.objectContaining({ msgid: 123, response: 'Approve' })
+      )
+      // The stale badge/re-presented-post bug (#9856): the count must be
+      // refreshed from the server as soon as the response is recorded.
+      expect(mockNotificationFetchCount).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not throw if the count refresh fails after responding', async () => {
+      mockMicroVolunteeringRespond.mockResolvedValue(undefined)
+      mockNotificationFetchCount.mockRejectedValue(new Error('offline'))
+      const wrapper = createWrapper()
+      await flushPromises()
+      const approveBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes, that looks ok'))
+      await approveBtn.trigger('click')
+      await flushPromises()
+      expect(mockMicroVolunteeringRespond).toHaveBeenCalled()
+      expect(mockNotificationFetchCount).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('rendering', () => {
