@@ -485,7 +485,7 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
         // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
         // every post-send tick a cheap no-op, so this is safe to run continuously.
         ->everyMinute()
-        // 08:00–12:00 UK local time (Europe/London, so BST-correct). This is the intended
+        // 07:00–12:00 UK local time (Europe/London, so BST-correct). This is the intended
         // member-facing window — digests arrive in the morning. The daily population (~79k,
         // ~tripled by rippling) can't fully clear in 4h at current throughput, so the run is
         // ordered MOST-OVERDUE-FIRST (see streamDailyOverdueFirst): the window sends as many
@@ -493,12 +493,12 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
         // across everyone — no one is permanently starved, and as throughput rises the window
         // reaches further until it completes daily. A 13:00 "still lagging" check
         // (mail:digest:daily-lag-check below) alerts if a large backlog remains after the window.
-        ->between('8:00', '12:00')
+        ->between('7:00', '12:00')
         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
         ->runInBackground();
 }
 
-// "Still lagging" alert — one hour after the 08:00-12:00 daily window closes, check whether the
+// "Still lagging" alert — one hour after the 07:00-12:00 daily window closes, check whether the
 // morning run kept up. Counts recently-active daily recipients (sent within the last 7 days, so
 // this excludes the permanently-inactive who never get a digest and the never-sent) who did NOT
 // get today's digest. In steady state the morning window clears them and this is ~0; a large
@@ -517,7 +517,7 @@ Schedule::call(function () {
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {
-        \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 08:00-12:00 window', [
+        \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 07:00-12:00 window', [
             'lagging_active_recipients' => $lagging,
             'threshold' => $threshold,
             'checked_at' => 'London 13:00',
