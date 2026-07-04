@@ -277,6 +277,12 @@ export const useMessageStore = defineStore({
       const ret = await api(this.config).message.search(params)
       return ret
     },
+    // Semantically similar posts for the "more like this" recommendation strip.
+    // Returns [{id, groupid, score, lat, lng}] (or [] when the feature is off or
+    // there's nothing to compare).
+    async similar(id, limit) {
+      return await api(this.config).message.similar(id, limit)
+    },
     async fetchMyGroups(gid) {
       let ret = null
 
@@ -532,9 +538,9 @@ export const useMessageStore = defineStore({
         ? activeMessages.length
         : 0
     },
-    async markSeen(ids) {
+    async markSeen(ids, source) {
       try {
-        await api(this.config).message.markSeen(ids)
+        await api(this.config).message.markSeen(ids, source)
       } catch (e) {
         if (e?.response?.status === 401) {
           // Session expired while scrolling — not critical, silently ignore.

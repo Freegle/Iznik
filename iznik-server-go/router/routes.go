@@ -61,6 +61,7 @@ import (
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
@@ -930,6 +931,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
 		rg.Get("/message/:id/reach", message.Reach)
 
+		// Similar posts for the "more like this nearby" recommendation strip.
+		// @Router /message/{id}/similar [get]
+		// @Summary Posts similar to a given post (recommendations)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 8, max 20)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/similar", message.Similar)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen
@@ -1409,6 +1420,14 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags browse
 		// @Produce json
 		rg.Get("/modtools/scroll/depth", browse.ScrollDepthCurve)
+
+		// Recommendation funnel (impressions/clicks/replies + holdout) for the
+		// sysadmin "Recommendations" tab (Support/Admin).
+		// @Router /modtools/recommendations/stats [get]
+		// @Summary Recommendation funnel stats
+		// @Tags recommendations
+		// @Produce json
+		rg.Get("/modtools/recommendations/stats", recommendations.Stats)
 
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]

@@ -4934,6 +4934,68 @@ func TestMessagePageviewSource(t *testing.T) {
 	}
 }
 
+// TestMarkSeenSource verifies a source-tagged impression (MarkSeen with a source,
+// e.g. from the similar-posts widget) records pageview=0 + the source on the
+// fresh row, that a later genuine open upgrades pageview to 1 while PRESERVING
+// the source, and that a subsequent differently-tagged impression does not
+// overwrite the first-touch source.
+func TestMarkSeenSource(t *testing.T) {
+	db := database.DBConn
+
+	get := func(msgID, userID uint64) (pv int, source string) {
+		db.Raw("SELECT COALESCE(pageview, -1), COALESCE(source, '') FROM messages_likes "+
+			"WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Row().Scan(&pv, &source)
+		return
+	}
+	doMarkSeen := func(token string, msgID uint64, source string) {
+		var body string
+		if source != "" {
+			body = fmt.Sprintf(`{"ids": [%d], "source": "%s"}`, msgID, source)
+		} else {
+			body = fmt.Sprintf(`{"ids": [%d]}`, msgID)
+		}
+		req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	doView := func(token string, msgID uint64) {
+		b, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "View"})
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	prefix := uniquePrefix("markseen_src")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewerID, groupID, "Member")
+	_, token := CreateTestSession(t, viewerID)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
+
+	// Source-tagged impression: pageview=0 + source recorded.
+	doMarkSeen(token, msgID, "similar_posts")
+	pv, src := get(msgID, viewerID)
+	assert.Equal(t, 0, pv, "impression => pageview=0")
+	assert.Equal(t, "similar_posts", src, "impression records its source")
+
+	// Genuine open (untagged): pageview upgraded to 1, source preserved.
+	doView(token, msgID)
+	pv, src = get(msgID, viewerID)
+	assert.Equal(t, 1, pv, "open after impression => pageview upgraded to 1")
+	assert.Equal(t, "similar_posts", src, "genuine open must not clear the impression source")
+
+	// A later differently-tagged impression must not overwrite first-touch source.
+	doMarkSeen(token, msgID, "wanted_match")
+	_, src = get(msgID, viewerID)
+	assert.Equal(t, "similar_posts", src, "first-touch source wins; later impressions do not overwrite")
+}
+
 // --- Adversarial tests ---
 
 func TestPostMessageAddByNegativeCount(t *testing.T) {

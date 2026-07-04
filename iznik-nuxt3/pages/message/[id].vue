@@ -108,6 +108,9 @@
             @not-found="error = true"
           />
         </div>
+        <client-only>
+          <SimilarPosts v-if="message && !showtaken" :msgid="id" />
+        </client-only>
       </b-col>
       <b-col cols="0" lg="3" class="d-none d-lg-flex justify-content-end">
         <client-only>
@@ -147,6 +150,7 @@ import { dateonlyNoYear } from '~/composables/useTimeFormat'
 import MyMessage from '~/components/MyMessage'
 import OurMessage from '~/components/OurMessage'
 import GlobalMessage from '~/components/GlobalMessage'
+import SimilarPosts from '~/components/SimilarPosts'
 import VisibleWhen from '~/components/VisibleWhen'
 import ExternalDa from '~/components/ExternalDa'
 import MicroVolunteering from '~/components/MicroVolunteering'
