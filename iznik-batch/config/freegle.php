@@ -290,6 +290,14 @@ return [
         // The scheduled `mail:digest:unified --mode=daily` is inert until this
         // is set; an explicit `--user=` bypasses the gate for manual sampling.
         'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
+
+        // Rank the daily digest's live posts by vector similarity to the
+        // member's own recent posts and recently-viewed items, so the things
+        // most like what they care about float to the top. Default OFF — this
+        // changes email ordering, so it ships dark and is enabled deliberately.
+        // A 10% holdout (userid % 10 == 0) always keeps the existing order so we
+        // can measure the effect via the digest click-by-position dashboard.
+        'relevance_enabled' => (bool) env('FEATURE_DIGEST_RELEVANCE', false),
     ],
 
     // Firebase Cloud Messaging for push notifications
@@ -1177,15 +1185,5 @@ return [
         'publish_brands'    => env('EEE_PUBLISH_BRANDS', false),
         'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
         'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
-    ],
-
-    'digest' => [
-        // Rank the daily digest's live posts by vector similarity to the
-        // member's own recent posts and recently-viewed items, so the things
-        // most like what they care about float to the top. Default OFF — this
-        // changes email ordering, so it ships dark and is enabled deliberately.
-        // A 10% holdout (userid % 10 == 0) always keeps the existing order so we
-        // can measure the effect via the digest click-by-position dashboard.
-        'relevance_enabled' => (bool) env('FEATURE_DIGEST_RELEVANCE', false),
     ],
 ];

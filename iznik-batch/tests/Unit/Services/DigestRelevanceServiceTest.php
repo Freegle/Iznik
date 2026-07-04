@@ -121,21 +121,24 @@ class DigestRelevanceServiceTest extends TestCase
     {
         config(['freegle.digest.relevance_enabled' => true]);
 
-        // Force a holdout user id (multiple of 10) by inserting one directly.
-        $group = $this->createTestGroup();
-        $holdoutId = ((int) (DB::table('users')->max('id') + 10) / 10) * 10;
+        // A fixed, high id that is a multiple of 10 (so it is always in the
+        // holdout) and safely above any auto-increment value in the test DB.
+        $holdoutId = 2000000000;
         DB::table('users')->insert(['id' => $holdoutId, 'firstname' => 'Hold', 'lastname' => 'Out', 'fullname' => 'Hold Out']);
 
+        // Give the holdout user an interest vector that WOULD rank $b first if
+        // ranking ran — the point of the test is that holdout suppresses it.
+        $group = $this->createTestGroup();
         $own = $this->createTestMessage($this->createTestUser(), $group, ['fromuser' => $holdoutId, 'arrival' => now()]);
         $this->insertEmbedding($own->id, $this->unitVec(2.0));
         $a = $this->createTestMessage($this->createTestUser(), $group, ['arrival' => now()]);
         $b = $this->createTestMessage($this->createTestUser(), $group, ['arrival' => now()]);
         $this->insertEmbedding($a->id, $this->unitVec(9.0));
-        $this->insertEmbedding($b->id, $this->unitVec(2.0001));
+        $this->insertEmbedding($b->id, $this->unitVec(2.0001)); // most similar to the interest
 
         $input = collect([$this->makePost($a->id), $this->makePost($b->id)]);
         $ranked = (new DigestRelevanceService)->rank($holdoutId, $input);
-        $this->assertSame([$a->id, $b->id], $ranked->map(fn ($p) => $p->id)->all(), 'holdout → unchanged order');
+        $this->assertSame([$a->id, $b->id], $ranked->map(fn ($p) => $p->id)->all(), 'holdout → unchanged order despite a matching interest');
     }
 
     public function test_user_with_no_interests_returns_input_order_unchanged(): void
