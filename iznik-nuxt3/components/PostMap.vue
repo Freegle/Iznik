@@ -61,12 +61,17 @@
                 :size="largeGroupMarkers ? 'rich' : 'poor'"
               />
             </div>
+            <!-- Coverage hull of the posts currently shown. View-agnostic: it adapts to the
+                 distance slider on BOTH the nearby and "all my communities" views, so it is no
+                 longer gated on showIsochrones (which is nearby-only). -->
+            <l-geo-json
+              v-if="coverageGeoJSON"
+              :geojson="coverageGeoJSON"
+              :options="isochroneOptions"
+            />
+            <!-- Explicit WKT overrides (e.g. the fixed Essex boundary) are a nearby/override-only
+                 concept, so they stay gated. -->
             <div v-if="showIsochrones">
-              <l-geo-json
-                v-if="coverageGeoJSON"
-                :geojson="coverageGeoJSON"
-                :options="isochroneOptions"
-              />
               <l-geo-json
                 v-for="g in isochroneGEOJSONs"
                 :key="'isochrone' + g.id"
@@ -373,7 +378,10 @@ const messagesForMap = computed(() => {
 // pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
 // this is an outward-rounded hull rather than Chaikin smoothing.
 const coverageGeoJSON = computed(() => {
-  if (!props.showIsochrones) return null
+  // Drawn for BOTH the nearby and "all my communities" views (not gated on showIsochrones,
+  // which is nearby-only). It is just a hull of the posts currently shown, so it adapts to the
+  // distance slider the same way on either view. Falls back to null (no polygon) when there
+  // aren't enough points, which buildCoverageGeoJSON handles.
   const points = messagesForMap.value
     .filter((m) => m.lat != null || m.lng != null)
     .map((m) => [m.lng, m.lat])

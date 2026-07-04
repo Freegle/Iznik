@@ -362,13 +362,20 @@ const sort = computed({
 const FEED_MAX_FLOOR = 2
 
 const feedMax = computed(() => {
-  // Scale the slider's right end to the farthest post in the loaded feed. This depends ONLY
-  // on the feed (not on the saved browseMaxDistance), so it stays STABLE while the member
-  // drags: coupling it to browseMaxDistance made feedMax grow on every change, which moved the
-  // slider's right edge mid-interaction and, via the [maxDistance, feedMax] watch below, kept
-  // yanking the thumb back to the saved position - a janky "clicking back" drag (reported after
-  // the Discourse 9844 headroom tweak, which is reverted here).
-  const distances = (nearbyStore.messageList || [])
+  // Scale the slider's right end to the farthest post in the CURRENTLY-SHOWN feed. Which feed
+  // that is depends on the view: the nearby (reach) view is in nearbyStore, the "all my
+  // communities" view is in messageStore.myGroupsList. Reading the wrong one (nearbyStore is
+  // empty on mygroups) collapsed the slider max to its floor and mis-scaled the slider there.
+  //
+  // It depends ONLY on the feed (not on the saved browseMaxDistance), so it stays STABLE while
+  // the member drags: coupling it to browseMaxDistance made feedMax grow on every change, which
+  // moved the slider's right edge mid-interaction and, via the [maxDistance, feedMax] watch
+  // below, kept yanking the thumb back - a janky "clicking back" drag.
+  const feed =
+    browseView.value === 'mygroups'
+      ? messageStore.myGroupsList
+      : nearbyStore.messageList
+  const distances = (feed || [])
     .map((m) => m.distance)
     .filter((d) => typeof d === 'number' && isFinite(d))
 

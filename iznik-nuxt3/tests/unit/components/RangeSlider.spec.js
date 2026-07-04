@@ -111,4 +111,53 @@ describe('RangeSlider', () => {
       expect(typeof wrapper.emitted('update:modelValue')[0][0]).toBe('number')
     })
   })
+
+  // The "clicking back" jank: the native range drag must be decoupled from parent reactivity.
+  // The input is driven by an internal localValue, so a parent re-render that echoes the value
+  // we just emitted must NOT rewrite the input and yank the thumb back mid-drag - only a genuine
+  // external change (reset/clamp/programmatic set) may move it.
+  describe('drag is decoupled from parent reactivity (no clicking-back)', () => {
+    it('does not reset the input when the parent echoes the value we just emitted', async () => {
+      const wrapper = createWrapper({ modelValue: 5 })
+      const input = wrapper.find('input')
+
+      // Drag to 8: the input emits update:modelValue.
+      input.element.value = '8'
+      await input.trigger('input')
+      expect(wrapper.emitted('update:modelValue').at(-1)).toEqual([8])
+
+      // Parent applies the v-model update, echoing 8 straight back as modelValue (the round-trip
+      // that happens on every drag tick). This must NOT disturb the input - it stays at 8.
+      await wrapper.setProps({ modelValue: 8 })
+      expect(input.element.value).toBe('8')
+    })
+
+    it('does not regress the input when the parent echoes a mid-drag value', async () => {
+      const wrapper = createWrapper({ modelValue: 2 })
+      const input = wrapper.find('input')
+
+      // Simulate a forward drag 2 -> 3 -> 4, each tick echoed back by the parent, and assert the
+      // thumb never jumps backwards to an earlier position.
+      for (const v of [3, 4]) {
+        input.element.value = String(v)
+        await input.trigger('input')
+        await wrapper.setProps({ modelValue: v }) // parent echo
+        expect(Number(input.element.value)).toBe(v)
+      }
+    })
+
+    it('DOES update the input when the parent sends a genuinely new (external) value', async () => {
+      const wrapper = createWrapper({ modelValue: 5 })
+      const input = wrapper.find('input')
+
+      // User drags to 8...
+      input.element.value = '8'
+      await input.trigger('input')
+
+      // ...then something external resets the distance to 3 (e.g. a clamp or a reset). The thumb
+      // must follow the external change.
+      await wrapper.setProps({ modelValue: 3 })
+      expect(input.element.value).toBe('3')
+    })
+  })
 })

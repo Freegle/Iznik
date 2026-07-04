@@ -24,6 +24,11 @@ export const useMessageStore = defineStore({
     bounds: {},
     activePostsCounter: 0,
 
+    // The most recent "all my communities" (mygroups) feed, kept so the distance slider can
+    // scale its range to these posts' distances - the nearby store is empty on this view, so
+    // without this the slider max collapsed to its floor and mis-scaled on mygroups.
+    myGroupsList: [],
+
     // The context from the last fetch, used for fetchMore (ModTools)
     context: null,
 
@@ -282,6 +287,11 @@ export const useMessageStore = defineStore({
         this.fetchingMyGroups = api(this.config).message.mygroups(gid)
         ret = await this.fetchingMyGroups
         this.fetchingMyGroups = null
+      }
+      // Keep the combined ("all my communities", gid falsy) feed so the distance slider can
+      // scale to it. Skip single-group fetches, which aren't the slider's universe.
+      if (!gid && Array.isArray(ret)) {
+        this.myGroupsList = ret
       }
       return ret
     },

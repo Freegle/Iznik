@@ -9,6 +9,10 @@ const mockMiscStore = {
 
 const mockMessageStore = {
   fetchCount: vi.fn(),
+  // The "all my communities" feed the slider scales to on the mygroups view.
+  get myGroupsList() {
+    return mockMyGroupsList.value
+  },
 }
 
 const mockAuthStore = {
@@ -28,13 +32,15 @@ const mockMyGroups = ref([{ id: 1, nameshort: 'TestGroup' }])
 // Rippling-out relevance ordering + distance slider (#D): the slider's max is scaled
 // to the farthest `distance` in the loaded nearby feed. Declared via vi.hoisted so it
 // exists before the (hoisted) vi.mock factory below references it.
-const { mockNearbyMessageList, mockWhichPostsShow } = vi.hoisted(() => {
-  const { ref: hoistedRef } = require('vue')
-  return {
-    mockNearbyMessageList: hoistedRef([]),
-    mockWhichPostsShow: vi.fn(),
-  }
-})
+const { mockNearbyMessageList, mockMyGroupsList, mockWhichPostsShow } =
+  vi.hoisted(() => {
+    const { ref: hoistedRef } = require('vue')
+    return {
+      mockNearbyMessageList: hoistedRef([]),
+      mockMyGroupsList: hoistedRef([]),
+      mockWhichPostsShow: vi.fn(),
+    }
+  })
 
 // PostFilters.vue's only need from '~/constants' is the distance-slider sentinel -
 // mock it explicitly (matching the plain-factory style other spec files use for this
@@ -97,6 +103,7 @@ describe('PostFilters', () => {
     }
     mockMyGroups.value = [{ id: 1, nameshort: 'TestGroup' }]
     mockNearbyMessageList.value = []
+    mockMyGroupsList.value = []
   })
 
   function createWrapper(props = {}) {
@@ -477,6 +484,20 @@ describe('PostFilters', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
       expect(Number(input.attributes('max'))).toBe(2)
+    })
+
+    it('scales the slider max from the mygroups feed on the all-my-communities view', () => {
+      // On mygroups the nearby store is empty - the feed lives in messageStore.myGroupsList.
+      // The slider must scale to THAT, not collapse to the floor (the mis-scaling bug).
+      mockMe.value = meWithLocation({ browseView: 'mygroups' })
+      mockNearbyMessageList.value = []
+      mockMyGroupsList.value = [
+        { id: 1, distance: 2.1 },
+        { id: 2, distance: 8.4 },
+      ]
+      const wrapper = createWrapper({ forceShowFilters: true })
+      const input = wrapper.find('.range-slider-stub')
+      expect(Number(input.attributes('max'))).toBe(9) // ceil(8.4), from the mygroups feed
     })
 
     it('has a minimum of 0.5 miles and a step of 0.5', () => {
