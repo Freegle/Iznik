@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -421,6 +422,95 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 		}
 	}
 
+	return out
+}
+
+// tokenizeWords lower-cases s and splits it into a set of alphanumeric words,
+// mirroring message.GetWords' tokenisation (without the stopword filter — the
+// query words are already filtered). Kept in this package to avoid an import
+// cycle with the message package.
+func tokenizeWords(s string) map[string]bool {
+	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	set := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		set[f] = true
+	}
+	return set
+}
+
+// LexicalMatch returns every open entry whose subject contains ALL of the given
+// words (case-insensitive), subject to the same type/group/bbox filters as
+// Search. This is the in-memory replacement for the retired keyword index's
+// exact-match guarantee: a post whose subject literally contains the query words
+// is always findable, even when its embedding cosine is low (short titles, UK
+// retail terms the model misses). O(N × words) over the store — single-digit ms
+// for the ~100k open-message store. Words must already be lower-cased.
+func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
+	swlat, swlng, nelat, nelng float32) []VectorSearchResult {
+
+	if len(words) == 0 {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	groupSet := make(map[uint64]bool, len(groupids))
+	for _, g := range groupids {
+		groupSet[g] = true
+	}
+	hasGroupFilter := len(groupids) > 0
+	hasBoxFilter := nelat != 0 || nelng != 0 || swlat != 0 || swlng != 0
+
+	out := make([]VectorSearchResult, 0, 16)
+	for i := range s.entries {
+		e := &s.entries[i]
+
+		if msgtype == "Offer" && e.Msgtype != "Offer" {
+			continue
+		}
+		if msgtype == "Wanted" && e.Msgtype != "Wanted" {
+			continue
+		}
+		if hasGroupFilter && !groupSet[e.Groupid] {
+			continue
+		}
+		if hasBoxFilter {
+			lat := float32(e.Lat)
+			lng := float32(e.Lng)
+			if lat < swlat-0.02 || lat > nelat+0.02 || lng < swlng-0.02 || lng > nelng+0.02 {
+				continue
+			}
+		}
+
+		// Whole-word match (matching the retired keyword index's semantics, not a
+		// substring — so "cat" doesn't match "category"). Tokenise the subject the
+		// same way the query words were tokenised: lower-case, split on any
+		// non-alphanumeric rune.
+		subjectWords := tokenizeWords(e.Subject)
+		all := true
+		for _, w := range words {
+			if !subjectWords[w] {
+				all = false
+				break
+			}
+		}
+		if !all {
+			continue
+		}
+
+		out = append(out, VectorSearchResult{
+			Msgid:   e.Msgid,
+			Groupid: e.Groupid,
+			Msgtype: e.Msgtype,
+			Lat:     e.Lat,
+			Lng:     e.Lng,
+			Subject:  e.Subject,
+			Arrival:  e.Arrival,
+		})
+	}
 	return out
 }
 
