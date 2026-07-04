@@ -29,3 +29,6 @@ npm-debug.log
 yarn-error.log
 Thumbs.db
 storage/incoming-archive/
+# Locally-generated EEE classification data (classifications.sqlite, eee-labels.db,
+# bridge). Runtime artifacts, explicitly not deployed - see EeeBackfillClassifiedTableCommand.
+storage/eee/
