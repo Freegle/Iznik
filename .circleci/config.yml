@@ -56,6 +56,25 @@ jobs:
               exit 0
             fi
 
+            # A plans-only / yesterday-only commit's OWN build gets halted (skipped)
+            # by the orb's "Check if only plans or yesterday files changed" step. Such
+            # a build must NOT cancel older pipelines: an older pipeline may be the real
+            # build that is actually testing the code these plans sit on top of.
+            # Cancelling it would leave the branch falsely green — the plans-only build
+            # reports success without ever running the tests (this is exactly what
+            # happened when a plans/ commit landed seconds after a merge whose build was
+            # still running). So if this commit is plans-only, skip cancellation and let
+            # the real build finish. Detection mirrors the orb's skip step exactly.
+            if [ "$CIRCLE_BRANCH" = "master" ] || [ "$CIRCLE_BRANCH" = "production" ]; then
+              SKIP_CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true)
+            else
+              SKIP_CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
+            fi
+            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/)')" ]; then
+              echo "This commit changes only plans/ or yesterday/ — its build will be skipped, so it must not cancel older (real) builds. Skipping cancellation."
+              exit 0
+            fi
+
             BRANCH="<< pipeline.git.branch >>"
             THIS_PIPELINE="<< pipeline.id >>"
             THIS_NUMBER="<< pipeline.number >>"
@@ -243,6 +262,19 @@ jobs:
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
                [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
               echo "Manual workflow trigger — skipping pipeline cancellation"
+              exit 0
+            fi
+
+            # Same plans-only guard as the first cancel pass: a build that will be
+            # skipped (plans/ or yesterday/ only) must not cancel an older real build
+            # that is testing the underlying code, or the branch goes falsely green.
+            if [ "$CIRCLE_BRANCH" = "master" ] || [ "$CIRCLE_BRANCH" = "production" ]; then
+              SKIP_CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true)
+            else
+              SKIP_CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
+            fi
+            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/)')" ]; then
+              echo "This commit changes only plans/ or yesterday/ — skipping cancellation so the older real build survives."
               exit 0
             fi
 
