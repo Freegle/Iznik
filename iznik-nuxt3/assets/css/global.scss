@@ -210,14 +210,16 @@ div[variant="success"] .card-header {
 }
 
 .forcebreak {
+  /* Wrap long, un-splittable tokens (URLs, long IDs) onto a new line so they don't
+     overflow their container - but keep NORMAL words whole. The previous rule also set
+     `word-break: break-all` and `hyphens: auto`, which broke ordinary words mid-word and
+     hyphenated them ("com-munities", "Corringha m"). In a flex layout (e.g. reply content
+     next to an avatar) `break-all` also let min-content collapse to a single character, so
+     the text column shrank to a 1-2-word ribbon in nested ChitChat replies on mobile.
+     `overflow-wrap: break-word` alone fixes both: whole words stay intact and set the
+     min-content width, and only a token too long for its own line is broken. */
   overflow-wrap: break-word;
-  word-wrap: break-word;
-  -ms-word-break: break-all;
-  word-break: break-word;
-  -ms-hyphens: auto;
-  -moz-hyphens: auto;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  word-wrap: break-word; /* legacy alias for older engines */
 }
 
 .black {
