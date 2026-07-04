@@ -147,6 +147,49 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 			stats.Dropped++
 		}
 	}
+	// Lexical guarantee (replaces the retired keyword index): a post whose
+	// subject literally contains ALL the query words must always appear, even
+	// when its embedding cosine is below MinVectorScore and so it was dropped
+	// above — or wasn't even in the store's top-K by cosine. LexicalMatch scans
+	// the whole store for such subjects; we add any not already present to the
+	// subject tier at the tier floor, so exact matches rank among (but below
+	// strong-semantic) subject hits.
+	if len(queryWords) > 0 {
+		seen := make(map[uint64]bool, len(subjectTier)+len(bodyTier))
+		for _, s := range subjectTier {
+			seen[s.result.Msgid] = true
+		}
+		for _, s := range bodyTier {
+			seen[s.result.Msgid] = true
+		}
+		lexical := embedding.Global.LexicalMatch(queryWords, msgtype, groupids, swlat, swlng, nelat, nelng)
+		for _, lr := range lexical {
+			if seen[lr.Msgid] {
+				continue
+			}
+			seen[lr.Msgid] = true
+			lat, lng := utils.Blur(lr.Lat, lr.Lng, utils.BLUR_USER)
+			subjectTier = append(subjectTier, scoredResult{
+				result: SearchResult{
+					Msgid:   lr.Msgid,
+					Arrival: lr.Arrival,
+					Groupid: lr.Groupid,
+					Lat:     lat,
+					Lng:     lng,
+					Word:    term,
+					Type:    lr.Msgtype,
+					Matchedon: Matchedon{
+						Type: "Vector",
+						Word: term,
+					},
+				},
+				// Tier floor: below every genuine subject-cosine hit (which score
+				// >= MinVectorScore + boost) but present and guaranteed.
+				score: MinVectorScore,
+			})
+		}
+	}
+
 	stats.SubjectTier = len(subjectTier)
 	stats.BodyTier = len(bodyTier)
 

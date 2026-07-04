@@ -83,6 +83,43 @@ func TestVectorSearchBasic(t *testing.T) {
 	assert.Equal(t, "sofa", results[0].Matchedon.Word)
 }
 
+// TestVectorSearchLexicalGuarantee verifies the in-memory replacement for the
+// retired keyword index: a post whose subject literally contains the query words
+// is returned even when its embedding cosine is far below MinVectorScore (and so
+// it would be dropped by the semantic tiers), because LexicalMatch surfaces it.
+func TestVectorSearchLexicalGuarantee(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
+	queryVec := makeTestVec(1.0)
+	// A "white goods bundle" post whose stored vector is ANTIPARALLEL to the query
+	// (cosine ~ -1, far below MinVectorScore). Only the lexical guarantee can
+	// return it.
+	const lexID = uint64(660001)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: lexID, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "White goods bundle", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(1.0)},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	// "white" is a stopword filtered by GetWords, so the effective query word is
+	// "goods" — which the subject contains. The post must be returned despite the
+	// deeply-negative cosine.
+	results, _, err := message.VectorSearch("goods", 10, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+	found := false
+	for _, r := range results {
+		if r.Msgid == lexID {
+			found = true
+		}
+	}
+	assert.True(t, found, "a subject containing the query word must be returned even with a below-threshold cosine")
+}
+
 func TestVectorSearchKeywordBoost(t *testing.T) {
 	embedding.ResetQueryCache()
 	t.Cleanup(embedding.ResetQueryCache)
