@@ -201,6 +201,7 @@ import ProxyImage from './ProxyImage'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
+import { useNotificationStore } from '~/stores/notification'
 
 const props = defineProps({
   id: {
@@ -214,6 +215,7 @@ const emit = defineEmits(['next'])
 const microVolunteeringStore = useMicroVolunteeringStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
+const notificationStore = useNotificationStore()
 
 // State
 const showComments = ref(false)
@@ -303,6 +305,7 @@ async function sendComments(callback) {
     comments: comments.value,
     msgcategory: msgcategory.value,
   })
+  await refreshNotificationCount()
   callback()
 
   emit('next')
@@ -315,9 +318,26 @@ async function approve(callback) {
     groupid: groupid.value,
     response: 'Approve',
   })
+  await refreshNotificationCount()
   callback()
 
   emit('next')
+}
+
+// After recording a response the server has already marked the "post to check"
+// notification seen. Refresh the badge count straight away so the indicator
+// clears immediately, rather than lingering (and re-presenting the same post)
+// until the next 60-second poll. Never let a count refresh failure block the
+// flow - the user has already voted.
+async function refreshNotificationCount() {
+  try {
+    await notificationStore.fetchCount()
+  } catch (e) {
+    console.log(
+      'Failed to refresh notification count after microvolunteering',
+      e
+    )
+  }
 }
 </script>
 <style scoped lang="scss">

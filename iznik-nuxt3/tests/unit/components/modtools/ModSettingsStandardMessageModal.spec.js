@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
 
 // Test the component logic directly without mounting the full component
 // The component uses template refs and complex composables that are hard to test
@@ -137,25 +136,33 @@ describe('ModSettingsStandardMessageModal - Logic Tests', () => {
   })
 
   describe('locked logic', () => {
+    // Mirrors the component's `locked` computed: a protected config with a null
+    // createdby has no real lock owner and must NOT read as locked (otherwise
+    // parseInt(null) is NaN, NaN !== myid is always true, and the Save/Add and
+    // Delete buttons vanish for everyone).
+    const isLocked = (config, myid) =>
+      Boolean(
+        config &&
+          config.protected &&
+          config.createdby &&
+          parseInt(config.createdby) !== myid
+      )
+
     it('returns false when config is not protected', () => {
-      const config = { protected: false, createdby: 123 }
-      const myid = 123
-      const locked = config.protected && parseInt(config.createdby) !== myid
-      expect(locked).toBe(false)
+      expect(isLocked({ protected: false, createdby: 123 }, 123)).toBe(false)
     })
 
     it('returns false when config is protected but user is creator', () => {
-      const config = { protected: true, createdby: 123 }
-      const myid = 123
-      const locked = config.protected && parseInt(config.createdby) !== myid
-      expect(locked).toBe(false)
+      expect(isLocked({ protected: true, createdby: 123 }, 123)).toBe(false)
     })
 
     it('returns true when config is protected and user is not creator', () => {
-      const config = { protected: true, createdby: 456 }
-      const myid = 123
-      const locked = config.protected && parseInt(config.createdby) !== myid
-      expect(locked).toBe(true)
+      expect(isLocked({ protected: true, createdby: 456 }, 123)).toBe(true)
+    })
+
+    it('returns false when config is protected but createdby is null (no lock owner)', () => {
+      // Regression: this is the "only a Cancel button" bug from Discourse #9793.
+      expect(isLocked({ protected: true, createdby: null }, 123)).toBe(false)
     })
   })
 
