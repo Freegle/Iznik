@@ -702,7 +702,13 @@ function showReplyPhotoModal() {
   width: 100%;
 }
 
-.reply-content {
+/* Scope to the INNER text column only (the direct child of the .reply flex row). The
+   NewsReply component ROOT also carries the `reply-content` class (NewsReplies renders
+   <NewsReply class="reply-content">), and that root wraps the nested <NewsReplies>. If these
+   rules hit the root too, the padding-right (and flex/min-width) COMPOUND on every nesting
+   level, shifting each deeper reply progressively inward - the narrow, wasted-right-margin
+   ChitChat replies. Targeting `.reply > .reply-content` applies them once, to the text column. */
+.reply > .reply-content {
   flex: 1;
   min-width: 0;
   /* Reserve a right-hand column so the inline name+text never runs under the
