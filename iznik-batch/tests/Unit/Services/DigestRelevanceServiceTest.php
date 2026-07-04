@@ -49,7 +49,7 @@ class DigestRelevanceServiceTest extends TestCase
     }
 
     /** A tiny fake post object as the digest passes (only ->id is read). */
-    private function post(int $id): object
+    private function makePost(int $id): object
     {
         return (object) ['id' => $id];
     }
@@ -94,7 +94,7 @@ class DigestRelevanceServiceTest extends TestCase
         $this->insertEmbedding($near->id, $this->unitVec(2.0001)); // cosine ~1 with ownVec
 
         $service = new DigestRelevanceService;
-        $ranked = $service->rank($user->id, collect([$this->post($far1->id), $this->post($far2->id), $this->post($near->id)]));
+        $ranked = $service->rank($user->id, collect([$this->makePost($far1->id), $this->makePost($far2->id), $this->makePost($near->id)]));
 
         $this->assertSame($near->id, $ranked->first()->id, 'the post most similar to the user interest ranks first');
     }
@@ -112,7 +112,7 @@ class DigestRelevanceServiceTest extends TestCase
         $this->insertEmbedding($a->id, $this->unitVec(9.0));
         $this->insertEmbedding($b->id, $this->unitVec(2.0001));
 
-        $input = collect([$this->post($a->id), $this->post($b->id)]);
+        $input = collect([$this->makePost($a->id), $this->makePost($b->id)]);
         $ranked = (new DigestRelevanceService)->rank($user->id, $input);
         $this->assertSame([$a->id, $b->id], $ranked->map(fn ($p) => $p->id)->all(), 'flag off → unchanged order');
     }
@@ -133,7 +133,7 @@ class DigestRelevanceServiceTest extends TestCase
         $this->insertEmbedding($a->id, $this->unitVec(9.0));
         $this->insertEmbedding($b->id, $this->unitVec(2.0001));
 
-        $input = collect([$this->post($a->id), $this->post($b->id)]);
+        $input = collect([$this->makePost($a->id), $this->makePost($b->id)]);
         $ranked = (new DigestRelevanceService)->rank($holdoutId, $input);
         $this->assertSame([$a->id, $b->id], $ranked->map(fn ($p) => $p->id)->all(), 'holdout → unchanged order');
     }
@@ -153,7 +153,7 @@ class DigestRelevanceServiceTest extends TestCase
         $this->insertEmbedding($a->id, $this->unitVec(9.0));
         $this->insertEmbedding($b->id, $this->unitVec(2.0001));
 
-        $input = collect([$this->post($a->id), $this->post($b->id)]);
+        $input = collect([$this->makePost($a->id), $this->makePost($b->id)]);
         $ranked = (new DigestRelevanceService)->rank($user->id, $input);
         $this->assertSame([$a->id, $b->id], $ranked->map(fn ($p) => $p->id)->all(), 'no interests → unchanged order');
     }
@@ -175,7 +175,7 @@ class DigestRelevanceServiceTest extends TestCase
         $this->insertEmbedding($embedded->id, $this->unitVec(2.0001)); // relevant
         $noEmb = $this->createTestMessage($poster, $group, ['arrival' => now()]); // no embedding row
 
-        $input = collect([$this->post($noEmb->id), $this->post($embedded->id)]);
+        $input = collect([$this->makePost($noEmb->id), $this->makePost($embedded->id)]);
         $ranked = (new DigestRelevanceService)->rank($user->id, $input);
         $this->assertSame($embedded->id, $ranked->first()->id, 'embedded relevant post outranks the unembedded one');
         $this->assertSame($noEmb->id, $ranked->last()->id, 'unembedded post sinks to the bottom');
