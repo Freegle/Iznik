@@ -124,7 +124,10 @@ const toShow = ref(props.initialCount)
 const infiniteId = ref(+new Date())
 
 const visibleItems = computed(() => {
-  return props.items.slice(0, toShow.value)
+  // Guard against a still-loading / non-array `items`: this computed evaluates eagerly (before
+  // the template's v-if="items?.length" can gate it), so a bare .slice() threw
+  // "Cannot read properties of undefined (reading 'slice'/'length')" during first paint.
+  return Array.isArray(props.items) ? props.items.slice(0, toShow.value) : []
 })
 
 function itemKey(item, index) {
