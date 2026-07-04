@@ -177,14 +177,13 @@ because the poster is from out of area.
 
 ## Rejecting or removing a post on its home community
 
-This is different from a secondary rejection above. When a post is **rejected, deleted,
-withdrawn, or moved back to pending** on the community it was **originally posted to** (its
-home community), it is no longer a live offer there - so:
+This is different from a secondary rejection above. When a post is **rejected, deleted, or
+withdrawn** on the community it was **originally posted to** (its home community), it is no
+longer a live offer there - so:
 
 1. **It is pulled from every community it had rippled into**, automatically. You do not have
    to chase it around the neighbouring communities; removing it at home cleans it up
-   everywhere it had spread. This includes **Delete** and **Back to Pending** - taking a post
-   off the board on its home community, for any reason, takes its rippled copies down with it.
+   everywhere it had spread.
 2. **It stops spreading.** Its rippling is halted, so it will not appear on any further
    communities.
 
@@ -192,16 +191,101 @@ This is exactly what you want when you catch spam or a rule-breaking post on its
 community: dealing with it once removes it everywhere, instead of leaving live copies
 stranded on the neighbouring communities it had already reached.
 
-If you move a post **back to pending** and later **approve it again**, it starts rippling
-out afresh from your community - so re-approving simply lets it spread again as normal.
-
 The clean-up happens on the next rippling run (within about a minute), not the instant you
 click - so a rippled copy may linger very briefly before it disappears.
+
+(**Back to Pending** now works differently from Delete/Reject: it keeps each community's
+copy for per-group review and does **not** re-ripple on re-approval - see **Reporting a
+post** below.)
 
 The poster is also removed from any community they had been auto-joined to **only** to carry
 that post (i.e. where they have no other posts). They keep their home community and any
 community where they have other activity, and - because this is a tidy-up rather than them
 choosing to leave - a later post of theirs can still ripple into those communities normally.
+
+---
+
+## Reporting a post
+
+There are two different actions here, on two different sites, and it helps to keep them
+straight:
+
+- **Reporting** is a **Freegle-site (FD)** action - the **Report this post** link members
+  (and you) use while browsing the Freegle website.
+- **Approve / Reject / Back to Pending** are **ModTools (MT)** actions - what you do to a
+  post in your moderation queue.
+
+Reporting now has teeth: enough member reports, or a single moderator's report, pull the
+post back into your **Pending** queue in ModTools for review, rather than only sending a
+message to the volunteers.
+
+### When members report (on the Freegle site)
+
+A member's report is a **review vote**. Reports made with **Report this post** on the
+Freegle site and the in-app "Does this look OK?" microvolunteering checks count the same
+way - they are both members saying "something's not right" about a post.
+
+When **two** different members flag the same post, it is moved **back to Pending on every
+community it is on** - its home community *and* every community it had rippled into. From
+that point:
+
+- The post is **hidden from members** and **stops rippling** any further while it is under
+  review.
+- The copies are **not deleted** - each community keeps its own copy in its **Pending**
+  queue.
+- **Each community's moderators decide for themselves** whether to approve or reject their
+  own copy. One community's decision does not affect another's.
+
+> Two members flagging a post is treated as "worth a look everywhere", not "definitely
+> bad". It simply puts the post in front of every affected community's moderators - you
+> still make the call.
+
+### When you (a moderator) report (also on the Freegle site)
+
+When you use **Report this post** on the Freegle site, the report dialog shows **every
+community the post is on** and lets you **choose which ones to report it on** - with an
+**All communities** option to select them all at once.
+
+- Reporting it on a community moves **that community's copy** straight to Pending - your
+  moderator judgement counts on its own, no quorum needed.
+- Choose **All communities** to pull the post everywhere in one go (the same effect as Back
+  to Pending in ModTools) when it is bad for everyone.
+- Communities you **don't** pick are **left alone** - their copy stays live. If a post is
+  fine for one community but not another, report it only where it is a problem.
+
+### Approving or rejecting a reported post (in ModTools)
+
+Once a post is Pending from a report, you handle your community's copy in ModTools exactly
+as normal:
+
+- **Approve** puts it back live on your community. Members are **not** emailed again - it
+  simply reappears; there are no duplicate "new post" notifications, and it does **not**
+  re-ripple out from scratch.
+- **Reject** removes it from your community only (the usual low-stakes secondary rejection;
+  the poster is not told). Other communities are unaffected.
+
+A post being **held** (shown as "held by" a moderator) is **per community**, on that
+community's own Pending copy, and only applies while the copy is Pending. It is
+**independent**: a copy being held on one community has no effect on the same post's copy on
+any other community. You approve or reject your own community's copy regardless of whether
+another community has held, approved, or rejected theirs.
+
+Because each community's copy is independent and stays put, a reported post **cannot
+flip-flop**: one community approving it will never re-create a copy on a community that has
+rejected it.
+
+### Moving a post back to pending in ModTools
+
+You don't have to go via the Freegle site at all. Moving a post from **Approved back to
+Pending** in **ModTools** - the ordinary moderation action - now does the same thing as a
+report: it pulls the post to Pending on **every** community it is on (its home community and
+every rippled copy), not just yours.
+
+So one moderator catching a problem in ModTools takes the post off the board **everywhere**
+for review, instead of leaving live copies stranded on the neighbouring communities you
+cannot see. As with a report, the copies are **kept** (not deleted), each community approves
+or rejects its own, and **re-approving brings a copy back without re-notifying members or
+re-rippling from scratch**.
 
 ---
 

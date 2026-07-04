@@ -8020,7 +8020,7 @@ func TestPostMessageSpamPerGroup(t *testing.T) {
 	assert.Equal(t, 0, isDeleted, "Message should not be soft-deleted when still on another group")
 }
 
-func TestPostMessageBackToPendingPerGroup(t *testing.T) {
+func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 	prefix := uniquePrefix("btp_pg")
 	db := database.DBConn
 
@@ -8039,7 +8039,10 @@ func TestPostMessageBackToPendingPerGroup(t *testing.T) {
 	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupA)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
 
-	// BackToPending on group A only.
+	// BackToPending on group A now pulls the WHOLE post back to Pending (every group it
+	// is on), so a rippled post is never left stranded and still visible elsewhere. The
+	// acting mod holds their acted-on group (A); other groups go Pending awaiting their
+	// own mods.
 	body := map[string]interface{}{
 		"id":      msgID,
 		"action":  "BackToPending",
@@ -8063,10 +8066,11 @@ func TestPostMessageBackToPendingPerGroup(t *testing.T) {
 	assert.NotNil(t, heldbyA)
 	assert.Equal(t, modID, *heldbyA)
 
-	// Group B should still be Approved and not held.
+	// Group B is ALSO pulled to Pending (the whole post is taken off the board), but is
+	// NOT held by this mod — they acted on group A, so only A carries their heldby.
 	var collectionB string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collectionB)
-	assert.Equal(t, "Approved", collectionB)
+	assert.Equal(t, "Pending", collectionB)
 
 	var heldbyB *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)

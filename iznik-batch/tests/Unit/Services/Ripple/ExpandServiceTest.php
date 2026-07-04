@@ -506,6 +506,73 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count());
     }
 
+    public function test_held_reach_persists_pending_copies_and_reach_row(): void
+    {
+        // A report / microvolunteering quorum (or a moderator Back to Pending) pulls a post to
+        // Pending on all its groups and FREEZES the reach (status='held'). The Pending
+        // rippled-in copies must persist for per-group moderation and the reach row must NOT be
+        // removed - so a later per-group re-approval brings a copy back without re-rippling.
+        Http::fake();
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: held', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        // Frozen reach. The post is Pending → not in messages_spatial, so the stale/orphan
+        // retraction paths would normally fire and delete the copies + reach row.
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'held', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay()]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $message->id)->count(),
+            'held reach row must persist (removeStaleAndRetract skips held)');
+        $copy = DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
+        $this->assertSame(0, (int) $copy->deleted, 'held post rippled-in copy must not be retracted');
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $copy->collection, 'held post rippled-in copy stays Pending');
+    }
+
+    public function test_non_held_orphaned_reach_is_removed(): void
+    {
+        // Contrast: an ordinary (non-held) reach whose post has left messages_spatial IS
+        // removed - proving the 'held' guard is what protects the report/back-to-pending copies.
+        Http::fake();
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: gone', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay()]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count(),
+            'a non-held reach whose post left spatial is removed as normal');
+    }
+
     public function test_handles_filtered_empty_polygon_tick_and_still_completes(): void
     {
         // Routing returns all 3 ticks, but tick 2's polygon is empty → it is filtered
