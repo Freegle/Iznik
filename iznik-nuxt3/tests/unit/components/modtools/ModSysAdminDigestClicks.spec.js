@@ -210,6 +210,7 @@ describe('ModSysAdminDigestClicks', () => {
         type: 'UnifiedDigestDaily',
         start: '2026-01-01',
         end: '2026-01-31',
+        cohort: '',
       })
       expect(mockEmailTrackingStore.fetchDigestPositions).toHaveBeenCalled()
     })
