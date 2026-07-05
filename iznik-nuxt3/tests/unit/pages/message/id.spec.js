@@ -97,6 +97,7 @@ describe('pages/message/[id].vue', () => {
           'b-col': { template: '<div><slot /></div>' },
           'b-row': { template: '<div><slot /></div>' },
           'b-button': { template: '<button><slot /></button>' },
+          'b-modal': { template: '<div><slot /></div>' },
           'v-icon': { template: '<i />' },
         },
       },
