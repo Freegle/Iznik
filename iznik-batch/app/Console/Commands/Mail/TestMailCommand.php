@@ -54,7 +54,6 @@ class TestMailCommand extends Command
      */
     protected array $emailTypes = [
         'admin' => 'Generic admin email (with local volunteers)',
-        'admin:marketing' => 'Marketing admin email (Little Free Shop template)',
         'chat:user2user' => 'User-to-user chat notification',
         'chat:user2mod' => 'User-to-moderator chat notification',
         'digest' => 'Unified digest email (posts from all communities)',
@@ -343,8 +342,7 @@ class TestMailCommand extends Command
     protected function buildMailable(string $type): ?\Illuminate\Mail\Mailable
     {
         return match ($type) {
-            'admin' => $this->buildAdmin(FALSE),
-            'admin:marketing' => $this->buildAdmin(TRUE),
+            'admin' => $this->buildAdmin(),
             'chat:user2user' => $this->buildChatNotification(ChatRoom::TYPE_USER2USER),
             'chat:user2mod' => $this->buildChatNotification(ChatRoom::TYPE_USER2MOD),
             'digest' => $this->buildDigest(),
@@ -402,9 +400,9 @@ class TestMailCommand extends Command
     }
 
     /**
-     * Build an admin email (generic or marketing).
+     * Build a generic admin email (with realistic local-volunteer data).
      */
-    protected function buildAdmin(bool $marketing): ?AdminMail
+    protected function buildAdmin(): ?AdminMail
     {
         $toEmail = $this->option('to');
 
@@ -442,19 +440,13 @@ class TestMailCommand extends Command
         $admin = [
             'id' => 0,
             'groupid' => $group->id ?? 0,
-            'subject' => $marketing
-                ? 'Could you help us start a Little Free Shop?'
-                : 'Test admin email from ' . $groupName,
-            'text' => $marketing
-                ? "Dear \$membername,\n\nImagine a place in your neighbourhood where anyone can drop off things they no longer need — and anyone can pick up what they do.\n\nThat's the idea behind the Little Free Shop: a simple, community-run space that makes reuse easy and accessible for everyone.\n\nWe'd love to pilot this in a few areas across the UK, and your donation could help make it happen."
-                : "Hello \$membername,\n\nThis is a test admin email for \$groupname.\n\nYou can contact your local volunteers at \$owneremail.\n\nThank you for freegling!",
-            'ctatext' => $marketing ? 'Donate now' : 'Visit Freegle',
-            'ctalink' => $marketing
-                ? 'https://www.ilovefreegle.org/donate'
-                : 'https://www.ilovefreegle.org',
+            'subject' => 'Test admin email from ' . $groupName,
+            'text' => "Hello \$membername,\n\nThis is a test admin email for \$groupname.\n\nYou can contact your local volunteers at \$owneremail.\n\nThank you for freegling!",
+            'ctatext' => 'Visit Freegle',
+            'ctalink' => 'https://www.ilovefreegle.org',
             'essential' => FALSE,
             'parentid' => null,
-            'template' => $marketing ? 'little-free-shop-2026' : null,
+            'template' => null,
         ];
 
         // Apply variable substitution like the real send does.

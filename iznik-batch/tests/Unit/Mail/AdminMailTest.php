@@ -48,14 +48,14 @@ class AdminMailTest extends TestCase
     {
         $user = $this->createTestUser();
         $admin = $this->makeAdmin([
-            'subject' => 'Little Free Shops - Help us make it happen!',
+            'subject' => 'Help us make it happen!',
             'template' => 'fundraising',
         ]);
 
         $mail = new AdminMail($user, $admin, 'Test Group');
         $envelope = $mail->envelope();
 
-        $this->assertEquals('Little Free Shops - Help us make it happen!', $envelope->subject);
+        $this->assertEquals('Help us make it happen!', $envelope->subject);
         $this->assertTrue($mail->isMarketing);
     }
 
