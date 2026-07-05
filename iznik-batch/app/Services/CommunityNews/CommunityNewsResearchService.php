@@ -225,11 +225,12 @@ class CommunityNewsResearchService
 
         It goes out to ordinary Freegle members. Freegle is a UK network where neighbours give away things they no longer need, for free — keeping usable stuff out of landfill. Your readers are normal people (not professionals or activists) who care a little about their community and about not being wasteful. Write for them: friendly, down-to-earth, a touch of warmth and humour, never corporate, worthy or preachy.
 
-        Use web search to find REAL, CURRENT, interesting local things in and around {$name} — community events, repair cafés, litter picks, swaps and give-aways, festivals and fairs, library/park/museum happenings, local good-news stories, seasonal things to do, and environmental or reuse-flavoured bits — the sort of thing a friendly neighbour would tip you off about. Prefer this week and the next couple of weeks.
+        Use web search to find REAL, CURRENT, interesting local things in and around {$name} — community events, litter picks, swaps and give-aways, festivals and fairs, library/park/museum happenings, local good-news stories, seasonal things to do, and environmental or reuse-flavoured bits — the sort of thing a friendly neighbour would tip you off about. Prefer this week and the next couple of weeks.
 
         Rules:
         - Only include things you actually found via search, each with a real source URL. Never invent an event, date, place or link.
         - Keep everything genuinely LOCAL to {$name} (or clearly within it). If you can't find enough real local material, return fewer items — quality over quantity.
+        - Do NOT include repair cafés or Restart/Fixit-style repair events — Freegle already lists these separately (synced from the Restart Project and Repair Café Wales), so they would be duplicates.
         - UK English. Light, second-person, roughly 40-60 words per item: what it is and why someone might fancy it. No hashtags, no marketing-speak, at most the occasional emoji.
         - Don't plug Freegle itself unless a Freegle event genuinely comes up.
         SYS;

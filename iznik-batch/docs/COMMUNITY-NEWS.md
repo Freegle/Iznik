@@ -1,10 +1,15 @@
 # Community News
 
 A warm, gently quirky round-up of genuinely local goings-on for Freegle members —
-community events, repair cafés, litter picks, swaps, festivals, library/park bits,
-local good-news and reuse/environment stories. Written for ordinary people who
-care a little about their community and about not being wasteful, never corporate
-or worthy.
+community events, litter picks, swaps, festivals, library/park bits, local
+good-news and reuse/environment stories. Written for ordinary people who care a
+little about their community and about not being wasteful, never corporate or
+worthy.
+
+**Repair cafés are deliberately excluded** from the research prompt: Freegle
+already surfaces those as native CommunityEvents, synced from the Restart Project
+(`RestartProjectService`) and Repair Café Wales (`RepairCafeWalesService`), so
+including them here would duplicate.
 
 It has **two delivery channels that share one research core**:
 
