@@ -295,6 +295,15 @@ Schedule::command('mail:alerts:send')
 // missed, and failureIssueThreshold=2 means a single sporadic miss won't raise
 // an issue — it takes two consecutive misses — with recoveryThreshold=1
 // clearing it on the next good check-in.
+// Do NOT add ->sentryMonitor() to windowed (->between()) or ->withoutOverlapping() jobs.
+// sentryMonitor() derives its expected check-in cadence from the *raw* cron expression, so
+// e.g. everyThirtyMinutes()->between('7:00','12:00') reports '*/30 * * * *' to Sentry — a
+// full-day cadence — and Sentry then raises a missed-check-in issue for every tick outside
+// the window. withoutOverlapping() skips are likewise invisible to Sentry and look like
+// missed check-ins. For those jobs use outcome-based monitoring (monitor:scheduled-outcomes
+// + ScheduledOutcomeRegistry), which asserts on the job's side effects regardless of when it
+// ran. ->sentryMonitor() is only safe on fixed-cadence, always-running tasks — currently just
+// this heartbeat and the outcome monitor itself.
 Schedule::call(fn () => null)
     ->everyFiveMinutes()
     ->name('scheduler-heartbeat')
@@ -473,55 +482,29 @@ Schedule::command('tn:sync')
 // idle stays high. (The earlier load-40 "saturation" at 8 was the post-reboot boot storm —
 // spatial graph rebuild + immediate backlog — not steady state.)
 $dailyShardCount = 8;
-// Send window is split weekday vs weekend because click engagement differs sharply by
-// day type (prompt-CTR analysis 2026-07-04, from email_tracking + email_tracking_clicks):
-//
-//   WEEKDAY  09:00–13:00 — weekday prompt-CTR peaks at NOON (~0.51%) and is strong 11:00–13:00.
-//            The old 07:00 start landed the MOST volume in the worst daytime hour (07:00 ~0.31%),
-//            because most-overdue-first front-loads the window; shifting the start to 09:00
-//            drops that dead hour and lands the bulk into the late-morning/noon peak. Keeps a
-//            4h window; if lag rises, add shards (the run is embarrassingly parallel and the box
-//            sits ~60% idle at 8 — see immediate-mode notes) rather than starting earlier.
-//
-//   WEEKEND  08:00–18:00 — weekend engagement rises earlier (08:00 ~0.55%) and stays high right
-//            across the day to an 18:00 peak (~0.55%), so the window is WIDE: an early start
-//            catches the weekend-morning peak and the extra hours give the higher weekend volume
-//            more capacity while every send still lands in a strong-engagement hour. (This fixes
-//            the observed weekend daily-digest CTR slump — it was a send-time mismatch, the old
-//            morning-weighted window missing the weekend afternoon, not low weekend availability.)
-//
-// Overnight (00:00–05:00) is 3–7× worse and is never in either window. Per-user send timing is
-// a deferred future overlay on top of this segment-level split.
-$dailyWindows = [
-    // [day-constraint method, window start, window end]
-    ['weekdays', '9:00', '13:00'],
-    ['weekends', '8:00', '18:00'],
-];
 foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
-    foreach ($dailyWindows as [$dayConstraint, $windowFrom, $windowTo]) {
-        Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
-            ->timezone(config('freegle.timezone'))
-            ->$dayConstraint()
-            // everyMinute (not everyThirtyMinutes): a daily sweep of a shard's eligible
-            // users takes as long as it takes; when it finishes, the very next tick
-            // relaunches it so residual backlog / newly-due users drain within ~60s
-            // instead of idling up to 30 minutes. Overlap is prevented by the command's
-            // own flock (PreventsOverlapping, keyed per mode+shard) — a tick that fires
-            // while the previous sweep is still running just logs "Already running,
-            // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
-            // every post-send tick a cheap no-op, so this is safe to run continuously.
-            // The weekday and weekend entries for a shard share that one mode+shard lock,
-            // and never run on the same day, so they can never double-send.
-            ->everyMinute()
-            // UK local time (Europe/London, BST-correct). Ordered MOST-OVERDUE-FIRST
-            // (see streamDailyOverdueFirst): the window sends as many of the most-lagged
-            // recipients as it can and the lag rotates fairly across everyone — no one is
-            // permanently starved. A post-window "still lagging" check (below) alerts if a
-            // large backlog remains.
-            ->between($windowFrom, $windowTo)
-            ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
-            ->runInBackground();
-    }
+    Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
+        ->timezone(config('freegle.timezone'))
+        // everyMinute (not everyThirtyMinutes): a daily sweep of a shard's eligible
+        // users takes as long as it takes; when it finishes, the very next tick
+        // relaunches it so residual backlog / newly-due users drain within ~60s
+        // instead of idling up to 30 minutes. Overlap is prevented by the command's
+        // own flock (PreventsOverlapping, keyed per mode+shard) — a tick that fires
+        // while the previous sweep is still running just logs "Already running,
+        // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
+        // every post-send tick a cheap no-op, so this is safe to run continuously.
+        ->everyMinute()
+        // 07:00–12:00 UK local time (Europe/London, so BST-correct). This is the intended
+        // member-facing window — digests arrive in the morning. The daily population (~79k,
+        // ~tripled by rippling) can't fully clear in 4h at current throughput, so the run is
+        // ordered MOST-OVERDUE-FIRST (see streamDailyOverdueFirst): the window sends as many
+        // of the most-lagged recipients as it can each morning and the lag rotates fairly
+        // across everyone — no one is permanently starved, and as throughput rises the window
+        // reaches further until it completes daily. A 13:00 "still lagging" check
+        // (mail:digest:daily-lag-check below) alerts if a large backlog remains after the window.
+        ->between('7:00', '12:00')
+        ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
+        ->runInBackground();
 }
 
 // "Still lagging" alert — one hour after the 07:00-12:00 daily window closes, check whether the
@@ -543,10 +526,10 @@ Schedule::call(function () {
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {
-        \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the send window', [
+        \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 07:00-12:00 window', [
             'lagging_active_recipients' => $lagging,
             'threshold' => $threshold,
-            'checked_at' => 'London 19:00',
+            'checked_at' => 'London 13:00',
         ]);
     } else {
         \Illuminate\Support\Facades\Log::info('Daily digest kept up with the morning window', [
@@ -556,30 +539,23 @@ Schedule::call(function () {
 })
     ->name('mail:digest:daily-lag-check')
     ->timezone(config('freegle.timezone'))
-    // 19:00: one hour after the latest (weekend 08:00–18:00) send window closes, so the
-    // check is valid on both day types — a 13:00 check would false-alarm every weekend
-    // while that window is still mid-send.
-    ->dailyAt('19:00')
+    ->dailyAt('13:00')
     ->withoutOverlapping(60);
 
 // Daily new-posts push notification (push:daily-posts).
 //
-// Trails the daily email digest by ~30 min, per day type (weekday 09:00 digest → push
-// from 09:30; weekend 08:00 digest → push from 08:30), so a user who opens the email
-// isn't also hit by a push in the same moment. Windows mirror the digest's weekday/weekend
-// split above. The once-per-London-day guard inside the command turns every later tick into
-// a no-op, so this is safe to leave scheduled even before the allowlist is configured — it
-// exits immediately when FREEGLE_POSTS_PUSH_ALLOWLIST is ''.
-foreach ([['weekdays', '9:30', '13:00'], ['weekends', '8:30', '18:00']] as [$pushDay, $pushFrom, $pushTo]) {
-    Schedule::command('push:daily-posts')
-        ->timezone(config('freegle.timezone'))
-        ->$pushDay()
-        ->everyThirtyMinutes()
-        ->between($pushFrom, $pushTo)
-        ->withoutOverlapping(60)
-        ->sendOutputTo(cronLog('push:daily-posts'))
-        ->runInBackground();
-}
+// Trails the daily email digest (07:00) by 30 minutes so users who open
+// the email aren't also hit by a push in the same moment. The
+// once-per-London-day guard inside the command turns every later tick into
+// a no-op, so this is safe to leave scheduled even before the allowlist is
+// configured — it exits immediately when FREEGLE_POSTS_PUSH_ALLOWLIST is ''.
+Schedule::command('push:daily-posts')
+    ->timezone(config('freegle.timezone'))
+    ->everyThirtyMinutes()
+    ->between('7:30', '12:00')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('push:daily-posts'))
+    ->runInBackground();
 
 // Immediate mode - V1-parity per-group iteration, sharded 8-way.
 //
@@ -975,10 +951,10 @@ Schedule::command('integrations:sync-whatjobs')
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
 
-// Early-morning sync ahead of the UK daily digest (earliest send 08:00 weekend /
-// 09:00 weekday). The every-3h UTC schedule above starts at 09:00 UTC, so the morning
-// digest would otherwise ship jobs last synced ~21:00 the night before (9-10h stale ->
-// closed postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
+// Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
+// schedule above starts at 09:00 UTC, so the morning digest would otherwise
+// ship jobs last synced ~21:00 the night before (9-10h stale -> closed
+// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
 // (and the post-swap KNN rebuild it triggers) completes before the digest.
 // Pinned to the local zone so it tracks BST/GMT with the digest; shares the
 // command mutex with the run above via withoutOverlapping.

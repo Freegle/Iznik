@@ -783,6 +783,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} location.Location
 		rg.Get("/location/typeahead", location.Typeahead)
 
+		// Location Resolve (exact place name -> best matching location)
+		// @Router /location/resolve [get]
+		// @Summary Resolve an exact place name to a location
+		// @Description Returns the single best location for an exact place name (county/town/postcode),
+		// @Description used to offer "search near <place>" when an item search returns nothing. 404 if unknown.
+		// @Tags location
+		// @Produce json
+		// @Param name query string true "Exact place name"
+		// @Success 200 {object} location.Location
+		rg.Get("/location/resolve", location.Resolve)
+
 		// Location Addresses
 		// @Router /location/{id}/addresses [get]
 		// @Summary Get addresses for location

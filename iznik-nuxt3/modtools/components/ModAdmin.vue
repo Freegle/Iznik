@@ -111,9 +111,6 @@
             group.
           </NoticeMessage>
           <p><strong>Subject:</strong> {{ admin.subject }}</p>
-          <ModAdminPreviewLittleFreeShop2026
-            v-if="admin.template === 'little-free-shop-2026'"
-          />
         </template>
         <template v-else>
           <b-form-group
