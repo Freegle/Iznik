@@ -94,7 +94,6 @@
             <span v-else-if="task.type === 'Invite'">
               Get more people freegling!
             </span>
-            <span v-else-if="task.type === 'SearchTerm'"> Word Match </span>
             <span v-else-if="task.type === 'PhotoRotate'"> Photo Rotate </span>
             <span v-else-if="task.type === 'AIImageReview'">
               AI Image Review
@@ -103,12 +102,6 @@
           <div v-if="task.type === 'CheckMessage'">
             <MicroVolunteeringCheckMessage
               :id="task.msgid"
-              @next="considerNext"
-            />
-          </div>
-          <div v-else-if="task.type === 'SearchTerm'">
-            <MicroVolunteeringSimilarTerms
-              :term="task.terms"
               @next="considerNext"
             />
           </div>
@@ -175,9 +168,6 @@ const MicroVolunteeringPhotosRotate = defineAsyncComponent(
 )
 const MicroVolunteeringCheckMessage = defineAsyncComponent(
   () => import('~/components/MicroVolunteeringCheckMessage')
-)
-const MicroVolunteeringSimilarTerms = defineAsyncComponent(
-  () => import('~/components/MicroVolunteeringSimilarTerms')
 )
 const MicroVolunteeringSurvey = defineAsyncComponent(
   () => import('~/components/MicroVolunteeringSurvey')
@@ -262,8 +252,6 @@ async function getTask() {
     })
 
     if (task.value.type === 'CheckMessage') {
-      showTask.value = true
-    } else if (task.value.type === 'SearchTerm') {
       showTask.value = true
     } else if (task.value.type === 'Facebook') {
       showTask.value = true
