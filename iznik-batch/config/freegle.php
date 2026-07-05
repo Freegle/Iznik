@@ -297,6 +297,10 @@ return [
     |
     */
     'communitynews' => [
+        // Global kill switch for the SCHEDULED runs (manual artisan invocation
+        // always works). Off by default so nothing fires until ops opts in.
+        'enabled' => (bool) env('COMMUNITY_NEWS_ENABLED', false),
+
         // Anthropic key (shared with the eee reference labeller) + model for the
         // research-and-write call. Defaults to Opus; override for cost/latency.
         'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),

@@ -1335,3 +1335,31 @@ Schedule::command('eee:sync-mv-labels')
 // proposals) also exists but is left unscheduled for now. It is advisory only
 // (nothing it writes changes the engine until a proposal is promoted), and is
 // intended to run weekly once the production rollout decision is made.
+
+// ─── Community News ──────────────────────────────────────────────────────────
+// Area-based local-news digest: a ChitChat engagement trial + a weekly branded
+// email (docs/COMMUNITY-NEWS.md). Everything is inert until (a) a community opts
+// in via the `communitynews` group setting, (b) COMMUNITY_NEWS_ENABLED is true,
+// and — for the email — (c) 'CommunityNews' is in FREEGLE_MAIL_ENABLED_TYPES.
+// The commands self-gate per area, so a daily cadence just tops up / drips as
+// each area falls due. ANTHROPIC_API_KEY must be set for the research call.
+Schedule::command('community-news:research')
+    ->dailyAt('06:30')
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('community-news:research'))
+    ->runInBackground();
+
+Schedule::command('community-news:post-chitchat')
+    ->dailyAt('09:15')
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('community-news:post-chitchat'))
+    ->runInBackground();
+
+Schedule::command('community-news:email')
+    ->weeklyOn(3, '10:00')
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('community-news:email'))
+    ->runInBackground();
