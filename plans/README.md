@@ -8,7 +8,6 @@ This directory contains Claude-generated plans and documentation organised by st
 Plans currently being implemented or partially complete.
 - **laravel-batch-jobs-implementation.md** - Migration of PHP cron jobs to Laravel (Phases 1-3 done)
 - **logging-tree-architecture.md** - Logging context architecture (server changes done, client pending)
-- **digestchanges.md** - Unified Freegle Digest consolidation
 - **amp-email-implementation.md** - AMP email support (code complete, awaiting Google registration)
 - **2025-12-26-job-ad-source-tracking.md** - Job ad click tracking
 

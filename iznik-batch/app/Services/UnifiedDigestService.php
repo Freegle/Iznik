@@ -247,6 +247,12 @@ class UnifiedDigestService
     /**
      * Process one group's immediate-mode notifications.
      *
+     * Known limitation: unlike the daily digest (which calls deduplicatePosts() across all of a
+     * member's groups), this path sends one email per message per group. A cross-posted item (TN
+     * cross-post or rippled copy) that lands in N of a member's groups generates N separate
+     * immediate emails. Fixing it would need a per-user cross-group dedup pass before spooling,
+     * which V1 never had and is not yet implemented.
+     *
      * @return array{emails: int, users: int[]}
      */
     protected function processGroupImmediate(object $cursorRow, bool $dryRun, ?int $userFilter = null): array
@@ -597,6 +603,11 @@ class UnifiedDigestService
      * reaches later are picked up; the cursor digest excludes reach-row posts so neither path
      * double-mails. Member point = settings.mylocation (both coords) else lastlocation. Returns
      * the number spooled. Best-effort: any failure is logged, never aborts the expander.
+     *
+     * Members-only by design: the memberships JOIN restricts immediate reach-mail to users who
+     * have already joined a group this post is on. Cold-emailing non-members about a group they
+     * haven't joined is not appropriate; non-members within reach discover the post via browse and
+     * the daily digest. Do not "fix" the JOIN to include non-members.
      */
     public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false): int
     {
