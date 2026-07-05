@@ -44,6 +44,20 @@
               </div>
             </NoticeMessage>
             <NoticeMessage
+              v-if="placeSuggestion"
+              variant="info"
+              class="mb-2"
+            >
+              <p class="mb-2">
+                <strong>{{ searchTerm }}</strong> looks like a place. Would you
+                like to see items being given away near
+                {{ placeSuggestion.name }}?
+              </p>
+              <b-button variant="primary" @click="searchNearPlace">
+                Show items near {{ placeSuggestion.name }}
+              </b-button>
+            </NoticeMessage>
+            <NoticeMessage
               v-if="browseView === 'nearby' && !hasLocation"
               variant="warning"
             >
@@ -119,6 +133,7 @@ import dayjs from 'dayjs'
 import { defineAsyncComponent } from 'vue'
 import Wkt from 'wicket'
 import { useMessageStore } from '~/stores/message'
+import { useLocationStore } from '~/stores/location'
 import NoticeMessage from '~/components/NoticeMessage'
 import { loadLeaflet } from '~/composables/useMap'
 import { buildHead } from '~/composables/useBuildHead'
@@ -181,6 +196,7 @@ const authStore = useAuthStore()
 const groupStore = useGroupStore()
 const nearbyStore = useNearbyStore()
 const messageStore = useMessageStore()
+const locationStore = useLocationStore()
 const api = Api(runtimeConfig)
 
 // State
@@ -189,6 +205,12 @@ const bump = ref(1)
 const showAboutMeModal = ref(false)
 const reviewAboutMe = ref(false)
 const messagesOnMapCount = ref(null)
+
+// When an item search finds nothing but the term is actually a place (e.g.
+// "Hertfordshire", "London", a postcode), offer to browse items near there
+// instead of a dead-end. Resolved via /location/resolve; only ever set when the
+// search returned zero, so item-words-that-are-also-places never false-trigger.
+const placeSuggestion = ref(null)
 const selectedGroup = ref(0)
 const selectedType = ref('All')
 const selectedSort = ref('Unseen')
@@ -403,6 +425,48 @@ async function savePostcode(pc) {
 function incBump() {
   bump.value++
 }
+
+// If the current search returned no posts, check whether the term is really a
+// place name and, if so, offer to browse items near it.
+async function checkPlaceSuggestion() {
+  placeSuggestion.value = null
+  const term = (searchTerm.value || '').toString().trim()
+  if (!term || messagesOnMapCount.value !== 0) {
+    return
+  }
+  const loc = await locationStore.resolve(term)
+  // Guard against a race: only apply if the search state hasn't changed since.
+  if (
+    loc &&
+    messagesOnMapCount.value === 0 &&
+    (searchTerm.value || '').toString().trim() === term
+  ) {
+    placeSuggestion.value = { name: loc.name, lat: loc.lat, lng: loc.lng }
+  }
+}
+
+// Re-centre the browse on the suggested place and drop the text search, so the
+// member sees items being given away in that area.
+async function searchNearPlace() {
+  const p = placeSuggestion.value
+  if (!p) {
+    return
+  }
+  await loadLeaflet()
+  const d = 0.15 // ~10 miles either side of the place centre
+  initialBounds.value = [
+    [p.lat - d, p.lng - d],
+    [p.lat + d, p.lng + d],
+  ]
+  placeSuggestion.value = null
+  searchTerm.value = ''
+  incBump()
+}
+
+// Re-check whenever the result count or the search term changes.
+watch([messagesOnMapCount, searchTerm], () => {
+  checkPlaceSuggestion()
+})
 
 async function handleScroll() {
   // If we are scrolling down the browse window then we want to update our count, but only every few seconds.
