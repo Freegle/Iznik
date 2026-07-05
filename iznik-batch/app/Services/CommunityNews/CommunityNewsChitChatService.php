@@ -135,13 +135,19 @@ class CommunityNewsChitChatService
 
     public function composeMessage(CommunityNewsItem $item): string
     {
-        $parts = [rtrim($item->title, " \t\n\r\0\x0B.") . '.'];
-        $parts[] = trim($item->snippet);
+        // Title as an opening line; add a full stop only if it doesn't already
+        // end in sentence punctuation (so "What's on?" doesn't become "What's on?.").
+        $title = trim($item->title);
+        if ($title !== '' && !preg_match('/[.!?…]$/u', $title)) {
+            $title .= '.';
+        }
+
+        $parts = [$title, trim($item->snippet)];
         if (!empty($item->url)) {
             $parts[] = $item->url;
         }
 
-        return trim(implode("\n\n", $parts));
+        return trim(implode("\n\n", array_filter($parts, fn ($p) => $p !== '')));
     }
 
     /**
