@@ -40,6 +40,22 @@
       come across one that hasn't reached you quite yet - you'll be able to
       reply as soon as it does.
     </p>
+    <h5>Why don't I see posts that are too far away?</h5>
+    <p>
+      You decide how far away posts can be, using the <strong>distance slider</strong>
+      - both here above the map and in your
+      <nuxt-link no-prefetch to="/settings">settings</nuxt-link> under
+      <strong>Feed</strong>. Anything further away than that won't show up on
+      Browse or in the emails we send you. Drag towards "Further" to cast a wider
+      net, or "Nearer" to keep things local.
+    </p>
+    <h5>Why is my post shown to only some people nearby?</h5>
+    <p>
+      When your post reaches a neighbouring community, it's shown to the freeglers
+      there who are closest to you and who've chosen to see posts from that far
+      away - not necessarily everyone in that community. That keeps it relevant,
+      so it reaches the people most likely to want your item.
+    </p>
   </div>
 </template>
 <script setup></script>
