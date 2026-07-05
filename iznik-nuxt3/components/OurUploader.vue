@@ -66,6 +66,7 @@ import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
+import { describeUploadError } from '~/composables/useUploadErrorDetail'
 
 const runtimeConfig = useRuntimeConfig()
 
@@ -383,6 +384,10 @@ let uppyTimer = null
 // autoProceed, happens BEFORE compression — @uppy/core emits `upload` in
 // createUpload, before runUpload executes the Compressor pre-processor).
 const compressTimers = new Map()
+// Per-file retry counter (keyed by file.id) so upload_failed can report which
+// attempt failed — a file that fails on attempt 5 exhausted the retry ladder
+// (a genuine stop), vs attempt 1 that later recovered.
+const uploadRetries = new Map()
 const scheduleRetry = createRetryCoalescer(() => uppy)
 
 onMounted(() => {
@@ -538,9 +543,20 @@ onMounted(() => {
       file_type: file?.type,
     })
   })
+  // Per-FILE upload failure carries the file + server response, so this is where
+  // we log the diagnosable detail (HTTP status, network-vs-server, cause, size).
+  uppy.on('upload-error', (file, error, response) => {
+    console.error('Upload error', file?.id, error, response)
+    action('upload_failed', {
+      uploader: 'our',
+      attempt: (uploadRetries.get(file?.id) ?? 0) + 1,
+      ...describeUploadError(error, file, response),
+    })
+  })
+  // The global error event drives the retry (unchanged behaviour); logging now
+  // lives in upload-error above to avoid double-counting.
   uppy.on('error', (error) => {
     console.error('Upload error, retry', error)
-    action('upload_failed', { uploader: 'our', reason: error?.message })
     if (uppyTimer) {
       clearTimeout(uppyTimer)
       uppyTimer = null
@@ -549,6 +565,7 @@ onMounted(() => {
   })
   uppy.on('upload-retry', (fileID) => {
     console.log('upload retried:', fileID)
+    uploadRetries.set(fileID, (uploadRetries.get(fileID) ?? 0) + 1)
   })
   uppy.on('upload-stalled', (error, files) => {
     console.log('upload seems stalled', error, files)
@@ -578,6 +595,7 @@ onMounted(() => {
     }
     // Drop any files still mid-compress (closed before preprocess-complete).
     compressTimers.clear()
+    uploadRetries.clear()
     emit('closed')
   })
   uppy.on('thumbnail:generated', (file, preview) => {
@@ -592,6 +610,7 @@ onBeforeUnmount(() => {
     uppyTimer = null
   }
   compressTimers.clear()
+  uploadRetries.clear()
 })
 
 async function uploadSuccess(result) {
