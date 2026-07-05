@@ -30,10 +30,14 @@ class MicrovolunteeringNotifyService
     /** @var array<int, bool> userid => true for users with any Exhort microvolunteering notification today */
     private array $alreadyNotifiedToday = [];
 
+    /** @var array<int, array<int, bool>> msgid => {userid => true} for users who already reviewed that message */
+    private array $reviewedByMessage = [];
+
     public function notifyForMessages(bool $dryRun = false): array
     {
         $this->eligibleCache       = [];
         $this->alreadyNotifiedToday = $this->loadAlreadyNotifiedToday();
+        $this->reviewedByMessage    = [];
 
         $stats = [
             'messages_considered' => 0,
@@ -58,6 +62,16 @@ class MicrovolunteeringNotifyService
         ", [self::NOTIFICATION_TYPE]);
 
         $stats['messages_considered'] = count($msgs);
+
+        // Users who have already recorded a CheckMessage microaction for a message
+        // must never be re-notified about it. Without this, a rippling post - whose
+        // messages_groups.arrival is refreshed each time it ripples into a new group -
+        // keeps re-entering the "arrival within 1 day" gate and re-lights the same
+        // person's "post to check" badge for ever, even after they have reviewed it.
+        // See Discourse 9856.
+        $this->reviewedByMessage = $this->loadReviewedByMessage(
+            array_values(array_unique(array_map(fn ($m) => (int) $m->id, $msgs)))
+        );
 
         Log::info("MicrovolunteeringNotify: considering " . count($msgs) . " messages");
 
@@ -150,12 +164,18 @@ class MicrovolunteeringNotifyService
         $skip = array_flip($notifiedThisRun);
         $skip[$msg->fromuser] = true;
 
+        $reviewed = $this->reviewedByMessage[$msg->id] ?? [];
+
         $available = [];
         foreach ($pool as $uid) {
             if (isset($skip[$uid])) {
                 continue;
             }
             if (isset($this->alreadyNotifiedToday[$uid])) {
+                continue;
+            }
+            if (isset($reviewed[$uid])) {
+                // Already reviewed this message - don't ask again.
                 continue;
             }
             $available[] = $uid;
@@ -232,6 +252,37 @@ class MicrovolunteeringNotifyService
      *
      * @return array<int, bool>
      */
+    /**
+     * Build {msgid => {userid => true}} for users who have already recorded a
+     * CheckMessage microaction for each of the given messages. Preloaded once per
+     * run (mirrors loadAlreadyNotifiedToday) so pickCandidates can skip anyone who
+     * has already reviewed the message without a per-candidate query.
+     *
+     * @param int[] $msgids
+     * @return array<int, array<int, bool>>
+     */
+    private function loadReviewedByMessage(array $msgids): array
+    {
+        if (empty($msgids)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($msgids), '?'));
+        $rows = DB::select(
+            "SELECT userid, msgid
+             FROM microactions
+             WHERE actiontype = 'CheckMessage'
+               AND msgid IN ($placeholders)",
+            $msgids
+        );
+
+        $map = [];
+        foreach ($rows as $row) {
+            $map[(int) $row->msgid][(int) $row->userid] = true;
+        }
+        return $map;
+    }
+
     private function loadAlreadyNotifiedToday(): array
     {
         $rows = DB::select(
