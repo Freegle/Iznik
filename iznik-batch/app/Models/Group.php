@@ -70,6 +70,9 @@ class Group extends Model implements Auditable
         'mentored' => 0,
         'showjoin' => 0,
         'engagement' => 1,
+        // Community News: OFF by default — opt-in per community (a new outbound
+        // channel: a weekly area digest email + a ChitChat engagement trial).
+        'communitynews' => 0,
     ];
 
     protected $table = 'groups';
@@ -170,6 +173,21 @@ class Group extends Model implements Auditable
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') IS NULL")
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = false")
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = 0");
+        });
+    }
+
+    /**
+     * Scope to groups that have opted in to Community News.
+     *
+     * Community News is OFF by default (opt-in per community), so — unlike
+     * newsletter/newsfeed which default on — the flag must be present and truthy.
+     * Mirrors scopeNotClosed's int/bool JSON handling (0 != false in MySQL JSON).
+     */
+    public function scopeCommunityNewsEnabled(Builder $query): Builder
+    {
+        return $query->where(function ($q) {
+            $q->whereRaw("JSON_EXTRACT(settings, '$.communitynews') = 1")
+                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') = true");
         });
     }
 
