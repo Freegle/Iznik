@@ -91,7 +91,6 @@
                 <span v-if="task.type === 'CheckMessage'">
                   Does this post look OK?
                 </span>
-                <span v-else-if="task.type === 'SearchTerm'"> Word Match </span>
                 <span v-else-if="task.type === 'PhotoRotate'">
                   Photo Rotate
                 </span>
@@ -118,18 +117,6 @@
               <div v-if="task.type === 'CheckMessage'">
                 <MicroVolunteeringCheckMessage
                   :id="task.msgid"
-                  @next="considerNext"
-                />
-              </div>
-              <div
-                v-else-if="
-                  task.type === 'SearchTerm' &&
-                  task.terms &&
-                  task.terms.length > 0
-                "
-              >
-                <MicroVolunteeringSimilarTerms
-                  :terms="task.terms"
                   @next="considerNext"
                 />
               </div>
@@ -205,9 +192,6 @@ const MicroVolunteeringPhotosRotate = defineAsyncComponent(() =>
 )
 const MicroVolunteeringCheckMessage = defineAsyncComponent(() =>
   import('./MicroVolunteeringCheckMessage')
-)
-const MicroVolunteeringSimilarTerms = defineAsyncComponent(() =>
-  import('./MicroVolunteeringSimilarTerms')
 )
 const MicroVolunteeringSurvey = defineAsyncComponent(() =>
   import('./MicroVolunteeringSurvey')
@@ -371,9 +355,6 @@ async function getTask() {
 
     if (
       task.value.type === 'CheckMessage' ||
-      (task.value.type === 'SearchTerm' &&
-        task.value.terms &&
-        task.value.terms.length > 0) ||
       task.value.type === 'Facebook' ||
       task.value.type === 'PhotoRotate' ||
       task.value.type === 'Survey2' ||

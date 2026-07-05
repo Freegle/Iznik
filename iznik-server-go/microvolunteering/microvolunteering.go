@@ -37,17 +37,10 @@ type EEELabelChallenge struct {
 type Challenge struct {
 	Type     string             `json:"type"`
 	Msgid    *uint64            `json:"msgid,omitempty"`
-	Terms    []SearchTerm       `json:"terms,omitempty"`
 	Photos   []Photo            `json:"photos,omitempty"`
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
 	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
-}
-
-// SearchTerm represents a search term for matching
-type SearchTerm struct {
-	ID   uint64 `json:"id"`
-	Term string `json:"term"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -59,7 +52,6 @@ type Photo struct {
 // Challenge types
 const (
 	ChallengeCheckMessage  = "CheckMessage"
-	ChallengeSearchTerm    = "SearchTerm"
 	ChallengePhotoRotate   = "PhotoRotate"
 	ChallengeSurvey        = "Survey2"
 	ChallengeInvite        = "Invite"
@@ -254,68 +246,9 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	}
 
-	// Try search term challenge
-	if contains(challengeTypes, ChallengeSearchTerm) {
-		// Check if user is in a group with word matching enabled
-		var enabled int
-		var query string
-		var params []interface{}
-
-		if groupID > 0 {
-			// Filter to specific group if provided
-			query = `
-				SELECT COUNT(*)
-				FROM memberships
-				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-				WHERE memberships.userid = ?
-				AND memberships.groupid = ?
-				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
-			`
-			params = []interface{}{userID, groupID}
-		} else {
-			// Check all user's groups
-			query = `
-				SELECT COUNT(*)
-				FROM memberships
-				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-				WHERE memberships.userid = ?
-				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
-			`
-			params = []interface{}{userID}
-		}
-
-		db.Raw(query, params...).Scan(&enabled)
-
-		if enabled > 0 {
-			// Get 10 random popular items
-			type ItemTerm struct {
-				ID   uint64 `json:"id"`
-				Term string `json:"term"`
-			}
-			var terms []ItemTerm
-
-			db.Raw(`
-				SELECT DISTINCT id, name AS term
-				FROM (SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t
-				ORDER BY RAND() LIMIT 10
-			`).Scan(&terms)
-
-			if len(terms) > 0 {
-				var searchTerms []SearchTerm
-				for _, t := range terms {
-					searchTerms = append(searchTerms, SearchTerm{
-						ID:   t.ID,
-						Term: t.Term,
-					})
-				}
-
-				return c.JSON(Challenge{
-					Type:  ChallengeSearchTerm,
-					Terms: searchTerms,
-				})
-			}
-		}
-	}
+	// (Retired) The SearchTerm challenge built a keyword-similarity dataset for
+	// the old keyword search index. Search is now served from vector embeddings,
+	// so the challenge is gone.
 
 	// If no challenge found, return empty object
 	return c.JSON(fiber.Map{})
@@ -649,8 +582,6 @@ type PostResponseRequest struct {
 	MsgCategory    *string `json:"msgcategory,omitempty"`
 	Response       *string `json:"response,omitempty"`
 	Comments       *string `json:"comments,omitempty"`
-	Searchterm1    uint64  `json:"searchterm1"`
-	Searchterm2    uint64  `json:"searchterm2"`
 	Photoid        uint64  `json:"photoid"`
 	Invite         bool    `json:"invite"`
 	Deg            int     `json:"deg"`
@@ -732,17 +663,6 @@ func PostResponse(c *fiber.Ctx) error {
 				}
 			}
 		}
-
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-
-	} else if req.Searchterm1 > 0 && req.Searchterm2 > 0 {
-		// Response to a SearchTerm challenge.
-		// The result column is enum('Approve','Reject') NOT NULL with no default.
-		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Exec(`INSERT INTO microactions (actiontype, userid, item1, item2, version, result, score_negative)
-			VALUES (?, ?, ?, ?, ?, 'Approve', 0)
-			ON DUPLICATE KEY UPDATE userid = userid, version = ?`,
-			ChallengeSearchTerm, myid, req.Searchterm1, req.Searchterm2, Version, Version)
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 

@@ -362,34 +362,9 @@ func TestMicroVolunteeringResponseCheckMessage(t *testing.T) {
 	assert.Equal(t, "Approve", actionResult)
 }
 
-func TestMicroVolunteeringResponseSearchTerm(t *testing.T) {
-	db := database.DBConn
-
-	prefix := uniquePrefix("mv_search")
-	userID := CreateTestUser(t, prefix, "User")
-	_, token := CreateTestSession(t, userID)
-
-	// Create test items
-	item1ID := CreateTestItem(t, "testitem1_"+prefix)
-	item2ID := CreateTestItem(t, "testitem2_"+prefix)
-
-	body := fmt.Sprintf(`{"searchterm1":%d,"searchterm2":%d}`, item1ID, item2ID)
-	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token,
-		strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json2.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, float64(0), result["ret"])
-
-	// Verify the microaction was recorded
-	var actionType string
-	db.Raw("SELECT actiontype FROM microactions WHERE userid = ? AND item1 = ? AND item2 = ? ORDER BY id DESC LIMIT 1",
-		userID, item1ID, item2ID).Row().Scan(&actionType)
-	assert.Equal(t, microvolunteering.ChallengeSearchTerm, actionType)
-}
+// (Retired) TestMicroVolunteeringResponseSearchTerm removed with the SearchTerm
+// challenge — the keyword-similarity dataset it built is obsolete under vector
+// search.
 
 func TestMicroVolunteeringResponsePhotoRotate(t *testing.T) {
 	db := database.DBConn
