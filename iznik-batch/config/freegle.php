@@ -332,6 +332,15 @@ return [
 
         // How many days a researched item stays eligible for posting/emailing.
         'item_freshness_days' => (int) env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
+
+        // Curated per-place source store (JSON files). Research seeds the model
+        // with these known-good local feeds, health-checks them each run, and
+        // re-discovers new ones roughly quarterly. See
+        // data/community-news-sources/README.md.
+        'sources_path' => env('COMMUNITY_NEWS_SOURCES_PATH', base_path('data/community-news-sources')),
+        'source_recheck_hours' => (int) env('COMMUNITY_NEWS_SOURCE_RECHECK_HOURS', 24),
+        'source_dead_after' => (int) env('COMMUNITY_NEWS_SOURCE_DEAD_AFTER', 3),
+        'source_discovery_days' => (int) env('COMMUNITY_NEWS_SOURCE_DISCOVERY_DAYS', 90),
     ],
 
     // The spatial-knn "finder" service (iznik-spatial-go). SPATIAL_KNN_URL is the

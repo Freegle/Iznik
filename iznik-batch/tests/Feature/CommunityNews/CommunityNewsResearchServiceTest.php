@@ -10,6 +10,14 @@ use Tests\TestCase;
 
 class CommunityNewsResearchServiceTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Isolate from the repo's curated source store so these tests exercise
+        // pure web-search research with no seed sources.
+        config(['freegle.communitynews.sources_path' => sys_get_temp_dir() . '/cn-none-' . uniqid()]);
+    }
+
     private function area(): CommunityNewsArea
     {
         return CommunityNewsArea::create([
@@ -63,6 +71,32 @@ class CommunityNewsResearchServiceTest extends TestCase
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'api.anthropic.com')
                 && ($request['tools'][0]['type'] ?? null) === 'web_search_20260209';
+        });
+    }
+
+    public function test_generate_seeds_curated_sources_and_adds_web_fetch(): void
+    {
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+
+        $json = json_encode(['intro' => 'x', 'items' => [
+            ['title' => 'T', 'blurb' => 'B', 'url' => 'https://x.org', 'source' => 'S'],
+        ]]);
+        Http::fake(['api.anthropic.com/*' => Http::response([
+            'stop_reason' => 'end_turn',
+            'content' => [['type' => 'text', 'text' => $json]],
+        ], 200)]);
+
+        $seed = [['name' => 'Oxford City Council News', 'url' => 'https://www.oxford.gov.uk/rss/news', 'type' => 'rss']];
+        $result = $this->svc()->generate($this->area(), $seed);
+
+        $this->assertNotNull($result);
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+            $toolTypes = array_column($body['tools'] ?? [], 'type');
+            $prompt = $body['messages'][0]['content'] ?? '';
+
+            return in_array('web_fetch_20260209', $toolTypes, true)
+                && str_contains($prompt, 'Oxford City Council News');
         });
     }
 

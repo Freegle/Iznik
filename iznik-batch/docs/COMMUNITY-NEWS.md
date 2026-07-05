@@ -60,6 +60,29 @@ drive-time refinement can later replace `CommunityNewsAreaService::clusterByDist
 Members are deduplicated across an area, so someone in three of its groups gets one
 email.
 
+## Curated sources (seed + self-maintenance)
+
+The research is seeded with hand-curated **local** feeds per place, stored as JSON
+files under `data/community-news-sources/` (path configurable via
+`COMMUNITY_NEWS_SOURCES_PATH`). When an area matches a place file, its live feeds
+are passed to the model to **check first** (via `web_fetch`), and web search fills
+the gaps. Oxford is seeded from the original zeitgeist persona (~14 local RSS
+feeds + 3 podcasts — council news, local outlets, local reuse/community/environment
+orgs); Edinburgh and everywhere else are web-search-only until someone curates a
+file for them.
+
+The store self-maintains (see `data/community-news-sources/README.md`):
+- **On each research run**, the area's sources are health-checked (throttled to
+  ~daily). A feed that fails `source_dead_after` (default 3) fetches in a row is
+  marked `dead` and dropped from the seed; one good fetch revives it. That's how
+  dead feeds are spotted.
+- **~Quarterly** (`community-news:discover-sources`, gated by
+  `source_discovery_days`, default 90), the model is asked for new local sources;
+  each candidate URL is fetched to verify it's live before being appended.
+
+Matching: an area uses a place file if the area's group short-names intersect the
+file's `groups`, or the place name appears in the area name.
+
 ## Opt-out
 
 Reuses the **existing** "Newsletters & stories" preference, `users.newslettersallowed`
@@ -76,6 +99,7 @@ not opt-out-gated per user.
 | `community-news:post-chitchat [--area=] [--dry-run]` | Drip un-posted items to ChitChat as Freegle, for areas that are due. |
 | `community-news:email [--area=] [--dry-run]` | Send the weekly digest for due areas to deduplicated, opted-in members. |
 | `community-news:engagement [--area=]` | Report loves + replies on the trial ChitChat posts. |
+| `community-news:discover-sources [--force]` | Maintain the curated source store: health-check feeds (spot dead ones) and, ~quarterly, discover new local sources. |
 | `group:set-community-news --group=<short> {--on\|--off}` | Toggle the per-group setting. |
 
 All the sending/posting commands take `--dry-run`.

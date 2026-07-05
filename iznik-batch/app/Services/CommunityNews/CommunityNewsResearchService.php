@@ -20,6 +20,10 @@ class CommunityNewsResearchService
 {
     private const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
+    public function __construct(private CommunityNewsSourceService $sources)
+    {
+    }
+
     /**
      * Research one area and (unless dry-run) store fresh CommunityNewsItem rows.
      *
@@ -27,7 +31,14 @@ class CommunityNewsResearchService
      */
     public function researchArea(CommunityNewsArea $area, bool $dryRun = false): array
     {
-        $parsed = $this->generate($area);
+        // Maintain the curated source store (spot dead feeds) on each real run,
+        // then seed the model with the live known-good local sources.
+        if (!$dryRun) {
+            $this->sources->maintainArea($area);
+        }
+        $seedSources = $this->sources->liveSourcesForArea($area);
+
+        $parsed = $this->generate($area, $seedSources);
         if ($parsed === null) {
             return ['ok' => false, 'items' => 0, 'intro' => null];
         }
@@ -62,7 +73,7 @@ class CommunityNewsResearchService
      *
      * @return array{0:string,1:array<int,array{title:string,blurb:string,url:?string,source:?string}>}|null
      */
-    public function generate(CommunityNewsArea $area): ?array
+    public function generate(CommunityNewsArea $area, array $seedSources = []): ?array
     {
         $apiKey = config('freegle.communitynews.anthropic_api_key');
         if (empty($apiKey)) {
@@ -76,7 +87,7 @@ class CommunityNewsResearchService
 
         $messages = [[
             'role' => 'user',
-            'content' => $this->userPrompt($area, $maxItems),
+            'content' => $this->userPrompt($area, $maxItems, $seedSources),
         ]];
 
         $tools = [[
@@ -89,6 +100,17 @@ class CommunityNewsResearchService
                 'city' => $this->plainAreaName($area),
             ],
         ]];
+
+        // With curated local feeds to hand, let the model fetch them directly.
+        // web_fetch only fetches URLs already in the conversation — i.e. the seed
+        // list we put in the prompt — so it can't wander off to arbitrary pages.
+        if (!empty($seedSources)) {
+            $tools[] = [
+                'type' => 'web_fetch_20260209',
+                'name' => 'web_fetch',
+                'max_uses' => 10,
+            ];
+        }
 
         $finalText = null;
 
@@ -236,21 +258,38 @@ class CommunityNewsResearchService
         SYS;
     }
 
-    private function userPrompt(CommunityNewsArea $area, int $maxItems): string
+    private function userPrompt(CommunityNewsArea $area, int $maxItems, array $seedSources = []): string
     {
         $name = $area->name;
         $lat = $area->lat;
         $lng = $area->lng;
         $groups = $this->groupNames($area);
+        $seedBlock = $this->seedBlock($seedSources);
 
         return <<<USER
         Area: {$name} (roughly centred on {$lat}, {$lng}; it covers the Freegle communities: {$groups}).
-
+        {$seedBlock}
         Find up to {$maxItems} interesting, genuinely local community happenings for readers here, this week or in the next couple of weeks.
 
         Then reply with ONLY a JSON object — no prose, no code fences — in exactly this shape:
         {"intro":"one or two warm, quirky sentences introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name"}]}
         USER;
+    }
+
+    /** A prompt block listing the curated local sources to check first. */
+    private function seedBlock(array $seedSources): string
+    {
+        if (empty($seedSources)) {
+            return '';
+        }
+
+        $lines = [];
+        foreach (array_slice($seedSources, 0, 30) as $s) {
+            $lines[] = '- ' . $s['name'] . ' (' . $s['url'] . ')';
+        }
+        $list = implode("\n", $lines);
+
+        return "\nCheck these known-good LOCAL sources FIRST (fetch them) for what's on, then use web search to fill any gaps:\n{$list}\n";
     }
 
     private function groupNames(CommunityNewsArea $area): string

@@ -1371,3 +1371,12 @@ Schedule::command('eee:sync-mv-labels')
 //     ->withoutOverlapping(120)
 //     ->sendOutputTo(cronLog('community-news:email'))
 //     ->runInBackground();
+//
+// Curated source store: health-check + discover new local feeds (~quarterly;
+// the command self-gates per place on source_discovery_days).
+// Schedule::command('community-news:discover-sources')
+//     ->quarterly()
+//     ->when(fn () => config('freegle.communitynews.enabled', false))
+//     ->withoutOverlapping(240)
+//     ->sendOutputTo(cronLog('community-news:discover-sources'))
+//     ->runInBackground();
