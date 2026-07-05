@@ -221,6 +221,77 @@ func TestUpdateLocationPreservesNearbyVertex(t *testing.T) {
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
+// Reproduces the STILL-OPEN half of Discourse #9770 (post #7: "no change from before").
+// The earlier fix removed write-time ST_Simplify, so ourgeometry keeps the dragged midpoint -
+// but the areas display query (SearchLocations, areas=true) still ST_Simplify(...,0.001)s the
+// geometry it returns. The map editor (ModGroupMapLocation.vue) loads that returned polygon,
+// so after Save+reload the new vertex has vanished and the edit looks unsaved. The vertex must
+// survive the exact round-trip the editor uses: PATCH save -> GET areas reload.
+func TestUpdateLocationMidpointVertexSurvivesAreasReload(t *testing.T) {
+	prefix := uniquePrefix("locwr_reload")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+
+	// The area the moderator edits.
+	db.Exec("INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Polygon', ?, 0)",
+		"ReloadArea "+prefix, "reloadarea "+prefix)
+	var areaID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "ReloadArea "+prefix).Scan(&areaID)
+	assert.Greater(t, areaID, uint64(0))
+
+	// A postcode whose areaid points at the area, so the areas query returns it.
+	db.Exec("INSERT INTO locations (name, type, canon, popularity, areaid, lat, lng) VALUES (?, ?, ?, 0, ?, 55.955, -3.195)",
+		"ReloadPC "+prefix, utils.LOCATION_TYPE_POSTCODE, "reloadpc "+prefix, areaID)
+
+	defer func() {
+		db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", areaID)
+		db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", areaID)
+		db.Exec("DELETE FROM locations WHERE name IN (?, ?)", "ReloadArea "+prefix, "ReloadPC "+prefix)
+	}()
+
+	// User drags a midpoint (5th vertex, ~55 m above the bottom edge) and saves.
+	withMidpoint := "POLYGON((-3.21 55.94, -3.21 55.97, -3.18 55.97, -3.18 55.94, -3.195 55.9405, -3.21 55.94))"
+	body := fmt.Sprintf(`{"id":%d,"polygon":"%s"}`, areaID, withMidpoint)
+	req := httptest.NewRequest("PATCH", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Sanity: the stored geometry keeps the vertex (write side already fixed).
+	var storedPoints int
+	db.Raw("SELECT ST_NumPoints(ST_ExteriorRing(ourgeometry)) FROM locations WHERE id = ?", areaID).Scan(&storedPoints)
+	assert.Equal(t, 6, storedPoints, "stored ourgeometry should keep the dragged midpoint vertex")
+
+	// Reload exactly as the map editor does: GET /locations?areas=true over a covering bbox.
+	url := "/api/locations?areas=true&groupsnear=false&swlat=55.93&swlng=-3.22&nelat=55.98&nelng=-3.17&jwt=" + adminToken
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var listResult struct {
+		Locations []struct {
+			ID      uint64 `json:"id"`
+			Polygon string `json:"polygon"`
+		} `json:"locations"`
+	}
+	json2.Unmarshal(rsp(resp2), &listResult)
+
+	var reloaded string
+	for _, l := range listResult.Locations {
+		if l.ID == areaID {
+			reloaded = l.Polygon
+		}
+	}
+	assert.NotEmpty(t, reloaded, "the edited area should be returned by the areas query")
+
+	// The polygon the editor receives back must still contain the dragged midpoint vertex.
+	var reloadedPoints int
+	db.Raw("SELECT ST_NumPoints(ST_ExteriorRing(ST_GeomFromText(?)))", reloaded).Scan(&reloadedPoints)
+	assert.Equal(t, 6, reloadedPoints,
+		"midpoint vertex must survive the areas reload the editor uses (Discourse #9770 post #7)")
+}
+
 func TestUpdateLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_upd")
 	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
