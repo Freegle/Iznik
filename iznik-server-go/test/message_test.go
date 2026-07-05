@@ -5868,6 +5868,80 @@ func TestMessagesMarkSeenIdempotent(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
+// TestMessagesMarkSeenBatchPreservesSemantics marks MANY messages in a single call (the batched
+// multi-row INSERT path that replaced the per-id loop) and verifies the per-message semantics are
+// unchanged: every message ends up with a View row (seen), a brand-new one gets pageview=0 (a
+// scroll impression), and a message that already has a genuine page-open (pageview=1) keeps
+// pageview=1 and has its count incremented - i.e. batching never downgrades an existing view.
+func TestMessagesMarkSeenBatchPreservesSemantics(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("markseen_batch")
+	groupID := CreateTestGroup(t, prefix)
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewerID, groupID, "Member")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	// A batch of messages (enough to exercise the multi-row INSERT).
+	const n = 12
+	ids := make([]uint64, n)
+	for i := 0; i < n; i++ {
+		ids[i] = CreateTestMessage(t, ownerID, groupID, fmt.Sprintf("%s item %d", prefix, i), 55.9533, -3.1883)
+	}
+
+	// Give the FIRST message a genuine page-open first (pageview=1), so we can prove the batch
+	// mark-seen does not downgrade it.
+	openBody, _ := json.Marshal(map[string]interface{}{"id": ids[0], "action": "View"})
+	openReq := httptest.NewRequest("POST", "/api/message?jwt="+viewerToken, bytes.NewBuffer(openBody))
+	openReq.Header.Set("Content-Type", "application/json")
+	openResp, _ := getApp().Test(openReq)
+	assert.Equal(t, 200, openResp.StatusCode)
+
+	var pvBefore, countBefore int
+	db.Raw("SELECT COALESCE(pageview, -1), count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[0], viewerID).Row().Scan(&pvBefore, &countBefore)
+	assert.Equal(t, 1, pvBefore, "page-open should set pageview=1 before the batch mark-seen")
+
+	// Mark ALL of them seen in one batched call.
+	idParts := make([]string, n)
+	for i, id := range ids {
+		idParts[i] = fmt.Sprint(id)
+	}
+	body := fmt.Sprintf(`{"ids": [%s]}`, strings.Join(idParts, ","))
+	req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+viewerToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Every message now has a View row.
+	var seenCount int
+	placeholders := make([]string, n)
+	args := make([]interface{}, 0, n+2)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, viewerID)
+	db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid IN ("+strings.Join(placeholders, ",")+
+		") AND userid = ? AND type = 'View'", args...).Scan(&seenCount)
+	assert.Equal(t, n, seenCount, "every message in the batch has a View row")
+
+	// A brand-new message (ids[1]) got pageview=0 (scroll impression).
+	var pvNew int
+	db.Raw("SELECT COALESCE(pageview, -1) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[1], viewerID).Scan(&pvNew)
+	assert.Equal(t, 0, pvNew, "a newly-seen message gets pageview=0")
+
+	// The pre-opened message (ids[0]) keeps pageview=1 (NOT downgraded) and its count incremented.
+	var pvAfter, countAfter int
+	db.Raw("SELECT COALESCE(pageview, -1), count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[0], viewerID).Row().Scan(&pvAfter, &countAfter)
+	assert.Equal(t, 1, pvAfter, "batch mark-seen must not downgrade an existing genuine view")
+	assert.Greater(t, countAfter, countBefore, "the ON DUPLICATE KEY UPDATE increments count on the existing row")
+}
+
 // --- Tests: Subject reconstruction from item + location ---
 
 func TestPatchMessageReconstructsSubjectFromItemLocation(t *testing.T) {
