@@ -33,9 +33,9 @@ class CommunityNewsChitChatService
      *
      * @return array{posts:int, areas:int}
      */
-    public function drip(bool $dryRun = false, ?int $onlyAreaId = null): array
+    public function drip(bool $dryRun = false, ?int $onlyAreaId = null, bool $force = false, ?int $itemsPerPost = null): array
     {
-        $perPost = max(1, (int) config('freegle.communitynews.chitchat_items_per_post', 1));
+        $perPost = max(1, $itemsPerPost ?? (int) config('freegle.communitynews.chitchat_items_per_post', 1));
         $minDays = (int) config('freegle.communitynews.chitchat_min_days', 3);
         $freshDays = (int) config('freegle.communitynews.item_freshness_days', 10);
 
@@ -54,7 +54,7 @@ class CommunityNewsChitChatService
         $areasPosted = 0;
 
         foreach ($query->get() as $area) {
-            if ($area->lastposted && $area->lastposted->gt(now()->subDays($minDays))) {
+            if (!$force && $area->lastposted && $area->lastposted->gt(now()->subDays($minDays))) {
                 continue; // posted too recently
             }
 

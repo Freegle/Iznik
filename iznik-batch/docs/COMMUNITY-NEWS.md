@@ -107,12 +107,44 @@ Community News is inert until **all** of these are true:
    The ChitChat trial does **not** need this — run the trial first, watch
    engagement, then flip on the email.
 
-## Schedule
+## Running it manually (current mode)
 
-Registered in `routes/console.php`, each gated on `communitynews.enabled`:
-`community-news:research` daily 06:30, `community-news:post-chitchat` daily 09:15,
-`community-news:email` weekly (Wed 10:00). The commands self-gate per area, so a
-daily cadence simply tops up / drips as each area falls due.
+Community News is **manual-only for now** — the scheduled runs in
+`routes/console.php` are **commented out** (nothing fires automatically). The plan
+is to hand-run a research for a few places, then hand-run ChitChat posts, and
+judge engagement before automating.
+
+A manual trial run:
+
+```bash
+# 1. Opt a few communities in.
+php artisan group:set-community-news --group=EdinburghFreegle --on
+php artisan group:set-community-news --group=OxfordFreegle --on
+
+# 2. Cluster into areas and research each (prints "#<areaid> <name>: N item(s)").
+#    Needs ANTHROPIC_API_KEY. Add --dry-run to preview without storing.
+php artisan community-news:research
+
+# 3. Post to ChitChat as Freegle. --force ignores the per-area cadence and
+#    --count=N posts several at once; --dry-run composes without writing.
+php artisan community-news:post-chitchat --area=<id> --force --count=3
+
+# 4. Watch engagement (loves + replies) on the trial posts.
+php artisan community-news:engagement
+```
+
+`--area`, `--force`, `--count` and `--dry-run` make one-off manual runs
+predictable. The commands run regardless of the (commented-out) schedule or the
+`COMMUNITY_NEWS_ENABLED` flag.
+
+## Automating later (not enabled yet)
+
+The three `Schedule::command(...)` blocks are present but **commented out** in
+`routes/console.php`, each already gated on `communitynews.enabled`
+(`community-news:research` daily 06:30, `:post-chitchat` daily 09:15, `:email`
+weekly Wed 10:00). To turn automation on after the manual trial: uncomment them
+and set `COMMUNITY_NEWS_ENABLED=true`. The commands self-gate per area, so a daily
+cadence just tops up / drips as each area falls due.
 
 ## Measuring the trial
 

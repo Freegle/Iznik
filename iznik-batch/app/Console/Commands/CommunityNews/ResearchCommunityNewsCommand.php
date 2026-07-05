@@ -39,7 +39,7 @@ class ResearchCommunityNewsCommand extends Command
             if (!$this->option('force')
                 && $area->lastresearched
                 && $area->lastresearched->gt(now()->subDays($minDays))) {
-                $this->line("  skip {$area->name} (researched {$area->lastresearched->diffForHumans()})");
+                $this->line("  skip #{$area->id} {$area->name} (researched {$area->lastresearched->diffForHumans()})");
                 continue;
             }
 
@@ -53,9 +53,9 @@ class ResearchCommunityNewsCommand extends Command
             if ($result['ok']) {
                 $researched++;
                 $itemsTotal += $result['items'];
-                $this->info("  {$area->name}: {$result['items']} item(s)" . ($dryRun ? ' (not stored)' : ''));
+                $this->info("  #{$area->id} {$area->name}: {$result['items']} item(s)" . ($dryRun ? ' (not stored)' : ''));
             } else {
-                $this->warn("  {$area->name}: no items found");
+                $this->warn("  #{$area->id} {$area->name}: no items found");
             }
         }
 

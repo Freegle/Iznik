@@ -106,6 +106,30 @@ class CommunityNewsChitChatServiceTest extends TestCase
         $this->assertSame(0, $result['posts']); // too soon
     }
 
+    public function test_force_bypasses_cadence(): void
+    {
+        $this->systemUser();
+        config(['freegle.communitynews.chitchat_min_days' => 3]);
+        $area = $this->area(['lastposted' => now()->subDay()]); // posted 1 day ago
+        $this->item($area);
+
+        $result = $this->svc()->drip(false, $area->id, true); // --force
+        $this->assertSame(1, $result['posts']);
+    }
+
+    public function test_count_override_posts_multiple(): void
+    {
+        $this->systemUser();
+        $area = $this->area();
+        // Distinct items so the dup-guard doesn't skip them.
+        $this->item($area, ['title' => 'Alpha event', 'url' => 'https://example.org/a']);
+        $this->item($area, ['title' => 'Bravo event', 'url' => 'https://example.org/b']);
+        $this->item($area, ['title' => 'Charlie event', 'url' => 'https://example.org/c']);
+
+        $result = $this->svc()->drip(false, $area->id, false, 2); // --count=2
+        $this->assertSame(2, $result['posts']);
+    }
+
     public function test_engagement_counts_loves_and_replies(): void
     {
         $sys = $this->systemUser();

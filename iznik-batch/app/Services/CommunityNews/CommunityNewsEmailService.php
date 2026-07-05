@@ -33,7 +33,7 @@ class CommunityNewsEmailService
      *
      * @return array{areas:int, sent:int}
      */
-    public function sendWeekly(bool $dryRun = false, ?int $onlyAreaId = null): array
+    public function sendWeekly(bool $dryRun = false, ?int $onlyAreaId = null, bool $force = false): array
     {
         $stats = ['areas' => 0, 'sent' => 0];
 
@@ -53,7 +53,7 @@ class CommunityNewsEmailService
         }
 
         foreach ($query->get() as $area) {
-            if ($area->lastemailed && $area->lastemailed->gt(now()->subDays($minDays))) {
+            if (!$force && $area->lastemailed && $area->lastemailed->gt(now()->subDays($minDays))) {
                 continue;
             }
 
