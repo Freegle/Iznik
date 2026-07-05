@@ -255,6 +255,40 @@ describe('NotificationOne', () => {
 
       expect(mockRouter.push).toHaveBeenCalledWith('/chitchat/789')
     })
+
+    it('navigates internally via the router for in-app links (e.g. a microvolunteering check) instead of opening a new browsing context', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = '/microvolunteering/message/456'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      // #9856: window.open() for an in-app route spins up a separate
+      // browsing context, so this SPA instance's Pinia stores (and the
+      // notification badge count they drive) never see the vote that
+      // happens there - the badge stays stuck and the link can be
+      // reopened to the same post.
+      expect(mockRouter.push).toHaveBeenCalledWith(
+        '/microvolunteering/message/456'
+      )
+      expect(openSpy).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    it('navigates internally via the router for same-origin absolute urls', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url =
+        window.location.origin + '/microvolunteering/message/789'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(mockRouter.push).toHaveBeenCalledWith(
+        '/microvolunteering/message/789'
+      )
+      expect(openSpy).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
   })
 
   describe('showModal emit', () => {

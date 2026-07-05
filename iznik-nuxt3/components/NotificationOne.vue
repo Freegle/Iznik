@@ -89,7 +89,31 @@ function click() {
   markSeen()
 
   if (notification.value?.url) {
-    window.open(notification.value.url)
+    const url = notification.value.url
+
+    // In-app links (relative, or absolute but same-origin) must navigate via
+    // the router rather than window.open(). window.open() spins up a
+    // separate browsing context that doesn't share this SPA instance's
+    // Pinia stores, so - for example - voting on a microvolunteering "check
+    // this message" notification there never updates the notification badge
+    // count shown here, leaving it stuck and the same link re-openable to
+    // the same post (#9856).
+    if (url.startsWith('/')) {
+      router.push(url)
+      return
+    }
+
+    try {
+      const parsed = new URL(url)
+      if (parsed.origin === window.location.origin) {
+        router.push(parsed.pathname + parsed.search + parsed.hash)
+        return
+      }
+    } catch (e) {
+      // Not a parseable absolute URL - fall through to window.open below.
+    }
+
+    window.open(url)
   } else if (newsfeed?.value) {
     router.push('/chitchat/' + newsfeed.value.id)
   }
