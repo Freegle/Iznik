@@ -1,17 +1,20 @@
 <template>
-  <!-- The whole strip is lazy: nothing is fetched until it scrolls into view,
-       and it renders nothing at all (no heading, no reserved space) unless we
-       have at least a few genuine matches. -->
+  <!-- Renders nothing at all (no heading, no reserved space) unless we have at
+       least a few genuine matches. In the sidebar it lazy-loads when it scrolls
+       into view; in a modal it loads eagerly because it's shown deliberately. -->
   <section
     v-observe-visibility="{
       callback: onVisible,
       options: { rootMargin: '200px' },
     }"
     class="similar-posts"
+    :class="`similar-posts--${variant}`"
   >
     <template v-if="show">
-      <h3 class="similar-posts__heading">More like this nearby</h3>
-      <div class="similar-posts__row">
+      <h3 v-if="variant !== 'modal'" class="similar-posts__heading">
+        More like this nearby
+      </h3>
+      <div class="similar-posts__list">
         <div v-for="mid in ids" :key="mid" class="similar-posts__item">
           <MessageSummary :id="mid" @expand="open(mid)" />
         </div>
@@ -21,7 +24,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { navigateTo } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useMe } from '~/composables/useMe'
@@ -30,6 +33,14 @@ import MessageSummary from '~/components/MessageSummary'
 const props = defineProps({
   // The post we're finding matches for.
   msgid: { type: [Number, String], required: true },
+  // 'sidebar' (desktop, alongside the post) or 'modal' (mobile, after a reply).
+  variant: { type: String, default: 'sidebar' },
+  // Load immediately on mount rather than waiting for the visibility callback.
+  // The modal is only mounted when it's opened, so it should fetch straight away.
+  eager: { type: Boolean, default: false },
+  // Cap the number of cards rendered. The sidebar has limited height alongside
+  // the post; the modal can show more. 0 means no cap.
+  max: { type: Number, default: 0 },
 })
 
 const MIN_RESULTS = 3
@@ -44,15 +55,15 @@ const ids = ref([])
 let loaded = false
 
 // 10% deterministic holdout: logged-in users whose id ends in 0 never see the
-// strip (and it never fetches), giving a clean control group for measuring
-// whether the recommendations are worth showing. Anonymous users always see it
-// and are excluded from the cohort analysis.
+// recommendations (and they never fetch), giving a clean control group for
+// measuring whether they're worth showing. Anonymous users always see them and
+// are excluded from the cohort analysis.
 const inHoldout = computed(() => !!myid.value && myid.value % 10 === 0)
 
 const show = computed(() => ids.value.length >= MIN_RESULTS)
 
-async function onVisible(visible) {
-  if (!visible || inHoldout.value || loaded) {
+async function load() {
+  if (inHoldout.value || loaded) {
     return
   }
   loaded = true
@@ -71,7 +82,11 @@ async function onVisible(visible) {
   // Hydrate the summaries so MessageSummary can render them from the store.
   await Promise.all(found.map((id) => messageStore.fetch(id).catch(() => null)))
   // Only keep the ones that actually resolved to a renderable message.
-  ids.value = found.filter((id) => messageStore.list[id])
+  let renderable = found.filter((id) => messageStore.list[id])
+  if (props.max > 0) {
+    renderable = renderable.slice(0, props.max)
+  }
+  ids.value = renderable
 
   if (ids.value.length >= MIN_RESULTS) {
     // Count the impression once (source-tagged so it's attributable). Fire and
@@ -81,6 +96,18 @@ async function onVisible(visible) {
     ids.value = []
   }
 }
+
+function onVisible(visible) {
+  if (visible) {
+    load()
+  }
+}
+
+onMounted(() => {
+  if (props.eager) {
+    load()
+  }
+})
 
 function open(mid) {
   navigateTo('/message/' + mid + '?src=' + SOURCE)
@@ -103,25 +130,16 @@ function open(mid) {
   margin-bottom: 0.5rem;
 }
 
-/* Horizontal scroller. The row scrolls inside its own container so it never
-   pushes the page into horizontal scroll; a partial next card peeks to signal
-   there's more. */
-.similar-posts__row {
+/* Vertical list: cards stack down the column. Used both in the desktop sidebar
+   (alongside the post, so it never pushes the post around) and in the mobile
+   after-reply modal. */
+.similar-posts__list {
   display: flex;
+  flex-direction: column;
   gap: 0.75rem;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 0.5rem;
 }
 
 .similar-posts__item {
-  flex: 0 0 auto;
-  width: 15rem;
-  scroll-snap-align: start;
-
-  @include media-breakpoint-down(sm) {
-    width: 72vw;
-  }
+  width: 100%;
 }
 </style>

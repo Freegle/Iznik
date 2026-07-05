@@ -117,4 +117,50 @@ describe('SimilarPosts', () => {
     expect(mockSimilar).toHaveBeenCalledWith(100, 8)
     expect(wrapper.text()).toContain('More like this nearby')
   })
+
+  it('caps the number of rendered cards with the max prop', async () => {
+    mockSimilar.mockResolvedValue([
+      { id: 1 },
+      { id: 2 },
+      { id: 3 },
+      { id: 4 },
+      { id: 5 },
+    ])
+    const wrapper = mountSP({ max: 3 })
+    await flushPromises()
+    expect(wrapper.findAll('.msg-summary')).toHaveLength(3)
+    // The impression is counted for exactly the capped set.
+    expect(mockMarkSeen).toHaveBeenCalledWith([1, 2, 3], 'similar_posts')
+  })
+
+  it('hides its own heading in the modal variant (the modal supplies the title)', async () => {
+    mockSimilar.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }])
+    const wrapper = mountSP({ variant: 'modal' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('More like this nearby')
+    expect(wrapper.findAll('.msg-summary')).toHaveLength(3)
+  })
+
+  it('loads eagerly on mount when eager, without waiting for visibility', async () => {
+    mockSimilar.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }])
+    // No-op the visibility directive so ONLY the eager path can trigger the load.
+    const wrapper = mount(SimilarPosts, {
+      props: { msgid: 100, eager: true },
+      global: {
+        stubs: {
+          MessageSummary: {
+            template: '<div class="msg-summary" @click="$emit(\'expand\')" />',
+            props: ['id'],
+          },
+          'client-only': { template: '<div><slot /></div>' },
+        },
+        directives: {
+          'observe-visibility': { mounted() {} },
+        },
+      },
+    })
+    await flushPromises()
+    expect(mockSimilar).toHaveBeenCalledWith(100, 8)
+    expect(wrapper.findAll('.msg-summary')).toHaveLength(3)
+  })
 })
