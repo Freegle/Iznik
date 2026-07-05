@@ -109,13 +109,14 @@
       <div class="position-relative d-inline-block ms-2">
         <b-button
           variant="white"
-          title="Show map and post filters"
+          size="lg"
+          title="Show post filters"
+          class="filters-button"
           @click="showFilters = true"
         >
-          <div class="d-flex">
-            <div class="d-none d-md-block">Map & Filters</div>
-            <v-icon icon="sliders" class="ms-md-2 align-self-center" />
-            <v-icon icon="map" class="ms-1 align-self-center" />
+          <div class="d-flex align-items-center">
+            <v-icon icon="sliders" class="align-self-center" />
+            <span class="ms-2">Filters</span>
           </div>
         </b-button>
         <b-badge
@@ -482,6 +483,16 @@ const hasNonDefaultFilters = computed(() => {
 
 // Compact labels for mobile
 .filters label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: $color-gray--darker;
+}
+
+/* "Show posts from:" is rendered as GroupSelect's own <label> in a child
+   component, which the scoped `.filters label` rule above can't reach - so it
+   showed in the default (larger) font. Match it to the other filter labels. */
+.group :deep(label) {
   font-size: 0.85rem;
   font-weight: 600;
   margin-bottom: 0.25rem;
