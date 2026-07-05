@@ -330,6 +330,38 @@ func LatLng(c *fiber.Ctx) error {
 	return c.JSON(loc)
 }
 
+// Resolve looks up a place by its EXACT name and returns the single best-matching
+// location, so a term the item search can't satisfy — a county/town/postcode such as
+// "Hertfordshire", "London" or "L30" — can be offered to the user as "search for items
+// near <place>" instead of a dead-end zero-results page.
+//
+// Prefers an area Polygon (best area centroid), then a full Postcode, then lesser
+// geometry types. Intended to be called ONLY when an item search returned nothing, so
+// item words that happen to also be place names ("Shed", "Mosaic") never reach here —
+// those return plenty of item results and so are never offered as a location. 404 when
+// the name is not a known place.
+func Resolve(c *fiber.Ctx) error {
+	name := strings.TrimSpace(c.Query("name"))
+	if name == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "No name")
+	}
+
+	db := database.DBConn
+
+	var loc Location
+	db.Raw("SELECT id, name, type, lat, lng, areaid "+
+		"FROM locations "+
+		"WHERE name = ? "+
+		"ORDER BY FIELD(type, 'Polygon', 'Postcode', 'Road', 'Line', 'Point'), id "+
+		"LIMIT 1;", name).Scan(&loc)
+
+	if loc.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "No matching place")
+	}
+
+	return c.JSON(loc)
+}
+
 // BoxLocation represents a location returned from bounding box queries, including its polygon.
 type BoxLocation struct {
 	ID      uint64  `json:"id"`
