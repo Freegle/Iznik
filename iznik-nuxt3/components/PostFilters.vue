@@ -519,7 +519,7 @@ const hasNonDefaultFilters = computed(() => {
 
   .type {
     grid-column: 1 / 2;
-    grid-row: 2 / 3;
+    grid-row: 3 / 4;
 
     @include media-breakpoint-up(md) {
       grid-column: 2 / 3;
@@ -527,11 +527,11 @@ const hasNonDefaultFilters = computed(() => {
     }
   }
 
-  /* Distance slider sits to the left of Sort, on the same row on desktop; on mobile
-     it stacks above Sort (reads top-to-bottom in the same left-to-right order). */
+  /* Distance slider sits to the left of Sort on desktop; on mobile it sits ABOVE
+     the Offer/Wanted (type) filter, so the "how far away" control reads first. */
   .distance {
     grid-column: 1 / 2;
-    grid-row: 3 / 4;
+    grid-row: 2 / 3;
 
     @include media-breakpoint-up(md) {
       grid-column: 1 / 2;
