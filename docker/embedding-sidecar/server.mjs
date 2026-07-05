@@ -32,6 +32,23 @@ const extractor = await pipeline(
 
 console.log(JSON.stringify({ level: 'info', event: 'model_loaded', num_threads: NUM_THREADS }));
 
+// Warm up the ONNX session before we start accepting requests. Loading the model
+// weights (above) is not enough: the first actual inference pays a large one-time
+// cost (session graph optimisation + memory-arena allocation) — measured at ~20s.
+// Without this, the first real user search after every deploy/restart eats that
+// latency. Now that vector search is every caller's default, run one throwaway
+// inference here so that cost lands at startup instead of on a user.
+{
+  const t0 = process.hrtime.bigint();
+  try {
+    await extractor(['search_query: warmup'], { pooling: 'mean', normalize: true });
+    const warmMs = Number(process.hrtime.bigint() - t0) / 1e6;
+    console.log(JSON.stringify({ level: 'info', event: 'warmup', elapsed_ms: Number(warmMs.toFixed(2)) }));
+  } catch (e) {
+    console.log(JSON.stringify({ level: 'error', event: 'warmup', error: e.message }));
+  }
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

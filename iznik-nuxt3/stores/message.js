@@ -562,60 +562,38 @@ export const useMessageStore = defineStore({
     },
     // ModTools-specific methods below
     async searchMT(params) {
-      if (params.searchmode === 'vector') {
-        // Use V2 vector search endpoint directly
-        const results = await api(this.config).message.search({
-          search: params.term,
-          messagetype: 'All',
-          groupids: params.groupid ? String(params.groupid) : undefined,
-          searchmode: 'vector',
-        })
-
-        if (!results || results.length === 0) return []
-
-        // Fetch in parallel but preserve API score order via Promise.all index stability
-        const fetched = await Promise.all(
-          results.map(async (r) => {
-            try {
-              const message = await this.fetchMT({ id: r.id || r.msgid })
-              if (message) {
-                // Carry matchedon from search result onto the fetched message
-                if (r.matchedon) {
-                  message.matchedon = r.matchedon
-                }
-                this.list[message.id] = message
-                return message.id
-              }
-            } catch (e) {
-              console.log('Failed to fetch message', r.id, e?.message)
-            }
-            return null
-          })
-        )
-        return fetched.filter((id) => id !== null)
-      }
-
-      // Existing keyword search path
-      const data = await api(this.config).message.fetchMessages({
-        subaction: 'searchall',
+      // Message search is always semantic now (the keyword toggle has been
+      // retired). We call the V2 vector search endpoint directly and pass
+      // searchmode explicitly so this does not depend on the server default.
+      const results = await api(this.config).message.search({
         search: params.term,
-        exactonly: true,
-        groupid: params.groupid,
+        messagetype: 'All',
+        groupids: params.groupid ? String(params.groupid) : undefined,
+        searchmode: 'vector',
       })
-      if (!data.messages || data.messages.length === 0) return
-      // Response is IDs only — fetch full details for each.
-      await Promise.all(
-        data.messages.map(async (id) => {
+
+      if (!results || results.length === 0) return []
+
+      // Fetch in parallel but preserve API score order via Promise.all index stability
+      const fetched = await Promise.all(
+        results.map(async (r) => {
           try {
-            const message = await this.fetchMT({ id })
+            const message = await this.fetchMT({ id: r.id || r.msgid })
             if (message) {
+              // Carry matchedon from search result onto the fetched message
+              if (r.matchedon) {
+                message.matchedon = r.matchedon
+              }
               this.list[message.id] = message
+              return message.id
             }
           } catch (e) {
-            console.log('Failed to fetch message', id, e?.message)
+            console.log('Failed to fetch message', r.id, e?.message)
           }
+          return null
         })
       )
+      return fetched.filter((id) => id !== null)
     },
     async fetchMessagesMT(params) {
       if (params.context) {

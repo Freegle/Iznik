@@ -317,11 +317,12 @@ describe('message store - searchMT()', () => {
     expect(ids).toEqual([202])
   })
 
-  it('uses keyword search when searchmode is not vector', async () => {
+  it('always uses vector search even when no searchmode is passed (keyword path retired)', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockFetchMessages.mockResolvedValue({
-      messages: [301, 302],
-    })
+    mockSearch.mockResolvedValue([
+      { id: 301, msgid: 301 },
+      { id: 302, msgid: 302 },
+    ])
 
     const store = useMessageStore()
     store.fetchMT = vi.fn().mockImplementation(({ id }) => {
@@ -335,27 +336,16 @@ describe('message store - searchMT()', () => {
       groupid: 50,
     })
 
-    expect(mockFetchMessages).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subaction: 'searchall',
-        search: 'bike',
-        exactonly: true,
-        groupid: 50,
-      })
-    )
+    // The V2 vector endpoint is used regardless of searchmode; the old keyword
+    // fetchMessages(subaction:'searchall') path has been removed.
+    expect(mockSearch).toHaveBeenCalledWith({
+      search: 'bike',
+      messagetype: 'All',
+      groupids: '50',
+      searchmode: 'vector',
+    })
+    expect(mockFetchMessages).not.toHaveBeenCalled()
     expect(store.fetchMT).toHaveBeenCalledTimes(2)
-  })
-
-  it('handles empty keyword search results', async () => {
-    useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockFetchMessages.mockResolvedValue({ messages: [] })
-
-    const store = useMessageStore()
-    store.fetchMT = vi.fn()
-
-    await store.searchMT({ term: 'nothing' })
-
-    expect(store.fetchMT).not.toHaveBeenCalled()
   })
 })
 
