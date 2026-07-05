@@ -23,14 +23,6 @@
         <PostPersonalInfoWarning :group="group" :text="postText" />
       </div>
 
-      <!-- Offers already available near the chosen location. Non-blocking. -->
-      <WantedMatches
-        v-if="postcodeValid && matchQuery"
-        :query="matchQuery"
-        :lat="matchLat"
-        :lng="matchLng"
-      />
-
       <div v-if="postcodeValid && noGroups" class="no-groups-notice">
         <NoticeMessage variant="info">
           We're really sorry, but there are no communities near there. If you'd
@@ -125,7 +117,6 @@ import ExternalLink from '~/components/ExternalLink.vue'
 import EmailValidator from '~/components/EmailValidator.vue'
 import EmailBelongsToSomeoneElse from '~/components/EmailBelongsToSomeoneElse.vue'
 import PostPersonalInfoWarning from '~/components/PostPersonalInfoWarning.vue'
-import WantedMatches from '~/components/WantedMatches.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
@@ -176,14 +167,6 @@ const postText = computed(() => {
   const msg = msgs[0]
   return ((msg.item || '') + ' ' + (msg.description || '')).trim()
 })
-
-// Query + location for the "offers available near you" panel.
-const matchQuery = computed(() => {
-  const msgs = composeStore.all.filter((m) => m.type === 'Wanted')
-  return msgs.length ? (msgs[0].item || '').trim() : ''
-})
-const matchLat = computed(() => composeStore.postcode?.lat || 0)
-const matchLng = computed(() => composeStore.postcode?.lng || 0)
 
 const canSubmit = makeCanSubmit({
   messageValid,

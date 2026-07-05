@@ -57,15 +57,6 @@
           </div>
         </div>
 
-        <!-- Offers already available near the chosen location that match this
-             wanted. Async and non-blocking — never gates the Next button. -->
-        <WantedMatches
-          v-if="postcodeValid && matchQuery"
-          :query="matchQuery"
-          :lat="matchLat"
-          :lng="matchLng"
-        />
-
         <!-- Navigation button -->
         <div v-if="postcodeValid && !closed" class="next-section">
           <div class="next-container">
@@ -94,7 +85,6 @@ import PostCode from '~/components/PostCode.vue'
 import WizardProgressCompact from '~/components/WizardProgressCompact.vue'
 import ComposeGroup from '~/components/ComposeGroup.vue'
 import PostPersonalInfoWarning from '~/components/PostPersonalInfoWarning.vue'
-import WantedMatches from '~/components/WantedMatches.vue'
 import { setup, postcodeSelect, postcodeClear } from '~/composables/useCompose'
 import { buildHead } from '~/composables/useBuildHead'
 import { useComposeStore } from '~/stores/compose'
@@ -122,15 +112,6 @@ const postText = computed(() => {
   const msg = msgs[0]
   return ((msg.item || '') + ' ' + (msg.description || '')).trim()
 })
-
-// Query + location for the "offers available near you" panel. The item name is
-// the cleanest match query; the location comes from the chosen postcode.
-const matchQuery = computed(() => {
-  const msgs = composeStore.all.filter((m) => m.type === 'Wanted')
-  return msgs.length ? (msgs[0].item || '').trim() : ''
-})
-const matchLat = computed(() => composeStore.postcode?.lat || 0)
-const matchLng = computed(() => composeStore.postcode?.lng || 0)
 </script>
 
 <style scoped lang="scss">

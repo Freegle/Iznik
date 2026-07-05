@@ -13,7 +13,7 @@
         class="wanted-matches__dismiss"
         @click="dismissed = true"
       >
-        Not what I'm looking for - keep posting
+        Not what I'm looking for
       </b-button>
     </div>
     <div class="wanted-matches__row">

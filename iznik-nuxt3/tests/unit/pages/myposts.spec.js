@@ -34,11 +34,18 @@ vi.mock('~/components/MyPostsDonationAsk.vue', () => ({
 vi.mock('~/components/NewUserInfo.vue', () => ({
   default: { template: '<div />' },
 }))
+vi.mock('~/components/WantedMatches.vue', () => ({
+  default: {
+    template: '<div class="wanted-matches-stub" />',
+    props: ['query', 'lat', 'lng'],
+  },
+}))
 
 // Mock stores
 const mockMessageStore = {
   myPosts: [],
   byUserList: {},
+  list: {},
   byId: vi.fn(() => null),
   fetchMyPosts: vi.fn().mockResolvedValue([]),
   fetchByUser: vi.fn().mockResolvedValue([]),
@@ -186,6 +193,7 @@ describe('myposts.vue loadMore', () => {
     mockMe.value = { id: 1, displayname: 'Test User', settings: {} }
     mockMessageStore.myPosts = []
     mockMessageStore.byUserList = {}
+    mockMessageStore.list = {}
     mockMessageStore.byId = vi.fn(() => null)
     mockMessageStore.fetchByUser = vi.fn().mockResolvedValue([])
     mockMessageStore.fetch = vi.fn().mockResolvedValue({})
@@ -256,5 +264,37 @@ describe('myposts.vue loadMore', () => {
     page.vm.loadMore(mockState)
 
     expect(mockState.complete).toHaveBeenCalled()
+  })
+
+  it('shows the wanted-offer matches after posting a WANTED', async () => {
+    // Simulate landing here straight after posting a WANTED (freegleIt pushes
+    // the type + posted ids into history state).
+    window.history.replaceState({ type: 'Wanted', ids: [7] }, '')
+    mockMessageStore.list = {
+      7: { id: 7, subject: 'sofa', lat: 55.9533, lng: -3.1883 },
+    }
+
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.wanted-matches-stub').exists()).toBe(true)
+
+    window.history.replaceState({}, '')
+  })
+
+  it('does not show wanted-offer matches after posting an OFFER', async () => {
+    window.history.replaceState({ type: 'Offer', ids: [8] }, '')
+    mockMessageStore.list = {
+      8: { id: 8, subject: 'table', lat: 55.9533, lng: -3.1883 },
+    }
+
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.wanted-matches-stub').exists()).toBe(false)
+
+    window.history.replaceState({}, '')
   })
 })
