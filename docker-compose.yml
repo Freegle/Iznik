@@ -1630,6 +1630,13 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-batch-prod
     profiles:
       - production
+    # Give the scheduler + daemons (schedule:work, mail:spool:process, ripple, digest
+    # shards) time to reach a safe stopping point on SIGTERM before Docker SIGKILLs them.
+    # The default is only 10s, too short for an in-flight email send / digest sweep to
+    # finish cleanly; a graceful shutdown was measured at ~9s, so 60s is generous headroom.
+    # This makes a plain `docker restart` / `docker compose restart` graceful without a
+    # manual -t flag (applied to the container's StopTimeout on next recreate).
+    stop_grace_period: 60s
     networks:
       - default
     build:
