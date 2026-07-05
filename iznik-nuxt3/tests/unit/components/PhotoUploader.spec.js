@@ -91,6 +91,14 @@ vi.mock('@uppy/compressor', () => ({
   default: vi.fn(),
 }))
 
+// Spy on the Loki action() logger so we can assert the upload/compression
+// telemetry payloads. Keep the module's other exports real.
+const mockAction = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useClientLog', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, action: (...args) => mockAction(...args) }
+})
+
 // Mock image store
 const mockImageStore = {
   post: vi.fn().mockResolvedValue({
@@ -1437,6 +1445,124 @@ describe('PhotoUploader', () => {
       expect(aiPhotos.length).toBe(0)
       expect(wrapper.vm.photos).toHaveLength(1)
       expect(wrapper.vm.photos[0].id).toBe(1)
+    })
+  })
+
+  describe('compression telemetry', () => {
+    function getHandler(name) {
+      return mockUppyInstance.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('registers the upload funnel and compression bracket listeners', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      const names = mockUppyInstance.on.mock.calls.map((c) => c[0])
+      expect(names).toContain('file-added')
+      expect(names).toContain('preprocess-progress')
+      expect(names).toContain('compressor:complete')
+      expect(names).toContain('preprocess-complete')
+      expect(names).toContain('upload-success')
+    })
+
+    it('logs upload_file_selected tagged uploader=photo', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('file-added')({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_file_selected',
+        expect.objectContaining({ uploader: 'photo', file_size: 5000 })
+      )
+    })
+
+    it('logs upload_compress_started on preprocess-progress', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith('upload_compress_started', {
+        uploader: 'photo',
+        file_size: 5000,
+      })
+    })
+
+    it('logs upload_compress_finished with compressed=true after a successful compress', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      getHandler('compressor:complete')([{ id: 'f1' }])
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 1000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({
+          uploader: 'photo',
+          original_size: 5000,
+          compressed_size: 1000,
+          elapsed_ms: expect.any(Number),
+          compressed: true,
+          shrunk: true,
+        })
+      )
+    })
+
+    it('records a silent compression failure when compressor:complete omits the file', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({ compressed: false, shrunk: false })
+      )
+    })
+
+    it('logs upload_succeeded tagged uploader=photo', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('upload-success')({ id: 'f1', size: 1000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_succeeded',
+        expect.objectContaining({ uploader: 'photo' })
+      )
+    })
+
+    it('logs upload_failed on error', async () => {
+      mockMobileStore.isApp = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('error')(new Error('boom'))
+      await flushPromises()
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({ uploader: 'photo', reason: 'boom' })
+      )
+      consoleError.mockRestore()
     })
   })
 })
