@@ -351,7 +351,9 @@ const me = computed(() => useAuthStore().user)
   display: flex;
   align-items: stretch;
   justify-content: space-around;
-  background: white;
+  /* Muted (not pure white) so the bar reads as fixed chrome and separates from the white
+     job-ad cards that can sit directly beneath it on Browse. */
+  background: $color-gray--lighter;
   border-top: 1px solid $color-gray-4;
   box-shadow: var(--shadow-md);
   padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
