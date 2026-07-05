@@ -255,11 +255,10 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	// Posted + approved on group A (helper adds messages_groups/spatial/index for A).
 	msgID := CreateTestMessage(t, posterID, groupA, subject, lat, lng)
 
-	// Cross-post to group B: approved messages_groups + per-group word index. Under the
-	// one-row spatial model messages_spatial keeps a single row per message (UNIQUE(msgid));
-	// the cross-post's group membership lives in messages_groups, which browse/search join through.
+	// Cross-post to group B. Under the one-row spatial model messages_spatial keeps
+	// a single row per message (UNIQUE(msgid)); the cross-post's group membership
+	// lives in messages_groups, which browse/search join through.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
-	indexMessageWords(t, db, msgID, groupB, subject)
 
 	// Seed the embedding store so the pure-vector search can find the post. The
 	// store holds one entry per message keyed to its single spatial group (A) —
@@ -281,7 +280,6 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	})
 
 	defer func() {
-		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
