@@ -107,6 +107,10 @@ type SearchResult struct {
 	Distance float64 `json:"distance" gorm:"-"`
 }
 
+// GetWords tokenises a search string into lower-cased, stopword-filtered words.
+// Used for the vector search's lexical-match tier (the query terms and the
+// keyword boost). The old keyword-index query functions that also lived here
+// were removed when the keyword index was retired.
 func GetWords(search string) []string {
 	common := [...]string{
 		"the", "old", "new", "please", "thanks", "with", "offer", "taken", "wanted", "received", "attachment", "offered", "and",
@@ -145,15 +149,6 @@ func GetWords(search string) []string {
 	return filtered
 }
 
-func processResults(tag string, results []SearchResult) []SearchResult {
-	for i := range results {
-		results[i].Matchedon.Type = tag
-		results[i].Matchedon.Word = results[i].Word
-	}
-
-	return results
-}
-
 func groupFilter(groupids []uint64) string {
 	ret := ""
 
@@ -169,29 +164,6 @@ func groupFilter(groupids []uint64) string {
 	}
 
 	return ret
-}
-
-// msgidFilter restricts a keyword-search query to an explicit msgid universe - for a
-// browse-scoped Nearby search, the member's reach feed (see nearbyFeedMsgIDs). Applying it
-// INSIDE the query matters: each search arm caps its results (LIMIT/top-K), so filtering
-// afterwards would let out-of-feed posts crowd in-feed posts out of the capped candidate
-// set. Empty = no restriction. The ids come from our own queries, never user input, so the
-// IN list is built directly (same pattern as groupFilter).
-func msgidFilter(msgids []uint64) string {
-	if len(msgids) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString(" AND messages_spatial.msgid IN (")
-	for i, id := range msgids {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(strconv.FormatUint(id, 10))
-	}
-	sb.WriteString(") ")
-	return sb.String()
 }
 
 // nearbyFeedMsgIDs returns the msgids of the posts that make up the member's Nearby browse
@@ -280,207 +252,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		}
 	}
 	return ids
-}
-
-func typeFilter(msgtype string) string {
-	var ret string
-
-	switch msgtype {
-	case utils.OFFER:
-		ret = " AND messages_spatial.msgtype = '" + utils.OFFER + "' "
-	case utils.WANTED:
-		ret = " AND messages_spatial.msgtype = '" + utils.WANTED + "' "
-	default:
-		ret = ""
-	}
-
-	return ret
-}
-
-func boxFilter(nelatf float32, nelngf float32, swlatf float32, swlngf float32) string {
-	var ret string
-
-	// Add in some padding.  This copes with blurring and also shows some fairly nearby results which might not be
-	// on the map.
-	if nelatf != 0 && nelngf != 0 && swlatf != 0 && swlngf != 0 {
-		nelat := strconv.FormatFloat(float64(nelatf+0.02), 'f', -1, 32)
-		nelng := strconv.FormatFloat(float64(nelngf+0.02), 'f', -1, 32)
-		swlat := strconv.FormatFloat(float64(swlatf-0.02), 'f', -1, 32)
-		swlng := strconv.FormatFloat(float64(swlngf-0.02), 'f', -1, 32)
-		srid := strconv.FormatInt(utils.SRID, 10)
-		ret = " ST_Contains(ST_SRID(POLYGON(LINESTRING(" +
-			"POINT(" + swlng + ", " + swlat + "), " +
-			"POINT(" + swlng + ", " + nelat + "), " +
-			"POINT(" + nelng + ", " + nelat + "), " +
-			"POINT(" + nelng + ", " + swlat + "), " +
-			"POINT(" + swlng + ", " + swlat + "))), " + srid + "), point) "
-	}
-
-	return ret
-}
-
-func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	bf := boxFilter(nelat, nelng, swlat, swlng)
-
-	if len(bf) > 0 {
-		bf = bf + " AND "
-	}
-
-	sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-		"INNER JOIN words ON messages_index.wordid = words.id " +
-		"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-		"WHERE " +
-		bf +
-		"word IN ("
-
-	args := []interface{}{}
-
-	for i, w := range words {
-		if i > 0 {
-			sql += ","
-		}
-
-		sql += "? "
-		args = append(args, w)
-	}
-
-	sql += ") " +
-		groupFilter(groupids) +
-		msgidFilter(msgids) +
-		typeFilter(msgtype) +
-		"GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?;"
-
-	args = append(args, limit)
-
-	var res []SearchResult
-	db.Raw(sql, args...).Scan(&res)
-
-	return processResults("Exact", res)
-}
-
-func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		bf := boxFilter(nelat, nelng, swlat, swlng)
-
-		if len(bf) > 0 {
-			bf = bf + " AND "
-		}
-
-		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch, messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-			"INNER JOIN words ON messages_index.wordid = words.id " +
-			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-			"WHERE (" + bf
-
-		args := []interface{}{}
-
-		for i, word := range words {
-			if i > 0 {
-				sql += " OR "
-			}
-
-			prefix := word[0:1] + "%"
-
-			sql += "(word LIKE ? AND damlevlim(word, ?, ?) < 2) "
-			args = append(args, prefix, word, len(word))
-		}
-
-		sql += ")" + groupFilter(groupids) +
-			msgidFilter(msgids) +
-			typeFilter(msgtype) +
-			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-		args = append(args, limit)
-
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("Typo", res)
-}
-
-func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-			"INNER JOIN words ON messages_index.wordid = words.id " +
-			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-			"WHERE "
-
-		bf := boxFilter(nelat, nelng, swlat, swlng)
-
-		if len(bf) > 0 {
-			sql += "(" + bf + ") AND "
-		}
-
-		sql += " ("
-
-		args := []interface{}{}
-
-		for i, word := range words {
-			if i > 0 {
-				sql += " OR "
-			}
-
-			prefix := word + "%"
-
-			sql += "word LIKE ? "
-			args = append(args, prefix)
-		}
-
-		sql += ") " + groupFilter(groupids) +
-			msgidFilter(msgids) +
-			typeFilter(msgtype) +
-			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-		args = append(args, limit)
-
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("StartsWith", res)
-}
-
-func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	var res []SearchResult
-
-	if len(words) > 0 {
-		sql := "SELECT COUNT(DISTINCT messages_index.wordid) AS wordmatch,  messages_spatial.msgid, words.word, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype as type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_index " +
-			"INNER JOIN words ON messages_index.wordid = words.id " +
-			"INNER JOIN messages_spatial ON messages_index.msgid = messages_spatial.msgid " +
-			"WHERE "
-
-		bf := boxFilter(nelat, nelng, swlat, swlng)
-
-		if len(bf) > 0 {
-			sql += "(" + bf + ") AND "
-		}
-
-		sql += " ("
-
-		args := []interface{}{}
-
-		for i, word := range words {
-			if i > 0 {
-				sql += " OR "
-			}
-
-			sql += "soundex = SUBSTRING(SOUNDEX(?), 1, 10) "
-			args = append(args, word)
-		}
-
-		sql += ") " + groupFilter(groupids) +
-			msgidFilter(msgids) +
-			typeFilter(msgtype) +
-			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
-
-		args = append(args, limit)
-
-		db.Raw(sql, args...).Scan(&res)
-	}
-
-	return processResults("SoundsLike", res)
 }
 
 // SearchByMsgID returns the message with the given id as a single-element search
