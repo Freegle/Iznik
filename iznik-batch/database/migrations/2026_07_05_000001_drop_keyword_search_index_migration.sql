@@ -1,12 +1,20 @@
 -- Idempotent production SQL for 2026_07_05_000001_drop_keyword_search_index.php
 --
--- Retires the keyword search index. Search is now served entirely from vector
--- embeddings (messages_embeddings + the in-memory embedding store in the Go API),
--- so the words / messages_index / items_index / words_cache tables, the
--- search_terms table, the microactions.searchterm1/2 columns (which fed the
--- retired "SearchTerm" micro-volunteering challenge) and the legacy
--- VW_search_term_similarities view are all dead storage. The matching code
--- removals ship in the same change set.
+-- Retires the SearchTerm micro-volunteering machinery: search_terms and the
+-- microactions.searchterm1/2 columns (which fed the retired "SearchTerm"
+-- micro-volunteering challenge) plus the legacy VW_search_term_similarities
+-- view. The matching code removals ship in the same change set.
+--
+-- NOT dropped, despite the original plan for this migration: words,
+-- words_cache, items_index and messages_index. Item::typeahead()/create()/
+-- delete() (iznik-server/include/message/Item.php) and
+-- Message::search()/searchActiveInBounds() (iznik-server/include/message/Message.php,
+-- behind the live ModTools message search endpoint in http/api/messages.php)
+-- still query these tables via the Search class, and
+-- Message::repost()/autoRepost() (driven by the live AutoRepostService) still
+-- call Search::bump()/delete() against messages_index. Only the message-text
+-- keyword search has actually been replaced by vector embeddings so far; item
+-- search and auto-repost have not been migrated.
 --
 -- KEPT deliberately: search_history and users_searches (search analytics) and the
 -- damlevlim() stored function.
@@ -42,12 +50,8 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 ALTER TABLE microactions DROP COLUMN IF EXISTS searchterm1;
 ALTER TABLE microactions DROP COLUMN IF EXISTS searchterm2;
 
--- 4. Drop the keyword index tables (no inter-table foreign keys).
-DROP TABLE IF EXISTS messages_index;
-DROP TABLE IF EXISTS items_index;
-DROP TABLE IF EXISTS words_cache;
+-- 4. Drop the SearchTerm table (no inter-table foreign keys).
 DROP TABLE IF EXISTS search_terms;
-DROP TABLE IF EXISTS words;
 
 -- 5. Drop the legacy keyword-similarity view.
 DROP VIEW IF EXISTS VW_search_term_similarities;
