@@ -1347,8 +1347,10 @@ class UnifiedDigestService
                 emailType: 'digest_daily',
             );
             // Advance the cursor past everything examined this window (live,
-            // completed and withdrawn) so nothing re-surfaces tomorrow.
-            $this->updateDigestTracker($digestTracker, $allPosts);
+            // completed and withdrawn) so nothing re-surfaces tomorrow. Pass
+            // emailWasSent=true so lastsent is stamped even when $allPosts is empty
+            // (a pinned-only digest still sent an email) — see updateDigestTracker.
+            $this->updateDigestTracker($digestTracker, $allPosts, true);
         }
 
         return ['status' => 'sent', 'count' => 1];
@@ -2044,7 +2046,7 @@ class UnifiedDigestService
      * @param UserDigest $tracker
      * @param Collection $posts
      */
-    protected function updateDigestTracker(UserDigest $tracker, Collection $posts): void
+    protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false): void
     {
         $lastPost = $posts->last();
 
@@ -2054,6 +2056,15 @@ class UnifiedDigestService
                 'lastmsgdate' => $lastPost->arrival,
                 'lastsent' => now(),
             ]);
+        } elseif ($emailWasSent) {
+            // A daily email WAS sent but there are no cursor posts to advance past —
+            // the digest contained only a pinned post, which is never part of the
+            // cursor set (see the pinned-post block in sendDigest). Stamp lastsent
+            // anyway so the once-per-London-day guard skips this user on the next tick.
+            // Without this, a pinned-only digest re-sends every minute (incident
+            // 2026-07-05: the once-per-day guard never fired, so 67 members received the
+            // daily digest up to ~198 times).
+            $tracker->update(['lastsent' => now()]);
         }
     }
 

@@ -420,6 +420,47 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    /**
+     * Regression for the 2026-07-05 daily-digest flood: a digest whose only content is a
+     * pinned post has an EMPTY cursor-post set ($allPosts) but STILL sends an email.
+     * updateDigestTracker must stamp lastsent in that case so the once-per-London-day
+     * guard skips the user on the next tick — otherwise the digest re-sends every minute.
+     */
+    public function test_update_tracker_stamps_lastsent_when_email_sent_with_no_cursor_posts(): void
+    {
+        $user = $this->createTestUser();
+        $old = \Carbon\Carbon::now()->subDays(2)->setTimezone('UTC');
+        $tracker = UserDigest::create([
+            'userid' => $user->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+            'lastsent' => $old,
+        ]);
+
+        $ref = new \ReflectionMethod($this->service, 'updateDigestTracker');
+        $ref->setAccessible(true);
+
+        $oldRaw = $tracker->fresh()->getRawOriginal('lastsent');
+
+        // Email sent, but no cursor posts (pinned-only digest): lastsent MUST advance.
+        $ref->invoke($this->service, $tracker->fresh(), collect(), true);
+        $this->assertNotEquals(
+            $oldRaw,
+            $tracker->fresh()->getRawOriginal('lastsent'),
+            'lastsent must be stamped when a daily email was sent with no cursor posts'
+        );
+
+        // No email sent and no posts: lastsent must NOT change (never mark unsent users).
+        $tracker->update(['lastsent' => $old]);
+        $resetRaw = $tracker->fresh()->getRawOriginal('lastsent');
+        $ref->invoke($this->service, $tracker->fresh(), collect(), false);
+        $this->assertEquals(
+            $resetRaw,
+            $tracker->fresh()->getRawOriginal('lastsent'),
+            'lastsent must not change when no email was sent'
+        );
+    }
+
     public function test_format_posted_to_multiple_groups(): void
     {
         $group1 = $this->createTestGroup();
