@@ -6,14 +6,14 @@
 
         <mj-section background-color="#ffffff" padding="20px">
             <mj-column>
-                <mj-text>
+                <mj-text font-size="16px" line-height="1.6">
                     Dear {{ $user->displayname ?? 'there' }},
                 </mj-text>
-                <mj-text>
+                <mj-text font-size="16px" line-height="1.6">
                     You kindly donated to Freegle on {{ $donationDate }}. We can make your kind donation go even further if we can claim Gift Aid on it.
                 </mj-text>
-                <mj-text>
-                    If you're a UK taxpayer, Freegle can claim an extra 25p for every £1 you donate — at no cost to you!
+                <mj-text font-size="16px" line-height="1.6">
+                    If you're a UK taxpayer, Freegle can claim an <strong>extra 25p for every £1</strong> you donate — at no cost to you!
                 </mj-text>
             </mj-column>
         </mj-section>

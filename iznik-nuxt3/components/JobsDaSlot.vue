@@ -186,7 +186,9 @@ function onJobClicked(clickedId) {
 
 .jobs-slot {
   width: 100%;
-  background: $white;
+  /* Muted (not pure white) so the job-ads block reads as distinct sponsored content and
+     separates from the white nav bar that can sit directly above it on Browse. */
+  background: $color-gray--lighter;
   border: 1px solid $gray-200;
   overflow-y: auto;
 }
