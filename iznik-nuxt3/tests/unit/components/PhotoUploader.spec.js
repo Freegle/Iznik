@@ -1549,18 +1549,53 @@ describe('PhotoUploader', () => {
       )
     })
 
-    it('logs upload_failed on error', async () => {
+    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', async () => {
       mockMobileStore.isApp = false
       const consoleError = vi
         .spyOn(console, 'error')
         .mockImplementation(() => {})
       createWrapper()
       mockAction.mockClear()
+      // The global error event now only drives retry — it must NOT log.
       getHandler('error')(new Error('boom'))
-      await flushPromises()
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_failed',
+        expect.anything()
+      )
+      // The per-file upload-error event logs the diagnosable detail.
+      const file = { id: 'f1', size: 5900000, type: 'image/jpeg' }
+      const err = new Error('Failed to upload big.jpg')
+      const response = { status: 413, body: 'Request Entity Too Large' }
+      getHandler('upload-error')(file, err, response)
       expect(mockAction).toHaveBeenCalledWith(
         'upload_failed',
-        expect.objectContaining({ uploader: 'photo', reason: 'boom' })
+        expect.objectContaining({
+          uploader: 'photo',
+          reason: 'Failed to upload big.jpg',
+          status: 413,
+          is_network_error: false,
+          file_size: 5900000,
+          file_type: 'image/jpeg',
+          attempt: 1,
+        })
+      )
+      consoleError.mockRestore()
+    })
+
+    it('counts retries so upload_failed reports the attempt number', async () => {
+      mockMobileStore.isApp = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      createWrapper()
+      const file = { id: 'f9', size: 100, type: 'image/png' }
+      getHandler('upload-retry')('f9')
+      getHandler('upload-retry')('f9')
+      mockAction.mockClear()
+      getHandler('upload-error')(file, new Error('nope'), undefined)
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({ attempt: 3 })
       )
       consoleError.mockRestore()
     })

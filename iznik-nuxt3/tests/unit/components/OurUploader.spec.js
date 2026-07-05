@@ -1516,4 +1516,68 @@ describe('OurUploader', () => {
       )
     })
   })
+
+  describe('upload failure telemetry', () => {
+    function getHandler(name) {
+      return mockUppy.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('logs enriched upload_failed on upload-error, not on the retry-only error event', async () => {
+      mockIsApp.value = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      await createWrapper()
+      mockAction.mockClear()
+      // Global error event drives retry only — must not log upload_failed.
+      getHandler('error')(new Error('boom'))
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_failed',
+        expect.anything()
+      )
+      // upload-error carries file + response → diagnosable payload.
+      getHandler('upload-error')(
+        { id: 'f1', size: 5900000, type: 'image/jpeg' },
+        new Error('Failed to upload big.jpg'),
+        { status: 413, body: 'Request Entity Too Large' }
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          uploader: 'our',
+          reason: 'Failed to upload big.jpg',
+          status: 413,
+          is_network_error: false,
+          file_size: 5900000,
+          file_type: 'image/jpeg',
+          attempt: 1,
+        })
+      )
+      consoleError.mockRestore()
+    })
+
+    it('flags a network error (no HTTP status) and counts the attempt', async () => {
+      mockIsApp.value = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      await createWrapper()
+      getHandler('upload-retry')('f2')
+      mockAction.mockClear()
+      getHandler('upload-error')(
+        { id: 'f2', size: 120000, type: 'image/jpeg' },
+        new Error('Failed to fetch'),
+        undefined
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          status: null,
+          is_network_error: true,
+          attempt: 2,
+        })
+      )
+      consoleError.mockRestore()
+    })
+  })
 })

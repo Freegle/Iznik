@@ -201,6 +201,7 @@ import PhotoCard from './PhotoCard.vue'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
 import { action } from '~/composables/useClientLog'
+import { describeUploadError } from '~/composables/useUploadErrorDetail'
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
@@ -713,6 +714,9 @@ async function handleUppySuccess(result) {
 // Per-file compression telemetry (see OurUploader.vue for the rationale). Keyed
 // by file.id; an entry lives from preprocess-progress to preprocess-complete.
 const compressTimers = new Map()
+// Per-file retry counter (keyed by file.id) so upload_failed reports which
+// attempt failed — attempt 5 = retry ladder exhausted (a genuine stop).
+const uploadRetries = new Map()
 
 // Initialize Uppy for web browsers
 onMounted(() => {
@@ -798,16 +802,29 @@ onMounted(() => {
       file_type: file?.type,
     })
   })
+  // Per-FILE failure carries file + server response — log diagnosable detail here.
+  uppy.value.on('upload-error', (file, error, response) => {
+    console.error('Upload error', file?.id, error, response)
+    action('upload_failed', {
+      uploader: 'photo',
+      attempt: (uploadRetries.get(file?.id) ?? 0) + 1,
+      ...describeUploadError(error, file, response),
+    })
+  })
+  uppy.value.on('upload-retry', (fileID) => {
+    uploadRetries.set(fileID, (uploadRetries.get(fileID) ?? 0) + 1)
+  })
   const scheduleRetry = createRetryCoalescer(() => uppy.value)
+  // Global error event drives retry only; logging lives in upload-error above.
   uppy.value.on('error', (error) => {
     console.error('Upload error, retry', error)
-    action('upload_failed', { uploader: 'photo', reason: error?.message })
     scheduleRetry()
   })
 })
 
 onBeforeUnmount(() => {
   compressTimers.clear()
+  uploadRetries.clear()
   if (uppy.value && typeof uppy.value.close === 'function') {
     uppy.value.close()
     uppy.value = null
