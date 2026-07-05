@@ -67,6 +67,7 @@ class TestMailCommand extends Command
         'deadline-reached' => 'Deadline reached notification',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
         'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
+        'giftaid-orphaned' => 'One-off Gift Aid ask for donors whose past donations were orphaned (from info@, signed Jacky)',
     ];
 
     /**
@@ -357,8 +358,31 @@ class TestMailCommand extends Command
             'deadline-reached' => $this->buildDeadlineReached(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
             'ripple-intro' => $this->buildRippleIntro(),
+            'giftaid-orphaned' => $this->buildGiftAidOrphaned(),
             default => null,
         };
+    }
+
+    /**
+     * Build the one-off orphaned-donation Gift Aid ask.
+     * mail:test giftaid-orphaned --to=you@example.com  (finds the user by that email)
+     */
+    protected function buildGiftAidOrphaned(): ?\App\Mail\Donation\GiftAidOrphanedAsk
+    {
+        $toEmail = $this->option('to');
+        $user = $toEmail
+            ? User::whereHas('emails', fn ($q) => $q->where('email', $toEmail))->first()
+            : $this->findUserWithEmail($this->option('user'));
+
+        if (! $user) {
+            $this->error('No user found'.($toEmail ? " with email: {$toEmail}" : ''));
+
+            return null;
+        }
+
+        $this->info("Generating orphaned-donation Gift Aid ask for: {$user->displayname} (ID: {$user->id})");
+
+        return new \App\Mail\Donation\GiftAidOrphanedAsk($user);
     }
 
     /**
