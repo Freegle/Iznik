@@ -244,7 +244,7 @@ func fingerprintVec(v []float32) string {
 // logVectorSearch emits a structured diagnostic log to Loki summarising one
 // vector search call. Cheap no-op when Loki is disabled.
 func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint64,
-	searchmode string, returned int, fallbackTaken bool, stats VectorStats) {
+	returned int, fallbackTaken bool, stats VectorStats) {
 
 	l := misc.GetLoki()
 	if l == nil || !l.IsEnabled() {
@@ -257,7 +257,6 @@ func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint
 	}
 
 	labels := map[string]string{
-		"searchmode":     searchmode,
 		"fallback_taken": strconv.FormatBool(fallbackTaken),
 		"empty":          strconv.FormatBool(returned == 0),
 	}

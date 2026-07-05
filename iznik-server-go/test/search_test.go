@@ -3,13 +3,15 @@ package test
 import (
 	json2 "encoding/json"
 	"fmt"
-	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/message"
-	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/message"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetWords(t *testing.T) {
@@ -19,61 +21,10 @@ func TestGetWords(t *testing.T) {
 	assert.Equal(t, "which", words[1])
 }
 
-func TestSearchExact(t *testing.T) {
-	// Create a message with searchable words
-	prefix := uniquePrefix("searchexact")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Vintage Sofa Available", 55.9533, -3.1883)
-
-	// Search on a word in subject
-	words := message.GetWords("Vintage Sofa Available")
-	results := message.GetWordsExact(database.DBConn, words, 100, nil, nil, "All", 0, 0, 0, 0)
-
-	// Should find messages with these words
-	assert.Greater(t, len(results), 0)
-}
-
-func TestSearchTypo(t *testing.T) {
-	// Create a message with searchable words
-	prefix := uniquePrefix("searchtypo")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Beautiful Chair Free", 55.9533, -3.1883)
-
-	words := message.GetWords("Beautiful Chair Free")
-	_ = message.GetWordsTypo(database.DBConn, words, 100, nil, nil, "All", 0, 0, 0, 0)
-	// May or may not find results depending on index state
-}
-
-func TestSearchSounds(t *testing.T) {
-	// Create a group for sound search test
-	prefix := uniquePrefix("searchsound")
-	groupID := CreateTestGroup(t, prefix)
-
-	// Search for a nonsense word that shouldn't exist
-	results := message.GetWordsSounds(database.DBConn, []string{"zcz"}, 100, []uint64{groupID}, nil, "All", 0, 0, 0, 0)
-	assert.Equal(t, len(results), 0)
-}
-
-func TestSearchStarts(t *testing.T) {
-	// Create a message with searchable words
-	prefix := uniquePrefix("searchstarts")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Bookshelf Wooden Large", 55.9533, -3.1883)
-
-	// Search on prefix of a word
-	words := message.GetWords("Bookshelf Wooden Large")
-	if len(words) > 0 && len(words[0]) >= 3 {
-		results := message.GetWordsStarts(database.DBConn, []string{words[0][:3]}, 100, nil, nil, "All", 0, 0, 0, 0)
-		// Should find something starting with that prefix
-		assert.Greater(t, len(results), 0)
-	}
-}
+// The keyword-index query functions (GetWordsExact/Typo/Starts/Sounds) and their
+// unit tests were removed when the keyword index was retired. Search is now pure
+// vector with an in-memory lexical guarantee; see embedding_vectorsearch_test.go
+// (TestVectorSearchLexicalGuarantee) and the endpoint tests below.
 
 func TestAPISearch(t *testing.T) {
 	// Create a full test user for search with history
@@ -116,44 +67,6 @@ func TestAPISearch(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
-// TestAPISearch_DedupsExactAndStartsMatch guards against the search endpoint returning
-// the same message more than once. The keyword path runs an exact-match pass and a
-// starts-with pass and concatenates them; any exact match is also a starts-with match, so
-// without dedup-by-msgid every exact hit would be returned twice.
-func TestAPISearch_DedupsExactAndStartsMatch(t *testing.T) {
-	prefix := uniquePrefix("srch_dedup")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-
-	// A rare, short (<=10 char) coined word so the index hit is deterministic and stays
-	// within SEARCH_LIMIT in the shared DB. It is the word's own prefix, so it matches
-	// BOTH the exact and the starts-with pass.
-	word := fmt.Sprintf("zq%d", time.Now().UnixNano()%100000)
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: "+word+" gadget", 55.9533, -3.1883)
-	defer func() {
-		db := database.DBConn
-		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
-		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
-		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
-		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
-	}()
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/search/"+word, nil), 60000)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var results []message.SearchResult
-	json2.Unmarshal(rsp(resp), &results)
-
-	count := 0
-	for _, r := range results {
-		if r.Msgid == msgID {
-			count++
-		}
-	}
-	assert.Equal(t, 1, count, "a message matching both the exact and starts-with pass must be returned only once")
-}
-
 func TestAPISearch_WithoutAuth(t *testing.T) {
 	// Search without auth should still work (just won't record search history)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/search/table", nil), 60000)
@@ -189,7 +102,24 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 
 	// A unique word that won't appear in other test data.
 	uniqueWord := prefix + "zygote"
-	CreateTestMessage(t, posterID, groupA, "Offer "+uniqueWord+" widget", 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, posterID, groupA, "Offer "+uniqueWord+" widget", 55.9533, -3.1883)
+
+	// Seed the in-memory embedding store so the pure-vector search finds the
+	// message via its lexical guarantee (the subject contains uniqueWord). The
+	// group filtering under test happens against the store, so this exercises the
+	// real authorisation path. Mock the sidecar for the query embedding.
+	embedding.ResetQueryCache()
+	defer embedding.ResetQueryCache()
+	vec := makeTestVec(1.0)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: msgID, Groupid: groupA, Msgtype: "Offer", Lat: 55.9533, Lng: -3.1883,
+			Subject: "Offer " + uniqueWord + " widget", Arrival: time.Now(), SubjectVec: vec},
+	})
+	defer embedding.Global.SetEntries(nil)
+	server := mockSidecarReturning(t, vec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
 
 	// Group B: the support user belongs to this group (not group A).
 	groupB := CreateTestGroup(t, prefix+"_b")
