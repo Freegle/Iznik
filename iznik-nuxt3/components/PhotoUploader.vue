@@ -733,7 +733,10 @@ onMounted(() => {
       endpoint: runtimeConfig.public.TUS_UPLOADER,
       uploadDataDuringCreation: true,
     })
-    .use(Compressor)
+    // Downscale, not just quality-compress (plugin default is quality-only), so 12MP
+    // phone photos don't upload at full resolution — the size-driven upload drop-off
+    // seen in Loki telemetry. 1600px cap keeps listing photos crisp; ~5-10x smaller.
+    .use(Compressor, { quality: 0.8, maxWidth: 1600, maxHeight: 1600 })
 
   uppy.value.on('complete', handleUppySuccess)
   const scheduleRetry = createRetryCoalescer(() => uppy.value)

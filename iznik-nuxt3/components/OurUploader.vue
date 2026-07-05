@@ -408,7 +408,12 @@ onMounted(() => {
       uploadDataDuringCreation: true,
       retryDelays: [0, 3000, 5000, 10000, 20000],
     })
-    .use(Compressor)
+    // Downscale, not just quality-compress. The plugin default is quality-only, so
+    // 12MP phone photos stayed full-resolution and multi-MB. Upload telemetry (Loki,
+    // 2026-07) showed size-driven loss: ~13% of selected photos abandoned during the
+    // client-side compress-then-start step, ~40% of upload sessions running >30s on
+    // mobile. A 1600px cap keeps listing photos crisp while cutting upload size ~5-10x.
+    .use(Compressor, { quality: 0.8, maxWidth: 1600, maxHeight: 1600 })
   uppy.on('file-added', (file) => {
     console.log('Added file', file)
     // Ships to Loki (event_type=action) so we can distinguish "opened the picker but
