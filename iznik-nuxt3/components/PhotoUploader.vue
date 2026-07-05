@@ -200,6 +200,7 @@ import Compressor from '@uppy/compressor'
 import PhotoCard from './PhotoCard.vue'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
+import { action } from '~/composables/useClientLog'
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
@@ -709,6 +710,10 @@ async function handleUppySuccess(result) {
   uppy.value.clear()
 }
 
+// Per-file compression telemetry (see OurUploader.vue for the rationale). Keyed
+// by file.id; an entry lives from preprocess-progress to preprocess-complete.
+const compressTimers = new Map()
+
 // Initialize Uppy for web browsers
 onMounted(() => {
   if (isApp.value) return
@@ -736,14 +741,73 @@ onMounted(() => {
     .use(Compressor)
 
   uppy.value.on('complete', handleUppySuccess)
+  // Upload funnel telemetry (Loki, event_type=action). This uploader previously
+  // had none. Per-file so selected/compress/succeeded counts are comparable
+  // (avoid mixing per-file file-added with per-batch upload events).
+  uppy.value.on('file-added', (file) => {
+    action('upload_file_selected', {
+      uploader: 'photo',
+      file_size: file?.size,
+      file_type: file?.type,
+    })
+  })
+  uppy.value.on('preprocess-progress', (file) => {
+    // Per file, at compression START — file.size is the ORIGINAL size.
+    if (!file || compressTimers.has(file.id)) return
+    const originalSize = file?.size ?? file?.data?.size ?? null
+    compressTimers.set(file.id, {
+      startedAt: Date.now(),
+      originalSize,
+      compressed: false,
+    })
+    action('upload_compress_started', {
+      uploader: 'photo',
+      file_size: originalSize,
+    })
+  })
+  uppy.value.on('compressor:complete', (files) => {
+    // Only successfully-compressed files appear here; absence = silent failure.
+    for (const file of files || []) {
+      const entry = compressTimers.get(file?.id)
+      if (entry) entry.compressed = true
+    }
+  })
+  uppy.value.on('preprocess-complete', (file) => {
+    // Per file, at compression END — file.size is now the COMPRESSED size.
+    const entry = file && compressTimers.get(file.id)
+    if (!entry) return
+    const compressedSize = file?.size ?? file?.data?.size ?? null
+    action('upload_compress_finished', {
+      uploader: 'photo',
+      file_type: file?.type,
+      original_size: entry.originalSize,
+      compressed_size: compressedSize,
+      elapsed_ms: Date.now() - entry.startedAt,
+      compressed: entry.compressed,
+      shrunk:
+        entry.originalSize != null &&
+        compressedSize != null &&
+        compressedSize < entry.originalSize,
+    })
+    compressTimers.delete(file.id)
+  })
+  uppy.value.on('upload-success', (file) => {
+    action('upload_succeeded', {
+      uploader: 'photo',
+      file_size: file?.size,
+      file_type: file?.type,
+    })
+  })
   const scheduleRetry = createRetryCoalescer(() => uppy.value)
   uppy.value.on('error', (error) => {
     console.error('Upload error, retry', error)
+    action('upload_failed', { uploader: 'photo', reason: error?.message })
     scheduleRetry()
   })
 })
 
 onBeforeUnmount(() => {
+  compressTimers.clear()
   if (uppy.value && typeof uppy.value.close === 'function') {
     uppy.value.close()
     uppy.value = null
