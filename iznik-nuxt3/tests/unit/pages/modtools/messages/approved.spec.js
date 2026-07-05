@@ -63,15 +63,6 @@ vi.mock('@/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
-const mockMiscStore = {
-  get: vi.fn(),
-  set: vi.fn(),
-}
-
-vi.mock('@/stores/misc', () => ({
-  useMiscStore: () => mockMiscStore,
-}))
-
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
@@ -246,11 +237,11 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
       expect(wrapper.text()).toContain('Select a community to search messages')
     })
 
-    it('renders semantic search toggle defaulting to on', async () => {
+    it('no longer renders a semantic search toggle (vector is always on)', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain('Semantic search')
-      expect(wrapper.vm.vectorSearchEnabled).toBe(false)
+      expect(wrapper.text()).not.toContain('Semantic search')
+      expect(wrapper.vm.vectorSearchEnabled).toBeUndefined()
     })
   })
 
@@ -415,27 +406,6 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
       expect(wrapper.vm.bump).toBeGreaterThan(0)
     })
 
-    it('initialises the semantic search toggle from the misc store (sticky across remounts)', async () => {
-      mockMiscStore.get.mockReturnValue(true)
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(mockMiscStore.get).toHaveBeenCalledWith('modtoolsSemanticSearch')
-      expect(wrapper.vm.vectorSearchEnabled).toBe(true)
-    })
-
-    it('persists the semantic search toggle to the misc store when changed', async () => {
-      mockMiscStore.get.mockReturnValue(false)
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      mockMiscStore.set.mockClear()
-      wrapper.vm.vectorSearchEnabled = true
-      await wrapper.vm.$nextTick()
-      expect(mockMiscStore.set).toHaveBeenCalledWith({
-        key: 'modtoolsSemanticSearch',
-        value: true,
-      })
-    })
-
     describe('loadMore', () => {
       it('calls loaded (not complete) when no user', async () => {
         const wrapper = mountComponent()
@@ -466,17 +436,15 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalled()
       })
 
-      it('uses vector search when toggle is enabled and populates listingIds', async () => {
-        // Set route params so mounted() sets the values we need
+      it('always uses vector search for a message-term search and populates listingIds', async () => {
+        // The semantic toggle has been retired: any message-term search now goes
+        // straight through searchMT (vector). No enable step required.
         mockRouteParams.value = { id: '123', term: 'test search' }
         mockMessages.value = []
         mockShow.value = 0
         mockListingIds.value = new Set()
         mockMessageStore.searchMT.mockResolvedValue([101, 102])
         const wrapper = mountComponent()
-        await wrapper.vm.$nextTick()
-        // Enable vector search (defaults off)
-        wrapper.vm.vectorSearchEnabled = true
         await wrapper.vm.$nextTick()
         mockMessageStore.searchMT.mockClear()
         mockMessageStore.searchMT.mockResolvedValue([101, 102])
@@ -486,7 +454,6 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
           expect.objectContaining({
             term: 'test search',
             groupid: 123,
-            searchmode: 'vector',
           })
         )
         expect(mockState.complete).toHaveBeenCalled()
@@ -507,8 +474,6 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         mockMessageStore.searchMT.mockResolvedValue([101, 102])
         const wrapper = mountComponent()
         await wrapper.vm.$nextTick()
-        wrapper.vm.vectorSearchEnabled = true
-        await wrapper.vm.$nextTick()
         mockMessageStore.searchMT.mockResolvedValue([101, 102])
         expect(wrapper.vm.loaded).toBe(false)
         const mockState = { loaded: vi.fn(), complete: vi.fn() }
@@ -517,23 +482,20 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         expect(mockBusy.value).toBe(false)
       })
 
-      it('uses keyword search by default when searching by message', async () => {
+      it('does not use the keyword searchall path for a message-term search (keyword retired)', async () => {
         mockRouteParams.value = { id: '123', term: 'test search' }
         mockMessages.value = []
         mockShow.value = 0
+        mockMessageStore.searchMT.mockResolvedValue([])
         const wrapper = mountComponent()
         await wrapper.vm.$nextTick()
         mockMessageStore.fetchMessagesMT.mockClear()
         const mockState = { loaded: vi.fn(), complete: vi.fn() }
         await wrapper.vm.loadMore(mockState)
-        expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalledWith(
-          expect.objectContaining({
-            subaction: 'searchall',
-            search: 'test search',
-            exactonly: true,
-            groupid: 123,
-          })
-        )
+        // Message-term search now always goes through searchMT (vector); the old
+        // subaction:'searchall' keyword fetch must never be called for it.
+        expect(mockMessageStore.searchMT).toHaveBeenCalled()
+        expect(mockMessageStore.fetchMessagesMT).not.toHaveBeenCalled()
       })
 
       it('uses memberTerm params when searching by member', async () => {
