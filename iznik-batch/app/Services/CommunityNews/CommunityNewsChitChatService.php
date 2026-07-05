@@ -1,0 +1,176 @@
+<?php
+
+namespace App\Services\CommunityNews;
+
+use App\Models\CommunityNewsArea;
+use App\Models\CommunityNewsItem;
+use App\Models\Newsfeed;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+/**
+ * The ChitChat engagement trial: drip-post Community News items to the newsfeed
+ * (a "ChitChat" post is a newsfeed row of type 'Message') as the Freegle account,
+ * placed at the area centre so members nearby see it in their feed. Every few
+ * days per area. Engagement (loves + replies) is read back to judge the trial
+ * before committing to the email channel.
+ */
+class CommunityNewsChitChatService
+{
+    /**
+     * Resolve the "Freegle" system user id to post as (idle noreply account).
+     */
+    public function systemUserId(): ?int
+    {
+        $email = config('freegle.communitynews.system_user_email', 'noreply@ilovefreegle.org');
+        $id = DB::table('users_emails')->where('email', $email)->value('userid');
+
+        return $id ? (int) $id : null;
+    }
+
+    /**
+     * Drip un-posted items for every area that is due.
+     *
+     * @return array{posts:int, areas:int}
+     */
+    public function drip(bool $dryRun = false, ?int $onlyAreaId = null): array
+    {
+        $perPost = max(1, (int) config('freegle.communitynews.chitchat_items_per_post', 1));
+        $minDays = (int) config('freegle.communitynews.chitchat_min_days', 3);
+        $freshDays = (int) config('freegle.communitynews.item_freshness_days', 10);
+
+        $systemUserId = $this->systemUserId();
+        if (!$systemUserId) {
+            Log::warning('CommunityNews ChitChat: no system user for ' . config('freegle.communitynews.system_user_email'));
+            return ['posts' => 0, 'areas' => 0];
+        }
+
+        $query = CommunityNewsArea::query();
+        if ($onlyAreaId) {
+            $query->where('id', $onlyAreaId);
+        }
+
+        $posts = 0;
+        $areasPosted = 0;
+
+        foreach ($query->get() as $area) {
+            if ($area->lastposted && $area->lastposted->gt(now()->subDays($minDays))) {
+                continue; // posted too recently
+            }
+
+            $items = CommunityNewsItem::where('areaid', $area->id)
+                ->whereNull('posted_at')
+                ->where('researched_at', '>', now()->subDays($freshDays))
+                ->orderBy('id')
+                ->limit($perPost)
+                ->get();
+
+            if ($items->isEmpty()) {
+                continue;
+            }
+
+            $anyPosted = false;
+            foreach ($items as $item) {
+                $newsfeedId = $this->postItem($area, $item, $systemUserId, $dryRun);
+                if ($newsfeedId === null) {
+                    continue;
+                }
+                if (!$dryRun) {
+                    $item->update(['newsfeedid' => $newsfeedId, 'posted_at' => now()]);
+                }
+                $posts++;
+                $anyPosted = true;
+            }
+
+            if ($anyPosted) {
+                if (!$dryRun) {
+                    $area->update(['lastposted' => now()]);
+                }
+                $areasPosted++;
+            }
+        }
+
+        return ['posts' => $posts, 'areas' => $areasPosted];
+    }
+
+    /**
+     * Insert one newsfeed row for an item. Returns the new id, or null if the
+     * dup-guard skipped it. In dry-run, returns 0 without writing.
+     */
+    public function postItem(CommunityNewsArea $area, CommunityNewsItem $item, int $systemUserId, bool $dryRun): ?int
+    {
+        $message = $this->composeMessage($item);
+
+        // Duplicate guard (mirrors the Go createPost check): skip if this author's
+        // most recent newsfeed row is an identical top-level Message. Guards the
+        // unattended "every few days" cadence against re-posting the same text.
+        $last = DB::table('newsfeed')
+            ->where('userid', $systemUserId)
+            ->orderByDesc('id')
+            ->first(['type', 'message', 'replyto']);
+        if ($last && $last->type === 'Message' && $last->replyto === null && $last->message === $message) {
+            Log::info('CommunityNews ChitChat: duplicate skipped', ['area' => $area->id, 'item' => $item->id]);
+            return null;
+        }
+
+        if ($dryRun) {
+            return 0;
+        }
+
+        $srid = (int) config('freegle.srid', 3857);
+        $lng = (float) $area->lng;
+        $lat = (float) $area->lat;
+
+        $newsfeed = new Newsfeed();
+        $newsfeed->type = 'Message';
+        $newsfeed->userid = $systemUserId;
+        $newsfeed->message = $message;
+        $newsfeed->location = mb_substr($area->name, 0, 80);
+        // Geometry via a raw expression, exactly like Group::boot() sets polyindex.
+        $newsfeed->position = DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)");
+        $newsfeed->save();
+
+        return (int) $newsfeed->id;
+    }
+
+    public function composeMessage(CommunityNewsItem $item): string
+    {
+        $parts = [rtrim($item->title, " \t\n\r\0\x0B.") . '.'];
+        $parts[] = trim($item->snippet);
+        if (!empty($item->url)) {
+            $parts[] = $item->url;
+        }
+
+        return trim(implode("\n\n", $parts));
+    }
+
+    /**
+     * Engagement for the posts this feature created (loves + direct replies).
+     *
+     * @return array<int, array{newsfeedid:int, title:string, area:string, loves:int, replies:int, posted_at:?string}>
+     */
+    public function engagement(?int $onlyAreaId = null): array
+    {
+        $query = CommunityNewsItem::query()->with('area')->whereNotNull('newsfeedid');
+        if ($onlyAreaId) {
+            $query->where('areaid', $onlyAreaId);
+        }
+
+        $rows = [];
+        foreach ($query->orderBy('posted_at')->get() as $item) {
+            $rows[] = [
+                'newsfeedid' => (int) $item->newsfeedid,
+                'title' => $item->title,
+                'area' => optional($item->area)->name ?? '',
+                'loves' => (int) DB::table('newsfeed_likes')->where('newsfeedid', $item->newsfeedid)->count(),
+                'replies' => (int) DB::table('newsfeed')
+                    ->where('replyto', $item->newsfeedid)
+                    ->whereNull('deleted')
+                    ->count(),
+                'posted_at' => optional($item->posted_at)?->toDateTimeString(),
+            ];
+        }
+
+        return $rows;
+    }
+}

@@ -33,6 +33,10 @@ return new class extends Migration {
                 // Human-readable label for the area (best-effort from group names).
                 $t->string('name');
 
+                // The latest warm/quirky intro blurb from the researcher, reused
+                // as the email's opening (per-run, refreshed on each research).
+                $t->text('intro')->nullable();
+
                 // Area centre (degrees) — used to place ChitChat posts and to give
                 // the researcher a geographic anchor.
                 $t->double('lat');
