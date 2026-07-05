@@ -274,6 +274,48 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         ]);
     }
 
+    public function test_stale_notification_for_already_reviewed_message_is_cleared(): void
+    {
+        // Second surface of Discourse 9856: pickCandidates only stops NEW duplicate
+        // notifications from being created. It does nothing for an Exhort
+        // notification that already exists (e.g. inserted before this exclusion
+        // existed, or via any other race) - that row stays seen=0 forever, so the
+        // badge never clears and its link keeps re-presenting the reviewed post.
+        // Confirmed against production: 81 such stuck rows currently exist.
+        $groupId  = $this->createGroup(microvolunteering: true);
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Moderate');
+
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+
+        // The reviewer has already checked this message...
+        DB::table('microactions')->insert([
+            'actiontype'     => 'CheckMessage',
+            'userid'         => $reviewer,
+            'msgid'          => $msgId,
+            'result'         => 'Approve',
+            'score_negative' => 0,
+        ]);
+
+        // ...but a stale unseen notification for it is still sitting there.
+        $notifId = DB::table('users_notifications')->insertGetId([
+            'touser' => $reviewer,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+
+        $this->artisan('microvolunteering:notify')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('users_notifications', [
+            'id'   => $notifId,
+            'seen' => 1,
+        ]);
+    }
+
     public function test_skips_user_already_notified_3_times(): void
     {
         $groupId  = $this->createGroup(microvolunteering: true);

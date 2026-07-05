@@ -31,7 +31,7 @@ class MicrovolunteeringNotifyCommand extends Command
 
             $verb = $dryRun ? 'would notify' : 'notified';
             $this->info(
-                "Considered {$stats['messages_considered']} messages: {$verb} {$stats['users_notified']} user(s), skipped {$stats['users_skipped']}."
+                "Considered {$stats['messages_considered']} messages: {$verb} {$stats['users_notified']} user(s), skipped {$stats['users_skipped']}, cleared {$stats['stale_notifications_cleared']} stale notification(s)."
             );
 
             Log::info('Microvolunteering notify complete', $stats);
