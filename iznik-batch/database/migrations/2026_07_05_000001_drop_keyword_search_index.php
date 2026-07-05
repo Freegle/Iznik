@@ -8,19 +8,27 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Retire the keyword search index.
+     * Retire the SearchTerm micro-volunteering machinery.
      *
-     * Search is now served entirely from vector embeddings (messages_embeddings +
-     * the in-memory embedding store in the Go API). The old keyword machinery -
-     * the words / messages_index / items_index / words_cache tables, the
-     * search_terms table and the microactions.searchterm1/2 columns that fed the
-     * retired "SearchTerm" micro-volunteering challenge - is no longer read or
-     * written by any code path (see the matching removals in this change set:
-     * the Go pure-vector search, the Laravel index-maintenance jobs, the v1
-     * Message::index no-ops and the SearchTerm challenge across Go/PHP/front-end).
+     * search_terms and microactions.searchterm1/2 fed the retired "SearchTerm"
+     * micro-volunteering challenge (removed across Go/PHP/front-end earlier in
+     * this change set) and are no longer read or written by any code path.
+     *
+     * NOT dropped, despite the original plan for this migration: words,
+     * words_cache, items_index and messages_index. Item::typeahead()/create()/
+     * delete() (iznik-server/include/message/Item.php, live behind the item API
+     * and the item-name-suggestion UI) and Message::search()/searchActiveInBounds()
+     * (iznik-server/include/message/Message.php, live behind the ModTools message
+     * search endpoint in http/api/messages.php) still query these tables via the
+     * Search class, and Message::repost()/autoRepost() (driven by the live
+     * AutoRepostService) still call Search::bump()/delete() against
+     * messages_index. Dropping them crashed fixture setup in CI (items_index)
+     * and would have broken those live features in production. Only the
+     * message-text keyword search has actually been replaced by vector
+     * embeddings so far; item search and auto-repost have not been migrated.
      *
      * KEPT deliberately: search_history and users_searches (search analytics, still
-     * used) and the damlevlim() stored function (used elsewhere).
+     * used) and the damlevlim() stored function.
      */
     public function up(): void
     {
@@ -36,12 +44,7 @@ return new class extends Migration
             });
         }
 
-        // The keyword index tables. No inter-table foreign keys, so order is free.
-        Schema::dropIfExists('messages_index');
-        Schema::dropIfExists('items_index');
-        Schema::dropIfExists('words_cache');
         Schema::dropIfExists('search_terms');
-        Schema::dropIfExists('words');
 
         // Legacy keyword-similarity view: only present in older production schemas
         // (it was never created by a migration), so guard with IF EXISTS.
@@ -49,60 +52,11 @@ return new class extends Migration
     }
 
     /**
-     * Recreate the keyword-index tables and the microactions search-term columns
-     * as they existed before retirement (data is not restored).
+     * Recreate search_terms and the microactions search-term columns as they
+     * existed before retirement (data is not restored).
      */
     public function down(): void
     {
-        if (!Schema::hasTable('words')) {
-            Schema::create('words', function (Blueprint $table) {
-                $table->comment('Unique words for searches');
-                $table->bigIncrements('id');
-                $table->string('word', 10)->unique('word_2');
-                $table->string('firstthree', 3);
-                $table->string('soundex', 10);
-                $table->bigInteger('popularity')->default(0)->index('popularity')->comment('Negative as DESC index not supported');
-
-                $table->index(['firstthree', 'popularity'], 'firstthree');
-                $table->index(['soundex', 'popularity'], 'soundex');
-                $table->index(['word', 'popularity'], 'word');
-            });
-        }
-
-        if (!Schema::hasTable('words_cache')) {
-            Schema::create('words_cache', function (Blueprint $table) {
-                $table->bigIncrements('id')->unique('id');
-                $table->string('search')->unique('search');
-                $table->text('words');
-                $table->timestamp('added')->useCurrent();
-            });
-        }
-
-        if (!Schema::hasTable('messages_index')) {
-            Schema::create('messages_index', function (Blueprint $table) {
-                $table->comment('For indexing messages for search keywords');
-                $table->unsignedBigInteger('msgid');
-                $table->unsignedBigInteger('wordid');
-                $table->bigInteger('arrival')->index('arrival')->comment('We prioritise recent messages');
-                $table->unsignedBigInteger('groupid')->nullable()->index('groupid');
-
-                $table->unique(['msgid', 'wordid'], 'msgid');
-                $table->index(['wordid', 'groupid'], 'wordid');
-            });
-        }
-
-        if (!Schema::hasTable('items_index')) {
-            Schema::create('items_index', function (Blueprint $table) {
-                $table->unsignedBigInteger('itemid')->index('itemid_2');
-                $table->unsignedBigInteger('wordid');
-                $table->integer('popularity')->default(0);
-                $table->unsignedBigInteger('categoryid')->nullable();
-
-                $table->unique(['itemid', 'wordid'], 'itemid');
-                $table->index(['wordid', 'popularity'], 'wordid');
-            });
-        }
-
         if (!Schema::hasTable('search_terms')) {
             Schema::create('search_terms', function (Blueprint $table) {
                 $table->bigIncrements('id');
