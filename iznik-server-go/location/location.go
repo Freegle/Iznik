@@ -486,12 +486,15 @@ func SearchLocations(c *fiber.Ctx) error {
 			db := database.DBConn
 			var boxLocs []BoxLocation
 
+			// Return the full-resolution geometry (ourgeometry override if present, else geometry).
+			// This bbox query feeds ONLY the ModTools area-boundary editor (the sole caller passing a
+			// bounding box). Applying ST_Simplify(...,0.001) (~111 m) here silently dropped a freshly
+			// dragged midpoint vertex on reload, so the edit looked unsaved and adjacent vertices could
+			// vanish (Discourse #9770). The write side already stores full detail; the editor needs to
+			// read it back at full detail too. Edited areas are small neighbourhood polygons, so the
+			// payload cost of dropping simplification here is negligible.
 			db.Raw("SELECT DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, "+
-				"ST_AsText("+
-				"CASE WHEN ST_Simplify(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END, 0.001) IS NULL "+
-				"THEN CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END "+
-				"ELSE ST_Simplify(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END, 0.001) "+
-				"END) AS polygon "+
+				"ST_AsText(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END) AS polygon "+
 				"FROM (SELECT DISTINCT locationid FROM locations_spatial "+
 				"INNER JOIN locations l2 ON l2.areaid = locations_spatial.locationid "+
 				"WHERE ST_Intersects(locations_spatial.geometry, "+
