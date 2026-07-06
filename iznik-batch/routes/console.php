@@ -92,12 +92,12 @@ Schedule::command('data:update-cpi')
     ->sendOutputTo(cronLog('data:update-cpi'))
     ->runInBackground();
 
-// Quarterly council statistics reminder - a couple of weeks after each quarter
-// ends (14th of Jan/Apr/Jul/Oct), generate the per-authority spreadsheets for the
-// last full quarter and email them to the partnerships inbox for review before
-// the quarterly emails go out to councils.
+// Quarterly council statistics reminder - the day after each quarter ends
+// (1st of Jan/Apr/Jul/Oct), generate the per-authority spreadsheets for the last
+// full quarter and email them to the partnerships inbox for review before the
+// quarterly emails go out to councils.
 Schedule::command('authority:stats-reminder')
-    ->cron('0 9 14 1,4,7,10 *')
+    ->cron('0 9 1 1,4,7,10 *')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('authority:stats-reminder'))
     ->runInBackground();
