@@ -71,10 +71,19 @@ func List(c *fiber.Ctx) error {
 
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
+	// Exhort notifications for microvolunteering "post to check" challenges are never
+	// deleted once actioned, so without this join they resurface in the list (and
+	// reappear every time the bell is reopened) for up to NOTIFICATION_AGE days after
+	// the user has already approved/rejected the post - even though the badge count and
+	// the challenge-selection queries in microvolunteering.go correctly treat it as done.
+	// See Discourse 9856.
 	var notifications []Notification
-	db.Raw("SELECT * FROM users_notifications "+
+	db.Raw("SELECT users_notifications.* FROM users_notifications "+
 		"LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) "+
-		"WHERE touser = ? AND timestamp >= ? AND spam_users.id IS NULL ORDER BY users_notifications.id DESC", utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER, myid, start).Scan(&notifications)
+		"LEFT JOIN microactions ON microactions.actiontype = 'CheckMessage' AND microactions.userid = users_notifications.touser "+
+		"AND users_notifications.type = 'Exhort' AND users_notifications.url = CONCAT('/microvolunteering/message/', microactions.msgid) "+
+		"WHERE users_notifications.touser = ? AND users_notifications.timestamp >= ? AND spam_users.id IS NULL AND microactions.id IS NULL "+
+		"ORDER BY users_notifications.id DESC", utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER, myid, start).Scan(&notifications)
 
 	if notifications == nil {
 		notifications = make([]Notification, 0)
