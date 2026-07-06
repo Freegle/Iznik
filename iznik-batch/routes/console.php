@@ -206,7 +206,9 @@ Schedule::command('ripple:proximity-notes')
 // excluding a quality-check sample. Runs every minute so the window is honoured tightly.
 Schedule::command('messages:auto-approve-clean')
     ->everyMinute()
-    ->withoutOverlapping()
+    // Bounded expiry (matches the other every-minute jobs): a killed run self-heals
+    // in 15 min instead of Laravel's 24h default - see SchedulerResilienceTest.
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('messages:auto-approve-clean'))
     ->runInBackground();
 
