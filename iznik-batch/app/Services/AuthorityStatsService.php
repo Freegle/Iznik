@@ -199,7 +199,7 @@ class AuthorityStatsService
         return [
             'name' => $authority['name'],
             'quarter' => $this->getQuarterNumber($quarterStart),
-            'year' => date('Y'),
+            'year' => date('Y', strtotime($quarterStart)),
             'months' => $months,
             'benefitPerTonne' => $this->getBenefitPerTonne(),
             'co2PerTonne' => $this->getCo2PerTonne(),

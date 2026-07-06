@@ -71,16 +71,19 @@ is automatic and she no longer depends on Edward to run anything.
   gate. The "go" signal is implicit: template dates freshened → send. Consider a
   dry-run mode and a hard stop if the recipient map or template can't be read.
 
-## Likely components (build later)
+## Components
 
 - `authority:stats` — generate spreadsheets. **DONE.**
-- `stats:council-remind` (scheduled) — generate the quarter's spreadsheets, email
-  Natalie the reminder with them attached. Records that a reminder was sent.
-- `stats:council-send` (scheduled/triggered) — read the template, verify its
-  dates are current; if so, send per-council emails as Natalie with attachments;
-  if not, re-remind and do not send.
-- Config: recipient map, template doc reference, sender identity, timing.
-- Stale-template detection helper.
+- `authority:stats-reminder` (scheduled quarterly, 14th of Jan/Apr/Jul/Oct) —
+  generate the last full quarter's spreadsheets and email them to the
+  partnerships inbox for review. **DONE** (this PR). Config in
+  `config/authority_stats.php` (`reminder_recipient`, `authority_ids`).
+- `authority:stats-send` (follow-up) — read the template, verify its dates are
+  current; if so, send per-council emails as Natalie with attachments; if not,
+  re-remind and do not send. **Not built** — needs the per-council recipient map,
+  the template Google Doc reference + a "dates updated" check, and the send-as
+  Gmail identity (all external config not yet available).
+- Stale-template detection helper (part of the send follow-up).
 
 ## Cross-references
 
