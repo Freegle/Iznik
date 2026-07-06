@@ -3,6 +3,7 @@ import {
   deduplicateMessages,
   findDuplicates,
   distinctGroupIds,
+  dedupKey,
 } from '~/composables/useMessageDedup'
 
 // Build a getMessage(id) lookup from a list of detail objects.
@@ -233,5 +234,27 @@ describe('distinctGroupIds', () => {
   it('handles empty/undefined input', () => {
     expect(distinctGroupIds([])).toEqual([])
     expect(distinctGroupIds(undefined)).toEqual([])
+  })
+})
+
+describe('dedupKey', () => {
+  it('collapses the same poster crossposts of one item across groups', () => {
+    // Same poster, same item, different trailing "(location)" -> one key, so the browse
+    // feed shows one card and MessageList can mark every copy seen together.
+    const a = { fromuser: 7, type: 'Offer', subject: 'OFFER: Sofa (Leeds LS1)' }
+    const b = { fromuser: 7, type: 'Offer', subject: 'OFFER: Sofa (Leeds LS2)' }
+    expect(dedupKey(a)).toBe(dedupKey(b))
+  })
+
+  it('separates different posters of the same item', () => {
+    const a = { fromuser: 7, type: 'Offer', subject: 'OFFER: Sofa (Leeds)' }
+    const b = { fromuser: 8, type: 'Offer', subject: 'OFFER: Sofa (Leeds)' }
+    expect(dedupKey(a)).not.toBe(dedupKey(b))
+  })
+
+  it('separates different items from the same poster', () => {
+    const a = { fromuser: 7, type: 'Offer', subject: 'OFFER: Sofa (Leeds)' }
+    const b = { fromuser: 7, type: 'Offer', subject: 'OFFER: Table (Leeds)' }
+    expect(dedupKey(a)).not.toBe(dedupKey(b))
   })
 })

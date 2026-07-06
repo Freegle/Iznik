@@ -41,8 +41,9 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => ({}),
 }))
 
+const mockNearbyStore = { markSeen: mockNearbyMarkSeen, messageList: [] }
 vi.mock('~/stores/nearby', () => ({
-  useNearbyStore: () => ({ markSeen: mockNearbyMarkSeen }),
+  useNearbyStore: () => mockNearbyStore,
 }))
 
 const mockMiscStore = { modtools: false }
@@ -476,5 +477,74 @@ describe('message store - markSeen()', () => {
 
     expect(store.list[1].unseen).toBe(false)
     expect(store.list[999]).toBeUndefined()
+  })
+
+  it('refreshes the count for the member browse view and distance, not the default', async () => {
+    useAuthStore.mockReturnValue({
+      user: { id: 1, settings: { browseView: 'mygroups', browseMaxDistance: 10 } },
+    })
+    const store = useMessageStore()
+    store.init({})
+    store.list = { 1: { id: 1, unseen: true } }
+
+    await store.markSeen([1])
+
+    // fetchCount -> api.message.count(browseView, maxDistance, log): the badge must be
+    // recomputed for the member's actual view, else a mygroups/slider member sees a
+    // different view's number and it never drops to zero.
+    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true)
+  })
+})
+
+describe('message store - markSeenSiblings()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockNearbyStore.messageList = []
+  })
+
+  it('marks only the still-unseen sibling copies and does not refetch the count', async () => {
+    mockNearbyStore.messageList = [
+      { id: 10, unseen: true },
+      { id: 11, unseen: true },
+      { id: 12, unseen: false }, // already seen - must be skipped
+    ]
+    const store = useMessageStore()
+    store.init({})
+    store.list = {
+      10: { id: 10, unseen: true },
+      11: { id: 11, unseen: true },
+      12: { id: 12, unseen: false },
+    }
+
+    await store.markSeenSiblings([11, 12])
+
+    expect(mockMarkSeen).toHaveBeenCalledWith([11])
+    expect(mockNearbyMarkSeen).toHaveBeenCalledWith([11])
+    expect(store.list[11].unseen).toBe(false)
+    expect(store.list[12].unseen).toBe(false) // unchanged
+    // Unlike markSeen(), the light sibling path leaves the count refresh to scroll/poll.
+    expect(mockCount).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when no sibling is still unseen', async () => {
+    mockNearbyStore.messageList = [{ id: 20, unseen: false }]
+    const store = useMessageStore()
+    store.init({})
+
+    await store.markSeenSiblings([20])
+
+    expect(mockMarkSeen).not.toHaveBeenCalled()
+    expect(mockNearbyMarkSeen).not.toHaveBeenCalled()
+  })
+
+  it('ignores an empty id list', async () => {
+    const store = useMessageStore()
+    store.init({})
+
+    await store.markSeenSiblings([])
+
+    expect(mockMarkSeen).not.toHaveBeenCalled()
   })
 })
