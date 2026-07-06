@@ -23,6 +23,14 @@ class MicrovolunteeringNotifyService
     private const NOTIFICATION_TITLE = 'Could you review this message to help us keep the site safe?';
     private const MAX_PER_USER = 3;
     private const CANDIDATES_PER_MESSAGE = 10;
+    // Only mark-seen notifications from the recent window. There are ~2.5M unseen
+    // type='Exhort' rows and no index on `type`, so an unbounded UPDATE full-scans
+    // and holds gap/next-key locks across the whole range for the duration of the
+    // (every-5-min) run — blocking concurrent Exhort inserts with 1205 lock-wait
+    // timeouts (Sentry 2026-07-06) and risking Galera on the large write. Reviews
+    // happen within days of the notification, and the touser_2 (timestamp,seen,mailed)
+    // index range-scans this cheaply, so a 7-day bound keeps it correct + tiny.
+    private const MARK_SEEN_WINDOW_DAYS = 7;
 
     /** @var array<string, int[]> "{groupid}:{P|A}" => active member userid[] cache for the current run */
     private array $eligibleCache = [];
@@ -337,7 +345,8 @@ class MicrovolunteeringNotifyService
                      ON ma.userid = un.touser
                      AND ma.actiontype = 'CheckMessage'
                      AND un.url = CONCAT('/microvolunteering/message/', ma.msgid)
-                 WHERE un.type = ? AND un.seen = 0",
+                 WHERE un.type = ? AND un.seen = 0
+                   AND un.timestamp >= DATE_SUB(NOW(), INTERVAL " . self::MARK_SEEN_WINDOW_DAYS . " DAY)",
                 [self::NOTIFICATION_TYPE]
             );
 
@@ -351,7 +360,8 @@ class MicrovolunteeringNotifyService
                  AND ma.actiontype = 'CheckMessage'
                  AND un.url = CONCAT('/microvolunteering/message/', ma.msgid)
              SET un.seen = 1
-             WHERE un.type = ? AND un.seen = 0",
+             WHERE un.type = ? AND un.seen = 0
+               AND un.timestamp >= DATE_SUB(NOW(), INTERVAL " . self::MARK_SEEN_WINDOW_DAYS . " DAY)",
             [self::NOTIFICATION_TYPE]
         );
     }
