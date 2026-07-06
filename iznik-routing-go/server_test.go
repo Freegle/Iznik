@@ -122,8 +122,15 @@ func TestExternalPort_HealthNoAuth(t *testing.T) {
 // TestExternalPort_ValidJWT_IsochroneAccessible verifies that a valid JWT
 // grants access to /v1/isochrone on the external port.
 // When groupsDB is nil (no MySQL in test), JWT signature check still runs
-// but session validation is skipped.
+// but session validation is skipped. Force that precondition explicitly
+// (matching the NoDB tests below) rather than relying on no earlier test
+// having connected groupsDB — TestReachableGroups_ReturnsPresentList does
+// exactly that, and package-level groupsDB stays set for the rest of the
+// binary's tests once established, which used to make this test's outcome
+// depend on run order.
 func TestExternalPort_ValidJWT_IsochroneAccessible(t *testing.T) {
+	t.Setenv("MYSQL_HOST", "")
+	groupsDB = nil
 	app := newExternalApp(t)
 	tok := makeJWT(t, "12345", "67890")
 	req := httptest.NewRequest(http.MethodGet,
