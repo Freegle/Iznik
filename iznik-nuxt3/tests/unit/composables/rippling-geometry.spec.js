@@ -18,47 +18,26 @@ const square = [
 
 describe('rippling/geometry', () => {
   describe('chaikinSmooth', () => {
-    it('returns a closed ring (first point equals last)', () => {
+    // Smoothing is deliberately a no-op: the reach is a grid-derived raster and must be
+    // displayed exactly as computed. Corner-cutting rounded the boundary, and where it
+    // hugged a river bank the curve bulged across the water - drawing the reach touching
+    // a far bank it cannot actually reach.
+    it('returns the ring unchanged (display must be exactly what was computed)', () => {
+      const out = chaikinSmooth(square)
+      expect(out).toEqual(square)
+    })
+
+    it('keeps the ring closed (first point equals last)', () => {
       const out = chaikinSmooth(square)
       expect(out[0]).toEqual(out[out.length - 1])
-    })
-
-    it('multiplies vertex count by 2^iterations (4 verts × 8 → 32 plus closer)', () => {
-      const out = chaikinSmooth(square, 3)
-      // 4 unique input verts; each iteration doubles → 4*2^3 = 32; +1 to close.
-      expect(out.length).toBe(33)
-    })
-
-    it('defaults to 3 iterations when count is omitted', () => {
-      const out = chaikinSmooth(square)
-      expect(out.length).toBe(33)
-    })
-
-    it('keeps the smoothed ring inside the original axis-aligned bbox', () => {
-      const out = chaikinSmooth(square, 5)
-      for (const [x, y] of out) {
-        expect(x).toBeGreaterThanOrEqual(-1)
-        expect(x).toBeLessThanOrEqual(1)
-        expect(y).toBeGreaterThanOrEqual(-1)
-        expect(y).toBeLessThanOrEqual(1)
-      }
     })
   })
 
   describe('geoToLeaflet', () => {
-    it('swaps [lng,lat] to [lat,lng] after smoothing', () => {
+    it('swaps [lng,lat] to [lat,lng] without altering the shape', () => {
       const out = geoToLeaflet(square)
-      // After smoothing the order is preserved; first point of a square
-      // centred on origin should still be near (-1,-1) but swapped.
-      const [lat, lng] = out[0]
-      expect(typeof lat).toBe('number')
-      expect(typeof lng).toBe('number')
-      // The smoothed first point is the 25/75 mix toward the second vert:
-      // 0.75*(-1,-1) + 0.25*(1,-1) = (-0.5, -1)  [lng, lat]
-      // After swap that's [-1, -0.5] (lat, lng).  Repeat for 3 iterations
-      // — exact value is not the point; just verify the swap by ranges.
-      expect(lat).toBeGreaterThanOrEqual(-1)
-      expect(lng).toBeGreaterThanOrEqual(-1)
+      // No smoothing: exact vertex-for-vertex swap of the input ring.
+      expect(out).toEqual(square.map(([lng, lat]) => [lat, lng]))
     })
   })
 

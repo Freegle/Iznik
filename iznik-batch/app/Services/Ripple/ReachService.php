@@ -223,6 +223,13 @@ class ReachService
             'ticks' => $this->totalTicks(),
             'max_minutes' => $this->maxMinutes,
             'curve' => $this->curve,
+            // Slim form: the batch needs per-tick drive_min / cumulative_users /
+            // reachable_group_ids, not a ~20k-vertex polygon per tick (which made a
+            // London schedule call ~24MB and dominated the stored schedule size).
+            // Tick polygons are fetched one at a time as ticks are actually reached
+            // (see catchmentWkt). Old servers ignore the parameter and return
+            // polygons, which parseScheduleResponse still accepts.
+            'polygons' => '0',
         ];
         // Only included when the audience cap is on, so the routing server's
         // schedule is byte-identical to the old behaviour otherwise.
@@ -247,16 +254,24 @@ class ReachService
 
         $ticks = [];
         foreach ($schedule as $entry) {
-            $wkt = $this->polygonToWkt($entry['polygon'] ?? null);
-            if ($wkt === null) {
-                continue;
-            }
-            $ticks[] = [
+            $tick = [
                 'tick' => (int) ($entry['tick'] ?? (count($ticks) + 1)),
                 'drive_min' => (float) ($entry['drive_min'] ?? 0),
                 'cumulative_users' => (int) ($entry['cumulative_users'] ?? 0),
-                'wkt' => $wkt,
             ];
+            // Slim responses (polygons=0) carry no per-tick polygon - the tick's
+            // polygon is fetched when the tick is reached (catchmentWkt). A full
+            // response's polygon is kept as WKT exactly as before.
+            $wkt = $this->polygonToWkt($entry['polygon'] ?? null);
+            if ($wkt !== null) {
+                $tick['wkt'] = $wkt;
+            }
+            // Per-tick targeting decision: groups with >=1 active in-polygon member
+            // road-reachable within THIS tick's drive-time. Absent on older servers.
+            if (isset($entry['reachable_group_ids']) && is_array($entry['reachable_group_ids'])) {
+                $tick['reachable_group_ids'] = array_map('intval', $entry['reachable_group_ids']);
+            }
+            $ticks[] = $tick;
         }
         if (empty($ticks)) {
             return null;
@@ -312,6 +327,35 @@ class ReachService
      * Uses the outer ring only; coordinates are [lng, lat] (degrees), matching
      * how messages_spatial.point / isochrones.polygon store geometry.
      */
+    /**
+     * Fetch the reach polygon for a single drive-time budget as WKT, via the routing
+     * server's point-form /v1/catchment (one Dijkstra, one polygon - unlike
+     * /v1/isochrone it computes only the requested mode). Used to materialise a
+     * tick's polygon when the slim schedule (polygons=0) is in use, and by the
+     * reach backfill. Returns null when the routing server is unreachable or the
+     * origin is off the road graph; callers treat that as "skip this run".
+     */
+    public function catchmentWkt(float $lat, float $lng, float $minutes): ?string
+    {
+        try {
+            $response = Http::timeout($this->requestTimeout)
+                ->get("{$this->url}/v1/catchment", [
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'minutes' => $minutes,
+                    'mode' => $this->mode,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: catchment fetch failed: {$e->getMessage()}", ['lat' => $lat, 'lng' => $lng]);
+            return null;
+        }
+        if (!$response->successful()) {
+            Log::warning("ripple: catchment HTTP {$response->status()}", ['lat' => $lat, 'lng' => $lng]);
+            return null;
+        }
+        return $this->polygonToWkt(($response->json() ?? [])['catchment'] ?? null);
+    }
+
     private function polygonToWkt(?array $polygon): ?string
     {
         $ring = $polygon['geometry']['coordinates'][0] ?? null;

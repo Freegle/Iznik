@@ -17,7 +17,6 @@ import {
   quintileOfFreegler,
   groupCentroid,
   distSq,
-  ringsOverlap,
   homeGroupOverlapFraction,
 } from './polygon.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
@@ -204,7 +203,11 @@ export async function setupRipplingExplorer({
     if (travelModeRow) travelModeRow.style.display = outbound ? '' : 'none'
     inboundRow.style.display = inbound ? '' : 'none'
     // Legend: outbound reach / inbound digest / catchment heatmap key.
-    legendMode.value = outbound ? 'outbound' : catchment ? 'catchment' : 'inbound'
+    legendMode.value = outbound
+      ? 'outbound'
+      : catchment
+      ? 'catchment'
+      : 'inbound'
     // Search-by-location box: not relevant in catchment (group picker is used instead).
     const searchWrap = document.getElementById('rippling-search-wrap')
     if (searchWrap) searchWrap.style.display = catchment ? 'none' : ''
@@ -310,7 +313,9 @@ export async function setupRipplingExplorer({
   function loadCatchmentGroups() {
     if (catchmentGroupsPromise) return catchmentGroupsPromise
     catchmentGroupsPromise = fetch(apiUrl('/v1/groups/list'))
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('groups ' + r.status))))
+      .then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error('groups ' + r.status))
+      )
       .then((list) => {
         catchmentGroupsByName = new Map()
         const dl = document.getElementById('rippling-catchment-grouplist')
@@ -356,7 +361,9 @@ export async function setupRipplingExplorer({
     if (!el) return
     el.style.display = 'none' // hide until we have real data — no "measuring…" flash on a card this prominent
     fetch(apiUrl(`/v1/group-extent?groupid=${g.id}&mode=drive`))
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('extent ' + r.status))))
+      .then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error('extent ' + r.status))
+      )
       .then((d) => {
         if (token !== catchmentDrawToken || viewMode !== 'catchment') return
         if (!d || !d.reachable || !d.from || !d.to) {
@@ -366,9 +373,15 @@ export async function setupRipplingExplorer({
         const labelFor = (pt) =>
           pt.place && pt.postcode
             ? `${pt.postcode} (${pt.place})`
-            : pt.postcode || pt.place || `${pt.lat.toFixed(3)}, ${pt.lng.toFixed(3)}`
-        document.getElementById('rippling-extent-a').textContent = labelFor(d.from)
-        document.getElementById('rippling-extent-b').textContent = labelFor(d.to)
+            : pt.postcode ||
+              pt.place ||
+              `${pt.lat.toFixed(3)}, ${pt.lng.toFixed(3)}`
+        document.getElementById('rippling-extent-a').textContent = labelFor(
+          d.from
+        )
+        document.getElementById('rippling-extent-b').textContent = labelFor(
+          d.to
+        )
         const milesEl = document.getElementById('rippling-extent-miles')
         if (typeof d.miles === 'number') {
           milesEl.textContent = `${d.miles.toFixed(1)} miles by road`
@@ -421,15 +434,21 @@ export async function setupRipplingExplorer({
   // Fetch the group's boundary ring (for the outline + to punch out of the heatmap). Best-effort.
   function fetchGroupRing(g) {
     return fetch(
-      apiUrl(`/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`)
+      apiUrl(
+        `/v1/groups/nearby?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}`
+      )
     )
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('nearby ' + r.status))))
+      .then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error('nearby ' + r.status))
+      )
       .then((fc) => {
         const feats = (fc && fc.features) || []
         const f =
           feats.find((x) => x.properties && x.properties.id === g.id) ||
           feats.find((x) => x.properties && x.properties.contains)
-        return f && f.geometry && f.geometry.coordinates[0] ? f.geometry.coordinates[0] : null
+        return f && f.geometry && f.geometry.coordinates[0]
+          ? f.geometry.coordinates[0]
+          : null
       })
       .catch(() => null)
   }
@@ -439,7 +458,9 @@ export async function setupRipplingExplorer({
   function fetchCatchmentData(g, m) {
     return fetch(
       apiUrl(`/v1/catchment?groupid=${g.id}&minutes=${m}&mode=drive`)
-    ).then((r) => (r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))))
+    ).then((r) =>
+      r.ok ? r.json() : Promise.reject(new Error('catchment ' + r.status))
+    )
   }
 
   // Resolve the drive-time the catchment should use under the "Possible alternative" (audience-
@@ -463,33 +484,44 @@ export async function setupRipplingExplorer({
       return Promise.resolve(apply(catchmentCache.audience))
     }
     return Promise.all([
-      fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`)).then((r) => (r.ok ? r.json() : null)),
+      fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`)).then((r) =>
+        r.ok ? r.json() : null
+      ),
       fetch(
         apiUrl(
-          `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}` +
-            `&mode=drive&ticks=9&max_minutes=30&curve=step-70`
+          `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(
+            6
+          )}` + `&mode=drive&ticks=9&max_minutes=30&curve=step-70`
         )
       ).then((r) => (r.ok ? r.json() : null)),
     ])
       .then(([actives, sched]) => {
-        if (!actives || actives.nstar == null || !sched || !sched.schedule) return apply(null)
+        if (!actives || actives.nstar == null || !sched || !sched.schedule)
+          return apply(null)
         const ticks = sched.schedule.map((e) => ({
           drive_min: e.drive_min,
           cumulative_users: e.cumulative_users,
         }))
-        const mins = clampAudienceMinutes(driveMinForAudience(ticks, actives.nstar))
+        const mins = clampAudienceMinutes(
+          driveMinForAudience(ticks, actives.nstar)
+        )
         // Hazard timing: elapsed hours after posting at which the ripple reaches each drive-time
         // (the 9 ticks map to HAZARD_HOURS) — used to annotate the catchment key with the delay.
         const hazard = sched.schedule.map((e, i) => ({
           drive: e.drive_min,
-          hours: HAZARD_HOURS[i] != null ? HAZARD_HOURS[i] : HAZARD_HOURS[HAZARD_HOURS.length - 1],
+          hours:
+            HAZARD_HOURS[i] != null
+              ? HAZARD_HOURS[i]
+              : HAZARD_HOURS[HAZARD_HOURS.length - 1],
         }))
         const total = sched.total_freeglers || 0
         // Sparse groups never reach N* within the 30-min ceiling, so the alternative reach stays at
         // 30 min = the current reach (identical by design) — say so, or it looks like a no-op.
         const caption =
           total >= actives.nstar
-            ? `Possible alternative reach (audience-based): ~${Math.round(mins)} min` +
+            ? `Possible alternative reach (audience-based): ~${Math.round(
+                mins
+              )} min` +
               ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
               ` (group has ${actives.actives.toLocaleString()} active members).`
             : `Possible alternative: unchanged (~30 min). This group only reaches about ` +
@@ -527,7 +559,12 @@ export async function setupRipplingExplorer({
     // call is the slow bit). The group ring is punched out of the heatmap as a hole; the catchment
     // is seeded from the whole GROUP AREA so corridor reach into the group's edges shows.
     if (catchmentCache.key !== g.id) {
-      catchmentCache = { key: g.id, ring: undefined, byMinutes: {}, audience: null }
+      catchmentCache = {
+        key: g.id,
+        ring: undefined,
+        byMinutes: {},
+        audience: null,
+      }
     }
     const ringP =
       catchmentCache.ring !== undefined
@@ -538,7 +575,8 @@ export async function setupRipplingExplorer({
           })
     const getCatchment = (m) => {
       const k = m.toFixed(1)
-      if (catchmentCache.byMinutes[k]) return Promise.resolve(catchmentCache.byMinutes[k])
+      if (catchmentCache.byMinutes[k])
+        return Promise.resolve(catchmentCache.byMinutes[k])
       return fetchCatchmentData(g, m).then((d) => {
         if (catchmentCache.key === g.id) catchmentCache.byMinutes[k] = d // ignore late arrivals
         return d
@@ -550,9 +588,12 @@ export async function setupRipplingExplorer({
     catchmentAudienceMinutes(g, token)
       .then((alt) => {
         const altMinutes = alt != null ? alt : sliderMinutes
-        const activeMinutes = catchmentReachBasis === 'audience' ? altMinutes : sliderMinutes
-        const otherMinutes = catchmentReachBasis === 'audience' ? sliderMinutes : altMinutes
-        if (Math.abs(otherMinutes - activeMinutes) > 0.05) getCatchment(otherMinutes)
+        const activeMinutes =
+          catchmentReachBasis === 'audience' ? altMinutes : sliderMinutes
+        const otherMinutes =
+          catchmentReachBasis === 'audience' ? sliderMinutes : altMinutes
+        if (Math.abs(otherMinutes - activeMinutes) > 0.05)
+          getCatchment(otherMinutes)
         return Promise.all([ringP, getCatchment(activeMinutes)])
       })
       .then(([groupRing, d]) => {
@@ -560,7 +601,10 @@ export async function setupRipplingExplorer({
         if (token !== catchmentDrawToken || viewMode !== 'catchment') return
         const bands = (d && d.bands) || []
         const fullRing =
-          d && d.catchment && d.catchment.geometry && d.catchment.geometry.coordinates[0]
+          d &&
+          d.catchment &&
+          d.catchment.geometry &&
+          d.catchment.geometry.coordinates[0]
         if (!bands.length && !fullRing) {
           showStatus('No catchment', false)
           return
@@ -576,7 +620,8 @@ export async function setupRipplingExplorer({
         // (drive-time to the group). Draw slowest→fastest so the fastest (hottest) band paints
         // on top; each point then shows the smallest band covering it = its quickest ripple-in.
         const usable = bands.filter(
-          (b) => b.polygon && b.polygon.geometry && b.polygon.geometry.coordinates[0]
+          (b) =>
+            b.polygon && b.polygon.geometry && b.polygon.geometry.coordinates[0]
         )
         let outerRing = null
         if (usable.length) {
@@ -584,7 +629,8 @@ export async function setupRipplingExplorer({
           const hueFor = (i) => (120 * i) / Math.max(1, n - 1) // fastest→red(0°), slowest→green(120°)
           const hazard =
             (catchmentCache.audience && catchmentCache.audience.hazard) || null
-          const delayFor = (mins) => fmtRippleDelay(rippleDelayForDrive(hazard, mins))
+          const delayFor = (mins) =>
+            fmtRippleDelay(rippleDelayForDrive(hazard, mins))
           usable
             .map((b, i) => ({ b, i }))
             .sort((a, z) => z.b.minutes - a.b.minutes)
@@ -613,8 +659,8 @@ export async function setupRipplingExplorer({
               sub: delayFor(b.minutes),
             }))
           }
-          outerRing = usable.reduce((a, z) => (z.minutes > a.minutes ? z : a)).polygon
-            .geometry.coordinates[0]
+          outerRing = usable.reduce((a, z) => (z.minutes > a.minutes ? z : a))
+            .polygon.geometry.coordinates[0]
         } else if (fullRing) {
           L.polygon(geoToLeaflet(fullRing), {
             renderer: catchmentRenderer,
@@ -653,10 +699,17 @@ export async function setupRipplingExplorer({
             cp.setAttribute('clipPathUnits', 'userSpaceOnUse')
             const use = document.createElementNS(NS, 'use')
             use.setAttribute('href', '#' + clipId + '-src')
-            use.setAttributeNS('http://www.w3.org/1999/xlink', 'href', '#' + clipId + '-src')
+            use.setAttributeNS(
+              'http://www.w3.org/1999/xlink',
+              'href',
+              '#' + clipId + '-src'
+            )
             cp.appendChild(use)
             defs.appendChild(cp)
-            catchmentRenderer._rootGroup.setAttribute('clip-path', 'url(#' + clipId + ')')
+            catchmentRenderer._rootGroup.setAttribute(
+              'clip-path',
+              'url(#' + clipId + ')'
+            )
           }
         }
 
@@ -674,7 +727,8 @@ export async function setupRipplingExplorer({
 
         if (outerRing) {
           const bounds = L.polygon(geoToLeaflet(outerRing)).getBounds()
-          if (bounds.isValid()) map.fitBounds(bounds.pad(0.1), { maxZoom: 12, animate: false })
+          if (bounds.isValid())
+            map.fitBounds(bounds.pad(0.1), { maxZoom: 12, animate: false })
         }
         showStatus('Done', false)
       })
@@ -976,8 +1030,11 @@ export async function setupRipplingExplorer({
     })
 
   // Catchment tab: group picker (datalist selection fires 'change').
-  const catchmentGroupInput = document.getElementById('rippling-catchment-group')
-  if (catchmentGroupInput) catchmentGroupInput.addEventListener('change', drawCatchment)
+  const catchmentGroupInput = document.getElementById(
+    'rippling-catchment-group'
+  )
+  if (catchmentGroupInput)
+    catchmentGroupInput.addEventListener('change', drawCatchment)
 
   // Catchment reach-model toggle: flip between the current 30-min reach and the proposed
   // audience-based reach, redrawing the catchment at each so the two areas can be compared.
@@ -1094,9 +1151,13 @@ export async function setupRipplingExplorer({
   const urlParams = new URLSearchParams(window.location.search)
   const pendingView = props.initialView || urlParams.get('view')
   const pendingLat =
-    props.initialLat != null ? props.initialLat : parseFloat(urlParams.get('lat'))
+    props.initialLat != null
+      ? props.initialLat
+      : parseFloat(urlParams.get('lat'))
   const pendingLng =
-    props.initialLng != null ? props.initialLng : parseFloat(urlParams.get('lng'))
+    props.initialLng != null
+      ? props.initialLng
+      : parseFloat(urlParams.get('lng'))
   const pendingPostcode = urlParams.get('postcode') || urlParams.get('q')
   const seededFromProps = props.initialLat != null && props.initialLng != null
 
@@ -1124,7 +1185,9 @@ export async function setupRipplingExplorer({
       // post's current point (how far it has already rippled), with the scrubber, and
       // let the user drag forwards/backwards. No animation.
       if (seededFromProps) {
-        startRipple(props.initialElapsedHours != null ? props.initialElapsedHours : 0)
+        startRipple(
+          props.initialElapsedHours != null ? props.initialElapsedHours : 0
+        )
       }
       return true
     }
@@ -1333,6 +1396,28 @@ export async function setupRipplingExplorer({
 
     showStatus('Computing isochrone…', true)
 
+    // Fetch the targeting gate for the same pin/budget in parallel: which groups
+    // have an active in-polygon member whose street is road-reachable. This is
+    // what the group tint/list shows (see reachedGroupIds) - the drawn boundary
+    // never decides reached-ness. Re-tints when it lands; cleared first so a slow
+    // answer can't leave the previous pin's tint showing.
+    lastReachableIds = null
+    fetch(
+      apiUrl(
+        `/v1/reachable-groups?lat=${currentLat.toFixed(
+          6
+        )}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}`
+      )
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (gen !== isochroneGeneration) return
+        lastReachableIds =
+          j && Array.isArray(j.reachable_group_ids) ? j.reachable_group_ids : []
+        drawGroupsOverlay()
+      })
+      .catch(() => {})
+
     fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`Server error ${r.status}`)
@@ -1376,6 +1461,10 @@ export async function setupRipplingExplorer({
   }
 
   let lastIsoData = null
+  // Max-extent reachable-group ids from /v1/reachable-groups for the current pin -
+  // the authoritative targeting decision the group tint/list uses. null until the
+  // gate answers; refreshed with every isochrone update (same generation guard).
+  let lastReachableIds = null
 
   function applyPolyTransition(el, durationMs) {
     if (!el) return
@@ -1934,7 +2023,9 @@ export async function setupRipplingExplorer({
       return
     }
     const gen = locationGeneration
-    const containing = groupFeatures.find((f) => f.properties && f.properties.contains)
+    const containing = groupFeatures.find(
+      (f) => f.properties && f.properties.contains
+    )
     if (!containing) {
       clearAudienceBoundary()
       if (cap) {
@@ -1946,15 +2037,17 @@ export async function setupRipplingExplorer({
     }
     try {
       const [actives, scheduleResp] = await Promise.all([
-        fetch(apiUrl(`/v1/group-actives?groupid=${containing.properties.id}`)).then((r) =>
-          r.ok ? r.json() : null
-        ),
+        fetch(
+          apiUrl(`/v1/group-actives?groupid=${containing.properties.id}`)
+        ).then((r) => (r.ok ? r.json() : null)),
         // Deliberately NO target_users cap here (unlike fetchRippleSchedule) — capping would
         // flatten/truncate the curve before it reaches nstar for a well-populated group; we
         // want the natural curve.
         fetch(
           apiUrl(
-            `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}` +
+            `/v1/ripple-schedule?lat=${currentLat.toFixed(
+              6
+            )}&lng=${currentLng.toFixed(6)}` +
               `&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${
                 RIPPLE_FRAMES * RIPPLE_STEP_MINS
               }&curve=step-70`
@@ -1962,7 +2055,12 @@ export async function setupRipplingExplorer({
         ).then((r) => (r.ok ? r.json() : null)),
       ])
       if (gen !== locationGeneration) return
-      if (!actives || actives.nstar == null || !scheduleResp || !scheduleResp.schedule) {
+      if (
+        !actives ||
+        actives.nstar == null ||
+        !scheduleResp ||
+        !scheduleResp.schedule
+      ) {
         clearAudienceBoundary()
         return
       }
@@ -1981,8 +2079,9 @@ export async function setupRipplingExplorer({
       // the boundary polygon for the clamped minutes.
       const isoResp = await fetch(
         apiUrl(
-          `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}` +
-            `&minutes=${minutes}&mode=${currentMode}&fairness=0`
+          `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
+            6
+          )}` + `&minutes=${minutes}&mode=${currentMode}&fairness=0`
         )
       ).then((r) => (r.ok ? r.json() : null))
       if (gen !== locationGeneration || !showAudienceReach) return
@@ -1992,19 +2091,24 @@ export async function setupRipplingExplorer({
       }
 
       if (audienceLayer) map.removeLayer(audienceLayer)
-      audienceLayer = L.polygon(geoToLeaflet(isoResp.standard.geometry.coordinates[0]), {
-        color: '#e6a817',
-        weight: 2.5,
-        dashArray: '6 4',
-        fill: false,
-      })
+      audienceLayer = L.polygon(
+        geoToLeaflet(isoResp.standard.geometry.coordinates[0]),
+        {
+          color: '#e6a817',
+          weight: 2.5,
+          dashArray: '6 4',
+          fill: false,
+        }
+      )
         .bindTooltip(`Audience-based reach: ~${minutes.toFixed(0)} min`)
         .addTo(map)
 
       if (cap) {
         cap.textContent =
           `Stops after reaching ~${actives.nstar.toLocaleString()} nearby freeglers ` +
-          `(~${Math.round(minutes)} min) - group has ${actives.actives.toLocaleString()} active members`
+          `(~${Math.round(
+            minutes
+          )} min) - group has ${actives.actives.toLocaleString()} active members`
         cap.style.display = ''
       }
     } catch (e) {
@@ -2029,19 +2133,19 @@ export async function setupRipplingExplorer({
   }
 
   function reachedGroupIds(isoData) {
-    const reached = new Set()
-    // Use only the standard (un-adjusted) travel boundary to decide which groups
-    // have been reached.  Fairness-adjustment islands can extend to distant
-    // deprived towns and would otherwise falsely mark those groups as reached.
-    if (!isoData || !hasRing(isoData.standard)) return reached
-    const isoRing = isoData.standard.geometry.coordinates[0]
-    for (const f of groupFeatures) {
-      const gRing =
-        f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
-      if (!gRing || gRing.length < 4) continue
-      if (ringsOverlap(isoRing, gRing)) reached.add(f.properties.id)
+    // A group counts as reached only when the server's targeting gate says so: at
+    // least one active member living inside the group's own polygon whose street
+    // node is road-reachable from the pin. Geometric overlap between the drawn
+    // reach and the group polygon is deliberately NOT used - the raster boundary
+    // can overrun a river the roads never cross, wrongly tinting far-bank groups
+    // (Gravesend from Corringham). What tints is exactly what targeting decides.
+    if (isoData && Array.isArray(isoData.reachableGroupIds)) {
+      // A ripple frame: the per-tick gate decision from the schedule response.
+      return new Set(isoData.reachableGroupIds)
     }
-    return reached
+    // Max-extent gate decision for the current pin (fetched with the isochrone).
+    // If the gate has not answered (yet), tint nothing rather than tint wrongly.
+    return new Set(lastReachableIds || [])
   }
 
   // Geographically-nearest group id, used as fallback "home" when
@@ -2211,7 +2315,9 @@ export async function setupRipplingExplorer({
       hits
         .map(
           (g) =>
-            `<div class="rpl-rg-item">${g.home ? '🏠 ' : '⚡ '}${esc(g.name)}</div>`
+            `<div class="rpl-rg-item">${g.home ? '🏠 ' : '⚡ '}${esc(
+              g.name
+            )}</div>`
         )
         .join('')
   }
@@ -2311,7 +2417,11 @@ export async function setupRipplingExplorer({
     layer.appendChild(mark)
     const label = document.createElement('div')
     const xform =
-      pct < 15 ? 'translateX(0)' : pct > 80 ? 'translateX(-100%)' : 'translateX(-50%)'
+      pct < 15
+        ? 'translateX(0)'
+        : pct > 80
+        ? 'translateX(-100%)'
+        : 'translateX(-50%)'
     label.style.cssText = `position:absolute;left:${pct}%;top:-22px;color:#e07000;font-size:11px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = '⚡'
     layer.appendChild(label)
@@ -2399,7 +2509,11 @@ export async function setupRipplingExplorer({
     layer.appendChild(mark)
     const label = document.createElement('div')
     const xform =
-      pct < 12 ? 'translateX(0)' : pct > 88 ? 'translateX(-100%)' : 'translateX(-50%)'
+      pct < 12
+        ? 'translateX(0)'
+        : pct > 88
+        ? 'translateX(-100%)'
+        : 'translateX(-50%)'
     const top = where === 'top' ? '-28px' : '16px'
     label.style.cssText = `position:absolute;left:${pct}%;top:${top};color:${color};font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = text
@@ -2412,7 +2526,13 @@ export async function setupRipplingExplorer({
     // is the "up to" indicator (no separate marker needed). Only when the engine is BEHIND
     // do we add an "actually here" marker, so the gap to the thumb is the lag.
     if (props.actualElapsedHours != null) {
-      addReachMarker(layer, props.actualElapsedHours, 'actually here ▲', '#e07000', 'top')
+      addReachMarker(
+        layer,
+        props.actualElapsedHours,
+        'actually here ▲',
+        '#e07000',
+        'top'
+      )
     }
   }
 
@@ -2812,6 +2932,10 @@ export async function setupRipplingExplorer({
       drive_min: entry.drive_min,
       cumulative_users: entry.cumulative_users,
       tick: entry.tick,
+      // Per-tick targeting decision: which groups are reached AT THIS TICK
+      // (active in-polygon member road-reachable within this tick's drive-time).
+      // reachedGroupIds prefers this, so the animation tints truthfully per frame.
+      reachableGroupIds: entry.reachable_group_ids,
     }))
     totalLocatedFromServer =
       scheduleResp.total_freeglers || totalLocatedFromServer

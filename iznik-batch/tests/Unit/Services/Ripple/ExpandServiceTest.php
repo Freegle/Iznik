@@ -2759,4 +2759,218 @@ class ExpandServiceTest extends TestCase
             'B got the same reach schedule as the co-located post A'
         );
     }
+
+    // --- Slim schedule (polygons=0): per-tick ids + fetched tick polygons ---------
+
+    /**
+     * Routing fakes for the slim contract: the schedule carries per-tick
+     * reachable_group_ids and NO polygons; the tick polygon comes from the
+     * point-form catchment endpoint instead.
+     */
+    private function fakeSlimRouting(array $perTickIds, int $ticks = 3): void
+    {
+        $catchment = ['catchment' => [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ]];
+        $schedule = [];
+        $last = [];
+        for ($k = 1; $k <= $ticks; $k++) {
+            $last = array_values($perTickIds[$k - 1] ?? $last);
+            $schedule[] = [
+                'tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k,
+                'reachable_group_ids' => $last,
+            ];
+        }
+        Http::fake([
+            '*ripple-schedule*' => Http::response([
+                'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
+                'reachable_group_ids' => $last,
+            ], 200),
+            '*catchment*' => Http::response($catchment, 200),
+        ]);
+    }
+
+    public function test_slim_schedule_fetches_tick_polygon_and_gates_by_tick_ids(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // tick 1
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        // B only becomes reachable at tick 2 - the tick-1 set excludes it.
+        $this->fakeSlimRouting([[$originGid], [$originGid, $groupB->id]], 3);
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row, 'slim schedule still initialises a reach row');
+        $this->assertSame(
+            'POLYGON',
+            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t,
+            'the tick polygon is materialised from the catchment endpoint'
+        );
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment'));
+
+        $ticks = json_decode($row->schedule, true);
+        $this->assertNotEmpty($ticks);
+        $this->assertArrayNotHasKey('wkt', $ticks[0], 'slim ticks are stored without per-tick WKT');
+        $this->assertSame([$originGid], json_decode($row->reachable_group_ids, true),
+            'the stored reachable set is the CURRENT tick\'s, not max extent');
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'tick-1 targeting uses tick-1 ids: B (reachable only at tick 2) is not rippled in yet'
+        );
+    }
+
+    public function test_slim_advance_fetches_polygon_and_uses_next_tick_ids(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subHours(4)); // hazard [1,3,6] => target tick 2
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        // Stored SLIM schedule (no wkt): tick 1 = origin only, tick 2 adds B.
+        $ticks = [
+            ['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 30, 'reachable_group_ids' => [$originGid]],
+            ['tick' => 2, 'drive_min' => 10.0, 'cumulative_users' => 60, 'reachable_group_ids' => [$originGid, $groupB->id]],
+            ['tick' => 3, 'drive_min' => 15.0, 'cumulative_users' => 90, 'reachable_group_ids' => [$originGid, $groupB->id]],
+        ];
+        DB::statement(
+            'INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, ?, 1, 3, 90, 30, ?, ?, ?, ?, NOW(), NOW())',
+            [
+                $msgid, self::WKT, now()->subHours(4), 'drive',
+                json_encode($ticks), json_encode([$originGid]), now()->subMinutes(5), 'expanding',
+            ]
+        );
+
+        $this->fakeSlimRouting([[$originGid], [$originGid, $groupB->id]], 3); // catchment fake used on advance
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(2, (int) $row->tick, 'the reach advanced to tick 2');
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment'));
+        $this->assertSame(
+            [$originGid, $groupB->id],
+            json_decode($row->reachable_group_ids, true),
+            'the stored reachable set moved to the new tick\'s ids'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'the tick-2 ids admit B, so it ripples in at the advance'
+        );
+    }
+
+    // --- ripple:backfill-reach (reach-algorithm change backfill) ------------------
+
+    /**
+     * One Http fake whose ripple-schedule answer switches with $phase: 'wide'
+     * (old algorithm, origin+B reachable, full polygons) then 'narrow' (new
+     * algorithm, slim, origin only). Laravel's Http::fake stubs cannot be
+     * replaced once registered, so the switch lives inside a single callback.
+     */
+    private function fakePhasedRouting(int $originGid, int $groupBId, string &$phase): void
+    {
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        Http::fake(function ($request) use ($polygon, $originGid, $groupBId, &$phase) {
+            if (str_contains($request->url(), '/v1/catchment')) {
+                return Http::response(['catchment' => $polygon], 200);
+            }
+            if (!str_contains($request->url(), '/v1/ripple-schedule')) {
+                return Http::response('', 404);
+            }
+            $wide = $phase === 'wide';
+            $ids = $wide ? [$originGid, $groupBId] : [$originGid];
+            $schedule = [];
+            for ($k = 1; $k <= 3; $k++) {
+                $entry = [
+                    'tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k,
+                    'reachable_group_ids' => $ids,
+                ];
+                if ($wide) {
+                    $entry['polygon'] = $polygon;
+                }
+                $schedule[] = $entry;
+            }
+            return Http::response([
+                'total_freeglers' => 90, 'max_drive_min' => 30,
+                'schedule' => $schedule, 'reachable_group_ids' => $ids,
+            ], 200);
+        });
+    }
+
+    public function test_backfill_reach_dry_run_previews_without_writing(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $phase = 'wide';
+        $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
+        $this->service()->process(false, 500); // ripples into B under the old wide set
+
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($copy);
+
+        // The new algorithm says only the origin is reachable.
+        $phase = 'narrow';
+
+        $r = $this->service()->backfillReach(true, 500);
+        $this->assertSame(1, $r['updated']);
+        $this->assertGreaterThanOrEqual(1, $r['would_retract_groups']);
+        $this->assertSame(
+            0,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('deleted'),
+            'dry run leaves the copy in place'
+        );
+    }
+
+    public function test_backfill_reach_rebuilds_row_and_retracts_uncovered_copy(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $phase = 'wide';
+        $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
+        $this->service()->process(false, 500);
+
+        // Freeze the mail signal so we can assert the backfill preserves it.
+        DB::statement('UPDATE rippling_reach SET updated_at = ? WHERE msgid = ?', ['2026-01-01 00:00:00', $msgid]);
+
+        // The new algorithm says only the origin is reachable.
+        $phase = 'narrow';
+
+        $r = $this->service()->backfillReach(false, 500);
+        $this->assertSame(1, $r['updated']);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame([$originGid], json_decode($row->reachable_group_ids, true));
+        $ticks = json_decode($row->schedule, true);
+        $this->assertArrayNotHasKey('wkt', $ticks[0], 'the rebuilt schedule is slim');
+        $this->assertSame('2026-01-01 00:00:00', (string) $row->updated_at,
+            'backfill preserves updated_at so the reach mailer never reconsiders the row');
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('deleted'),
+            'the copy in the no-longer-covered group is retracted'
+        );
+
+        // Idempotent: a second run changes nothing further.
+        $r2 = $this->service()->backfillReach(false, 500);
+        $this->assertSame(0, $r2['pulled_out_of_reach'], 'second run finds nothing left to retract');
+    }
 }

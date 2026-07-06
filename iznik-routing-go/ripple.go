@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -75,14 +76,12 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		}
 
 		// --- collect all reachable freegler drive-times ---
-		// (Same approach as handleNearbyFreeglers / handleRippleSchedule.)
-		res := AutoResolution(maxSecs, mode)
-		fullPoly := IsochronePolygon(g, iso.ReachedNodes, res)
-		ring := fullPoly.Geometry.Coordinates
-		if len(ring) == 0 || len(ring[0]) < 4 {
-			return c.JSON(empty)
-		}
-		wkt := ringToWKT(ring[0])
+		// Candidates come from the reach's bbox (not the detailed boundary, which is
+		// unsimplified and too large for a WKT query); the nearest-node-in-reached-set
+		// test below filters each candidate exactly, so the result is unchanged.
+		evMinLat, evMaxLat, evMinLng, evMaxLng := reachedBBox(g, iso.ReachedNodes)
+		wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
+			evMinLng, evMaxLng, evMinLat, evMaxLat)
 
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
@@ -163,7 +162,8 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 //
 // Simulator evaluation against 4,264 historical posts (see
 // plans/reference/ripple-curve-evaluation.md) ranks the front-loaded shapes:
-//   step-70%+linear ≈ front-x^0.15 > front-x^0.2 > front-heavy x^0.3 > …
+//
+//	step-70%+linear ≈ front-x^0.15 > front-x^0.2 > front-heavy x^0.3 > …
 //
 // "step-70%+linear" is the recommended production default: 70 % of users
 // notified immediately at tick 1, the remaining 30 % linearly across the
@@ -224,17 +224,37 @@ func stepCurve(s float64, numTicks int, x float64) float64 {
 }
 
 // rippleScheduleEntry is a single tick of the density-driven ripple schedule.
+// Polygon is a pointer so the slim form (polygons=0) omits the key entirely: the
+// batch needs only drive_min/cumulative_users/reachable_group_ids per tick, and a
+// ~20k-vertex polygon per tick is what made schedule calls slow (~7s of a 10.5s
+// London call) and stored schedules huge. The explorer keeps the default (with
+// polygons) for the animation.
 type rippleScheduleEntry struct {
-	Tick            int            `json:"tick"`
-	DriveMin        float64        `json:"drive_min"`
-	CumulativeUsers int            `json:"cumulative_users"`
-	Polygon         GeoJSONPolygon `json:"polygon"`
+	Tick            int             `json:"tick"`
+	DriveMin        float64         `json:"drive_min"`
+	CumulativeUsers int             `json:"cumulative_users"`
+	Polygon         *GeoJSONPolygon `json:"polygon,omitempty"`
+	// ReachableGroupIDs is the targeting decision AT THIS TICK: groups with >=1
+	// active in-polygon member road-reachable within this tick's drive-time.
+	// The explorer tints groups from this, so the display is the decision.
+	ReachableGroupIDs []int64 `json:"reachable_group_ids"`
+}
+
+// wantTickPolygons: only an explicit polygons=0 disables per-tick polygons, so
+// older callers and the explorer (which draws them) are unaffected.
+func wantTickPolygons(q string) bool {
+	return q != "0"
 }
 
 type rippleScheduleResponse struct {
 	TotalFreeglers int                   `json:"total_freeglers"`
 	MaxDriveMin    float64               `json:"max_drive_min"`
 	Schedule       []rippleScheduleEntry `json:"schedule"`
+	// ReachableGroupIDs is the set of groups containing >=1 road node reachable
+	// within the max budget - the water/toll-correct ripple-targeting signal
+	// (plan 2026-07-06). Present (non-null) when computed, so batch can tell it
+	// apart from an older server that omits the field. No omitempty on purpose.
+	ReachableGroupIDs []int64 `json:"reachable_group_ids"`
 }
 
 // handleRippleSchedule produces the density-driven ripple schedule for a given
@@ -325,14 +345,41 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			return c.JSON(empty)
 		}
 
-		// --- Step 2: get the freeglers within the max polygon via spatial ---
-		res := AutoResolution(maxSecs, mode)
-		fullPoly := IsochronePolygon(g, iso.ReachedNodes, res)
-		ring := fullPoly.Geometry.Coordinates
-		if len(ring) == 0 || len(ring[0]) < 4 {
-			return c.JSON(empty)
+		// Road-reachable ripple targeting: a group is reached iff at least one
+		// active member who lives inside the group's own polygon has a street
+		// node in the Dijkstra reached set (see snapMembers /
+		// groupIDsWithinSeconds). The snaps carry each member's drive-time, so
+		// the same decision is made per tick below - the explorer tints exactly
+		// what targeting decides. Empty (non-nil) if no group DB is configured,
+		// which the batch treats as "gate not available".
+		var memberSnaps []memberSnap
+		if db := ensureGroupsDB(); db != nil {
+			minLat, maxLat, minLng, maxLng := reachedBBox(g, iso.ReachedNodes)
+			if members, err := queryActiveMembersInBox(db, minLat, maxLat, minLng, maxLng); err == nil {
+				memberSnaps = snapMembers(g, iso.ReachedNodes, members, mode)
+			} else {
+				log.Printf("ripple-schedule: active-member query failed: %v", err)
+			}
 		}
-		wkt := ringToWKT(ring[0])
+		reachableGroups := groupIDsWithinSeconds(memberSnaps, maxSecs)
+
+		// --- Step 2: get candidate freeglers via spatial, by BOUNDING BOX ---
+		// The candidate polygon is deliberately just the reach's bbox, not the detailed
+		// boundary: Step 3 filters each candidate exactly (their street node must be in
+		// the Dijkstra reached set), so a looser candidate set changes nothing in the
+		// result - and the unsimplified boundary ring (10k+ vertices now that display
+		// smoothing is gone) is too large to ship as a WKT query.
+		// polygons=0 (the batch): skip building a polygon per tick - the dominant cost
+		// of this endpoint and the bulk of the stored schedule. The resolution is only
+		// needed when polygons are built.
+		includePolys := wantTickPolygons(c.Query("polygons", "1"))
+		var res float64
+		if includePolys {
+			res = NetworkResolution(g, iso.ReachedNodes, mode)
+		}
+		bMinLat, bMaxLat, bMinLng, bMaxLng := reachedBBox(g, iso.ReachedNodes)
+		wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
+			bMinLng, bMaxLng, bMinLat, bMaxLat)
 
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
@@ -416,20 +463,26 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			}
 			driveSecs := fwt[target-1].seconds
 
-			// Polygon at this drive-time: filter reached nodes by time.
-			filtered := make(map[NodeID]float32, target*4)
-			for nid, t := range iso.ReachedNodes {
-				if t <= driveSecs {
-					filtered[nid] = t
+			// Polygon at this drive-time (only when requested): filter reached nodes
+			// by time and rasterise. Skipped entirely for polygons=0.
+			var tickPoly *GeoJSONPolygon
+			if includePolys {
+				filtered := make(map[NodeID]float32, target*4)
+				for nid, t := range iso.ReachedNodes {
+					if t <= driveSecs {
+						filtered[nid] = t
+					}
 				}
+				p := IsochronePolygon(g, filtered, res)
+				tickPoly = &p
 			}
-			tickPoly := IsochronePolygon(g, filtered, res)
 
 			schedule = append(schedule, rippleScheduleEntry{
-				Tick:            k,
-				DriveMin:        float64(driveSecs) / 60.0,
-				CumulativeUsers: target,
-				Polygon:         tickPoly,
+				Tick:              k,
+				DriveMin:          float64(driveSecs) / 60.0,
+				CumulativeUsers:   target,
+				Polygon:           tickPoly,
+				ReachableGroupIDs: groupIDsWithinSeconds(memberSnaps, driveSecs),
 			})
 		}
 
@@ -444,9 +497,10 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		}
 
 		return c.JSON(rippleScheduleResponse{
-			TotalFreeglers: total,
-			MaxDriveMin:    maxDriveMin,
-			Schedule:       schedule,
+			TotalFreeglers:    total,
+			MaxDriveMin:       maxDriveMin,
+			Schedule:          schedule,
+			ReachableGroupIDs: reachableGroups,
 		})
 	}
 }

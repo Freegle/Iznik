@@ -200,12 +200,13 @@ class ExpandService
             }
 
             $entry = $this->entryForTick($ticks, (int) $row->tick);
-            if ($entry === null || empty($entry['wkt'])) {
+            $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
+            if ($tickWkt === null) {
                 $stats['skipped']++;
                 continue;
             }
 
-            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
 
             // Cross-post breadth: how many groups the post hits under its CURRENT reach
             // vs under the CAPPED reach, counted with the SAME selection the live ripple
@@ -230,7 +231,7 @@ class ExpandService
                 [
                     $storeWkt,
                     json_encode($ticks),
-                    json_encode($schedule['reachable_group_ids'] ?? []),
+                    json_encode($this->tickReachableIds($entry, $schedule)),
                     (int) $schedule['total_freeglers'],
                     $schedule['max_drive_min'],
                     $row->msgid,
@@ -866,7 +867,14 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+                    $tickWkt = $this->resolveTickWkt($entry, (float) $lat, (float) $lng);
+                    if ($tickWkt === null) {
+                        // Routing unreachable mid-run - leave the post for the next pass
+                        // rather than storing a reach with no polygon.
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     // Upsert, not plain INSERT: on the normal/backfill path the anti-join guarantees
                     // no existing row so this behaves exactly like INSERT; on the recompute path the
                     // placeholder (DPA) row already exists and we replace it IN PLACE, so the post is
@@ -890,11 +898,14 @@ class ExpandService
                             $this->reach->mode(), $tick, $total,
                             $schedule['total_freeglers'], $schedule['max_drive_min'],
                             json_encode($schedule['ticks']),
-                            json_encode($schedule['reachable_group_ids'] ?? []),
+                            json_encode($this->tickReachableIds($entry, $schedule)),
                             $next, $status,
                         ]
                     );
-                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $schedule['reachable_group_ids'] ?? null);
+                    $this->rippleIntoNewGroups(
+                        (int) $row->msgid, $storeWkt, $stats,
+                        $this->tickReachableIdsOrNull($entry, $schedule)
+                    );
                     // Reach mail is decoupled into the sharded `mail:digest:unified --mode=reach`
                     // pass (UnifiedDigestService::sendReachDigests). It must NOT run inline here:
                     // the 2026-06-24 live profile showed it was ~75% of this serial Phase-2 loop's
@@ -1004,25 +1015,38 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+                    $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
+                    if ($tickWkt === null) {
+                        // Routing unreachable - keep the previous polygon and retry this
+                        // tick on the next run (next_expansion_at is already due).
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     DB::statement(
                         'UPDATE rippling_reach
                          SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                             reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?',
-                        [$storeWkt, $target, $next, $status, $row->msgid]
+                        [$storeWkt, $this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid]
                     );
                     // The polygon was just overwritten from the cached schedule, which does NOT
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                    // The reachable-group set was computed at init and cached on the reach
-                    // row; later ticks re-ripple against the same set (a cheap keyed lookup,
-                    // only when the gate is on).
+                    // Targeting ids for THIS tick: prefer the stored slim schedule's
+                    // per-tick set (exact for this drive-time); fall back to the cached
+                    // column (schedules stored before per-tick ids existed).
                     $cachedReachable = null;
                     if ($this->reachableGateEnabled()) {
-                        $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
-                        $cachedReachable = $raw ? json_decode($raw, true) : null;
+                        $cachedReachable = is_array($entry['reachable_group_ids'] ?? null)
+                            ? array_map('intval', $entry['reachable_group_ids'])
+                            : null;
+                        if ($cachedReachable === null) {
+                            $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
+                            $cachedReachable = $raw ? json_decode($raw, true) : null;
+                        }
                     }
                     $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $cachedReachable);
                     // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
@@ -1594,6 +1618,158 @@ class ExpandService
      *
      * @param array<int,array{tick:int,wkt:string}> $ticks
      */
+    /**
+     * Backfill: re-derive EVERY active post's stored reach under the current
+     * algorithm - fine no-smoothing polygon, slim schedule with per-tick
+     * reachable_group_ids - and retract what the new targeting no longer covers:
+     * rippled-in copies, and the ripple-created memberships that existed only for
+     * them (via retractOutOfReachCopies' existing rules: latest-join-was-Rippled,
+     * no other live post, held reaches untouched).
+     *
+     * Mirrors recomputeReach's safety properties: updated_at is preserved so the
+     * reach mailer never reconsiders the row, writes are one row per statement
+     * (Galera-safe), and a routing failure skips the row for a later run rather
+     * than degrading it. Idempotent: a second run finds nothing left to change.
+     * The budget used is the post's CURRENT tick re-read from a fresh schedule,
+     * so a post mid-expansion keeps its place in the hazard timetable.
+     *
+     * @return array{candidates:int,updated:int,skipped:int,would_retract_groups:int,pulled_out_of_reach:int,memberships_removed:int}
+     */
+    public function backfillReach(bool $dryRun = false, int $limit = 500, ?int $onlyMsgid = null): array
+    {
+        $stats = [
+            'candidates' => 0, 'updated' => 0, 'skipped' => 0,
+            'would_retract_groups' => 0, 'pulled_out_of_reach' => 0,
+            'memberships_removed' => 0, 'pulled_on_removal' => 0, 'skipped_terminal' => 0,
+        ];
+
+        $rows = DB::table('rippling_reach')
+            ->select(['msgid', 'lat', 'lng', 'tick', 'rejected_groups', 'status'])
+            ->whereIn('status', ['expanding', 'stopped', 'done']) // held = frozen for moderation
+            ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
+            ->orderBy('msgid')
+            ->limit($limit)
+            ->get();
+
+        foreach ($rows as $row) {
+            $stats['candidates']++;
+            try {
+                $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                if ($schedule === null || empty($schedule['ticks'])) {
+                    $stats['skipped']++;
+                    continue; // routing unreachable/off-graph - safe to retry later
+                }
+                $ticks = $schedule['ticks'];
+                $tick = min(max((int) $row->tick, 1), count($ticks));
+                $entry = $this->entryForTick($ticks, $tick);
+                $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
+                if ($tickWkt === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
+                $ids = $this->tickReachableIds($entry, $schedule);
+
+                if ($dryRun) {
+                    // Preview the retraction the new ids would drive (ids-based only;
+                    // the tighter polygon can retract further copies on the live run).
+                    if (!empty($ids)) {
+                        $ph = implode(',', array_fill(0, count($ids), '?'));
+                        $stats['would_retract_groups'] += (int) DB::selectOne(
+                            "SELECT COUNT(*) AS n FROM messages_groups
+                              WHERE msgid = ? AND rippled_in = 1 AND deleted = 0
+                                AND groupid NOT IN ({$ph})",
+                            array_merge([$row->msgid], $ids)
+                        )->n;
+                    }
+                    $stats['updated']++;
+                    continue;
+                }
+
+                $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
+                DB::statement(
+                    'UPDATE rippling_reach
+                        SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                            schedule = ?, reachable_group_ids = ?,
+                            total_freeglers = ?, max_drive_min = ?,
+                            updated_at = updated_at
+                      WHERE msgid = ?',
+                    [
+                        $storeWkt,
+                        json_encode($ticks),
+                        json_encode($ids),
+                        (int) $schedule['total_freeglers'],
+                        $schedule['max_drive_min'],
+                        $row->msgid,
+                    ]
+                );
+                // Secondary "out of area" rejection clips must survive the rewrite.
+                $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+                // Retract copies (and their ripple-only memberships) the new reach no
+                // longer covers - polygon-based always, ids-based when the gate is on.
+                $this->retractOutOfReachCopies((int) $row->msgid, false, $stats);
+                $stats['updated']++;
+            } catch (\Throwable $e) {
+                Log::warning("ripple: backfillReach failed for msg {$row->msgid}: {$e->getMessage()}");
+                $stats['skipped']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * The polygon WKT for a schedule tick. Full schedules (old servers / rows stored
+     * before the slim form) carry it inline; slim schedules (polygons=0) don't, so it
+     * is fetched as a single point-form catchment at the tick's drive-time. Null when
+     * the entry is unusable or the routing server is unreachable - callers skip the
+     * row and retry on a later run.
+     */
+    private function resolveTickWkt(?array $entry, float $lat, float $lng): ?string
+    {
+        if ($entry === null) {
+            return null;
+        }
+        if (!empty($entry['wkt'])) {
+            return (string) $entry['wkt'];
+        }
+        $driveMin = (float) ($entry['drive_min'] ?? 0);
+        if ($driveMin <= 0) {
+            return null;
+        }
+        return $this->reach->catchmentWkt($lat, $lng, $driveMin);
+    }
+
+    /**
+     * The reachable-group ids to store for the row's CURRENT tick: the per-tick set
+     * when the schedule carries one (slim form), else the schedule's max-extent set
+     * (older servers). Stored on rippling_reach so retraction tests copies against
+     * the current extent.
+     *
+     * @return int[]
+     */
+    private function tickReachableIds(?array $entry, array $schedule): array
+    {
+        return $this->tickReachableIdsOrNull($entry, $schedule) ?? [];
+    }
+
+    /** As tickReachableIds, but null when neither source has a set (gate unavailable). */
+    private function tickReachableIdsOrNull(?array $entry, array $schedule): ?array
+    {
+        if (is_array($entry['reachable_group_ids'] ?? null)) {
+            return array_map('intval', $entry['reachable_group_ids']);
+        }
+        $top = $schedule['reachable_group_ids'] ?? null;
+        return is_array($top) ? array_map('intval', $top) : null;
+    }
+
+    /** The per-tick ids as JSON for a COALESCE update, or null to keep the stored set. */
+    private function tickReachableIdsJson(?array $entry): ?string
+    {
+        return is_array($entry['reachable_group_ids'] ?? null)
+            ? json_encode(array_map('intval', $entry['reachable_group_ids']))
+            : null;
+    }
+
     private function entryForTick(array $ticks, int $target): ?array
     {
         $best = null;

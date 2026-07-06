@@ -227,4 +227,63 @@ class ReachServiceTest extends TestCase
         $this->assertSame([], $this->service()->computeSchedulesBatch([]));
         $this->assertCount(0, Http::recorded());
     }
+
+    // --- Slim schedule contract (polygons=0) --------------------------------------
+
+    public function test_schedule_request_asks_for_the_slim_form(): void
+    {
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 1, 'max_drive_min' => 30,
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 1, 'reachable_group_ids' => []]],
+            'reachable_group_ids' => [],
+        ], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(function ($req) {
+            return str_contains($req->url(), '/v1/ripple-schedule')
+                && ($req['polygons'] ?? null) === '0';
+        });
+    }
+
+    public function test_parse_keeps_slim_ticks_and_per_tick_ids(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'total_freeglers' => 42,
+            'max_drive_min' => 30,
+            'schedule' => [
+                ['tick' => 1, 'drive_min' => 5.5, 'cumulative_users' => 10, 'reachable_group_ids' => ['21656']],
+                ['tick' => 2, 'drive_min' => 12.0, 'cumulative_users' => 30, 'reachable_group_ids' => [21656, 21458]],
+            ],
+            'reachable_group_ids' => [21656, 21458],
+        ]);
+
+        $this->assertNotNull($parsed, 'slim ticks (no polygon) are usable');
+        $this->assertCount(2, $parsed['ticks']);
+        $this->assertArrayNotHasKey('wkt', $parsed['ticks'][0]);
+        $this->assertSame([21656], $parsed['ticks'][0]['reachable_group_ids'], 'per-tick ids are cast to ints');
+        $this->assertSame([21656, 21458], $parsed['ticks'][1]['reachable_group_ids']);
+        $this->assertSame([21656, 21458], $parsed['reachable_group_ids']);
+    }
+
+    public function test_catchment_wkt_parses_the_polygon(): void
+    {
+        Http::fake(['*catchment*' => Http::response(['catchment' => [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.1, 51.5], [-0.2, 51.5], [-0.2, 51.6], [-0.1, 51.5],
+            ]]],
+        ]], 200)]);
+
+        $wkt = $this->service()->catchmentWkt(51.5, -0.1, 12.5);
+        $this->assertNotNull($wkt);
+        $this->assertStringStartsWith('POLYGON((', $wkt);
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment') && (float) $req['minutes'] === 12.5);
+    }
+
+    public function test_catchment_wkt_returns_null_on_server_error(): void
+    {
+        Http::fake(['*catchment*' => Http::response('', 500)]);
+        $this->assertNull($this->service()->catchmentWkt(51.5, -0.1, 12.5));
+    }
 }
