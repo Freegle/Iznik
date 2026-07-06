@@ -2298,8 +2298,6 @@ class IncomingMailService
             'Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User',
             'UnknownMessage', 'SameImage', 'DodgyImage',
             'CountryBlocked',
-            'IPUsedForDifferentUsers',
-            'IPUsedForDifferentGroups',
             'SubjectUsedForDifferentGroups',
             'SpamAssassin',
             'Greetings spam',

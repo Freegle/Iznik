@@ -219,8 +219,6 @@ describe('ModChatReview', () => {
       ['UnknownMessage', 'reply to a post we cannot find'],
       ['Spam', 'failed spam checks'],
       ['CountryBlocked', 'country we are blocking'],
-      ['IPUsedForDifferentUsers', 'IP address'],
-      ['IPUsedForDifferentGroups', 'IP address'],
       ['SubjectUsedForDifferentGroups', 'subject line'],
       ['SpamAssassin', 'SpamAssassin'],
       ['Greetings spam', 'greetings spam'],

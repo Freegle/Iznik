@@ -369,15 +369,6 @@ const reviewreason = computed(() => {
         ret = 'It comes from a country we are blocking.'
         break
       }
-      case 'IPUsedForDifferentUsers': {
-        ret = 'The same IP address has been used for a lot of different users.'
-        break
-      }
-      case 'IPUsedForDifferentGroups': {
-        ret =
-          ' The same IP address has been used for a lot of different groups.'
-        break
-      }
       case 'SubjectUsedForDifferentGroups': {
         ret =
           'The same subject line has been used on a lot of different groups.'
