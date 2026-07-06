@@ -69,8 +69,15 @@ func Groups(c *fiber.Ctx) error {
 		"messages_spatial.groupid, "+
 		"messages_spatial.msgtype AS type, "+
 		"messages_spatial.arrival, "+
+		// posted = the ORIGINAL post time (messages.arrival), stable across rippling.
+		// The client's "Newest posted" sort keys on posted; messages_spatial.arrival is
+		// ripple-BUMPED, so without posted the mygroups feed fell back to it and the
+		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
+		// Mirrors the nearby/reach feed (isochrone/message.go).
+		"m.arrival AS posted, "+
 		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
 		"FROM messages_spatial "+
+		"INNER JOIN messages m ON m.id = messages_spatial.msgid "+
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
 		"WHERE 1=1 "+spatialGroupFilter+
 		"UNION "+
@@ -80,6 +87,7 @@ func Groups(c *fiber.Ctx) error {
 		"ANY_VALUE(messages_groups.groupid) AS groupid, "+
 		"messages.type, "+
 		"MAX(messages_groups.arrival) AS arrival, "+
+		"messages.arrival AS posted, "+
 		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
 		"FROM messages "+
 		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
