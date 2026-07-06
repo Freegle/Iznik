@@ -102,8 +102,6 @@ class BirthdayService
 
     private function getActiveVolunteers(int $groupId): array
     {
-        $oneYearAgo = now()->subYear()->format('Y-m-d H:i:s');
-
         // Match the source of truth used by the modtools "Show me as a volunteer"
         // toggle, the Go API's group volunteer list (iznik-server-go
         // group/groupVolunteer.go:45), and every other on-site volunteer display:
@@ -116,13 +114,18 @@ class BirthdayService
         // from the volunteer line in the birthday email even though their UI
         // showed "Show me". V1 papered over this with a periodic
         // fix_list_birthday_moderators.php back-fill; this avoids the divergence.
+        //
+        // No lastaccess filter, again matching the Go volunteer list: lastaccess
+        // only updates on an authenticated web/app login, so a mod who moderates
+        // purely by email would be silently dropped from the birthday mail every
+        // year while appearing as an active volunteer everywhere else on the site
+        // (reported for Oxford's group birthday email).
         $mods = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
             ->whereIn('memberships.role', ['Moderator', 'Owner'])
             ->whereNull('users.deleted')
-            ->where('users.lastaccess', '>=', $oneYearAgo)
             ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
             ->select(['users.id', 'users.fullname', 'users.firstname'])
             ->get();

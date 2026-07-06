@@ -44,6 +44,49 @@ class BirthdayServiceTest extends TestCase
         $this->assertSame(1, $count, 'only the genuine member receives the birthday appeal');
     }
 
+    /**
+     * The volunteer list must match the Go API's group volunteer query, which has
+     * no lastaccess filter. lastaccess only updates on web/app login, so a mod who
+     * moderates purely by email must still appear in the birthday email's volunteer
+     * line (an Oxford mod was silently dropped every year by a lastaccess filter).
+     */
+    public function test_email_only_mod_included_in_birthday_volunteers(): void
+    {
+        $group = $this->createTestGroup();
+
+        $webMod = $this->makeBirthdayVolunteer($group->id, 'Web Mod', now());
+        $emailOnlyMod = $this->makeBirthdayVolunteer($group->id, 'Email Mod', now()->subYears(2));
+        $hiddenMod = $this->makeBirthdayVolunteer($group->id, 'Hidden Mod', now());
+        DB::table('users')->where('id', $hiddenMod->id)->update([
+            'settings' => json_encode(['showmod' => false]),
+        ]);
+
+        $method = new \ReflectionMethod(BirthdayService::class, 'getActiveVolunteers');
+        $volunteers = $method->invoke(new BirthdayService(), $group->id);
+
+        $names = array_column($volunteers, 'displayname');
+        $this->assertContains('Web Mod', $names);
+        $this->assertContains('Email Mod', $names, 'mod who only moderates by email must be included');
+        $this->assertNotContains('Hidden Mod', $names, 'showmod=false must still be respected');
+    }
+
+    /** A moderator on the group with the given display name and lastaccess. */
+    private function makeBirthdayVolunteer(int $groupId, string $name, $lastaccess): object
+    {
+        $user = $this->createTestUser();
+        DB::table('users')->where('id', $user->id)->update([
+            'fullname' => $name,
+            'deleted' => null,
+            'lastaccess' => $lastaccess,
+        ]);
+        DB::table('memberships')->insert([
+            'userid' => $user->id, 'groupid' => $groupId,
+            'role' => 'Moderator', 'collection' => 'Approved', 'added' => now(),
+        ]);
+
+        return $user;
+    }
+
     /** A user who passes every birthday gate: consenting, active, contactable, no recent appeal. */
     private function makeBirthdayRecipient(): object
     {
