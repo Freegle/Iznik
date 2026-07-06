@@ -26,8 +26,6 @@
         aria-label="How far away"
         @change="onSliderChange"
       />
-
-      <p class="readout mt-2 mb-0">{{ readout }}</p>
     </div>
   </div>
 </template>
@@ -67,15 +65,9 @@ watch(maxDistance, (d) => {
   sliderValue.value = sliderPositionFor(d, feedMax)
 })
 
-// Live readout follows the drag (RangeSlider updates v-model on every tick).
-const readout = computed(() => {
-  const v = sliderValue.value
-  if (v >= feedMax) {
-    return 'Showing posts at any distance.'
-  }
-  return `Showing posts within ${v} ${v === 1 ? 'mile' : 'miles'}.`
-})
-
+// Deliberately no numeric readout - the Nearer/Further labels are enough, and a
+// per-tick "within N miles" text made the drag janky (matches the browse slider,
+// which is numeric-readout-free for the same reason).
 // Only persist on release/keyup (RangeSlider's `change`), not every drag tick.
 async function onSliderChange(val) {
   const settings = me.value?.settings
@@ -136,11 +128,5 @@ async function onSliderChange(val) {
 .option-desc {
   font-size: 0.8rem;
   color: var(--color-gray-600);
-}
-
-.readout {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: $color-green-background;
 }
 </style>

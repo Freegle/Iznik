@@ -48,14 +48,10 @@ describe('FeedSettingsSection', () => {
     expect(wrapper.text().toLowerCase()).toContain('emails')
   })
 
-  it('reads a saved mile value into the readout', () => {
+  it('has no numeric miles readout (matches the browse slider; avoids janky drag)', () => {
     const wrapper = mountWith(3)
-    expect(wrapper.text()).toContain('Showing posts within 3 miles.')
-  })
-
-  it('shows "any distance" when unlimited', () => {
-    const wrapper = mountWith(BROWSE_DISTANCE_UNLIMITED)
-    expect(wrapper.text()).toContain('Showing posts at any distance.')
+    expect(wrapper.text()).not.toContain('miles')
+    expect(wrapper.text()).not.toContain('any distance')
   })
 
   it('persists a chosen mile value via saveAndGet', async () => {
