@@ -18,7 +18,9 @@ class ReplyGmailOutreachCommand extends Command
 {
     protected $signature = 'bulkoffer:reply-outreach
                             {--thread= : Gmail thread id to reply in (required)}
-                            {--body= : Reply text (required)}
+                            {--body= : Reply text (or use --body-file)}
+                            {--body-file= : Read the reply text from a file (alternative to --body)}
+                            {--attach= : Files to attach: a directory (all files in it) or a comma-separated list of paths}
                             {--live : Actually send when the mailbox is configured live}';
 
     protected $description = 'Send a concierge reply in an outreach mail thread (mailbox FSM transport)';
@@ -27,9 +29,23 @@ class ReplyGmailOutreachCommand extends Command
     {
         $threadId = (string) $this->option('thread');
         $body = (string) $this->option('body');
-        if ($threadId === '' || trim($body) === '') {
-            $this->error('--thread and --body are required.');
+        if ($this->option('body-file')) {
+            $path = (string) $this->option('body-file');
+            if (! is_file($path)) {
+                $this->error("--body-file not found: {$path}");
 
+                return self::FAILURE;
+            }
+            $body = (string) file_get_contents($path);
+        }
+        if ($threadId === '' || trim($body) === '') {
+            $this->error('--thread and a reply body (--body or --body-file) are required.');
+
+            return self::FAILURE;
+        }
+
+        $attachments = $this->resolveAttachments((string) $this->option('attach'));
+        if ($attachments === null) {
             return self::FAILURE;
         }
         if (! $gmail->isDryRun() && ! $this->option('live')) {
@@ -75,6 +91,7 @@ class ReplyGmailOutreachCommand extends Command
                 html: $html,
                 text: $text,
                 headers: $headers,
+                attachments: $attachments,
             );
         } catch (\Throwable $e) {
             $this->error("Send failed: {$e->getMessage()}");
@@ -120,5 +137,41 @@ class ReplyGmailOutreachCommand extends Command
         }
 
         return $ctx;
+    }
+
+    /**
+     * Resolve the --attach option into an attachments array for GmailService::send.
+     * Accepts a directory (all files within) or a comma-separated list of paths.
+     * Returns [] when empty, or null (with an error printed) if any path is missing.
+     *
+     * @return array<int,array{path:string,name:string}>|null
+     */
+    private function resolveAttachments(string $spec): ?array
+    {
+        $spec = trim($spec);
+        if ($spec === '') {
+            return [];
+        }
+
+        if (is_dir($spec)) {
+            $paths = array_values(array_filter(
+                glob(rtrim($spec, '/').'/*') ?: [],
+                'is_file'
+            ));
+        } else {
+            $paths = array_map('trim', explode(',', $spec));
+        }
+
+        $out = [];
+        foreach ($paths as $p) {
+            if ($p === '' || ! is_file($p)) {
+                $this->error("--attach path not found: {$p}");
+
+                return null;
+            }
+            $out[] = ['path' => $p, 'name' => basename($p)];
+        }
+
+        return $out;
     }
 }

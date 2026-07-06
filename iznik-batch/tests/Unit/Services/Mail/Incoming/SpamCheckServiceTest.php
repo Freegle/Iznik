@@ -78,6 +78,22 @@ class SpamCheckServiceTest extends TestCase
         $this->assertNull($service->checkIPCountry('1.2.3.4'));
     }
 
+    public function test_lookup_ip_country_code_returns_iso_code(): void
+    {
+        // The ISO code is what gets stored in messages.fromcountry on incoming
+        // mail, so ModTools can flag posts from outside the UK.
+        $service = $this->createServiceWithMockedGeoIPCode('GB');
+        $this->assertSame('GB', $service->lookupIPCountryCode('1.2.3.4'));
+    }
+
+    public function test_lookup_ip_country_code_returns_null_when_unresolved(): void
+    {
+        // Fail-soft: no country resolved (e.g. private IP or absent database)
+        // stores NULL rather than breaking the post.
+        $service = $this->createServiceWithMockedGeoIPCode(null);
+        $this->assertNull($service->lookupIPCountryCode('192.168.1.1'));
+    }
+
     // ========================================
     // Subject Reuse Detection Tests
     // ========================================
@@ -739,6 +755,27 @@ class SpamCheckServiceTest extends TestCase
             protected function lookupIPCountry(string $ip): ?string
             {
                 return $this->mockCountry;
+            }
+        };
+    }
+
+    /**
+     * Create a SpamCheckService whose GeoIP record lookup yields a given ISO
+     * code (or null), without needing the mmdb database.
+     */
+    private function createServiceWithMockedGeoIPCode(?string $isoCode): SpamCheckService
+    {
+        return new class($isoCode) extends SpamCheckService
+        {
+            public function __construct(private ?string $mockIsoCode) {}
+
+            protected function readGeoIPCountry(string $ip): ?\GeoIp2\Record\Country
+            {
+                if ($this->mockIsoCode === null) {
+                    return null;
+                }
+
+                return new \GeoIp2\Record\Country(['iso_code' => $this->mockIsoCode]);
             }
         };
     }

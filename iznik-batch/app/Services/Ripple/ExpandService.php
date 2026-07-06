@@ -96,48 +96,6 @@ class ExpandService
         return $stats;
     }
 
-    /**
-     * One-off (re-runnable) backfill: seed a rippling_reach row for every LIVE post that is
-     * eligible to ripple but has none — the posts whose messages_spatial.arrival predates the
-     * go-live cutoff (freegle.ripple.enabled_at) and so were never picked up by initialiseNew.
-     *
-     * It reuses initialiseNew EXACTLY (same concurrent routing, blurred-origin de-dup, tick
-     * placement, INSERT, cross-post rippleIntoNewGroups and poster auto-join), only lifting the
-     * arrival cutoff, so a backfilled reach row is identical to a natively-initialised one. It
-     * deliberately does NOT retract, advance or otherwise touch existing reach rows: the
-     * per-minute ripple:expand cron advances the seeded rows on later ticks (division of labour —
-     * backfill seeds, expand grows). Because it only INSERTs seed rows (Galera-safe, one row per
-     * INSERT inside initialiseNew) it cannot fight the expand cron; the command also takes a
-     * DISTINCT Cache lock ('ripple:backfill:run', never 'ripple:expand:run').
-     *
-     * Idempotent and resumable: a post that already has a reach row is skipped by the same
-     * LEFT JOIN rippling_reach ... IS NULL the live path uses, so re-running drains the backlog
-     * in --limit-sized bites. Gated exactly like process(): an UNSCOPED backfill is inert while
-     * global rippling is off, but a within-poly scope is still allowed through (experiment path).
-     *
-     * NB seeding is NOT a cheap insert: initialiseNew computes each post's reach polygon inline
-     * via the routing server (deduped by blurred origin, fanned out at compute_concurrency) and
-     * cross-posts the post into its tick-0 groups. The routing server is therefore the throughput
-     * limiter, which is why $shardCount/$shardIndex let several instances drain disjoint msgid
-     * slices in parallel — keep shards x compute_concurrency within the routing server's headroom.
-     *
-     * @return array{initialized:int,skipped:int,errors:int,rippled_in:int,memberships_added:int}
-     */
-    public function backfill(bool $dryRun = false, int $limit = 500, ?string $withinPolyWkt = null, ?int $shardCount = null, ?int $shardIndex = null, bool $recompute = false): array
-    {
-        $stats = [
-            'initialized' => 0, 'skipped' => 0, 'errors' => 0,
-            'rippled_in' => 0, 'mailed' => 0, 'memberships_added' => 0, 'reused' => 0,
-        ];
-
-        if (!config('freegle.ripple.enabled') && $withinPolyWkt === null) {
-            return $stats;
-        }
-
-        $this->initialiseNew($dryRun, $limit, $stats, null, $withinPolyWkt, true, $shardCount, $shardIndex, $recompute);
-
-        return $stats;
-    }
 
     /**
      * Backfill: shrink the stored reach of EXISTING active posts whose reach was
@@ -200,12 +158,13 @@ class ExpandService
             }
 
             $entry = $this->entryForTick($ticks, (int) $row->tick);
-            if ($entry === null || empty($entry['wkt'])) {
+            $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
+            if ($tickWkt === null) {
                 $stats['skipped']++;
                 continue;
             }
 
-            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
 
             // Cross-post breadth: how many groups the post hits under its CURRENT reach
             // vs under the CAPPED reach, counted with the SAME selection the live ripple
@@ -224,12 +183,13 @@ class ExpandService
             DB::statement(
                 'UPDATE rippling_reach
                     SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                        schedule = ?, total_freeglers = ?, max_drive_min = ?,
+                        schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?,
                         updated_at = updated_at
                   WHERE msgid = ?',
                 [
                     $storeWkt,
                     json_encode($ticks),
+                    json_encode($this->tickReachableIds($entry, $schedule)),
                     (int) $schedule['total_freeglers'],
                     $schedule['max_drive_min'],
                     $row->msgid,
@@ -448,7 +408,25 @@ class ExpandService
         }
 
         // Rippled-in groups whose polyindex no longer intersects the post's current
-        // (capped) reach polygon — i.e. groups we would NOT ripple into now.
+        // (capped) reach polygon — i.e. groups we would NOT ripple into now. With the
+        // reachable-gate on, ALSO retract groups the polygon still covers but which are
+        // no longer in the node-reachable set (rr.reachable_group_ids), so a reach that
+        // overshot water self-heals. The `rr.reachable_group_ids IS NOT NULL` guard means
+        // reaches computed before the gate rolled out (NULL column) are never retracted by
+        // it - only polygon-based retraction applies to them.
+        // JSON_LENGTH > 0: an EMPTY stored set means "gate could not compute" (zero
+        // members found is indistinguishable from a transient members-query failure),
+        // and targeting already treats [] as unavailable - so retraction must never
+        // act on it either, or one bad routing-side query would retract every copy
+        // of the post. Polygon-based retraction still applies to such rows.
+        $reachClause = $this->reachableGateEnabled()
+            ? "AND (NOT ST_Intersects(g.polyindex, rr.polygon)
+                    OR (rr.reachable_group_ids IS NOT NULL
+                        AND JSON_VALID(rr.reachable_group_ids)
+                        AND JSON_LENGTH(rr.reachable_group_ids) > 0
+                        AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
+            : "AND NOT ST_Intersects(g.polyindex, rr.polygon)";
+
         $rows = DB::select(
             "SELECT g.id
                FROM messages_groups mg
@@ -457,7 +435,7 @@ class ExpandService
               WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
                 AND rr.status <> 'held'
                 AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
-                AND NOT ST_Intersects(g.polyindex, rr.polygon)",
+                " . $reachClause,
             [$msgid]
         );
 
@@ -621,7 +599,7 @@ class ExpandService
         return $stats;
     }
 
-    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null, bool $ignoreArrivalCutoff = false, ?int $shardCount = null, ?int $shardIndex = null, bool $recompute = false): void
+    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
         // cutoff ever start rippling, so flipping RIPPLE_ENABLED on does not make the
@@ -646,60 +624,31 @@ class ExpandService
                 $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ms.point)';
                 $params[] = $withinPolyWkt;
             }
-            // The go-live arrival cutoff is what leaves every pre-go-live post without a reach
-            // row. The one-off ripple:backfill drain (ignoreArrivalCutoff) lifts it so those
-            // still-live posts get seeded too; everything else about the selection/seed is
-            // identical, so a backfilled post is indistinguishable from a natively-initialised one.
-            if (!empty($enabledAt) && !$ignoreArrivalCutoff && !$recompute) {
+            if (!empty($enabledAt)) {
                 $cutoffSql = ' AND ms.arrival >= ?';
                 $params[] = $enabledAt;
             }
             // Reply-saturation stop (extent-governor T1.1): a post that already has >= threshold
             // distinct repliers never starts rippling - it has enough interest without reach.
-            // 0 disables. Applies to normal and scoped (experiment) runs alike. NOT applied on a
-            // recompute pass: those posts already have a placeholder reach row we must resolve to
-            // real (or 'done') so the drain terminates - a saturated one would otherwise stay in the
-            // candidate set forever and stall the loop. (advanceDue re-checks saturation next tick.)
+            // 0 disables. Applies to normal and scoped (experiment) runs alike.
             $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
-            if ($satStop > 0 && !$recompute) {
+            if ($satStop > 0) {
                 $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
                                   WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?";
                 $params[] = $satStop;
             }
         }
-        // Sharding (ripple:backfill --shards N --shard i): partition the candidate set by msgid so
-        // several instances can drain DISJOINT slices in parallel without overlapping or double-
-        // seeding. Deterministic and stateless (msgid % N), so a re-run of a shard still only sees
-        // its own not-yet-seeded rows. Applied to every scope; ignored for a single-post run
-        // (that is inherently one row). Each shard still fans its routing out at compute_concurrency,
-        // so total concurrent routing load ~= shards x compute_concurrency (see the command docs).
-        $shardSql = '';
-        if ($shardCount !== null && $shardCount > 1 && $shardIndex !== null) {
-            $shardSql = ' AND (ms.msgid % ?) = ?';
-            $params[] = $shardCount;
-            $params[] = $shardIndex;
-        }
         $params[] = $limit;
 
-        // Candidate source. Normal/backfill: live posts with NO reach row yet (anti-join). Recompute:
-        // the placeholder "DPA" seeds (status='stopped' + schedule IS NULL) laid down by the quick
-        // geometry pass, which this pass replaces IN PLACE with real routed reach (upsert below, so
-        // the post is never momentarily without a reach row).
-        $reachJoin = $recompute
-            ? 'JOIN rippling_reach mr ON mr.msgid = ms.msgid'
-            : 'LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid';
-        $reachWhere = $recompute
-            ? "mr.status = 'stopped' AND mr.schedule IS NULL"
-            : 'mr.msgid IS NULL';
-
+        // Candidate source: live posts with NO reach row yet (anti-join).
         $rows = DB::select(
             'SELECT ms.msgid AS msgid,
                     ANY_VALUE(ST_Y(ms.point)) AS lat,
                     ANY_VALUE(ST_X(ms.point)) AS lng,
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
-             ' . $reachJoin . '
-             WHERE ' . $reachWhere . $scopeSql . $cutoffSql . $satSql . $shardSql . '
+             LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -734,10 +683,10 @@ class ExpandService
         // config - see the Phase-1 note above), so if another live post at the SAME blurred origin
         // already has a real computed reach, copy its schedule rather than hit the routing server
         // again. This covers "same user posting again from home" and any co-located posts; on the
-        // recompute drain (many posts share a postcode/home) it removes the bulk of routing calls.
+        // same-origin batch (many posts share a postcode/home) it removes the bulk of routing calls.
         // Exact because blurOrigin quantises to 4dp and only the blurred origin + global config feed
         // the schedule. If that config (curve/max_minutes/extent) ever changes, set
-        // freegle.ripple.reuse_reach=false for one full recompute so stale reaches are not reused.
+        // freegle.ripple.reuse_reach=false to disable if stale reuse is ever suspected.
         if (config('freegle.ripple.reuse_reach', true) && !empty($distinctOrigins)) {
             $pairs = array_values($distinctOrigins);
             $placeholders = implode(',', array_fill(0, count($pairs), '(?, ?)'));
@@ -817,14 +766,6 @@ class ExpandService
                 }
                 if ($schedule === null) {
                     // Genuinely unreachable (raw origin off-graph too) — retry next run.
-                    if ($recompute && !$dryRun) {
-                        // On the recompute drain, retire this permanently-stranded placeholder from
-                        // the candidate set (flip status off 'stopped' -> 'done') so the loop does
-                        // not re-select it forever and stall. It keeps its DPA polygon, so replies
-                        // stay gated to its area; nothing off-graph would resolve on a retry anyway.
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)
-                            ->update(['status' => 'done', 'updated_at' => now()]);
-                    }
                     $stats['skipped']++;
                     continue;
                 }
@@ -841,11 +782,6 @@ class ExpandService
                 $tick = min($this->reach->tickForElapsedHours($elapsedHours), $total);
                 $entry = $this->entryForTick($schedule['ticks'], $tick);
                 if ($entry === null) {
-                    if ($recompute && !$dryRun) {
-                        // As above: retire the placeholder so the recompute drain terminates.
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)
-                            ->update(['status' => 'done', 'updated_at' => now()]);
-                    }
                     $stats['skipped']++;
                     continue;
                 }
@@ -853,32 +789,44 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
-                    // Upsert, not plain INSERT: on the normal/backfill path the anti-join guarantees
-                    // no existing row so this behaves exactly like INSERT; on the recompute path the
-                    // placeholder (DPA) row already exists and we replace it IN PLACE, so the post is
-                    // never momentarily without a reach row (created_at is preserved - not in the SET).
+                    $tickWkt = $this->resolveTickWkt($entry, (float) $lat, (float) $lng);
+                    if ($tickWkt === null) {
+                        // Routing unreachable mid-run - leave the post for the next pass
+                        // rather than storing a reach with no polygon.
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
+                    // Upsert, not plain INSERT: the anti-join guarantees no existing row so this
+                    // behaves exactly like INSERT, while staying safe against a concurrent run
+                    // seeding the same msgid (created_at is preserved - not in the SET).
                     DB::statement(
                         'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
-                            total_freeglers, max_drive_min, schedule, next_expansion_at, status,
-                            created_at, updated_at)
-                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            total_freeglers, max_drive_min, schedule, reachable_group_ids,
+                            next_expansion_at, status, created_at, updated_at)
+                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
                             lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon),
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
+                            reachable_group_ids = VALUES(reachable_group_ids),
                             next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
                             updated_at = NOW()',
                         [
                             $row->msgid, $lat, $lng, $storeWkt, $arrival,
                             $this->reach->mode(), $tick, $total,
                             $schedule['total_freeglers'], $schedule['max_drive_min'],
-                            json_encode($schedule['ticks']), $next, $status,
+                            json_encode($schedule['ticks']),
+                            json_encode($this->tickReachableIds($entry, $schedule)),
+                            $next, $status,
                         ]
                     );
-                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
+                    $this->rippleIntoNewGroups(
+                        (int) $row->msgid, $storeWkt, $stats,
+                        $this->tickReachableIdsOrNull($entry, $schedule)
+                    );
                     // Reach mail is decoupled into the sharded `mail:digest:unified --mode=reach`
                     // pass (UnifiedDigestService::sendReachDigests). It must NOT run inline here:
                     // the 2026-06-24 live profile showed it was ~75% of this serial Phase-2 loop's
@@ -988,19 +936,40 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $entry['wkt']);
+                    $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
+                    if ($tickWkt === null) {
+                        // Routing unreachable - keep the previous polygon and retry this
+                        // tick on the next run (next_expansion_at is already due).
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     DB::statement(
                         'UPDATE rippling_reach
                          SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                             reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?',
-                        [$storeWkt, $target, $next, $status, $row->msgid]
+                        [$storeWkt, $this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid]
                     );
                     // The polygon was just overwritten from the cached schedule, which does NOT
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
+                    // Targeting ids for THIS tick: prefer the stored slim schedule's
+                    // per-tick set (exact for this drive-time); fall back to the cached
+                    // column (schedules stored before per-tick ids existed).
+                    $cachedReachable = null;
+                    if ($this->reachableGateEnabled()) {
+                        $cachedReachable = is_array($entry['reachable_group_ids'] ?? null)
+                            ? array_map('intval', $entry['reachable_group_ids'])
+                            : null;
+                        if ($cachedReachable === null) {
+                            $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
+                            $cachedReachable = $raw ? json_decode($raw, true) : null;
+                        }
+                    }
+                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $cachedReachable);
                     // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
                     // initialiseNew and UnifiedDigestService::sendReachDigests.
                 }
@@ -1018,6 +987,16 @@ class ExpandService
     }
 
     /**
+     * True when the road-reachable ripple gate is enabled (plan 2026-07-06). Off by
+     * default and independent of RIPPLE_ENABLED; enable only once the routing server
+     * that returns reachable_group_ids is deployed and validated.
+     */
+    private function reachableGateEnabled(): bool
+    {
+        return (bool) config('freegle.ripple.reachable_gate', false);
+    }
+
+    /**
      * Ripple a post INTO every published group whose area the reach now covers (#6).
      *
      * "Crosses into a new group" = the reach polygon intersects the group's area. A
@@ -1032,7 +1011,7 @@ class ExpandService
      * (the default - no Pending flicker, since the post was already vetted on origin), else
      * Pending so AutoApproveService approves it after the mod-veto window.
      */
-    private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats): void
+    private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
     {
         try {
             // Never ripple a post that has already been taken/received/withdrawn into new groups,
@@ -1080,6 +1059,17 @@ class ExpandService
                 return;
             }
 
+            // Reachable-gate (plan 2026-07-06): when enabled AND the routing server sent a
+            // reachable-group set, restrict targets to groups containing a road node
+            // reachable from the origin - so a reach polygon that overshoots water can't
+            // ripple across an uncrossable barrier. The polygon ST_Intersects stays as the
+            // cheap spatial-index prefilter; this is an AND gate on top. IDs are
+            // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
+            // off => clause omitted => unchanged behaviour (fall back to polygon only).
+            $reachableGate = ($this->reachableGateEnabled() && !empty($reachableGroupIds))
+                ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
+                : '';
+
             $targetGroups = DB::select(
                 "SELECT g.id
                  FROM `groups` g
@@ -1089,7 +1079,7 @@ class ExpandService
                    AND g.nameshort NOT LIKE '%playground%'
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
-                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))
+                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )
@@ -1549,6 +1539,175 @@ class ExpandService
      *
      * @param array<int,array{tick:int,wkt:string}> $ticks
      */
+    /**
+     * Backfill: re-derive EVERY active post's stored reach under the current
+     * algorithm - fine no-smoothing polygon, slim schedule with per-tick
+     * reachable_group_ids - and retract what the new targeting no longer covers:
+     * rippled-in copies, and the ripple-created memberships that existed only for
+     * them (via retractOutOfReachCopies' existing rules: latest-join-was-Rippled,
+     * no other live post, held reaches untouched).
+     *
+     * Mirrors recomputeReach's safety properties: updated_at is preserved so the
+     * reach mailer never reconsiders the row, writes are one row per statement
+     * (Galera-safe), and a routing failure skips the row for a later run rather
+     * than degrading it. Idempotent: a second run finds nothing left to change.
+     * The budget used is the post's CURRENT tick re-read from a fresh schedule,
+     * so a post mid-expansion keeps its place in the hazard timetable.
+     *
+     * Resumable and shardable: by default only rows the new algorithm has not yet
+     * touched are candidates - reachable_group_ids IS NULL, which is exactly the
+     * pre-gate population (init/advance now populate it) - so each run continues
+     * where the last stopped and a drained run finds nothing. $all overrides that
+     * for a full re-sweep (e.g. after a later algorithm change). $shardCount/$shardIndex
+     * partition candidates by msgid % shardCount so disjoint shards run in parallel;
+     * total routing load ~= shards, so keep it within the routing server's headroom.
+     *
+     * @return array{candidates:int,updated:int,skipped:int,would_retract_groups:int,pulled_out_of_reach:int,memberships_removed:int}
+     */
+    public function backfillReach(
+        bool $dryRun = false,
+        int $limit = 500,
+        ?int $onlyMsgid = null,
+        ?int $shardCount = null,
+        ?int $shardIndex = null,
+        bool $all = false
+    ): array {
+        $stats = [
+            'candidates' => 0, 'updated' => 0, 'skipped' => 0,
+            'would_retract_groups' => 0, 'pulled_out_of_reach' => 0,
+            'memberships_removed' => 0, 'pulled_on_removal' => 0, 'skipped_terminal' => 0,
+        ];
+
+        $rows = DB::table('rippling_reach')
+            ->select(['msgid', 'lat', 'lng', 'tick', 'rejected_groups', 'status'])
+            ->whereIn('status', ['expanding', 'stopped', 'done']) // held = frozen for moderation
+            ->when(!$all, fn ($q) => $q->whereNull('reachable_group_ids'))
+            ->when($shardCount !== null && $shardCount > 1,
+                fn ($q) => $q->whereRaw('msgid % ? = ?', [$shardCount, (int) $shardIndex]))
+            ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
+            ->orderBy('msgid')
+            ->limit($limit)
+            ->get();
+
+        foreach ($rows as $row) {
+            $stats['candidates']++;
+            try {
+                $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                if ($schedule === null || empty($schedule['ticks'])) {
+                    $stats['skipped']++;
+                    continue; // routing unreachable/off-graph - safe to retry later
+                }
+                $ticks = $schedule['ticks'];
+                $tick = min(max((int) $row->tick, 1), count($ticks));
+                $entry = $this->entryForTick($ticks, $tick);
+                $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
+                if ($tickWkt === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
+                $ids = $this->tickReachableIds($entry, $schedule);
+
+                if ($dryRun) {
+                    // Preview the retraction the new ids would drive (ids-based only;
+                    // the tighter polygon can retract further copies on the live run).
+                    if (!empty($ids)) {
+                        $ph = implode(',', array_fill(0, count($ids), '?'));
+                        $stats['would_retract_groups'] += (int) DB::selectOne(
+                            "SELECT COUNT(*) AS n FROM messages_groups
+                              WHERE msgid = ? AND rippled_in = 1 AND deleted = 0
+                                AND groupid NOT IN ({$ph})",
+                            array_merge([$row->msgid], $ids)
+                        )->n;
+                    }
+                    $stats['updated']++;
+                    continue;
+                }
+
+                $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
+                DB::statement(
+                    'UPDATE rippling_reach
+                        SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                            schedule = ?, reachable_group_ids = ?,
+                            total_freeglers = ?, max_drive_min = ?,
+                            updated_at = updated_at
+                      WHERE msgid = ?',
+                    [
+                        $storeWkt,
+                        json_encode($ticks),
+                        json_encode($ids),
+                        (int) $schedule['total_freeglers'],
+                        $schedule['max_drive_min'],
+                        $row->msgid,
+                    ]
+                );
+                // Secondary "out of area" rejection clips must survive the rewrite.
+                $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+                // Retract copies (and their ripple-only memberships) the new reach no
+                // longer covers - polygon-based always, ids-based when the gate is on.
+                $this->retractOutOfReachCopies((int) $row->msgid, false, $stats);
+                $stats['updated']++;
+            } catch (\Throwable $e) {
+                Log::warning("ripple: backfillReach failed for msg {$row->msgid}: {$e->getMessage()}");
+                $stats['skipped']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * The polygon WKT for a schedule tick. Full schedules (old servers / rows stored
+     * before the slim form) carry it inline; slim schedules (polygons=0) don't, so it
+     * is fetched as a single point-form catchment at the tick's drive-time. Null when
+     * the entry is unusable or the routing server is unreachable - callers skip the
+     * row and retry on a later run.
+     */
+    private function resolveTickWkt(?array $entry, float $lat, float $lng): ?string
+    {
+        if ($entry === null) {
+            return null;
+        }
+        if (!empty($entry['wkt'])) {
+            return (string) $entry['wkt'];
+        }
+        $driveMin = (float) ($entry['drive_min'] ?? 0);
+        if ($driveMin <= 0) {
+            return null;
+        }
+        return $this->reach->catchmentWkt($lat, $lng, $driveMin);
+    }
+
+    /**
+     * The reachable-group ids to store for the row's CURRENT tick: the per-tick set
+     * when the schedule carries one (slim form), else the schedule's max-extent set
+     * (older servers). Stored on rippling_reach so retraction tests copies against
+     * the current extent.
+     *
+     * @return int[]
+     */
+    private function tickReachableIds(?array $entry, array $schedule): array
+    {
+        return $this->tickReachableIdsOrNull($entry, $schedule) ?? [];
+    }
+
+    /** As tickReachableIds, but null when neither source has a set (gate unavailable). */
+    private function tickReachableIdsOrNull(?array $entry, array $schedule): ?array
+    {
+        if (is_array($entry['reachable_group_ids'] ?? null)) {
+            return array_map('intval', $entry['reachable_group_ids']);
+        }
+        $top = $schedule['reachable_group_ids'] ?? null;
+        return is_array($top) ? array_map('intval', $top) : null;
+    }
+
+    /** The per-tick ids as JSON for a COALESCE update, or null to keep the stored set. */
+    private function tickReachableIdsJson(?array $entry): ?string
+    {
+        return is_array($entry['reachable_group_ids'] ?? null)
+            ? json_encode(array_map('intval', $entry['reachable_group_ids']))
+            : null;
+    }
+
     private function entryForTick(array $ticks, int $target): ?array
     {
         $best = null;

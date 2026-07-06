@@ -1,7 +1,7 @@
 # Rippling Out - A Guide for Moderators
 
-> **Current reference document.** Supersedes the draft at
-> `plans/rippling-out-rollout/CHANGES-FOR-MODERATORS.md`.
+> For the technical detail of how the algorithm works (and the approaches that were
+> rejected), see [RIPPLING-ALGORITHM.md](RIPPLING-ALGORITHM.md).
 
 ---
 

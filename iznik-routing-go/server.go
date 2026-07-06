@@ -1,7 +1,6 @@
 package main
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,9 +13,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 )
-
-//go:embed demo.html
-var demoHTML []byte
 
 type isochroneResponse struct {
 	Walk  GeoJSONPolygon `json:"walk"`
@@ -50,7 +46,7 @@ func handleIsochrone(g *Graph) fiber.Handler {
 		for _, m := range []Mode{Walk, Cycle, Drive} {
 			go func(m Mode) {
 				iso := Isochrone(g, lat, lng, secs, m)
-				res := AutoResolution(secs, m)
+				res := NetworkResolution(g, iso.ReachedNodes, m)
 				ch <- result{m, IsochronePolygon(g, iso.ReachedNodes, res)}
 			}(m)
 		}
@@ -137,7 +133,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 			}
 			iso := multiSourceIsochrone(g, seeds, secs, mode)
-			poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
+			poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, mode))
 			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
 			bands := catchmentBands(g, iso, secs, mode, 6)
 			return c.JSON(fiber.Map{"catchment": poly, "bands": bands, "seeds": len(seeds)})
@@ -153,7 +149,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		iso := Isochrone(g, lat, lng, secs, mode)
-		poly := IsochronePolygon(g, iso.ReachedNodes, AutoResolution(secs, mode))
+		poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, mode))
 		return c.JSON(fiber.Map{"catchment": poly})
 	}
 }
@@ -283,7 +279,7 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(empty)
 		}
-		res := AutoResolution(secs, mode)
+		res := NetworkResolution(g, iso.ReachedNodes, mode)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		ring := poly.Geometry.Coordinates
 		if len(ring) == 0 || len(ring[0]) < 4 {
@@ -386,10 +382,6 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 		AllowMethods: "GET,OPTIONS",
 	}))
 	app.Get("/health", handleHealth(g))
-	app.Get("/demo", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/html; charset=utf-8")
-		return c.Send(demoHTML)
-	})
 
 	var v1 fiber.Router
 	if requireAuth {
@@ -405,6 +397,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/group-actives", handleGroupActives())
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
 	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
+	v1.Get("/reachable-groups", handleReachableGroups(g))
 	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))
 	v1.Get("/posts-for-member", handlePostsForMember(g, spatialURL))
 	v1.Get("/digest-simulator", handleDigestSimulator(g, spatialURL))
