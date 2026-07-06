@@ -1286,4 +1286,63 @@ class UnifiedDigestTest extends TestCase
             'Immediate-mode preheader must contain the post subject location'
         );
     }
+
+    public function test_compact_image_urls_contain_scroll_percent(): void
+    {
+        // Guards that compact image URLs (heroImageUrl, thumbImageUrl, posterAvatarUrl)
+        // carry the ?s= scroll-percent query param so the Go handler can update
+        // email_tracking.scroll_depth_percent via the same max-update logic as the
+        // long-form trackedImageUrl path. Compact URLs without s= meant scroll depth
+        // was never populated for digest recipients (Fix 15).
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Bicycle (London)']);
+        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Table (London)']);
+
+        // Give msg1 an internal attachment (externaluid set, no externalurl) so
+        // prepareCard() takes the compact URL path instead of the fallback URL.
+        DB::table('messages_attachments')->insertGetId([
+            'msgid'       => $msg1->id,
+            'externaluid' => 'freegletusd-' . str_repeat('c', 32),
+            'primary'     => 1,
+            'archived'    => 0,
+        ]);
+
+        // Eager-load fromUser so prepareCard() resolves $posterUser and takes the
+        // compact 'u' avatar URL path rather than the fallback resolveAvatarUrl().
+        $msg1->load(['attachments', 'fromUser']);
+
+        $posts = collect([
+            ['message' => $msg1, 'postedToGroups' => [$group->id]],
+            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $prepared = $ref->getValue($mail);
+
+        // Post 0 (msg1) has an internal attachment -> compact URL path is taken.
+        // scroll = round((0/2)*100) = 0, so s=0 must be present.
+        $card0 = $prepared->get(0);
+
+        $this->assertStringContainsString('s=0', $card0['thumbImageUrl'],
+            'thumbImageUrl for post 0 (index 0 of 2) must carry s=0');
+        $this->assertStringContainsString('s=0', $card0['heroImageUrl'],
+            'heroImageUrl for post 0 (index 0 of 2) must carry s=0');
+        $this->assertStringContainsString('s=0', $card0['posterAvatarUrl'],
+            'posterAvatarUrl for post 0 (index 0 of 2) must carry s=0');
+
+        // All three must be compact-format URLs (not the fallback direct URL).
+        foreach (['thumbImageUrl', 'heroImageUrl', 'posterAvatarUrl'] as $key) {
+            $this->assertStringContainsString('/e/d/i/', $card0[$key],
+                "{$key} must use the compact /e/d/i/ tracking route");
+        }
+    }
 }

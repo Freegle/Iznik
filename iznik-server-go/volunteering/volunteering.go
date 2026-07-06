@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,7 @@ type Volunteering struct {
 	Pending        bool               `json:"pending"`
 	Heldby         *uint64            `json:"heldby"`
 	Title          string             `json:"title"`
+	Online         bool               `json:"online"`
 	Location       string             `json:"location"`
 	Contactname    string             `json:"contactname"`
 	Contactphone   string             `json:"contactphone"`
@@ -38,11 +40,13 @@ type Volunteering struct {
 	Description    string             `json:"description"`
 	Timecommitment string             `json:"timecommitment"`
 	Added          time.Time          `json:"added"`
+	Renewed        *time.Time         `json:"renewed"`
 	Groups         []uint64           `json:"groups"  gorm:"-"`
 	Image          *VolunteeringImage `json:"image" gorm:"-"`
 	Dates          []VolunteeringDate `json:"dates" gorm:"-"`
 	Expired        bool               `json:"expired"`
 	Canmodify      bool               `json:"canmodify" gorm:"-"`
+	Url            string             `json:"url" gorm:"-"`
 }
 
 // listLimit caps how many opportunities a member's list returns. National ops are taken
@@ -178,6 +182,16 @@ func ListGroup(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// Gate on the group's volunteering setting. Mirrors V1 Volunteering::listForGroup's
+	// $g->getSetting('volunteering', 1) check: NULL or absent key means enabled (default 1);
+	// only an explicit 0 disables it.
+	var cnt int64
+	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ? AND "+
+		"(settings IS NULL OR JSON_EXTRACT(settings, '$.volunteering') IS NULL OR JSON_EXTRACT(settings, '$.volunteering') != 0)", id).Scan(&cnt)
+	if cnt == 0 {
+		return c.JSON(make([]string, 0))
+	}
+
 	var ids []uint64
 
 	start := time.Now().Format("2006-01-02")
@@ -289,6 +303,20 @@ func Single(c *fiber.Ctx) error {
 			volunteering.Contactname = html.UnescapeString(volunteering.Contactname)
 			volunteering.Contacturl = html.UnescapeString(volunteering.Contacturl)
 			volunteering.Timecommitment = html.UnescapeString(volunteering.Timecommitment)
+
+			// Set the canonical URL for this opportunity. Mirrors V1 getPublic():
+			// $atts['url'] = 'https://' . USER_SITE . '/volunteering/' . $atts['id']
+			userSite := os.Getenv("USER_SITE")
+			if userSite == "" {
+				userSite = "www.ilovefreegle.org"
+			}
+			volunteering.Url = "https://" + userSite + "/volunteering/" + strconv.FormatUint(volunteering.ID, 10)
+
+			// Normalise contacturl: if non-empty and has no scheme, prepend https://.
+			// Mirrors V1: if (strlen($atts['contacturl']) && strpos($atts['contacturl'], 'http') === FALSE)
+			if len(volunteering.Contacturl) > 0 && !strings.Contains(volunteering.Contacturl, "http") {
+				volunteering.Contacturl = "https://" + volunteering.Contacturl
+			}
 
 			myid := user.WhoAmI(c)
 			if myid > 0 {

@@ -1314,7 +1314,11 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 	isParticipant := myid == room.User1 || myid == room.User2
 	var reviewFilter string
 	if isParticipant {
-		reviewFilter = "(chat_messages.userid = ? OR (chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1))"
+		// Mirror FetchChatMessages: gate rippling-held replies so a participant
+		// cannot use this endpoint to bypass the hold that the regular chat API
+		// enforces.  The sender still sees their own messages (userid = ? branch).
+		reviewFilter = "(chat_messages.userid = ? OR (chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1 " +
+			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	} else {
 		// Mod viewing — show all messages except rejected ones.
 		reviewFilter = "(chat_messages.reviewrejected = 0 OR chat_messages.userid = ?)"

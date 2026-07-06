@@ -998,7 +998,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // photos use the compact /e/d/i/{ref}/t/{attachId}/{preset}/{pos} form
         // (preset 1 = 600x400 hero); external/placeholder keep the direct URL.
         $heroImageUrl = $hasInternalImage
-            ? $this->trackedResourceImageUrl('t', (int) $attachment->id, 1, "h{$index}", $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl)
+            ? $this->trackedResourceImageUrl('t', (int) $attachment->id, 1, "h{$index}", $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl, $scrollPercent)
             : ($this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl);
 
         // Thumbnail image for multi-post (daily) cards: a fixed 4:3
@@ -1012,7 +1012,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // the card sits flush with the photo rather than dangling below.
         // Compact form for our own photos (preset 0 = 240x240 card thumb).
         $thumbImageUrl = $hasInternalImage
-            ? $this->trackedResourceImageUrl('t', (int) $attachment->id, 0, "i{$index}", $this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl)
+            ? $this->trackedResourceImageUrl('t', (int) $attachment->id, 0, "i{$index}", $this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl, $scrollPercent)
             : ($this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl);
 
         // Decode emoji sequences in message text.
@@ -1080,7 +1080,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // Compact form: type 'u' preset 2 (avatar) -> handler reconstructs the
         // poster's avatar at 36px. Falls back to the direct avatar URL.
         $posterAvatarUrl = ($posterUser && $posterUser->id)
-            ? $this->trackedResourceImageUrl('u', (int) $posterUser->id, 2, "a{$index}", $this->resolveAvatarUrl($posterUser, 36))
+            ? $this->trackedResourceImageUrl('u', (int) $posterUser->id, 2, "a{$index}", $this->resolveAvatarUrl($posterUser, 36), $scrollPercent)
             : $this->resolveAvatarUrl($posterUser, 36);
         $posterName = $posterUser?->displayname ?? $message->fromname ?? 'Freegler';
 

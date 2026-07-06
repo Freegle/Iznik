@@ -5,6 +5,7 @@ import (
 	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -828,4 +829,106 @@ func TestVolunteering_NationalOpsListedWithNoGroups(t *testing.T) {
 	var ids []uint64
 	json2.Unmarshal(rsp(resp), &ids)
 	assert.Contains(t, ids, nationalOpID, "member of no communities must still see national ops")
+}
+
+// TestVolunteeringListGroupSettingsGate verifies that groups with the volunteering
+// setting explicitly disabled return an empty list from GET /api/volunteering/group/:id,
+// while groups without that restriction (NULL settings or setting = 1) return items.
+// Mirrors V1 Volunteering::listForGroup's $g->getSetting('volunteering', 1) gate.
+func TestVolunteeringListGroupSettingsGate(t *testing.T) {
+	prefix := uniquePrefix("volsettgate")
+	db := database.DBConn
+
+	// Group with volunteering explicitly disabled.
+	disabledGroupID := CreateTestGroup(t, prefix+"_dis")
+	db.Exec("UPDATE `groups` SET settings = '{\"volunteering\": 0}' WHERE id = ?", disabledGroupID)
+
+	// Group with volunteering explicitly enabled.
+	enabledGroupID := CreateTestGroup(t, prefix+"_ena")
+	db.Exec("UPDATE `groups` SET settings = '{\"volunteering\": 1}' WHERE id = ?", enabledGroupID)
+
+	// Group with NULL settings (default = enabled).
+	defaultGroupID := CreateTestGroup(t, prefix+"_def")
+
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, disabledGroupID, "Member")
+	CreateTestMembership(t, userID, enabledGroupID, "Member")
+	CreateTestMembership(t, userID, defaultGroupID, "Member")
+
+	CreateTestVolunteering(t, userID, disabledGroupID)
+	enabledVolID := CreateTestVolunteering(t, userID, enabledGroupID)
+	defaultVolID := CreateTestVolunteering(t, userID, defaultGroupID)
+
+	// Disabled group returns empty array.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/volunteering/group/%d", disabledGroupID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var disabledIDs []uint64
+	json2.Unmarshal(rsp(resp), &disabledIDs)
+	assert.Empty(t, disabledIDs, "disabled group should return empty volunteering list")
+
+	// Enabled group returns item.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/volunteering/group/%d", enabledGroupID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var enabledIDs []uint64
+	json2.Unmarshal(rsp(resp), &enabledIDs)
+	assert.Contains(t, enabledIDs, enabledVolID, "enabled group should return its volunteering item")
+
+	// Group with NULL settings (default enabled) returns item.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/volunteering/group/%d", defaultGroupID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var defaultIDs []uint64
+	json2.Unmarshal(rsp(resp), &defaultIDs)
+	assert.Contains(t, defaultIDs, defaultVolID, "group with NULL settings should return its volunteering item")
+}
+
+// TestVolunteeringSingleResponseFields verifies that GET /api/volunteering/:id returns
+// the 'renewed', 'url', 'online', and 'contacturl' (https-normalised) fields added by
+// Fix 11 to match V1 getPublic() output.
+func TestVolunteeringSingleResponseFields(t *testing.T) {
+	prefix := uniquePrefix("volfields")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create a volunteering with online=1 and a contacturl that has no scheme.
+	db.Exec("INSERT INTO volunteering (userid, title, location, description, online, pending, deleted, expired, contacturl) "+
+		"VALUES (?, 'Fields Test Vol', 'Edinburgh', 'Testing response fields', 1, 0, 0, 0, 'example.com')", userID)
+	var volID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'Fields Test Vol' ORDER BY id DESC LIMIT 1", userID).Scan(&volID)
+	assert.Greater(t, volID, uint64(0))
+	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", volID, groupID)
+	db.Exec("INSERT INTO volunteering_dates (volunteeringid, start, end) VALUES (?, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))", volID)
+
+	// Set a renewed timestamp so the field is non-null.
+	db.Exec("UPDATE volunteering SET renewed = NOW() WHERE id = ?", volID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM volunteering_dates WHERE volunteeringid = ?", volID)
+		db.Exec("DELETE FROM volunteering_groups WHERE volunteeringid = ?", volID)
+		db.Exec("DELETE FROM volunteering WHERE id = ?", volID)
+	})
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/volunteering/%d", volID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	// 'url' must be present and contain the path segment.
+	urlVal, urlOk := result["url"].(string)
+	assert.True(t, urlOk, "url field must be a string")
+	assert.Contains(t, urlVal, "/volunteering/", "url must contain /volunteering/ path")
+
+	// 'online' must be true.
+	assert.Equal(t, true, result["online"], "online field must be true")
+
+	// 'renewed' must be non-null (we set it above).
+	assert.NotNil(t, result["renewed"], "renewed field must be non-null after Renew action")
+
+	// 'contacturl' must have been normalised to https://.
+	contacturl, cuOk := result["contacturl"].(string)
+	assert.True(t, cuOk, "contacturl field must be a string")
+	assert.True(t, strings.HasPrefix(contacturl, "https://"), "contacturl without scheme must be prefixed with https://")
 }
