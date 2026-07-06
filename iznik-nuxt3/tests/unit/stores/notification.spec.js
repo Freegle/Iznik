@@ -112,14 +112,21 @@ describe('notification store', () => {
       expect(store.listById[2].title).toBe('Notif 2')
     })
 
-    it('does not overwrite existing listById entries', async () => {
+    it('picks up the latest seen status on refetch (Discourse 9856)', async () => {
+      // The server just marked this notification seen (e.g. the user reviewed
+      // the microvolunteering post it points at), but a stale cached copy from
+      // an earlier fetchList() would keep reporting seen: false forever, so
+      // the notification indicator (and re-servable "post to check" link)
+      // never clears within the same browser session.
       const store = useNotificationStore()
       store.init({ public: {} })
-      store.listById[1] = { id: 1, title: 'Original' }
-      mockList.mockResolvedValue([{ id: 1, title: 'Updated' }])
-
+      mockList.mockResolvedValue([{ id: 1, title: 'Notif 1', seen: false }])
       await store.fetchList()
-      expect(store.listById[1].title).toBe('Original')
+      expect(store.byId(1).seen).toBe(false)
+
+      mockList.mockResolvedValue([{ id: 1, title: 'Notif 1', seen: true }])
+      await store.fetchList()
+      expect(store.byId(1).seen).toBe(true)
     })
 
     it('swallows 401 errors', async () => {

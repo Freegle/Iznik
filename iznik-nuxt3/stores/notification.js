@@ -37,10 +37,12 @@ export const useNotificationStore = defineStore({
         this.list = await api(this.config).notification.list()
 
         this.list.forEach((item) => {
-          // Notifications are immutable so we can avoid triggering a re-render.
-          if (!this.listById[item.id]) {
-            this.listById[item.id] = item
-          }
+          // seen (and other fields, e.g. via allSeen/PostResponse marking a
+          // stale Exhort notification seen server-side) can change between
+          // fetches, so always take the latest copy rather than the first one
+          // seen — else the indicator/highlight for an already-actioned
+          // notification never clears within the same browser session.
+          this.listById[item.id] = item
         })
 
         return this.list
