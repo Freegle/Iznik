@@ -4,6 +4,7 @@ import {
   geoToLeaflet,
   crowFliesKm,
   pointInRing,
+  reachedIdSet,
   segmentsIntersect,
 } from '~/modtools/composables/rippling/geometry.js'
 
@@ -30,6 +31,25 @@ describe('rippling/geometry', () => {
     it('keeps the ring closed (first point equals last)', () => {
       const out = chaikinSmooth(square)
       expect(out[0]).toEqual(out[out.length - 1])
+    })
+  })
+
+  describe('reachedIdSet', () => {
+    it("prefers a frame's per-tick ids when present", () => {
+      expect([...reachedIdSet([1, 2], [9])].sort((a, b) => a - b)).toEqual([1, 2])
+    })
+
+    it('treats an empty frame array as an answer (tick reached nothing yet)', () => {
+      expect(reachedIdSet([], [9]).size).toBe(0)
+    })
+
+    it('falls back to the max-extent gate ids when no frame ids', () => {
+      expect([...reachedIdSet(undefined, [9, 10])].sort((a, b) => a - b)).toEqual([9, 10])
+    })
+
+    it('tints nothing when neither source has answered - never geometry', () => {
+      expect(reachedIdSet(undefined, null).size).toBe(0)
+      expect(reachedIdSet(null, undefined).size).toBe(0)
     })
   })
 

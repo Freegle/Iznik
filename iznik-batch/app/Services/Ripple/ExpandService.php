@@ -599,7 +599,7 @@ class ExpandService
         return $stats;
     }
 
-    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null, bool $ignoreArrivalCutoff = false, ?int $shardCount = null, ?int $shardIndex = null, bool $recompute = false): void
+    private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
         // Go-live flood guard: only posts that arrived on or after the configured
         // cutoff ever start rippling, so flipping RIPPLE_ENABLED on does not make the
@@ -624,60 +624,31 @@ class ExpandService
                 $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ms.point)';
                 $params[] = $withinPolyWkt;
             }
-            // The go-live arrival cutoff is what leaves every pre-go-live post without a reach
-            // row. The one-off ripple:backfill drain (ignoreArrivalCutoff) lifts it so those
-            // still-live posts get seeded too; everything else about the selection/seed is
-            // identical, so a backfilled post is indistinguishable from a natively-initialised one.
-            if (!empty($enabledAt) && !$ignoreArrivalCutoff && !$recompute) {
+            if (!empty($enabledAt)) {
                 $cutoffSql = ' AND ms.arrival >= ?';
                 $params[] = $enabledAt;
             }
             // Reply-saturation stop (extent-governor T1.1): a post that already has >= threshold
             // distinct repliers never starts rippling - it has enough interest without reach.
-            // 0 disables. Applies to normal and scoped (experiment) runs alike. NOT applied on a
-            // recompute pass: those posts already have a placeholder reach row we must resolve to
-            // real (or 'done') so the drain terminates - a saturated one would otherwise stay in the
-            // candidate set forever and stall the loop. (advanceDue re-checks saturation next tick.)
+            // 0 disables. Applies to normal and scoped (experiment) runs alike.
             $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
-            if ($satStop > 0 && !$recompute) {
+            if ($satStop > 0) {
                 $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
                                   WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?";
                 $params[] = $satStop;
             }
         }
-        // Sharding (ripple:backfill --shards N --shard i): partition the candidate set by msgid so
-        // several instances can drain DISJOINT slices in parallel without overlapping or double-
-        // seeding. Deterministic and stateless (msgid % N), so a re-run of a shard still only sees
-        // its own not-yet-seeded rows. Applied to every scope; ignored for a single-post run
-        // (that is inherently one row). Each shard still fans its routing out at compute_concurrency,
-        // so total concurrent routing load ~= shards x compute_concurrency (see the command docs).
-        $shardSql = '';
-        if ($shardCount !== null && $shardCount > 1 && $shardIndex !== null) {
-            $shardSql = ' AND (ms.msgid % ?) = ?';
-            $params[] = $shardCount;
-            $params[] = $shardIndex;
-        }
         $params[] = $limit;
 
-        // Candidate source. Normal/backfill: live posts with NO reach row yet (anti-join). Recompute:
-        // the placeholder "DPA" seeds (status='stopped' + schedule IS NULL) laid down by the quick
-        // geometry pass, which this pass replaces IN PLACE with real routed reach (upsert below, so
-        // the post is never momentarily without a reach row).
-        $reachJoin = $recompute
-            ? 'JOIN rippling_reach mr ON mr.msgid = ms.msgid'
-            : 'LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid';
-        $reachWhere = $recompute
-            ? "mr.status = 'stopped' AND mr.schedule IS NULL"
-            : 'mr.msgid IS NULL';
-
+        // Candidate source: live posts with NO reach row yet (anti-join).
         $rows = DB::select(
             'SELECT ms.msgid AS msgid,
                     ANY_VALUE(ST_Y(ms.point)) AS lat,
                     ANY_VALUE(ST_X(ms.point)) AS lng,
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
-             ' . $reachJoin . '
-             WHERE ' . $reachWhere . $scopeSql . $cutoffSql . $satSql . $shardSql . '
+             LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -712,10 +683,10 @@ class ExpandService
         // config - see the Phase-1 note above), so if another live post at the SAME blurred origin
         // already has a real computed reach, copy its schedule rather than hit the routing server
         // again. This covers "same user posting again from home" and any co-located posts; on the
-        // recompute drain (many posts share a postcode/home) it removes the bulk of routing calls.
+        // same-origin batch (many posts share a postcode/home) it removes the bulk of routing calls.
         // Exact because blurOrigin quantises to 4dp and only the blurred origin + global config feed
         // the schedule. If that config (curve/max_minutes/extent) ever changes, set
-        // freegle.ripple.reuse_reach=false for one full recompute so stale reaches are not reused.
+        // freegle.ripple.reuse_reach=false to disable if stale reuse is ever suspected.
         if (config('freegle.ripple.reuse_reach', true) && !empty($distinctOrigins)) {
             $pairs = array_values($distinctOrigins);
             $placeholders = implode(',', array_fill(0, count($pairs), '(?, ?)'));
@@ -795,14 +766,6 @@ class ExpandService
                 }
                 if ($schedule === null) {
                     // Genuinely unreachable (raw origin off-graph too) — retry next run.
-                    if ($recompute && !$dryRun) {
-                        // On the recompute drain, retire this permanently-stranded placeholder from
-                        // the candidate set (flip status off 'stopped' -> 'done') so the loop does
-                        // not re-select it forever and stall. It keeps its DPA polygon, so replies
-                        // stay gated to its area; nothing off-graph would resolve on a retry anyway.
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)
-                            ->update(['status' => 'done', 'updated_at' => now()]);
-                    }
                     $stats['skipped']++;
                     continue;
                 }
@@ -819,11 +782,6 @@ class ExpandService
                 $tick = min($this->reach->tickForElapsedHours($elapsedHours), $total);
                 $entry = $this->entryForTick($schedule['ticks'], $tick);
                 if ($entry === null) {
-                    if ($recompute && !$dryRun) {
-                        // As above: retire the placeholder so the recompute drain terminates.
-                        DB::table('rippling_reach')->where('msgid', $row->msgid)
-                            ->update(['status' => 'done', 'updated_at' => now()]);
-                    }
                     $stats['skipped']++;
                     continue;
                 }
@@ -839,10 +797,9 @@ class ExpandService
                         continue;
                     }
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
-                    // Upsert, not plain INSERT: on the normal/backfill path the anti-join guarantees
-                    // no existing row so this behaves exactly like INSERT; on the recompute path the
-                    // placeholder (DPA) row already exists and we replace it IN PLACE, so the post is
-                    // never momentarily without a reach row (created_at is preserved - not in the SET).
+                    // Upsert, not plain INSERT: the anti-join guarantees no existing row so this
+                    // behaves exactly like INSERT, while staying safe against a concurrent run
+                    // seeding the same msgid (created_at is preserved - not in the SET).
                     DB::statement(
                         'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,

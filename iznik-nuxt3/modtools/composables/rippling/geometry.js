@@ -56,3 +56,12 @@ export function segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
   const u = ((cx - ax) * d1y - (cy - ay) * d1x) / cross
   return t > 0 && t < 1 && u > 0 && u < 1
 }
+
+// The group-tint decision: which groups count as REACHED right now. Prefers a
+// ripple frame's per-tick reachable ids (the targeting decision at that tick);
+// otherwise the max-extent gate ids for the pin; otherwise nothing - never a
+// geometric fallback, because polygon overlap can wrongly tint far-bank groups.
+export function reachedIdSet(frameIds, gateIds) {
+  if (Array.isArray(frameIds)) return new Set(frameIds)
+  return new Set(gateIds || [])
+}

@@ -11,7 +11,12 @@
 //   props        — { spatialUrl, jwt } from the host component
 //   digestModal  — ref to <RipplingDigestModal>; modal opening is delegated
 //   legendMode   — ref ('outbound' | 'inbound') flipped by view-toggle
-import { chaikinSmooth, geoToLeaflet, pointInRing } from './geometry.js'
+import {
+  chaikinSmooth,
+  geoToLeaflet,
+  pointInRing,
+  reachedIdSet,
+} from './geometry.js'
 import {
   hasRing,
   quintileOfFreegler,
@@ -2135,17 +2140,9 @@ export async function setupRipplingExplorer({
   function reachedGroupIds(isoData) {
     // A group counts as reached only when the server's targeting gate says so: at
     // least one active member living inside the group's own polygon whose street
-    // node is road-reachable from the pin. Geometric overlap between the drawn
-    // reach and the group polygon is deliberately NOT used - the raster boundary
-    // can overrun a river the roads never cross, wrongly tinting far-bank groups
-    // (Gravesend from Corringham). What tints is exactly what targeting decides.
-    if (isoData && Array.isArray(isoData.reachableGroupIds)) {
-      // A ripple frame: the per-tick gate decision from the schedule response.
-      return new Set(isoData.reachableGroupIds)
-    }
-    // Max-extent gate decision for the current pin (fetched with the isochrone).
-    // If the gate has not answered (yet), tint nothing rather than tint wrongly.
-    return new Set(lastReachableIds || [])
+    // node is road-reachable from the pin. See reachedIdSet for the decision rule
+    // (per-tick frame ids preferred; max-extent gate ids otherwise; never geometry).
+    return reachedIdSet(isoData && isoData.reachableGroupIds, lastReachableIds)
   }
 
   // Geographically-nearest group id, used as fallback "home" when
