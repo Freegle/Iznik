@@ -97,13 +97,22 @@ of scoring already used to order the rippling digest email. This changes the ord
 member's own browse page shows posts in; it does not change what rippling approves, joins,
 or who a post reaches.
 
-Members also have a new distance slider in their filters, marked "Nearer" and "Further"
-with no numbers shown. It is a **personal display preference each member sets for
+Members also have a distance slider marked "Nearer" and "Further" with no numbers shown,
+in two places: their **browse filters**, and (new) their **Settings**, under a "Feed"
+section above Email Settings. It is a **personal preference each member sets for
 themselves** - by default it is left at "Further" (no extra limit beyond their normal
-rippling reach), and moving it towards "Nearer" simply narrows what appears on their own
-screen. It has no effect on rippling itself, on what other members see, or on moderation -
-and, like their other browse filters (which posts, which communities, sort order), their
-choice is remembered between visits.
+rippling reach), and moving it towards "Nearer" narrows how far away posts can be.
+
+Importantly, this preference now applies **both to what they see when browsing and to the
+posts in the emails we send them** (their daily digest and immediate emails). A member who
+sets it "Nearer" will stop seeing - and stop being emailed about - posts from further away,
+including rippled-in ones. It still has **no effect on rippling itself, on what other
+members see, or on moderation**, and their choice is remembered between visits.
+
+A practical consequence worth knowing: a rippled-in post is shown to the members of your
+community who are **closest to the poster and whose own distance preference reaches that
+far - not necessarily everyone**. If a member says a post "isn't showing for them", their
+distance slider being set to "Nearer" is a likely reason.
 
 ---
 

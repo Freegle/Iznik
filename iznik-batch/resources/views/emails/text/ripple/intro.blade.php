@@ -2,6 +2,8 @@
 
 Good news - we've noticed that some of the nearby freeglers in neighbouring communities might be interested in your recent {{ config('freegle.branding.name') }} post, so we're showing it to them too.
 
+It's shown to the freeglers there who are nearest to you - not everyone in those communities. Each freegler chooses how far away they want to see posts from, using the "How far away" distance setting in their settings ({{ $settingsUrl }}) - you have one there too.
+
 THERE'S NOTHING YOU NEED TO DO - this just helps your post reach the right person.
 
 So this works smoothly, we've added you to those communities - just as if you'd posted there yourself. That way people there can reply to you, and our volunteers can reach you about your post if they need to.
