@@ -75,6 +75,7 @@ class GmailService
         ?Address $replyTo = null,
         array $headers = [],
         ?string $fromName = null,
+        array $attachments = [],
     ): array {
         $from = new Address($this->mailbox, $fromName ?? (string) config('services.gmail_outreach.from_name', 'Natalie @ Freegle'));
 
@@ -84,6 +85,16 @@ class GmailService
             ->subject($subject)
             ->text($text)
             ->html($html);
+
+        // Optional file attachments: each item is a path string, or an array
+        // ['path' => ..., 'name' => ?display name, 'type' => ?content type].
+        foreach ($attachments as $att) {
+            if (is_array($att)) {
+                $email->attachFromPath($att['path'], $att['name'] ?? null, $att['type'] ?? null);
+            } else {
+                $email->attachFromPath($att);
+            }
+        }
 
         if ($replyTo) {
             $email->replyTo($replyTo);
