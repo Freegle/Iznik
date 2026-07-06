@@ -5,7 +5,7 @@
 // Build the dedup key for a message. Mirrors the original inline logic exactly: strip a
 // trailing "(location)" so the same poster's crossposts of one item collapse, and when
 // the subject has a "TYPE: ..." prefix key on type + the stripped remainder.
-function dedupKey(message) {
+export function dedupKey(message) {
   const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
   let key = message.fromuser + '|' + stripLocation(message.subject)
   const p = message.subject.indexOf(':')

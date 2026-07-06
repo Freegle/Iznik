@@ -558,7 +558,57 @@ export const useMessageStore = defineStore({
         }
       })
 
-      await this.fetchCount()
+      // Refresh the badge for the member's ACTUAL browse view and distance limit. Calling
+      // fetchCount() with no arguments recomputed the count for the default view (nearby,
+      // unlimited), so a 'mygroups' member - or anyone with the distance slider set - saw
+      // the badge repaint with a different view's number right after marking seen, i.e. it
+      // didn't drop to zero. Mirror nearbyStore.fetchMessages and read the settings here.
+      const settings = useAuthStore().user?.settings
+      await this.fetchCount(settings?.browseView, settings?.browseMaxDistance)
+    },
+    // Mark the hidden crosspost/repost copies of an already-shown post as seen. The browse
+    // feed collapses a poster's duplicate copies to one card (useMessageDedup), but the server
+    // counts each copy as its own unseen post, so viewing the shown card leaves the hidden
+    // copies unseen and the unread badge can never drain to zero through normal browsing.
+    // Marking them here keeps the count in step with what the member has actually seen.
+    //
+    // Deliberately lighter than markSeen(): only writes the copies that are still unseen (so a
+    // re-view is a no-op, not a repeated API call) and does NOT refetch the count - like a
+    // normal per-card view, the badge refreshes on the next scroll/poll.
+    async markSeenSiblings(ids) {
+      if (!ids?.length) {
+        return
+      }
+
+      const nearbyStore = useNearbyStore()
+      const unseen = new Set(
+        (nearbyStore.messageList || [])
+          .filter((m) => m.unseen)
+          .map((m) => m.id)
+      )
+      const toMark = ids.filter((id) => unseen.has(id))
+
+      if (!toMark.length) {
+        return
+      }
+
+      try {
+        await api(this.config).message.markSeen(toMark)
+      } catch (e) {
+        if (e?.response?.status === 401) {
+          return
+        }
+
+        throw e
+      }
+
+      nearbyStore.markSeen(toMark)
+      toMark.forEach((id) => {
+        const cached = this.list[id]
+        if (cached) {
+          cached.unseen = false
+        }
+      })
     },
     // ModTools-specific methods below
     async searchMT(params) {

@@ -56,6 +56,7 @@
                 :matchedon="m.matchedon"
                 :preload="ix < 2"
                 record-view
+                @view="onCardView(m.id)"
                 @not-found="messageNotFound(m.id)"
               />
               <template #fallback>
@@ -91,6 +92,7 @@
                 :matchedon="m.matchedon"
                 :preload="ix < 2"
                 record-view
+                @view="onCardView(m.id)"
                 @not-found="messageNotFound(m.id)"
               />
               <template #fallback>
@@ -124,6 +126,7 @@
               :matchedon="m.matchedon"
               :preload="ix < 2"
               record-view
+              @view="onCardView(m.id)"
               @not-found="messageNotFound(m.id)"
             />
             <template #fallback>
@@ -155,6 +158,7 @@ import { useScrollDepth } from '~/composables/useScrollDepth'
 import {
   deduplicateMessages,
   findDuplicates,
+  dedupKey,
 } from '~/composables/useMessageDedup'
 
 const OurMessage = defineAsyncComponent(() =>
@@ -467,6 +471,52 @@ const deDuplicatedMessages = computed(() =>
     failedIds: failedIds.value,
   })
 )
+
+// For each rendered card, the ids of the crosspost/repost copies that deduplicateMessages
+// collapsed under it (same dedupKey, i.e. same poster + item). The server counts every copy
+// as its own unseen post, but only the one kept card is shown - so viewing that card marks
+// only its copy seen and the hidden copies keep the unread count above zero forever. Mapping
+// id -> siblings here lets a view of the shown card also mark the hidden copies seen, so the
+// badge drains in step with what the member has actually seen. Uses the SAME dedupKey and
+// message detail as deDuplicatedMessages so the grouping matches the feed exactly.
+const siblingIdsById = computed(() => {
+  const byKey = new Map()
+  for (const m of reduceSuccessful.value || []) {
+    const detail = messageStore?.byId(m.id)
+    if (!detail) {
+      continue
+    }
+    const key = dedupKey(detail)
+    const arr = byKey.get(key)
+    if (arr) {
+      arr.push(m.id)
+    } else {
+      byKey.set(key, [m.id])
+    }
+  }
+
+  const map = new Map()
+  for (const ids of byKey.values()) {
+    if (ids.length < 2) {
+      continue
+    }
+    for (const id of ids) {
+      map.set(
+        id,
+        ids.filter((other) => other !== id)
+      )
+    }
+  }
+  return map
+})
+
+// When a de-duped card registers a view, mark the hidden copies it stands in for as seen too.
+function onCardView(id) {
+  const siblings = siblingIdsById.value.get(id)
+  if (siblings?.length) {
+    messageStore.markSeenSiblings(siblings)
+  }
+}
 
 const unseenMessages = computed(() => {
   return deDuplicatedMessages.value.filter((m) => m.unseen)
