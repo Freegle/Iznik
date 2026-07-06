@@ -235,6 +235,11 @@ type rippleScheduleResponse struct {
 	TotalFreeglers int                   `json:"total_freeglers"`
 	MaxDriveMin    float64               `json:"max_drive_min"`
 	Schedule       []rippleScheduleEntry `json:"schedule"`
+	// ReachableGroupIDs is the set of groups containing >=1 road node reachable
+	// within the max budget - the water/toll-correct ripple-targeting signal
+	// (plan 2026-07-06). Present (non-null) when computed, so batch can tell it
+	// apart from an older server that omits the field. No omitempty on purpose.
+	ReachableGroupIDs []int64 `json:"reachable_group_ids"`
 }
 
 // handleRippleSchedule produces the density-driven ripple schedule for a given
@@ -323,6 +328,19 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		iso := Isochrone(g, latF, lngF, maxSecs, mode)
 		if len(iso.ReachedNodes) == 0 {
 			return c.JSON(empty)
+		}
+
+		// Reachable-group set for road-reachable ripple targeting (plan
+		// 2026-07-06): which groups contain >=1 reached road node. Computed once
+		// per reach from the node set already in hand; empty (non-nil) if no group
+		// DB is configured, which the batch treats as "gate not available".
+		reachableGroups := make([]int64, 0)
+		if db := ensureGroupsDB(); db != nil {
+			if polys, err := loadAllGroupPolygons(db); err == nil {
+				reachableGroups = reachableGroupIDs(g, iso.ReachedNodes, polys)
+			} else {
+				log.Printf("ripple-schedule: loadAllGroupPolygons failed: %v", err)
+			}
 		}
 
 		// --- Step 2: get the freeglers within the max polygon via spatial ---
@@ -444,9 +462,10 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		}
 
 		return c.JSON(rippleScheduleResponse{
-			TotalFreeglers: total,
-			MaxDriveMin:    maxDriveMin,
-			Schedule:       schedule,
+			TotalFreeglers:    total,
+			MaxDriveMin:       maxDriveMin,
+			Schedule:          schedule,
+			ReachableGroupIDs: reachableGroups,
 		})
 	}
 }

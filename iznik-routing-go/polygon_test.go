@@ -48,18 +48,4 @@ func TestAutoResolution(t *testing.T) {
 	t.Logf("walk15 res=%.5f drive15 res=%.5f", walkRes, driveRes)
 }
 
-// pointInPolygon uses ray casting. Coords are [lng, lat].
-func pointInPolygon(lng, lat float64, ring [][2]float64) bool {
-	inside := false
-	n := len(ring)
-	j := n - 1
-	for i := 0; i < n; i++ {
-		xi, yi := ring[i][0], ring[i][1]
-		xj, yj := ring[j][0], ring[j][1]
-		if ((yi > lat) != (yj > lat)) && (lng < (xj-xi)*(lat-yi)/(yj-yi)+xi) {
-			inside = !inside
-		}
-		j = i
-	}
-	return inside
-}
+// pointInPolygon now lives in reachable_groups.go (production code), reused here.
