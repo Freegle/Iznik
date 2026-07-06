@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Authority;
 
+use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as XlsxReader;
 use Tests\Support\SeedsAuthorityStats;
 use Tests\TestCase;
@@ -87,5 +88,71 @@ class AuthorityStatsCommandTest extends TestCase
         $this->assertEqualsWithDelta(25.0, (float) $postcode->getCell('F2')->getValue(), 0.001);
 
         $sheet->disconnectWorksheets();
+    }
+
+    public function test_shows_user_stories_section_when_present(): void
+    {
+        $this->seedAuthorityScenario();
+        $this->runCommand();
+
+        $this->assertTrue($this->standardReportContains('User stories'), 'header present when there are stories');
+    }
+
+    public function test_omits_user_stories_section_when_none(): void
+    {
+        $this->seedAuthorityScenario();
+        DB::table('users_stories')->delete();
+        $this->runCommand();
+
+        $this->assertFalse($this->standardReportContains('User stories'), 'header omitted when there are no stories');
+    }
+
+    public function test_postcode_sheet_has_no_stray_borders(): void
+    {
+        $this->seedAuthorityScenario();
+        $this->runCommand();
+
+        $sheet = (new XlsxReader())->load($this->generatedFile());
+        $pc = $sheet->getSheetByName('Postcode breakdown');
+        // The template leaves a stray partial box around C10:C14; confirm it's gone.
+        foreach (['C10', 'C14', 'B14'] as $addr) {
+            $b = $pc->getStyle($addr)->getBorders();
+            $this->assertSame('none', $b->getBottom()->getBorderStyle(), "$addr bottom border cleared");
+            $this->assertSame('none', $b->getLeft()->getBorderStyle(), "$addr left border cleared");
+        }
+        $sheet->disconnectWorksheets();
+    }
+
+    private function runCommand(): void
+    {
+        $this->artisan('authority:stats', [
+            '--i' => (string) $this->authorityId,
+            '--q' => $this->quarterStart,
+            '--output' => $this->outputDir,
+        ])->assertExitCode(0);
+    }
+
+    private function generatedFile(): string
+    {
+        $files = glob($this->outputDir . '/*.xlsx') ?: [];
+        $this->assertCount(1, $files);
+
+        return $files[0];
+    }
+
+    private function standardReportContains(string $text): bool
+    {
+        $sheet = (new XlsxReader())->load($this->generatedFile());
+        $s = $sheet->getSheetByName('Standard report');
+        $found = false;
+        for ($r = 1; $r <= $s->getHighestRow(); $r++) {
+            if (str_contains((string) $s->getCell("A$r")->getValue(), $text)) {
+                $found = true;
+                break;
+            }
+        }
+        $sheet->disconnectWorksheets();
+
+        return $found;
     }
 }

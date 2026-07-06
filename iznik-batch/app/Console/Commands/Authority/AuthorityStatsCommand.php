@@ -5,6 +5,7 @@ namespace App\Console\Commands\Authority;
 use App\Services\AuthorityStatsService;
 use Illuminate\Console\Command;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as XlsxReader;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 
@@ -306,15 +307,18 @@ class AuthorityStatsCommand extends Command
         $sheet->setCellValue("A$allDataRow", 'All data correct at ' . date('d/m/Y'));
         $sheet->getStyle("A$allDataRow")->getFont()->setName('Segoe UI')->setSize(10)->setBold(true)->getColor()->setRGB('316F0F');
 
-        $storiesHeaderRow = $allDataRow + 2;
-        $sheet->setCellValue("A$storiesHeaderRow", 'User stories');
+        // Only show the User stories section when there are stories to include.
+        if (count($report['stories']) > 0) {
+            $storiesHeaderRow = $allDataRow + 2;
+            $sheet->setCellValue("A$storiesHeaderRow", 'User stories');
 
-        $storyrow = $storiesHeaderRow + 1;
-        foreach ($report['stories'] as $story) {
-            $sheet->setCellValue("A$storyrow", $story['headline']);
-            $sheet->getStyle("A$storyrow")->getFont()->setName('Segoe UI')->setSize(10)->setBold(true);
-            $sheet->setCellValue("B$storyrow", $story['story']);
-            $storyrow++;
+            $storyrow = $storiesHeaderRow + 1;
+            foreach ($report['stories'] as $story) {
+                $sheet->setCellValue("A$storyrow", $story['headline']);
+                $sheet->getStyle("A$storyrow")->getFont()->setName('Segoe UI')->setSize(10)->setBold(true);
+                $sheet->setCellValue("B$storyrow", $story['story']);
+                $storyrow++;
+            }
         }
     }
 
@@ -368,6 +372,12 @@ class AuthorityStatsCommand extends Command
 
         $lastRow = max($row - 1, 1);
         $sheet->getStyle("A1:H$lastRow")->getFont()->setName('Segoe UI')->setSize(10);
+
+        // The template leaves a stray partial border on a few cells (which can sit
+        // below the data for a small authority), so clear borders across the whole
+        // used range - no box should hang over part-way down the table.
+        $borderEnd = max($lastRow, $sheet->getHighestRow());
+        $sheet->getStyle("A1:H$borderEnd")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_NONE);
 
         // Auto-fit each column to its content (the manual "select all, double-click
         // to auto-size" step) so the count columns aren't needlessly wide.
