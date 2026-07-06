@@ -215,9 +215,12 @@ return [
         'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
-    // GeoIP database for IP country lookups
+    // GeoIP database for IP country lookups. Defaults to the copy bundled in
+    // the repo (resources/geoip) so the lookup works out of the box wherever
+    // the app is deployed - no separately-provisioned mmdb file required.
+    // GEOIP_MMDB_PATH can point at a system-managed/fresher database.
     'geoip' => [
-        'mmdb_path' => env('GEOIP_MMDB_PATH', '/usr/share/GeoIP/GeoLite2-Country.mmdb'),
+        'mmdb_path' => env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
     ],
 
     // TUS uploader for AI-generated images
