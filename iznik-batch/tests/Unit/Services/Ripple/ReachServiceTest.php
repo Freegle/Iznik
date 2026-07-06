@@ -85,6 +85,57 @@ class ReachServiceTest extends TestCase
         $this->assertStringEndsWith('-0.1 51.5))', $result['ticks'][0]['wkt']);
     }
 
+    public function test_parseScheduleResponse_includes_reachable_group_ids(): void
+    {
+        $s = $this->service();
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => [
+                'type' => 'Polygon',
+                'coordinates' => [[
+                    [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+                ]],
+            ],
+        ];
+        $result = $s->parseScheduleResponse([
+            'total_freeglers' => 5,
+            'max_drive_min' => 30,
+            'schedule' => [
+                ['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 2, 'polygon' => $polygon],
+            ],
+            // The routing server may send them as JSON numbers; keep them ints.
+            'reachable_group_ids' => [21439, 21656],
+        ]);
+
+        $this->assertNotNull($result);
+        $this->assertSame([21439, 21656], $result['reachable_group_ids']);
+    }
+
+    public function test_parseScheduleResponse_defaults_reachable_group_ids_to_empty(): void
+    {
+        // An older routing server omits the field entirely - the batch must see []
+        // (not null), which the gate treats as "not available" and leaves targeting
+        // unchanged.
+        $s = $this->service();
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => [
+                'type' => 'Polygon',
+                'coordinates' => [[
+                    [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+                ]],
+            ],
+        ];
+        $result = $s->parseScheduleResponse([
+            'schedule' => [
+                ['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 2, 'polygon' => $polygon],
+            ],
+        ]);
+
+        $this->assertNotNull($result);
+        $this->assertSame([], $result['reachable_group_ids']);
+    }
+
     public function test_schedule_omits_target_users_when_extent_disabled(): void
     {
         // Default / dark: the audience cap must not touch the request at all,
@@ -175,5 +226,64 @@ class ReachServiceTest extends TestCase
         Http::fake();
         $this->assertSame([], $this->service()->computeSchedulesBatch([]));
         $this->assertCount(0, Http::recorded());
+    }
+
+    // --- Slim schedule contract (polygons=0) --------------------------------------
+
+    public function test_schedule_request_asks_for_the_slim_form(): void
+    {
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 1, 'max_drive_min' => 30,
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 1, 'reachable_group_ids' => []]],
+            'reachable_group_ids' => [],
+        ], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(function ($req) {
+            return str_contains($req->url(), '/v1/ripple-schedule')
+                && ($req['polygons'] ?? null) === '0';
+        });
+    }
+
+    public function test_parse_keeps_slim_ticks_and_per_tick_ids(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'total_freeglers' => 42,
+            'max_drive_min' => 30,
+            'schedule' => [
+                ['tick' => 1, 'drive_min' => 5.5, 'cumulative_users' => 10, 'reachable_group_ids' => ['21656']],
+                ['tick' => 2, 'drive_min' => 12.0, 'cumulative_users' => 30, 'reachable_group_ids' => [21656, 21458]],
+            ],
+            'reachable_group_ids' => [21656, 21458],
+        ]);
+
+        $this->assertNotNull($parsed, 'slim ticks (no polygon) are usable');
+        $this->assertCount(2, $parsed['ticks']);
+        $this->assertArrayNotHasKey('wkt', $parsed['ticks'][0]);
+        $this->assertSame([21656], $parsed['ticks'][0]['reachable_group_ids'], 'per-tick ids are cast to ints');
+        $this->assertSame([21656, 21458], $parsed['ticks'][1]['reachable_group_ids']);
+        $this->assertSame([21656, 21458], $parsed['reachable_group_ids']);
+    }
+
+    public function test_catchment_wkt_parses_the_polygon(): void
+    {
+        Http::fake(['*catchment*' => Http::response(['catchment' => [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.1, 51.5], [-0.2, 51.5], [-0.2, 51.6], [-0.1, 51.5],
+            ]]],
+        ]], 200)]);
+
+        $wkt = $this->service()->catchmentWkt(51.5, -0.1, 12.5);
+        $this->assertNotNull($wkt);
+        $this->assertStringStartsWith('POLYGON((', $wkt);
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment') && (float) $req['minutes'] === 12.5);
+    }
+
+    public function test_catchment_wkt_returns_null_on_server_error(): void
+    {
+        Http::fake(['*catchment*' => Http::response('', 500)]);
+        $this->assertNull($this->service()->catchmentWkt(51.5, -0.1, 12.5));
     }
 }

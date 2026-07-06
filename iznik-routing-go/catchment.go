@@ -12,7 +12,7 @@ type catchmentBand struct {
 
 // catchmentBands slices a reached-set into n nested drive-time contours (equal time steps).
 func catchmentBands(g *Graph, iso IsochroneResult, maxSecs float32, mode Mode, n int) []catchmentBand {
-	res := AutoResolution(maxSecs, mode)
+	res := NetworkResolution(g, iso.ReachedNodes, mode)
 	bands := make([]catchmentBand, 0, n)
 	for k := 1; k <= n; k++ {
 		t := maxSecs * float32(k) / float32(n)

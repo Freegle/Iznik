@@ -402,11 +402,36 @@ class SpamCheckService
     }
 
     /**
-     * Look up the country for an IP address using GeoIP.
+     * Look up the country NAME for an IP address using GeoIP (used for the
+     * country blocklist, which stores full names).
      *
      * This method can be overridden in tests to avoid requiring the GeoIP database.
      */
     protected function lookupIPCountry(string $ip): ?string
+    {
+        return $this->readGeoIPCountry($ip)?->name;
+    }
+
+    /**
+     * Look up the ISO 3166-1 alpha-2 country CODE for an IP (e.g. "GB").
+     *
+     * Stored in messages.fromcountry so ModTools can flag posts from outside
+     * the UK (MessageHistory.vue). The 2-letter code is expanded to a full
+     * country name on read. Returns null when the country can't be determined,
+     * matching V1's skip-on-error behaviour (Message.php / Spam.php).
+     */
+    public function lookupIPCountryCode(string $ip): ?string
+    {
+        return $this->readGeoIPCountry($ip)?->isoCode;
+    }
+
+    /**
+     * Open the GeoIP database and resolve an IP to its country record, or null
+     * on any failure (database absent, unresolvable IP). Shared by the name and
+     * code lookups above. The name lookup stays overridable in tests, so the
+     * existing country-block tests keep working without a database.
+     */
+    protected function readGeoIPCountry(string $ip): ?\GeoIp2\Record\Country
     {
         try {
             $mmdbPath = config('freegle.geoip.mmdb_path', '/usr/share/GeoIP/GeoLite2-Country.mmdb');
@@ -415,10 +440,12 @@ class SpamCheckService
             }
 
             $reader = new \GeoIp2\Database\Reader($mmdbPath);
-            $record = $reader->country($ip);
 
-            return $record->country->name;
-        } catch (\Exception $e) {
+            return $reader->country($ip)->country;
+        } catch (\Throwable $e) {
+            // \Throwable (not just \Exception) so a missing geoip2 package
+            // (class-not-found is an \Error) degrades to "unknown" rather than
+            // fataling the mail pipeline - e.g. if vendor lags a deploy.
             Log::debug('GeoIP lookup failed', ['ip' => $ip, 'error' => $e->getMessage()]);
 
             return null;
