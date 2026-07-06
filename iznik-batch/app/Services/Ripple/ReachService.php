@@ -149,21 +149,30 @@ class ReachService
      *
      * @return array{closest:array{lat:float,lng:float,drive_min:float},furthest:array{lat:float,lng:float,drive_min:float},quicker:bool}|null
      */
-    public function groupProximity(float $lat, float $lng, int $groupid): ?array
+    public function groupProximity(float $lat, float $lng, int $groupid, ?float $maxMinutes = null): ?array
     {
         // Best-effort moderator note, computed OUT of the hot ripple:expand cron (by the
         // ripple:proximity-notes command), so a slacker timeout is fine here. Slow or failed calls
         // are surfaced to Sentry for visibility rather than silently swallowed. Never throws.
         $timeout = (int) config('freegle.ripple.proximity_timeout', 15);
         $started = microtime(true);
+        $query = [
+            'groupid' => $groupid,
+            'lat' => $lat,
+            'lng' => $lng,
+            'mode' => $this->mode,
+        ];
+        // Scope the isochrone exploration to the post's own reach budget rather than the
+        // routing server default (120 min). Over-exploring made every note call ~4x slower
+        // and, on dense-urban high-ripple groups, tripped the 3s slow-warning en masse
+        // (Sentry storm 2026-07-06, groupid=21521). A post only rippled into groups within
+        // its reach, so the note never needs to look further than that.
+        if ($maxMinutes !== null && $maxMinutes > 0) {
+            $query['max_minutes'] = (int) ceil($maxMinutes);
+        }
         try {
             $response = Http::timeout($timeout)
-                ->get("{$this->url}/v1/group-proximity", [
-                    'groupid' => $groupid,
-                    'lat' => $lat,
-                    'lng' => $lng,
-                    'mode' => $this->mode,
-                ]);
+                ->get("{$this->url}/v1/group-proximity", $query);
         } catch (\Throwable $e) {
             $this->reportProximityTiming($groupid, (microtime(true) - $started) * 1000, $e->getMessage());
             return null;
