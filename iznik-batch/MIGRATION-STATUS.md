@@ -315,7 +315,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 |--------|------|----------|-------------|
 | ~~`chat_chaseup_expected.php`~~ | ~~06:00~~ | ~~Medium~~ | ~~Chat expected response chase-up~~ — **Migrated: `chats:chaseup-expected`** (WAITING FOR REPLY user2user notification; scheduler disabled pending go-live) |
 | ~~`birthday.php`~~ | ~~12:00~~ | ~~Low~~ | ~~Birthday notifications~~ — **Migrated: `birthday:send-emails`** |
-| ~~`relevant.php`~~ | ~~14:30~~ | ~~Medium~~ | ~~Relevant message matching~~ — **Retired 2026-07**: folded into the daily digest as personal relevance ranking (`DigestRelevanceService` in UnifiedDigestService, gated by `FEATURE_DIGEST_RELEVANCE`). No separate mail; cron `relevant.php` deleted. Live crontab entry to be removed at deploy. |
+| ~~`relevant.php`~~ | ~~14:30~~ | ~~Medium~~ | ~~Relevant message matching~~ — **Retired 2026-07**: folded into the daily digest as personal relevance ranking (`DigestRelevanceService` in UnifiedDigestService, gated by `FEATURE_DIGEST_RELEVANCE`). No separate mail; cron `relevant.php` deleted (V1 no longer runs in production, so this was already dead code — no deploy action). |
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
 | ~~`newsfeed_digest.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Newsfeed digest~~ — **Migrated: `mail:newsfeed:digest`** (nearby chitchat digest with per-user spatial bounding box; scheduler disabled pending go-live) |
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |

@@ -431,7 +431,7 @@ Outcome (per Edward 2026-07-04): similarity-to-previous-items becomes part of th
 
 ### Task 4.5: Retire the V1 Relevant email
 
-- [ ] Delete `iznik-server/scripts/cron/relevant.php`; add a header comment to `iznik-server/include/mail/Relevant.php`: "RETIRED 2026-07 — replaced by digest relevance ranking (iznik-batch DigestRelevanceService); do not resurrect" (class deletion happens with the rest of V1; the cron file is what runs). Update `iznik-batch/MIGRATION-STATUS.md` (~line 318): "Relevant message matching" → Retired, folded into digest relevance ranking, with date. **PR body must flag: the LIVE crontab entry for relevant.php (not tracked in-repo) needs removing at deploy time — action for Edward.**
+- [ ] Delete `iznik-server/scripts/cron/relevant.php`; add a header comment to `iznik-server/include/mail/Relevant.php`: "RETIRED 2026-07 — replaced by digest relevance ranking (iznik-batch DigestRelevanceService); do not resurrect" (class deletion happens with the rest of V1). Update `iznik-batch/MIGRATION-STATUS.md` (~line 318): "Relevant message matching" → Retired, folded into digest relevance ranking, with date. (V1 no longer runs in production, so this is dead-code cleanup — no live crontab entry exists and no deploy action is needed.)
 - [ ] Full Laravel + Go + vitest suites green. Code review. Push. PR `feat: digest relevance ranking (flagged) + retire V1 relevant email`.
 
 ---
@@ -500,7 +500,7 @@ The hybrid keyword leg (GetWordsExact/Starts) currently guarantees literal match
 
 - [ ] Repo-wide sweep: `grep -rn --include='*.php' --include='*.go' --include='*.js' --include='*.vue' -i "messages_index\|items_index\|words_cache\|search_terms\|GetWordsTypo\|GetWordsSounds\|ExpandQuery\|SOUNDEX" iznik-server iznik-server-go iznik-batch iznik-nuxt3` — every remaining hit must be: kept-by-design (damlevlim email domains; search_history stats) or removed. Document the survivors list in the PR body.
 - [ ] `migration-parity-audit` skill mindset check (manual): for each deleted execution path, name its replacement (cascade→vector+lexical tier; index maintenance→embeddings:generate; Relevant→mail:relevant; typeahead→none, orphaned; SearchTerm challenge→none, purpose obsolete).
-- [ ] Full suites green; code review; push; PR `feat!: retire legacy keyword search` with body: merge-order requirement (after Phase 1 + Phase 4), the dropped-tables list, the keep-list with reasons, prod deploy notes (run the `*_migration.sql`; remove relevant.php crontab line if still present; `embedding-sidecar` is already a standing prod service).
+- [ ] Full suites green; code review; push; PR `feat!: retire legacy keyword search` with body: merge-order requirement (after Phase 1 + Phase 4), the dropped-tables list, the keep-list with reasons, prod deploy notes (run the `*_migration.sql`; `embedding-sidecar` is already a standing prod service).
 
 ---
 
