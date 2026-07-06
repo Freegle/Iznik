@@ -45,12 +45,16 @@ class ProximityNotesCommand extends Command
             ->where('mg.arrival', '>=', now()->subDays(8))
             ->orderByDesc('mg.arrival')
             ->limit((int) $this->option('limit'))
-            ->get(['mg.msgid', 'mg.groupid', 'rr.lat', 'rr.lng']);
+            ->get(['mg.msgid', 'mg.groupid', 'rr.lat', 'rr.lng', 'rr.max_drive_min']);
 
         $written = 0;
         foreach ($rows as $r) {
             try {
-                $prox = $reach->groupProximity((float) $r->lat, (float) $r->lng, (int) $r->groupid);
+                // Bound the proximity exploration to the post's reach budget (not the routing
+                // server default of 120 min) — the post only rippled within its reach, so
+                // over-exploring is pure waste and trips the slow-call Sentry warning.
+                $budget = isset($r->max_drive_min) ? (float) $r->max_drive_min : null;
+                $prox = $reach->groupProximity((float) $r->lat, (float) $r->lng, (int) $r->groupid, $budget);
                 if ($prox === null || !($prox['quicker'] ?? false)) {
                     continue; // not quicker, or routing unreachable — no note (re-tried next run)
                 }
