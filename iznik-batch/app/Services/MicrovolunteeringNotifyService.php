@@ -39,10 +39,23 @@ class MicrovolunteeringNotifyService
         $this->alreadyNotifiedToday = $this->loadAlreadyNotifiedToday();
         $this->reviewedByMessage    = [];
 
+        // Second surface of Discourse 9856: the exclusion below only stops a NEW
+        // duplicate notification from being created. It does nothing about an
+        // Exhort notification that already exists and is still unseen for a
+        // message the recipient has since reviewed (e.g. inserted before this
+        // exclusion existed, or via any other race) - that row would otherwise
+        // stay seen=0 for ever, keeping the badge lit and its link re-presenting
+        // the already-reviewed post. Sweep those clear on every run, independent
+        // of today's candidate set, so the badge/count stays consistent with the
+        // review-selection exclusion (confirmed against production: 81 such
+        // stuck rows exist at time of writing).
+        $staleNotificationsCleared = $this->markStaleReviewedNotificationsSeen($dryRun);
+
         $stats = [
-            'messages_considered' => 0,
-            'users_notified'      => 0,
-            'users_skipped'       => 0,
+            'messages_considered'         => 0,
+            'users_notified'              => 0,
+            'users_skipped'               => 0,
+            'stale_notifications_cleared' => $staleNotificationsCleared,
         ];
 
         $msgs = DB::select("
@@ -245,14 +258,6 @@ class MicrovolunteeringNotifyService
     }
 
     /**
-     * Build {userid => true} for users with any microvolunteering Exhort
-     * notification in the last 24 h. Equivalent to the per-message
-     * `LEFT JOIN users_notifications … IS NULL` filter the V1 candidate
-     * query did, hoisted out of the per-message hot loop.
-     *
-     * @return array<int, bool>
-     */
-    /**
      * Build {msgid => {userid => true}} for users who have already recorded a
      * CheckMessage microaction for each of the given messages. Preloaded once per
      * run (mirrors loadAlreadyNotifiedToday) so pickCandidates can skip anyone who
@@ -283,6 +288,14 @@ class MicrovolunteeringNotifyService
         return $map;
     }
 
+    /**
+     * Build {userid => true} for users with any microvolunteering Exhort
+     * notification in the last 24 h. Equivalent to the per-message
+     * `LEFT JOIN users_notifications … IS NULL` filter the V1 candidate
+     * query did, hoisted out of the per-message hot loop.
+     *
+     * @return array<int, bool>
+     */
     private function loadAlreadyNotifiedToday(): array
     {
         $rows = DB::select(
@@ -299,5 +312,47 @@ class MicrovolunteeringNotifyService
             $set[(int) $row->touser] = true;
         }
         return $set;
+    }
+
+    /**
+     * Mark seen any existing Exhort "post to check" notification whose recipient
+     * has already recorded a CheckMessage microaction for the message it points
+     * at. The per-message exclusion in pickCandidates only prevents a NEW
+     * duplicate from being created; it cannot retroactively clear a notification
+     * that already exists (e.g. inserted before this exclusion shipped, or via
+     * any other race). Without this sweep the badge stays lit and the
+     * notification's link keeps re-presenting an already-reviewed post
+     * indefinitely. See Discourse 9856.
+     *
+     * @return int Number of notifications cleared (0 in dry-run mode, since
+     *             nothing is written).
+     */
+    private function markStaleReviewedNotificationsSeen(bool $dryRun): int
+    {
+        if ($dryRun) {
+            $row = DB::selectOne(
+                "SELECT COUNT(*) AS count
+                 FROM users_notifications un
+                 INNER JOIN microactions ma
+                     ON ma.userid = un.touser
+                     AND ma.actiontype = 'CheckMessage'
+                     AND un.url = CONCAT('/microvolunteering/message/', ma.msgid)
+                 WHERE un.type = ? AND un.seen = 0",
+                [self::NOTIFICATION_TYPE]
+            );
+
+            return (int) $row->count;
+        }
+
+        return DB::update(
+            "UPDATE users_notifications un
+             INNER JOIN microactions ma
+                 ON ma.userid = un.touser
+                 AND ma.actiontype = 'CheckMessage'
+                 AND un.url = CONCAT('/microvolunteering/message/', ma.msgid)
+             SET un.seen = 1
+             WHERE un.type = ? AND un.seen = 0",
+            [self::NOTIFICATION_TYPE]
+        );
     }
 }
