@@ -42,6 +42,22 @@ Archive every evidence URL to archive.org at the moment of checking, so the audi
 5. **Aggregate** to a spreadsheet with two sheets: **Included** (Category, Tier, Name, Website, Email, Postcode/Area, Activity evidence [URL+date+one-line], Item-cluster fit, Why they fit, Confidence, Priority) + operator columns (Decision send/skip, Sent?, Reply?, Outcome, Notes); and **Rejected** (with reason, for audit + false-negative analysis).
 6. **Validate after the clearance.** Compare the shortlist to who actually took items: true/false positives, and false negatives (orgs that took but weren't found - trace which source would have caught them). Promote responders to Tier 1; feed source gaps into the next run.
 
+## Bounce salvage (recover the bounced sends - proven on the WAGGGS clearance, 2026)
+
+A bounce usually means the *listed* address is stale, not that the org is unreachable. On the WAGGGS run, **16 of 24 bounces** yielded a different, MX-valid published address (the rest were dead orgs or email-less). Per bounced org, in order:
+
+1. **Is the org still alive? Check this FIRST**, before hunting an address. Charity Commission register (status "Removed" / "Does not operate"), Companies House (dissolved), Ofsted for nurseries/schools ("Closed"). If dead, DROP it - don't spend time. (WAGGGS run: 4 confirmed dead by exactly these registers.)
+2. **Hunt a DIFFERENT published email** from, in rough priority: the org's own site contact/about page; its Facebook page About/Contact tab; the Charity Commission register's contact-information page; the local CVS/council directory. Verbatim + source URL only; never construct or infer an address.
+3. **Grep the RAW HTML, not the WebFetch/WebSearch summary.** Those summaries invent placeholder addresses ("[email protected]", a guessed "info@..."). `curl` the page and grep for genuine `@` patterns (filter `@font-face`/`@media`/`@context` noise) and decode Cloudflare-obfuscated mailto links. A hallucinated address that then MX-passes on a real provider is the worst failure mode - it looks verified. (A group-C agent caught exactly this for a nursery.)
+4. **Common bounce patterns (check these before deep research):**
+   - Trussell Trust **foodbanks**: the generic `<branch>@foodbank.org.uk` bounces (routes to national), but a live `info@<branch>.foodbank.org.uk` sits on the branch's own site. (Held for all 3 foodbanks on the WAGGGS run.)
+   - Generic `admin@` / `office@` / `enquiries@` often bounce while `info@` or a named-person address on the same domain works.
+   - `.org` vs `.org.uk` (and similar TLD) typos in the original list.
+   - Whole-domain death (NXDOMAIN / broken DNS delegation) = no email channel at all; fall back to Facebook/phone, or drop.
+5. **MX-gate every candidate** before re-sending (`dns.resolveMx`, or `~/.claude/bin`-style helper). A resolving MX is necessary, not sufficient - it says the domain accepts mail, not that the mailbox exists.
+6. **Facebook as the fallback channel.** When no email survives but the org has an active, ownership-verified Facebook page (linked from its own site, or a handle its own site confirms), message the page / post the offer - a manual, human-in-the-loop step. Login walls block dating posts, so verify the page is *theirs* via a link on their own site and treat activity as "unknown" rather than guessing a URL.
+7. **Re-send is a fresh send:** same one-cluster discipline, same human sign-off, and add BOTH the bounced and the new address to the ledger (suppression + alternatives) so the next run starts clean.
+
 ## The output is a candidate list, NOT a send list
 
 A human reviews and marks send/skip PER ROW. The whole exercise is stakeable on one bad email, so the human gate is deliberate and sticky (no bulk-send > 5; rate-limit ~20/hour). Tier 1 first, then Tier 2 one-cluster emails, each naming specific items - no mail-merge. Sign as the human facilitator, never "AI".
@@ -52,7 +68,9 @@ A human reviews and marks send/skip PER ROW. The whole exercise is stakeable on 
 - **Scope the donor's upfront ask in ONE go**, not across drifting messages: item name, dimensions (H x W x D), condition (rubric, eBay-style), dismantlable?, notes, a photo per item, and a **number per item**. Orgs will do surprising amounts of upfront work if the ask is clear and single.
 - **Item numbers and measurements are essential** - "I'd like the desk and the chest with two drawers" is undisambiguable across 50 desks without them.
 - **Open days** (people come in pairs to look before committing) dramatically raise uptake - worth offering if the donor organises early; allocate with a short memorable word-code, not QR.
+- **Waiting list, don't dead-end.** When a replier wants only items already allocated/gone, don't just say no - reply that they're **on the waiting list** and you'll come back if it frees up or more is confirmed. Keep a waiting-list table; call-back order when an item frees is priority orgs first, individuals last. Costs nothing, keeps goodwill, and catches the common case where a promised collection falls through.
 - **PECR / privacy:** legitimate-interest basis, published org addresses only, never individuals; one email per org per ~6 months; persistent suppression list for opt-outs.
+- **WebFetch/WebSearch hallucinate email addresses** (placeholder "[email protected]", plausible-looking "info@..." guesses). Verify every address against the RAW page HTML or the Charity Commission register before trusting it - a hallucinated address that MX-passes on a real provider looks fully verified but isn't. Provenance rule: verbatim published address + source URL + MX gate, always.
 
 ## Files
 - `reuse-organisations.md` - **the Tier-1 directory**: 73 verified UK reuse organisations and networks by material type (furniture, electricals, IT, bikes/tools, books, textiles/uniform/baby, paint/wood/scrap), each with a "find your local branch/member" route. Start here for Tier 1.

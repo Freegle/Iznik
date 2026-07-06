@@ -215,9 +215,12 @@ return [
         'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
-    // GeoIP database for IP country lookups
+    // GeoIP database for IP country lookups. Defaults to the copy bundled in
+    // the repo (resources/geoip) so the lookup works out of the box wherever
+    // the app is deployed - no separately-provisioned mmdb file required.
+    // GEOIP_MMDB_PATH can point at a system-managed/fresher database.
     'geoip' => [
-        'mmdb_path' => env('GEOIP_MMDB_PATH', '/usr/share/GeoIP/GeoLite2-Country.mmdb'),
+        'mmdb_path' => env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
     ],
 
     // TUS uploader for AI-generated images
@@ -331,6 +334,14 @@ return [
         // independent of RIPPLE_ENABLED).
         'proximity_notes' => filter_var(env('RIPPLE_PROXIMITY_NOTES', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_timeout' => (int) env('RIPPLE_PROXIMITY_TIMEOUT', 15),
+        // reachable_gate: ripple targeting is gated on the routing server's
+        // reachable-group signal - a group is targeted only when an active member
+        // living inside the group's own polygon has a road-reachable street node,
+        // so a post never crosses an uncrossable barrier. Default ON; set
+        // RIPPLE_REACHABLE_GATE=false as the killswitch (reverts targeting and
+        // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
+        // empty/absent list falls back to polygon-only for that post.
+        'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,

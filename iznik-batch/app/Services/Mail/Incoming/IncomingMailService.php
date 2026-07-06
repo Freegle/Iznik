@@ -2784,6 +2784,10 @@ class IncomingMailService
                 'fromaddr' => $email->fromAddress,
                 'replyto' => $email->getHeader('Reply-To'),
                 'fromip' => $email->senderIp,
+                // Geolocate the sender IP so ModTools can flag posts from
+                // outside the UK (MessageHistory.vue). V1 (Message.php/Spam.php)
+                // stored the ISO code here; store NULL when it can't be resolved.
+                'fromcountry' => $email->senderIp ? $this->spamCheck->lookupIPCountryCode($email->senderIp) : null,
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,

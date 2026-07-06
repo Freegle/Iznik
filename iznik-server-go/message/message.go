@@ -3818,6 +3818,14 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create message.
 	fromip := c.IP()
+	// Geolocate the IP to a country so ModTools can flag posts from outside the
+	// UK (MessageHistory.vue). V1 (Message.php) did this at receive time; the
+	// web submit path lost it when it moved to Go. Store the ISO code (NULL when
+	// unknown); the read path expands it to a full name for display.
+	var fromcountry *string
+	if cc := utils.CountryCodeForIP(fromip); cc != "" {
+		fromcountry = &cc
+	}
 	// V1 parity (Message.php:2708/2717): invent a unique messageid because
 	// downstream dedupe/cross-reference joins assume it's populated.
 	messageid := fmt.Sprintf("%.6f@%s", float64(time.Now().UnixNano())/1e9, utils.USER_DOMAIN)
@@ -3834,8 +3842,8 @@ func PutMessage(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
+	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, fromcountry, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?, ?)",
+		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, fromcountry, messageid)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}

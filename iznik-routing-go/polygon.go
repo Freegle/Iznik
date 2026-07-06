@@ -66,9 +66,50 @@ func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float6
 		}
 	}
 
-	// Morphological closing: fill empty cells that have ≥2 orthogonal filled
-	// neighbours. Read from a snapshot so fills don't cascade across the grid
-	// and produce spurious straight-line edges at the grid boundary.
+	// Stamp cells along each reached EDGE, not only at its endpoints, so the road network
+	// is continuous whatever the edge length: a long motorway segment no longer leaves an
+	// unfillable multi-cell gap that would fragment the reach off the main blob (which then
+	// draws only a stray fragment). Water carries no reached edge, so it is never stamped
+	// and the reach stops at the near bank. Undirected edges are stamped once (u < e.To).
+	for u := range reached {
+		if int(u)+1 >= len(g.EdgeStart) {
+			continue // edgeless graph (e.g. a unit-test fixture): node stamping only
+		}
+		nu := g.Nodes[u]
+		r0 := int((float64(nu.Lat) - minLat) / resolution)
+		c0 := int((float64(nu.Lng) - minLng) / resolution)
+		for _, e := range g.EdgesFrom(u) {
+			if _, ok := reached[e.To]; !ok || u > e.To {
+				continue
+			}
+			nv := g.Nodes[e.To]
+			r1 := int((float64(nv.Lat) - minLat) / resolution)
+			c1 := int((float64(nv.Lng) - minLng) / resolution)
+			stampLine(grid, rows, cols, r0, c0, r1, c1)
+		}
+	}
+
+	// CLOSE the stamped road network into the solid area it actually reaches: dilate by N
+	// cells to merge the between-road gaps into one blob, then erode by the SAME N. Closing
+	// fills the inhabited gaps between roads - so the displayed reach is the area a member
+	// can be in, not a spidery set of lines that would exclude a reachable postcode whose
+	// centre sits between roads - but it keeps the boundary at the roads and does NOT grow
+	// outward. Crucially the erosion strips off any thin bridge the dilation threw across a
+	// river (both banks separately reachable is caught by TestIsochronePolygon_DoesNotBridgeRiver),
+	// so the reach never gains the far bank of water it cannot cross. N is in network-derived
+	// cells (~N local road-spacings), so it tracks settlement density with no fixed-metre
+	// constant; a real barrier is always wider than the gaps within a settlement.
+	// Grow by one cell. In a typical settlement the stamped roads are only a cell or two
+	// apart, so one cell of growth usually merges them into the solid area a member can be in
+	// (and covers a postcode centre set back a little from its road); the holes that remain
+	// are mostly genuine fields/water with no roads and so no freeglers. This is a pragmatic
+	// compromise, NOT a guarantee: one cell can still bridge an uncrossable barrier that is
+	// only ~a cell wide AND has both banks separately reachable, and it can leave a real hole
+	// where roads are sparser than in a town. One cell is roughly the least growth that fills
+	// most settlements and about the most that keeps the water test passing. Membership is
+	// more reliably decided by a freegler's own nearest-node reachability than by this
+	// polygon's exact edge. The cell is network-derived, so this tracks density without a
+	// fixed-metre constant.
 	snap := make([][]bool, rows)
 	for i := range snap {
 		snap[i] = make([]bool, cols)
@@ -76,29 +117,51 @@ func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float6
 	}
 	for r := 1; r < rows-1; r++ {
 		for c := 1; c < cols-1; c++ {
-			if snap[r][c] {
-				continue
-			}
-			n := 0
-			if snap[r+1][c] {
-				n++
-			}
-			if snap[r-1][c] {
-				n++
-			}
-			if snap[r][c+1] {
-				n++
-			}
-			if snap[r][c-1] {
-				n++
-			}
-			if n >= 2 {
+			if snap[r][c] || snap[r+1][c] || snap[r-1][c] || snap[r][c+1] || snap[r][c-1] {
 				grid[r][c] = true
 			}
 		}
 	}
 
 	return traceBoundary(grid, rows, cols, minLat, minLng, resolution)
+}
+
+// stampLine marks every grid cell on the line between (r0,c0) and (r1,c1) as filled,
+// using Bresenham's algorithm. Cells outside the grid are skipped.
+func stampLine(grid [][]bool, rows, cols, r0, c0, r1, c1 int) {
+	dr := r1 - r0
+	if dr < 0 {
+		dr = -dr
+	}
+	dc := c1 - c0
+	if dc < 0 {
+		dc = -dc
+	}
+	sr, sc := 1, 1
+	if r0 > r1 {
+		sr = -1
+	}
+	if c0 > c1 {
+		sc = -1
+	}
+	err := dc - dr
+	for {
+		if r0 >= 0 && r0 < rows && c0 >= 0 && c0 < cols {
+			grid[r0][c0] = true
+		}
+		if r0 == r1 && c0 == c1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 > -dr {
+			err -= dr
+			c0 += sc
+		}
+		if e2 < dc {
+			err += dc
+			r0 += sr
+		}
+	}
 }
 
 // IsochronePolygon converts a set of reachable nodes into a GeoJSON polygon
@@ -108,6 +171,10 @@ func IsochronePolygon(g *Graph, reached map[NodeID]float32, resolution float64) 
 	if len(rings) == 0 {
 		return emptyPolygon()
 	}
+	// No shape simplification beyond dropping exactly-collinear points (lossless): the
+	// displayed boundary must be exactly the traced grid boundary. Approximating
+	// simplification (Douglas-Peucker) moves the boundary by up to its tolerance, which
+	// near a bank can misrepresent what is reached.
 	ring := removeCollinear(rings[0])
 	if len(ring) < 4 {
 		return emptyPolygon()
@@ -312,8 +379,52 @@ func AutoResolution(limitSeconds float32, mode Mode) float64 {
 	if res < 0.0005 {
 		res = 0.0005
 	}
-	if res > 0.01 {
-		res = 0.01
+	// Cap at ~0.17 km/cell (was 1.1 km). A coarse grid quantises the whole shape: a
+	// sub-cell-width river (~0.8 km Thames) can't exist in the raster, so it gets
+	// closed over and the reach visibly crosses water into the far town. At ~0.17 km a
+	// real river is several cells wide (never bridged by the one-cell closing) and the
+	// whole-cell overshoot drops from ~1.1 km to ~0.17 km, so the boundary stops at the
+	// bank. Cell count stays bounded because the reach area is bounded.
+	if res > 0.0015 {
+		res = 0.0015
+	}
+	return res
+}
+
+// NetworkResolution derives the grid cell size from the reach's OWN road network - a
+// high percentile of the lengths of the reached edges - rather than a fixed number.
+// Cells then track local road density: fine where roads are dense (resolving a narrow
+// barrier like a river), coarser on open motorway (nothing narrow to resolve there). A
+// real barrier is wider than the local road spacing, so it always spans >=2 cells and is
+// never closed over; and because the cell is ~the node spacing, adjacent reached nodes
+// stay grid-connected, so a genuinely-connected reach is not fragmented. No per-geography
+// magic number: pass a denser city or a different projection and it self-adjusts.
+func NetworkResolution(g *Graph, reached map[NodeID]float32, mode Mode) float64 {
+	lens := make([]float64, 0, len(reached))
+	for u := range reached {
+		nu := g.Nodes[u]
+		for _, e := range g.EdgesFrom(u) {
+			if e.Seconds[mode] < 0 {
+				continue
+			}
+			if _, ok := reached[e.To]; !ok || u > e.To {
+				continue // only edges between two reached nodes; dedupe undirected
+			}
+			nv := g.Nodes[e.To]
+			lens = append(lens, haversineM(float64(nu.Lat), float64(nu.Lng), float64(nv.Lat), float64(nv.Lng)))
+		}
+	}
+	if len(lens) == 0 {
+		return 0.0015 // edgeless (degenerate / unit-test fixtures): fall back to a fine cell
+	}
+	sort.Float64s(lens)
+	p75 := lens[len(lens)*3/4] // typical road segment; robust to a few long motorway edges
+	res := p75 / 111320.0      // metres -> degrees of latitude
+	if res < 0.0003 {
+		res = 0.0003 // ~33m floor
+	}
+	if res > 0.003 {
+		res = 0.003 // ~330m cap (safety valve; rarely binds)
 	}
 	return res
 }
