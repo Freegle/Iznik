@@ -205,14 +205,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Put("/modtools/alert", alert.CreateAlert)
-
-		// @Router /alert [post]
-		// @Summary Record alert click
-		// @Description Records a click on an alert tracking entry (public access)
-		// @Tags alert
-		// @Accept json
-		// @Produce json
-		// @Success 200 {object} map[string]interface{}
 		rg.Post("/modtools/alert", alert.RecordAlert)
 
 		// Admin

@@ -15,7 +15,7 @@
   "paths": {
     "/health": {
       "get": {
-        "description": "Returns the health status of the spatial service.",
+        "description": "Returns {\"status\":\"ok\"} when the service is up. Used by Docker healthchecks.",
         "tags": [
           "health"
         ],
@@ -28,39 +28,9 @@
         }
       }
     },
-    "/v1/datasets": {
-      "get": {
-        "description": "Returns all available datasets with their names, record counts, and readiness status.",
-        "tags": [
-          "spatial"
-        ],
-        "summary": "List datasets",
-        "operationId": "listDatasets",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/genericResponse"
-          }
-        }
-      }
-    },
-    "/v1/rebuild": {
-      "post": {
-        "description": "Triggers an asynchronous full rebuild of every dataset from MySQL.",
-        "tags": [
-          "admin"
-        ],
-        "summary": "Rebuild all datasets (admin)",
-        "operationId": "rebuildAllDatasets",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/genericResponse"
-          }
-        }
-      }
-    },
     "/v1/{dataset}/knn": {
       "get": {
-        "description": "Returns the nearest records in a dataset to a given lat/lng point.\nOptionally filtered by feature type and/or a polygon boundary.",
+        "description": "Returns the nearest records in a dataset to a given lat/lng point.\nOptionally filtered by feature type and/or a polygon boundary.\nResponse: {\"results\": [{\"id\": int64, \"distance\": float64, \"extra\": {...}}]}",
         "tags": [
           "spatial"
         ],
@@ -69,7 +39,7 @@
         "parameters": [
           {
             "type": "string",
-            "description": "Dataset name",
+            "description": "Dataset name (e.g. locations, messages, userapproxlocs, jobs, groups, postcodes, newsfeed)",
             "name": "dataset",
             "in": "path",
             "required": true
@@ -98,13 +68,13 @@
           },
           {
             "type": "string",
-            "description": "Optional feature-type filter",
+            "description": "Optional feature-type filter (dataset-specific, e.g. \"Postcode\" for locations)",
             "name": "type",
             "in": "query"
           },
           {
             "type": "string",
-            "description": "WKT polygon to restrict results to (optional)",
+            "description": "WKT polygon to restrict results to (optional; use POST /within_coords for large polygons)",
             "name": "polygon",
             "in": "query"
           }
@@ -119,6 +89,9 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           },
+          "500": {
+            "$ref": "#/responses/errorResponse"
+          },
           "503": {
             "$ref": "#/responses/errorResponse"
           }
@@ -127,7 +100,7 @@
     },
     "/v1/{dataset}/rebuild": {
       "post": {
-        "description": "Triggers an asynchronous full rebuild of the named dataset from MySQL.",
+        "description": "Triggers an asynchronous full rebuild of the named dataset from MySQL.\nThe rebuild runs in a background goroutine; the endpoint returns immediately.\nResponse on 200: {\"status\":\"rebuilding\",\"dataset\":\"\\u003cname\\u003e\"}\n\nIMPORTANT: this route is served on SPATIAL_ADMIN_PORT (default 8195), not the\npublic SPATIAL_PORT (default 8194). It must not be exposed to the public network.",
         "tags": [
           "admin"
         ],
@@ -136,7 +109,7 @@
         "parameters": [
           {
             "type": "string",
-            "description": "Dataset name",
+            "description": "Dataset name (e.g. locations, messages, userapproxlocs)",
             "name": "dataset",
             "in": "path",
             "required": true
@@ -157,7 +130,7 @@
     },
     "/v1/{dataset}/remove": {
       "post": {
-        "description": "Performs an incremental hard-delete of specific record IDs from the spatial index.",
+        "description": "Performs an incremental hard-delete of specific record IDs from the spatial index.\nRequest body: {\"ids\": [int64, ...]}\nResponse on 200: {\"removed\": count}\n\nIMPORTANT: this route is served on SPATIAL_ADMIN_PORT (default 8195), not the\npublic SPATIAL_PORT (default 8194). It must not be exposed to the public network.",
         "tags": [
           "admin"
         ],
@@ -170,6 +143,24 @@
             "name": "dataset",
             "in": "path",
             "required": true
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "description": "JSON object with an \"ids\" array of int64 IDs to remove",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
           }
         ],
         "responses": {
@@ -188,14 +179,14 @@
         }
       }
     },
-    "/v1/{dataset}/status": {
-      "get": {
-        "description": "Returns the readiness, record count and last-sync time for a named dataset.",
+    "/v1/{dataset}/upsert": {
+      "post": {
+        "description": "Inserts or replaces specific items in the spatial index by WKT geometry.\nIntended for integration tests: seeds a known geometry into the live index\n(decoupled from the nightly MySQL rebuild) and removes it afterwards.\nRequest body: {\"items\": [{\"id\": int64, \"wkt\": \"WKT string\", \"extra\": {...}}]}\nResponse on 200: {\"upserted\": count}\n\nIMPORTANT: this route is served on SPATIAL_ADMIN_PORT (default 8195), not the\npublic SPATIAL_PORT (default 8194). It must not be exposed to the public network.",
         "tags": [
-          "spatial"
+          "admin"
         ],
-        "summary": "Get dataset status",
-        "operationId": "getDatasetStatus",
+        "summary": "Upsert items into dataset (admin)",
+        "operationId": "upsertDatasetItems",
         "parameters": [
           {
             "type": "string",
@@ -203,40 +194,35 @@
             "name": "dataset",
             "in": "path",
             "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/genericResponse"
-          },
-          "404": {
-            "$ref": "#/responses/errorResponse"
-          }
-        }
-      }
-    },
-    "/v1/{dataset}/within": {
-      "get": {
-        "description": "Returns the IDs of all records whose geometry falls inside the given WKT polygon.",
-        "tags": [
-          "spatial"
-        ],
-        "summary": "Within polygon — return IDs",
-        "operationId": "withinQuery",
-        "parameters": [
-          {
-            "type": "string",
-            "description": "Dataset name",
-            "name": "dataset",
-            "in": "path",
-            "required": true
           },
           {
-            "type": "string",
-            "description": "WKT polygon (required)",
-            "name": "polygon",
-            "in": "query",
-            "required": true
+            "name": "body",
+            "in": "body",
+            "description": "JSON object with an \"items\" array; each item has id (int64), wkt (WKT polygon or point string), and optional extra (arbitrary JSON object)",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "format": "int64"
+                      },
+                      "wkt": {
+                        "type": "string"
+                      },
+                      "extra": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         ],
         "responses": {
@@ -247,6 +233,9 @@
             "$ref": "#/responses/errorResponse"
           },
           "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
             "$ref": "#/responses/errorResponse"
           },
           "503": {
@@ -256,46 +245,8 @@
       }
     },
     "/v1/{dataset}/within_coords": {
-      "get": {
-        "description": "Returns full item objects (including coordinates) for records inside the polygon.\nUse POST for large polygons that exceed URL length limits.",
-        "tags": [
-          "spatial"
-        ],
-        "summary": "Within polygon — return items with coordinates (GET)",
-        "operationId": "withinCoordsGet",
-        "parameters": [
-          {
-            "type": "string",
-            "description": "Dataset name",
-            "name": "dataset",
-            "in": "path",
-            "required": true
-          },
-          {
-            "type": "string",
-            "description": "WKT polygon (required)",
-            "name": "polygon",
-            "in": "query",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/genericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/errorResponse"
-          },
-          "404": {
-            "$ref": "#/responses/errorResponse"
-          },
-          "503": {
-            "$ref": "#/responses/errorResponse"
-          }
-        }
-      },
       "post": {
-        "description": "Same as GET /within_coords but accepts the polygon in the request body to\navoid URL length limits for large isochrone polygons.\nBody may be raw WKT (Content-Type: text/plain) or form-encoded (polygon=WKT).",
+        "description": "Returns full item objects (including extra fields such as coordinates) for all\nrecords whose geometry falls inside the given WKT polygon.\nUse this POST form for large isochrone polygons that exceed safe URL length limits.\nResponse: {\"results\": [{\"extra\": {...}}]}\n\nAccepts Content-Type: text/plain (raw WKT body) or\napplication/x-www-form-urlencoded with field polygon=\\u003cWKT\\u003e.\n\nBinds to SPATIAL_PORT (default 8194).",
         "tags": [
           "spatial"
         ],
@@ -304,10 +255,19 @@
         "parameters": [
           {
             "type": "string",
-            "description": "Dataset name",
+            "description": "Dataset name (e.g. userapproxlocs)",
             "name": "dataset",
             "in": "path",
             "required": true
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "description": "WKT polygon as raw text body (Content-Type text/plain) or polygon=<WKT> form field",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -318,6 +278,12 @@
             "$ref": "#/responses/errorResponse"
           },
           "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "413": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
             "$ref": "#/responses/errorResponse"
           },
           "503": {
@@ -329,10 +295,10 @@
   },
   "responses": {
     "errorResponse": {
-      "description": "errorResponse is a JSON error response"
+      "description": "errorResponse is a JSON error response containing a single \"error\" string field: {\"error\": \"message\"}"
     },
     "genericResponse": {
-      "description": "genericResponse is a generic JSON response"
+      "description": "genericResponse is a generic JSON response; actual fields depend on the endpoint (see each route description)"
     }
   }
 }

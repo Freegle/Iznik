@@ -293,8 +293,8 @@ func TestPostStoryLike(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 	storyID := CreateTestStory(t, userID, "Like Test "+prefix, "A story to like", true, true)
 
-	body := fmt.Sprintf(`{"id":%d,"action":"Like"}`, storyID)
-	req := httptest.NewRequest("POST", "/api/story?jwt="+token, bytes.NewBufferString(body))
+	body := fmt.Sprintf(`{"id":%d}`, storyID)
+	req := httptest.NewRequest("POST", "/api/story/like?jwt="+token, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -327,8 +327,8 @@ func TestPostStoryUnlike(t *testing.T) {
 	assert.Equal(t, int64(1), countBefore)
 
 	// Unlike
-	body := fmt.Sprintf(`{"id":%d,"action":"Unlike"}`, storyID)
-	req := httptest.NewRequest("POST", "/api/story?jwt="+token, bytes.NewBufferString(body))
+	body := fmt.Sprintf(`{"id":%d}`, storyID)
+	req := httptest.NewRequest("POST", "/api/story/unlike?jwt="+token, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -523,7 +523,7 @@ func TestDeleteStoryUnauthorized(t *testing.T) {
 
 func TestPostStoryLikeNotLoggedIn(t *testing.T) {
 	body := `{"id":1,"action":"Like"}`
-	req := httptest.NewRequest("POST", "/api/story", bytes.NewBufferString(body))
+	req := httptest.NewRequest("POST", "/api/story/like", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 401, resp.StatusCode)

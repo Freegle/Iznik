@@ -485,7 +485,6 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
 	v1.Get("/reachable-groups", handleReachableGroups(g))
 	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))
-	v1.Get("/posts-for-member", handlePostsForMember(g, spatialURL))
 	v1.Get("/digest-simulator", handleDigestSimulator(g, spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())

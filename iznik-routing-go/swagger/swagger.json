@@ -8,29 +8,11 @@
   "swagger": "2.0",
   "info": {
     "description": "A routing and isochrone service for finding reachable areas from a given\nlocation using walk, cycle, and drive travel modes based on OpenStreetMap data.",
-    "title": "Freegle Routing \u0026 Isochrone API",
+    "title": "Freegle Routing & Isochrone API",
     "version": "1.0.0"
   },
   "basePath": "/",
   "paths": {
-    "/demo": {
-      "get": {
-        "description": "Returns an interactive HTML demo page for the routing service.",
-        "produces": [
-          "text/html"
-        ],
-        "tags": [
-          "demo"
-        ],
-        "summary": "Demo page",
-        "operationId": "getDemoPage",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          }
-        }
-      }
-    },
     "/health": {
       "get": {
         "description": "Returns the health status of the routing service including the number of\nloaded graph nodes.",
@@ -46,9 +28,65 @@
         }
       }
     },
+    "/v1/catchment": {
+      "get": {
+        "description": "Returns the inbound catchment polygon for a group: the area from which a post\nwould ripple far enough to reach it. Supply either groupid (to seed from the\ngroup's entire boundary polygon) or lat+lng (for an ad-hoc single-point\ncatchment). Returns {catchment, bands, seeds} for the groupid form and\n{catchment} for the point form.",
+        "tags": [
+          "routing"
+        ],
+        "summary": "Group inbound catchment",
+        "operationId": "getCatchment",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Group ID to compute catchment for (mutually exclusive with lat/lng)",
+            "name": "groupid",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude of origin point (mutually exclusive with groupid)",
+            "name": "lat",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude of origin point (mutually exclusive with groupid)",
+            "name": "lng",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Travel-time budget in minutes (default 30, max 120)",
+            "name": "minutes",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Travel mode (walk, cycle, drive; default drive)",
+            "name": "mode",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/routingGenericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/routingErrorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/routingErrorResponse"
+          }
+        }
+      }
+    },
     "/v1/digest-simulator": {
       "get": {
-        "description": "Simulates the content of a digest email for a member at a given location,\noptionally grouping results by poster.",
+        "description": "Simulates the content of a digest email for a member at a given location,\nscoring and ranking nearby posts by closeness, freshness, and budget-decay.\nOptionally groups results by poster.",
         "tags": [
           "routing"
         ],
@@ -75,6 +113,61 @@
             "type": "boolean",
             "description": "Whether to group results by poster (true/false)",
             "name": "group_by_poster",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Maximum drive-time isochrone in minutes (default 30, max 120)",
+            "name": "max_minutes",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Closeness scoring weight (default 1.0)",
+            "name": "w_closeness",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Freshness scoring weight (default 0.5)",
+            "name": "w_freshness",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Budget scoring weight (default 1.0)",
+            "name": "w_budget",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Anchor scoring weight (default 0)",
+            "name": "w_anchor",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "Maximum posts to select (default 65, mirrors DIGEST_POST_CAP)",
+            "name": "cap",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Lookback window in hours for posts (default 24, max 168)",
+            "name": "window_hours",
+            "in": "query"
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Budget decay rate (default 25)",
+            "name": "budget_decay",
             "in": "query"
           }
         ],
@@ -140,6 +233,153 @@
           },
           "400": {
             "$ref": "#/responses/routingErrorResponse"
+          }
+        }
+      }
+    },
+    "/v1/group-actives": {
+      "get": {
+        "description": "Returns the 90-day-active approved-member count for a group and the\nStage-A audience target N* derived from it. Result is cached in-process\nfor approximately one hour.",
+        "tags": [
+          "routing"
+        ],
+        "summary": "Group active-member count",
+        "operationId": "getGroupActives",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Group ID to query",
+            "name": "groupid",
+            "in": "query",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/routingGenericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/routingErrorResponse"
+          },
+          "503": {
+            "$ref": "#/responses/routingErrorResponse"
+          }
+        }
+      }
+    },
+    "/v1/group-extent": {
+      "get": {
+        "description": "Returns the widest road drive-time between two points inside the group —\nthe group's internal \"diameter\" as a travel-time yardstick. Returns\n{reachable:false} when no two points are road-connected within max_minutes.",
+        "tags": [
+          "routing"
+        ],
+        "summary": "Group road diameter",
+        "operationId": "getGroupExtent",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Group ID to compute extent for",
+            "name": "groupid",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Maximum drive-time to consider in minutes (default 240)",
+            "name": "max_minutes",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Travel mode (walk, cycle, drive; default drive)",
+            "name": "mode",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/routingGenericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/routingErrorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/routingErrorResponse"
+          }
+        }
+      }
+    },
+    "/v1/group-proximity": {
+      "get": {
+        "description": "For an offer at (lat, lng) rippling into groupid, returns the nearest\nin-group road point and the point furthest from it, each with drive-time.\nAlso returns quicker=true when the offer is closer to the near edge than\nthe group spans internally. Returns {reachable:false} when no path exists\nwithin max_minutes.",
+        "tags": [
+          "routing"
+        ],
+        "summary": "Group road proximity",
+        "operationId": "getGroupProximity",
+        "parameters": [
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude of the offer location",
+            "name": "lat",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude of the offer location",
+            "name": "lng",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "description": "Group ID to measure proximity to",
+            "name": "groupid",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Maximum drive-time to consider in minutes (default 120)",
+            "name": "max_minutes",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Travel mode (walk, cycle, drive; default drive)",
+            "name": "mode",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/routingGenericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/routingErrorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/routingErrorResponse"
+          }
+        }
+      }
+    },
+    "/v1/groups/list": {
+      "get": {
+        "description": "Returns every publishable Freegle group with a polygon as a flat array of\n{id, name, lat, lng} objects, ordered by short name. Used by the catchment\ntab's group picker. Returns [] (not an error) when the database is\nunavailable.",
+        "tags": [
+          "routing"
+        ],
+        "summary": "All publishable groups",
+        "operationId": "getGroupsList",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/routingGenericResponse"
           }
         }
       }
@@ -272,19 +512,19 @@
         }
       }
     },
-    "/v1/posts-for-member": {
+    "/v1/reachable-groups": {
       "get": {
-        "description": "Returns freegle posts whose origin is reachable within the given travel time\nfrom the member's location, for a given date window.",
+        "description": "Returns the IDs of freegle groups that have at least one active member\nwhose home location is road-reachable from the given origin within the\ntravel-time budget. Groups where members are technically inside the\nisochrone but separated by severed crossings (rivers, motorways) are\nexcluded. reachable_group_ids is always a non-null array.",
         "tags": [
           "routing"
         ],
-        "summary": "Posts reachable by a member",
-        "operationId": "getPostsForMember",
+        "summary": "Reachable freegle groups",
+        "operationId": "getReachableGroups",
         "parameters": [
           {
             "type": "number",
             "format": "double",
-            "description": "Latitude of member's location",
+            "description": "Latitude of origin point",
             "name": "lat",
             "in": "query",
             "required": true
@@ -292,7 +532,7 @@
           {
             "type": "number",
             "format": "double",
-            "description": "Longitude of member's location",
+            "description": "Longitude of origin point",
             "name": "lng",
             "in": "query",
             "required": true
@@ -300,17 +540,15 @@
           {
             "type": "number",
             "format": "double",
-            "description": "Maximum travel time in minutes",
-            "name": "max_minutes",
-            "in": "query",
-            "required": true
+            "description": "Travel-time budget in minutes (default 30, max 120)",
+            "name": "minutes",
+            "in": "query"
           },
           {
             "type": "string",
-            "description": "Date filter (YYYY-MM-DD)",
-            "name": "date",
-            "in": "query",
-            "required": true
+            "description": "Travel mode (walk, cycle, drive; default drive)",
+            "name": "mode",
+            "in": "query"
           }
         ],
         "responses": {
@@ -325,11 +563,11 @@
     },
     "/v1/ripple-eval": {
       "post": {
-        "description": "Accepts a proposed ripple schedule as JSON and returns evaluation metrics.",
+        "description": "Accepts a JSON body {lat, lng, mode, max_minutes, points[][2]float64} and\nreturns, for each input point, the road drive-time from the post origin\nand the point's rank among all reachable freeglers (1 = nearest). Used by\nthe simulator to evaluate at which send-tick a historical replier would\nhave been notified. points are [lng, lat] GeoJSON order.",
         "tags": [
           "routing"
         ],
-        "summary": "Evaluate ripple schedule",
+        "summary": "Evaluate reach for a post origin and point set",
         "operationId": "postRippleEval",
         "responses": {
           "200": {
@@ -389,6 +627,18 @@
             "type": "string",
             "description": "Travel mode (walk, cycle, drive; default drive)",
             "name": "mode",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Set to 0 to omit the per-tick polygon geometry (slim form for the batch; each tick keeps drive_min, cumulative_users and reachable_group_ids)",
+            "name": "polygons",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "Stage-A audience-budget cap; when >0 limits the schedule to the N nearest freeglers (default 0 = no cap)",
+            "name": "target_users",
             "in": "query"
           }
         ],

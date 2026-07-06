@@ -36,8 +36,8 @@ package swagger
 import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
-	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
@@ -407,7 +407,9 @@ type alertResponse struct {
 // swagger:route POST /modtools/alert modtools recordAlert
 // Record alert click
 //
-// Records a click on an alert tracking entry (public access)
+// Records a click on an alert tracking entry. Public access (no auth required).
+// Body: { action: "clicked", trackid: <integer> }
+// When action=="clicked" and trackid>0, sets alerts_tracking.response="Clicked".
 //
 // Responses:
 //
@@ -797,6 +799,33 @@ type patchChatMessageParams struct {
 //
 // security:
 // - BearerAuth: []
+//
+// Parameters:
+//   + name: count
+//     in: query
+//     description: Return only the unseen count
+//     required: false
+//     type: boolean
+//   + name: id
+//     in: query
+//     description: Return a single chat room by id
+//     required: false
+//     type: integer
+//   + name: chattypes
+//     in: query
+//     description: Comma-separated chat types to include
+//     required: false
+//     type: string
+//   + name: search
+//     in: query
+//     description: Filter chats by search term
+//     required: false
+//     type: string
+//   + name: since
+//     in: query
+//     description: Only chats with activity since this time
+//     required: false
+//     type: string
 //
 // Responses:
 //
@@ -1535,6 +1564,23 @@ type giftAidResponse struct {
 //
 // Returns all groups
 //
+// Parameters:
+//   + name: polygon
+//     in: query
+//     description: Include each group polygon in the response
+//     required: false
+//     type: boolean
+//   + name: modtools
+//     in: query
+//     description: ModTools view: include moderation-only fields
+//     required: false
+//     type: boolean
+//   + name: support
+//     in: query
+//     description: Support view: include support-only fields
+//     required: false
+//     type: boolean
+//
 // Responses:
 //
 //	200: groupsResponse
@@ -1580,6 +1626,32 @@ type groupWorkResponse struct {
 //     required: true
 //     type: integer
 //     format: int64
+//
+//   + name: showmods
+//     in: query
+//     description: Include the group moderator list
+//     required: false
+//     type: boolean
+//   + name: sponsors
+//     in: query
+//     description: Include group sponsors
+//     required: false
+//     type: boolean
+//   + name: polygon
+//     in: query
+//     description: Include the group polygon
+//     required: false
+//     type: boolean
+//   + name: tnkey
+//     in: query
+//     description: TrashNothing partner-key view
+//     required: false
+//     type: boolean
+//   + name: modtools
+//     in: query
+//     description: ModTools view: include moderation-only fields
+//     required: false
+//     type: boolean
 //
 // Responses:
 //
@@ -1766,6 +1838,23 @@ type isochronesResponse struct {
 //
 // Returns all jobs
 //
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude (required - without lat+lng an empty array is returned)
+//     required: false
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Longitude (required)
+//     required: false
+//     type: number
+//   + name: category
+//     in: query
+//     description: Job category filter
+//     required: false
+//     type: string
+//
 // Responses:
 //
 //	200: jobsResponse
@@ -1816,6 +1905,27 @@ type jobResponse struct {
 //     required: true
 //     type: integer
 //
+//   + name: link
+//     in: query
+//     description: Clicked job link
+//     required: false
+//     type: string
+//   + name: placement
+//     in: query
+//     description: Ad placement identifier
+//     required: false
+//     type: string
+//   + name: source
+//     in: query
+//     description: Click source
+//     required: false
+//     type: string
+//   + name: page
+//     in: query
+//     description: Page the click came from
+//     required: false
+//     type: string
+//
 // Responses:
 //
 //	200: successResponse
@@ -1860,7 +1970,7 @@ type locationResponse struct {
 // Returns location suggestions for typeahead
 //
 // Parameters:
-//   + name: term
+//   + name: q
 //     in: query
 //     description: Search term
 //     required: true
@@ -1908,6 +2018,12 @@ type locationsResponse struct {
 //     type: integer
 //     format: int64
 //
+//   + name: groupsnear
+//     in: query
+//     description: Include nearby groups for the location
+//     required: false
+//     type: boolean
+//
 // Responses:
 //
 //	200: locationResponse
@@ -1917,6 +2033,68 @@ type locationsResponse struct {
 // Search locations
 //
 // Searches locations by lat/lng, typeahead, or bounding box
+//
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude for point lookup
+//     required: false
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Longitude for point lookup
+//     required: false
+//     type: number
+//   + name: swlat
+//     in: query
+//     description: Bounding box south-west latitude
+//     required: false
+//     type: number
+//   + name: swlng
+//     in: query
+//     description: Bounding box south-west longitude
+//     required: false
+//     type: number
+//   + name: nelat
+//     in: query
+//     description: Bounding box north-east latitude
+//     required: false
+//     type: number
+//   + name: nelng
+//     in: query
+//     description: Bounding box north-east longitude
+//     required: false
+//     type: number
+//   + name: typeahead
+//     in: query
+//     description: Partial name for typeahead matching
+//     required: false
+//     type: string
+//   + name: dodgy
+//     in: query
+//     description: Include locations flagged as dodgy
+//     required: false
+//     type: boolean
+//   + name: areas
+//     in: query
+//     description: Include areas as well as postcodes
+//     required: false
+//     type: boolean
+//   + name: limit
+//     in: query
+//     description: Maximum results to return
+//     required: false
+//     type: integer
+//   + name: groupsnear
+//     in: query
+//     description: Include nearby groups for each location
+//     required: false
+//     type: boolean
+//   + name: pconly
+//     in: query
+//     description: Postcodes only
+//     required: false
+//     type: boolean
 //
 // Responses:
 //
@@ -2186,6 +2364,13 @@ type membershipsResponse struct {
 // Message
 // ============================================================================
 
+// listMessagesResponse is the response for the message list endpoint
+// swagger:response listMessagesResponse
+type listMessagesResponse struct {
+	// in:body
+	Body message.ListMessagesResponse
+}
+
 // swagger:route GET /messages message listPublicMessages
 // List messages
 //
@@ -2218,21 +2403,31 @@ type membershipsResponse struct {
 //
 //	200: listMessagesResponse
 
-// listMessagesResponse is the response for the message list endpoint
-// swagger:response listMessagesResponse
-type listMessagesResponse struct {
-	// in:body
-	Body message.ListMessagesResponse
-}
-
 // swagger:route GET /modtools/messages modtools listMessages
 // List messages
 //
 // Returns messages with moderation queue support
 //
+// Parameters:
+//   + name: subaction
+//     in: query
+//     description: Sub-action filter (e.g. searchall)
+//     required: false
+//     type: string
+//   + name: search
+//     in: query
+//     description: Search term filter
+//     required: false
+//     type: string
+//   + name: fromuser
+//     in: query
+//     description: Filter to messages from this user id
+//     required: false
+//     type: integer
+//
 // Responses:
 //
-//	200: messagesResponse
+//	200: listMessagesResponse
 
 // swagger:route GET /message/count message getMessageCount
 // Get message count
@@ -2269,6 +2464,12 @@ type listMessagesResponse struct {
 //     description: Northeast longitude
 //     required: true
 //     type: number
+//
+//   + name: limit
+//     in: query
+//     description: Maximum results to return
+//     required: false
+//     type: string
 //
 // Responses:
 //
@@ -2329,6 +2530,12 @@ type listMessagesResponse struct {
 //     in: path
 //     description: Message IDs (comma separated)
 //     required: true
+//     type: string
+//
+//   + name: partner
+//     in: query
+//     description: Partner API key allowing partner access
+//     required: false
 //     type: string
 //
 // Responses:
@@ -3352,7 +3559,7 @@ type storyResponse struct {
 // System Logs
 // ============================================================================
 
-// swagger:route GET /systemlogs systemlogs getSystemLogs
+// swagger:route GET /modtools/systemlogs systemlogs getSystemLogs
 // Get system logs
 //
 // Returns system logs (moderator only)
@@ -3374,7 +3581,7 @@ type systemLogsResponse struct {
 	Body systemlogs.LogsResponse
 }
 
-// swagger:route GET /systemlogs/counts systemlogs getSystemLogCounts
+// swagger:route GET /modtools/systemlogs/counts systemlogs getSystemLogCounts
 // Get log counts by subtype
 //
 // Returns counts of logs grouped by subtype using Loki metric queries (moderator only)
@@ -4176,3 +4383,580 @@ type housekeeperTasksResponse struct {
 //
 //	200: successResponse
 //	400: errorResponse
+
+// ============================================================================
+// Previously undocumented endpoints — added by api-surface-audit (JOB 2)
+// ============================================================================
+
+// swagger:route POST /scrolldepth browse recordScrollDepth
+// Record browse-feed scroll depth
+//
+// Records how far down the browse feed a session scrolled.
+// One row per browse session (furthest feed position reached); no login required.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /admin/ai-images/{id}/suppress aiimage suppressAIImage
+// Suppress AI image
+//
+// Suppresses a specific AI-generated image from the review queue.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /amp/digest/reply amp ampDigestReplyShared
+// Reply to digest (shared AMP endpoint)
+//
+// Handles AMP email digest reply with all parameters (mid, rt, uid, exp, tid, message) from form body.
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route POST /amp/digest/{id}/reply amp ampDigestReply
+// Reply to digest by ID (AMP)
+//
+// Handles AMP email digest reply. Reads rt, uid, exp, tid query params and message body.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Digest ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route GET /avatar/{name} user getAvatar
+// Get user avatar
+//
+// Returns the avatar image for the given name.
+//
+// Parameters:
+//   + name: name
+//     in: path
+//     description: Avatar name
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	404: errorResponse
+
+// swagger:route GET /bulkoffer/update/{token} bulkoffer getBulkOfferUpdate
+// Get bulk offer update page (external)
+//
+// External/unauthenticated endpoint for owners to view and update bulk item availability.
+//
+// Parameters:
+//   + name: token
+//     in: path
+//     description: Edit token
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /bulkoffer/update/{token} bulkoffer postBulkOfferUpdate
+// Update bulk offer items (external)
+//
+// External/unauthenticated endpoint for owners to toggle item availability.
+//
+// Parameters:
+//   + name: token
+//     in: path
+//     description: Edit token
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /charities charities createCharity
+// Create or update a charity
+//
+// Creates or updates a charity record.
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route GET /chat/{id}/commongroups chat getChatCommonGroups
+// Get groups common to both chat participants
+//
+// Returns groups that both chat participants are members of.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Chat ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /config/admin/concern_keywords config listConcernKeywords
+// List concern keywords
+//
+// Returns all concern keywords (moderation keyword list, successor to worry_words and spam_keywords).
+//
+// Parameters:
+//   + name: scope
+//     in: query
+//     description: Filter by scope (global or group)
+//     required: false
+//     type: string
+//   + name: group_id
+//     in: query
+//     description: Filter by group ID
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /config/admin/concern_keywords config createConcernKeyword
+// Create concern keyword
+//
+// Creates a new concern keyword.
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route DELETE /config/admin/concern_keywords/{id} config deleteConcernKeyword
+// Delete concern keyword
+//
+// Deletes a concern keyword by ID.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Concern keyword ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	404: errorResponse
+
+// swagger:route GET /discourse_sso sso discourseSSO
+// Discourse SSO login
+//
+// Handles Discourse single sign-on. Reads sso and sig query params.
+//
+// Parameters:
+//   + name: sso
+//     in: query
+//     description: SSO payload (base64-encoded)
+//     required: true
+//     type: string
+//   + name: sig
+//     in: query
+//     description: HMAC-SHA256 signature
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	302: successResponse
+
+// swagger:route GET /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} delivery deliveryImageCompact
+// Delivery image (compact)
+//
+// Returns redirect to original image for email scroll depth tracking (compact form).
+//
+// Parameters:
+//   + name: ref
+//     in: path
+//     required: true
+//     type: string
+//   + name: type
+//     in: path
+//     required: true
+//     type: string
+//   + name: idenc
+//     in: path
+//     required: true
+//     type: string
+//   + name: preset
+//     in: path
+//     required: true
+//     type: string
+//   + name: pos
+//     in: path
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	302: successResponse
+
+// swagger:route GET /e/d/r/{ref}/{type}/{idenc}/{pos} delivery deliveryRedirectCompact
+// Delivery redirect (compact)
+//
+// Handles link clicks and button actions in emails (compact form).
+//
+// Parameters:
+//   + name: ref
+//     in: path
+//     required: true
+//     type: string
+//   + name: type
+//     in: path
+//     required: true
+//     type: string
+//   + name: idenc
+//     in: path
+//     required: true
+//     type: string
+//   + name: pos
+//     in: path
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	302: successResponse
+
+// swagger:route POST /helper helper createHelper
+// Create a helper request
+//
+// Creates a new helper record or initiates helper workflow.
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route GET /helper/escalated helper getEscalatedHelpers
+// Get escalated helper requests
+//
+// Returns helper requests that have been escalated.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /helper/{msgid} helper getHelper
+// Get helper by message ID
+//
+// Returns the helper record for a given message.
+//
+// Parameters:
+//   + name: msgid
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /location/resolve location resolveLocation
+// Resolve location by name
+//
+// Resolves a location by name string. Reads name (string, required) query param.
+//
+// Parameters:
+//   + name: name
+//     in: query
+//     description: Location name to resolve
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/{id}/reach message getMessageReach
+// Get rippling reach for a message
+//
+// Returns the rippling reach polygon/area for a specific message.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /messages/markseen message markMessagesSeen
+// Mark messages as seen
+//
+// Marks a set of messages as seen for the current user.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/email/stats/digestpositions modtools getDigestPositions
+// Get digest email position stats
+//
+// Returns statistics on where digest emails were opened/clicked relative to the digest position.
+// Reads start, end, type query params.
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: Start date (ISO 8601)
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date (ISO 8601)
+//     required: false
+//     type: string
+//   + name: type
+//     in: query
+//     description: Digest type filter
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/scroll/depth modtools getScrollDepth
+// Get scroll depth stats
+//
+// Returns browse-feed scroll depth analytics. Reads start and end query params.
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: Start date (ISO 8601)
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date (ISO 8601)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/user/{id}/dump modtools getUserDump
+// Get user data dump
+//
+// Streams a per-user SQLite database of every user-linked table plus Loki logs and Sentry issues.
+// Support/Admin role required.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /rippling/metrics rippling getRipplingMetrics
+// Get rippling metrics
+//
+// Returns rippling reach metrics for a group. Reads groupid (int), trialOnly (bool),
+// start (string), end (string) query params.
+//
+// Parameters:
+//   + name: groupid
+//     in: query
+//     description: Group ID
+//     required: false
+//     type: integer
+//   + name: trialOnly
+//     in: query
+//     description: Filter to trial-only ripples
+//     required: false
+//     type: boolean
+//   + name: start
+//     in: query
+//     description: Start date
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/applied user getUserApplied
+// Get user applied jobs/events
+//
+// Returns items the user has applied to.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/bans user getUserBans
+// Get user bans
+//
+// Returns ban records for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/chatrooms user getUserChatrooms
+// Get user chatrooms
+//
+// Returns chat rooms the user is participating in.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/emailhistory user getUserEmailHistory
+// Get user email history
+//
+// Returns sent email history for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/logins user getUserLogins
+// Get user login history
+//
+// Returns login history for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/membershiphistory user getUserMembershipHistory
+// Get user membership history
+//
+// Returns group membership history for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/newsfeed user getUserNewsfeed
+// Get user newsfeed entries
+//
+// Returns newsfeed entries for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/replies user getUserReplies
+// Get user message replies
+//
+// Returns reply messages sent by the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//   + name: type
+//     in: query
+//     description: Filter by type (Offer/Wanted)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /version misc getVersion
+// Get API version
+//
+// Returns the current API version string.
+//
+// Responses:
+//
+//	200: successResponse
