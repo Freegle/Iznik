@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/stretchr/testify/assert"
 )
@@ -992,6 +993,50 @@ func TestPatchSessionSettings(t *testing.T) {
 	var settings string
 	db.Raw("SELECT settings FROM users WHERE id = ?", userID).Scan(&settings)
 	assert.Contains(t, settings, `"email":"daily"`)
+}
+
+func TestPatchSessionReinstateLogsRestored(t *testing.T) {
+	prefix := uniquePrefix("patch_restore")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+
+	// Soft-delete the account as self-service deletion does, then create the
+	// session afterwards, mirroring a user logging back in during the grace
+	// period to recover their account.
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", userID)
+	_, token := CreateTestSession(t, userID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"deleted": nil,
+	})
+
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The deleted flag is cleared.
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
+	assert.Nil(t, deleted)
+
+	// The reinstatement is recorded in the audit log, matching the
+	// (User, Deleted) entry written when the account was deleted.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ?",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED).Scan(&count)
+	assert.Equal(t, int64(1), count)
+
+	// A repeat PATCH with deleted:null on an already-live account must not
+	// write another Restored log.
+	req = httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ?",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED).Scan(&count)
+	assert.Equal(t, int64(1), count)
 }
 
 func TestPatchSessionSettingsPostcodeChange(t *testing.T) {
