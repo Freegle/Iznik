@@ -90,6 +90,25 @@ class ExpandServiceTest extends TestCase
         ], 200)]);
     }
 
+    /** Like fakeRouting(), but the schedule response also carries reachable_group_ids. */
+    private function fakeRoutingWithReachable(array $reachableIds, int $ticks = 3): void
+    {
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $schedule = [];
+        for ($k = 1; $k <= $ticks; $k++) {
+            $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
+        }
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
+            'reachable_group_ids' => array_values($reachableIds),
+        ], 200)]);
+    }
+
     /**
      * Fakes the routing server's /v1/group-proximity response used by
      * ReachService::groupProximity(). Layers on top of any Http::fake() already
@@ -680,6 +699,150 @@ class ExpandServiceTest extends TestCase
             1,
             (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->count()
         );
+    }
+
+    // --- Reachable-node gate (plan 2026-07-06) -----------------------------------
+
+    private function seedTargetGroupCoveringReach(): object
+    {
+        // Area intersects the fake reach box (-0.20..-0.10 lng, 51.50..51.60 lat), so
+        // ST_Intersects passes and only the node-set gate can exclude it.
+        $g = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $g->id]
+        );
+        return $g;
+    }
+
+    public function test_reachable_gate_blocks_a_group_the_polygon_covers_but_the_nodes_do_not(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        // Non-empty reachable set that does NOT include B (only the origin is node-reachable).
+        $this->fakeRoutingWithReachable([$originGid], 3);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'gate on: a group the polygon covers but with no reachable node is NOT rippled in'
+        );
+    }
+
+    public function test_reachable_gate_allows_a_group_in_the_reachable_set(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        $this->fakeRoutingWithReachable([$groupB->id], 3);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'gate on: a group in the reachable set IS rippled in'
+        );
+    }
+
+    public function test_reachable_gate_off_ripples_an_intersecting_group_regardless_of_the_set(): void
+    {
+        // Default (off): unchanged behaviour - the polygon alone decides, even though B
+        // is not in reachable_group_ids.
+        config(['freegle.ripple.reachable_gate' => false]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        $this->fakeRoutingWithReachable([$originGid], 3); // B not in the set
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'gate off: an intersecting group is still rippled in (backward compatible)'
+        );
+    }
+
+    /**
+     * @param int[] $reachableIds JSON-stored on the reach row
+     */
+    private function seedRippledCopyWithReach(array $reachableIds): array
+    {
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        // Rippled group's area INTERSECTS the reach polygon, so the polygon-only path
+        // keeps it - only the node-set gate can retract it.
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $rippled->id]
+        );
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: reach', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay(), json_encode(array_values($reachableIds))]
+        );
+        return [(int) $message->id, (int) $rippled->id];
+    }
+
+    public function test_reachable_gate_retracts_a_rippled_group_outside_the_reachable_set(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        [$msgid, $rippledId] = $this->seedRippledCopyWithReach([]); // reachable set excludes it (empty -> not contained)
+
+        $stats = [];
+        $this->service()->retractOutOfReachCopies($msgid, false, $stats);
+
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $rippledId)->first();
+        $this->assertSame(1, (int) $copy->deleted, 'a rippled group outside the reachable set is retracted');
+    }
+
+    public function test_reachable_gate_keeps_a_rippled_group_inside_the_reachable_set(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $rippled->id]
+        );
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: keep', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
+        );
+
+        $stats = [];
+        $this->service()->retractOutOfReachCopies((int) $message->id, false, $stats);
+
+        $copy = DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
+        $this->assertSame(0, (int) $copy->deleted, 'a rippled group inside the reachable set is kept');
     }
 
     /**

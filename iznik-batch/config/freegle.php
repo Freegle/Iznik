@@ -331,6 +331,13 @@ return [
         // independent of RIPPLE_ENABLED).
         'proximity_notes' => filter_var(env('RIPPLE_PROXIMITY_NOTES', true), FILTER_VALIDATE_BOOLEAN),
         'proximity_timeout' => (int) env('RIPPLE_PROXIMITY_TIMEOUT', 15),
+        // reachable_gate (plan 2026-07-06): when on, ripple targeting is AND-gated on
+        // the routing server's reachable_group_ids (groups with a road node reachable
+        // from the origin), so a reach polygon that overshoots water can't ripple a
+        // post across an uncrossable barrier. Default OFF: enable only after the new
+        // routing server (which returns reachable_group_ids) is deployed and validated.
+        // Independent of RIPPLE_ENABLED; an empty/absent list falls back to polygon-only.
+        'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', false), FILTER_VALIDATE_BOOLEAN),
         'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
