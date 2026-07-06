@@ -133,6 +133,29 @@ describe('notification store', () => {
       await store.fetchList()
       logSpy.mockRestore()
     })
+
+    it('refreshes the seen flag on refetch so a reviewed notification stops showing as unread (Discourse 9856)', async () => {
+      const store = useNotificationStore()
+      store.init({ public: {} })
+
+      // First load: the notification is unread.
+      mockList.mockResolvedValue([
+        { id: 1, title: 'Post to check', seen: false },
+      ])
+      await store.fetchList()
+      expect(store.byId(1).seen).toBe(false)
+
+      // The user reviews the post the notification points at; the server flips
+      // its seen flag to true. A later poll re-fetches the list.
+      mockList.mockResolvedValue([
+        { id: 1, title: 'Post to check', seen: true },
+      ])
+      await store.fetchList()
+
+      // The cached copy that components render via byId() must reflect the
+      // latest seen status, not the frozen unread state from the first fetch.
+      expect(store.byId(1).seen).toBe(true)
+    })
   })
 
   describe('seen', () => {

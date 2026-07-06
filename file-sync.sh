@@ -16,6 +16,16 @@ PROJECT_DIR="$SCRIPT_DIR"
 # Container name prefix from COMPOSE_PROJECT_NAME (defaults to 'freegle')
 CN="${COMPOSE_PROJECT_NAME:-freegle}"
 
+# Host-side path of THIS checkout. file-sync runs inside ${CN}-host-scripts, whose
+# /workspace bind mount is this checkout's directory on the host. Docker's compose
+# labels and bind-mount sources are HOST paths, so we need this to tell our own
+# containers apart from a different checkout's (worktree-escape guard below). Left
+# empty if it can't be resolved, in which case that guard fails OPEN (never blocks a
+# legitimate sync); the bind-mount guard does not depend on it.
+MY_HOST_DIR=$(timeout 5 docker inspect "${CN}-host-scripts" \
+    --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
+[[ -z "$MY_HOST_DIR" ]] && echo "WARNING: could not resolve this checkout's host dir from ${CN}-host-scripts; the worktree-escape guard is DISABLED for this run (the bind-mount guard, which prevents source deletion, is unaffected)." >&2
+
 # Queue file for pending syncs
 QUEUE_FILE="/tmp/freegle-sync-queue.$$"
 QUEUE_LOCK="/tmp/freegle-sync-queue.$$.lock"
@@ -109,6 +119,76 @@ get_container_info() {
     fi
 }
 
+# --- Self-heal guards --------------------------------------------------------
+# Historically do_sync/do_delete ran `docker cp` / `docker exec rm -f` against
+# ${CN}-<svc> purely by name. Two ways that destroys the wrong files:
+#   1. Bind-mounted target: e.g. freegle-batch bind-mounts ./iznik-batch to
+#      /var/www/html, so the container already sees host edits live. There `docker cp`
+#      is redundant and `docker exec rm -f` DELETES THE SOURCE on the host - a transient
+#      delete event (an editor's atomic save, a stray git op, the cp's own rename)
+#      then gets amplified into permanent loss of a tracked file.
+#   2. Worktree escape: a secondary checkout whose COMPOSE_PROJECT_NAME fell back to
+#      "freegle" resolves ${CN}-<svc> to the MAIN containers and overwrites the main
+#      checkout's code with its own.
+# should_touch_container() gates both do_sync and do_delete. Fail direction on a docker
+# inspect error is chosen by the caller: do_delete fails CLOSED (skip - never risk
+# deleting a source file), do_sync fails OPEN (a redundant/missed copy is harmless).
+
+# Per-process ~5s cache of each container's mount+label topology (it does not change at
+# file-edit frequency), so a settle burst of N files costs ~1 docker inspect per
+# container instead of 2N. The inotify loop and the settle drainer are separate
+# processes and each keep their own copy; that is fine.
+declare -A _META_CACHE   # container -> "<working_dir>\n<bind dest>\n<bind dest>..."
+declare -A _META_TS      # container -> $SECONDS when cached
+
+# Echo "<compose working_dir>\n<bind destination per line>" for a container. All docker
+# inspects are `timeout`-wrapped so a hung daemon can't block do_delete (which runs
+# inline in the inotify loop) indefinitely. Non-zero exit == inspect failed/timed out.
+_container_meta() {
+    local container="$1" meta
+    if [[ -n "${_META_TS[$container]:-}" ]] && (( SECONDS - _META_TS[$container] < 5 )); then
+        printf '%s' "${_META_CACHE[$container]}"
+        return 0
+    fi
+    meta=$(timeout 5 docker inspect "$container" --format \
+        '{{index .Config.Labels "com.docker.compose.project.working_dir"}}{{range .Mounts}}{{if eq .Type "bind"}}{{printf "\n"}}{{.Destination}}{{end}}{{end}}' 2>/dev/null) || return 1
+    _META_CACHE[$container]="$meta"
+    _META_TS[$container]=$SECONDS
+    printf '%s' "$meta"
+}
+
+# Gate shared by do_sync/do_delete. $3="closed" (delete) => an inspect failure SKIPS;
+# default "open" (sync) => an inspect failure PROCEEDS. Returns non-zero (skip) with a
+# one-line reason when the container is another checkout's or the path is bind-mounted.
+should_touch_container() {
+    local container="$1" target_path="$2" failmode="${3:-open}" meta wd rest d
+    if ! meta=$(_container_meta "$container"); then
+        if [[ "$failmode" == closed ]]; then
+            echo "  ⤳ skip $container: cannot verify mounts (docker inspect failed/timed out); not risking a delete"
+            return 1
+        fi
+        return 0
+    fi
+    wd="${meta%%$'\n'*}"
+    # Worktree-escape guard: the container was created by a different checkout than ours.
+    if [[ -n "$MY_HOST_DIR" && -n "$wd" && "$wd" != "$MY_HOST_DIR" ]]; then
+        echo "  ⤳ skip $container: belongs to another checkout ($wd, not $MY_HOST_DIR)"
+        return 1
+    fi
+    # Bind-mount guard: host edits are already live there; cp redundant, rm deletes source.
+    if [[ "$meta" == *$'\n'* ]]; then
+        rest="${meta#*$'\n'}"
+        while IFS= read -r d; do
+            [[ -z "$d" ]] && continue
+            if [[ "$target_path" == "$d" || "$target_path" == "$d"/* ]]; then
+                echo "  ⤳ skip $container: $target_path is bind-mounted (host edits are already live there)"
+                return 1
+            fi
+        done <<< "$rest"
+    fi
+    return 0
+}
+
 # Function to actually perform the sync
 do_sync() {
     local file_path="$1"
@@ -127,6 +207,9 @@ do_sync() {
     while IFS= read -r line; do
         if [[ -n "$line" ]]; then
             read -r container target_path service <<< "$line"
+            if ! should_touch_container "$container" "$target_path"; then
+                continue
+            fi
             echo "[$timestamp] $service: $filename"
 
             local cp_error
@@ -160,6 +243,14 @@ do_delete() {
     while IFS= read -r line; do
         if [[ -n "$line" ]]; then
             read -r container target_path service <<< "$line"
+            # Never propagate a delete into a bind-mounted or foreign-checkout container:
+            # for a bind mount that rm would delete the source file on the host, which is
+            # exactly the data-loss bug this guards against. Only genuine image-baked
+            # copies (dev-local, apiv1/2) need a delete mirrored. "closed" => if docker
+            # inspect can't confirm the mounts, SKIP rather than risk deleting a source.
+            if ! should_touch_container "$container" "$target_path" closed; then
+                continue
+            fi
             # rm -f is a no-op if the file was never synced, so this is safe even
             # for editor temp files that briefly appear and vanish.
             if docker exec "$container" rm -f "$target_path" 2>/dev/null; then

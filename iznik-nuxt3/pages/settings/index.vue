@@ -13,6 +13,7 @@
           @show-email-confirm-modal="showEmailConfirmModal = true"
         />
         <AddressBookSection @show-address-modal="showAddressModal = true" />
+        <FeedSettingsSection @update="updateMe" />
         <EmailSettingsSection @update="updateMe" />
         <AppNotificationsSection @update="updateMe" />
         <OtherSettingsSection @update="updateMe" />
@@ -50,6 +51,7 @@ import { buildHead } from '~/composables/useBuildHead'
 import ProfileSection from '~/components/settings/ProfileSection.vue'
 import AccountSection from '~/components/settings/AccountSection.vue'
 import AddressBookSection from '~/components/settings/AddressBookSection.vue'
+import FeedSettingsSection from '~/components/settings/FeedSettingsSection.vue'
 import EmailSettingsSection from '~/components/settings/EmailSettingsSection.vue'
 import AppNotificationsSection from '~/components/settings/AppNotificationsSection.vue'
 import OtherSettingsSection from '~/components/settings/OtherSettingsSection.vue'

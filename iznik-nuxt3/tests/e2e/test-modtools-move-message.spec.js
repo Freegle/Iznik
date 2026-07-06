@@ -76,20 +76,29 @@ test.describe('ModTools move message', () => {
 
     expect(foundGroup).toBeTruthy()
 
-    // Step 4: Click on the first message to expand it
-    const messageCards = page.locator('.card')
-    await messageCards.first().click()
+    // Step 4: Locate this specific message's card. Cards render fully expanded
+    // by default (ModMessage's `summary` prop defaults to false), so there is
+    // nothing to click to "expand" it — a blind click on the whole card is
+    // unsafe, since depending on the card's content height it can land on any
+    // of the card's own interactive elements (e.g. the "View rippling reach"
+    // button), opening an unrelated fullscreen modal that then blocks every
+    // other click on the page.
+    const messageCard = page.locator(`#msg-${msgId}`)
+    await expect(messageCard).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
 
-    // Step 5: Click the Edit button
-    const editButton = page.locator('button:has-text("Edit")').first()
+    // Step 5: Click the Edit button, scoped to this message's card so it
+    // can't resolve to a different (already-visible) message in the queue.
+    const editButton = messageCard.locator('button:has-text("Edit")').first()
     await expect(editButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
     await editButton.click()
 
     // Step 6: Find the group select inside the message card and change group
-    const editGroupSelect = page
-      .locator('[id^="msg-"] select#communitieslist')
+    const editGroupSelect = messageCard
+      .locator('select#communitieslist')
       .first()
     await expect(editGroupSelect).toBeVisible({
       timeout: timeouts.ui.appearance,
@@ -119,7 +128,7 @@ test.describe('ModTools move message', () => {
     })
 
     // Click Save
-    const saveButton = page.locator('button:has-text("Save")').first()
+    const saveButton = messageCard.locator('button:has-text("Save")').first()
     await expect(saveButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })

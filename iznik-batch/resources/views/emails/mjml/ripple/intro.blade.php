@@ -35,6 +35,12 @@
           might be interested in your recent {{ config('freegle.branding.name') }} post, so we're
           showing it to them too.
         </mj-text>
+        <mj-text font-size="14px" color="#000000" line-height="1.6" padding="6px 25px">
+          It's shown to the freeglers there who are nearest to you &mdash; not everyone in those
+          communities. Each freegler chooses how far away they want to see posts from, using the
+          <strong>How far away</strong> distance setting in their
+          <a href="{{ $settingsUrl }}">settings</a> (you have one there too).
+        </mj-text>
         <mj-text font-size="15px" font-weight="bold" color="#338808" line-height="1.6" padding="6px 25px">
           There's nothing you need to do - this just helps your post reach the right person.
         </mj-text>
