@@ -58,6 +58,13 @@ class EloquentUtilsTest extends TestCase
         $container = new Container;
         $container->instance('log', $this->logger);
         Facade::setFacadeApplication($container);
+
+        // Facades cache resolved instances statically, keyed by accessor name.
+        // If an earlier test in this process already resolved Log against the
+        // real (booted) app, that stale instance survives the swap above and
+        // EloquentUtils::reparentRow() would log through it instead of our
+        // fake logger - clear it so Log:: re-resolves against $container.
+        Facade::clearResolvedInstances();
     }
 
     protected function tearDown(): void
