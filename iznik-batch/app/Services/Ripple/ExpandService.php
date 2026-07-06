@@ -96,48 +96,6 @@ class ExpandService
         return $stats;
     }
 
-    /**
-     * One-off (re-runnable) backfill: seed a rippling_reach row for every LIVE post that is
-     * eligible to ripple but has none — the posts whose messages_spatial.arrival predates the
-     * go-live cutoff (freegle.ripple.enabled_at) and so were never picked up by initialiseNew.
-     *
-     * It reuses initialiseNew EXACTLY (same concurrent routing, blurred-origin de-dup, tick
-     * placement, INSERT, cross-post rippleIntoNewGroups and poster auto-join), only lifting the
-     * arrival cutoff, so a backfilled reach row is identical to a natively-initialised one. It
-     * deliberately does NOT retract, advance or otherwise touch existing reach rows: the
-     * per-minute ripple:expand cron advances the seeded rows on later ticks (division of labour —
-     * backfill seeds, expand grows). Because it only INSERTs seed rows (Galera-safe, one row per
-     * INSERT inside initialiseNew) it cannot fight the expand cron; the command also takes a
-     * DISTINCT Cache lock ('ripple:backfill:run', never 'ripple:expand:run').
-     *
-     * Idempotent and resumable: a post that already has a reach row is skipped by the same
-     * LEFT JOIN rippling_reach ... IS NULL the live path uses, so re-running drains the backlog
-     * in --limit-sized bites. Gated exactly like process(): an UNSCOPED backfill is inert while
-     * global rippling is off, but a within-poly scope is still allowed through (experiment path).
-     *
-     * NB seeding is NOT a cheap insert: initialiseNew computes each post's reach polygon inline
-     * via the routing server (deduped by blurred origin, fanned out at compute_concurrency) and
-     * cross-posts the post into its tick-0 groups. The routing server is therefore the throughput
-     * limiter, which is why $shardCount/$shardIndex let several instances drain disjoint msgid
-     * slices in parallel — keep shards x compute_concurrency within the routing server's headroom.
-     *
-     * @return array{initialized:int,skipped:int,errors:int,rippled_in:int,memberships_added:int}
-     */
-    public function backfill(bool $dryRun = false, int $limit = 500, ?string $withinPolyWkt = null, ?int $shardCount = null, ?int $shardIndex = null, bool $recompute = false): array
-    {
-        $stats = [
-            'initialized' => 0, 'skipped' => 0, 'errors' => 0,
-            'rippled_in' => 0, 'mailed' => 0, 'memberships_added' => 0, 'reused' => 0,
-        ];
-
-        if (!config('freegle.ripple.enabled') && $withinPolyWkt === null) {
-            return $stats;
-        }
-
-        $this->initialiseNew($dryRun, $limit, $stats, null, $withinPolyWkt, true, $shardCount, $shardIndex, $recompute);
-
-        return $stats;
-    }
 
     /**
      * Backfill: shrink the stored reach of EXISTING active posts whose reach was
@@ -456,10 +414,16 @@ class ExpandService
         // overshot water self-heals. The `rr.reachable_group_ids IS NOT NULL` guard means
         // reaches computed before the gate rolled out (NULL column) are never retracted by
         // it - only polygon-based retraction applies to them.
+        // JSON_LENGTH > 0: an EMPTY stored set means "gate could not compute" (zero
+        // members found is indistinguishable from a transient members-query failure),
+        // and targeting already treats [] as unavailable - so retraction must never
+        // act on it either, or one bad routing-side query would retract every copy
+        // of the post. Polygon-based retraction still applies to such rows.
         $reachClause = $this->reachableGateEnabled()
             ? "AND (NOT ST_Intersects(g.polyindex, rr.polygon)
                     OR (rr.reachable_group_ids IS NOT NULL
                         AND JSON_VALID(rr.reachable_group_ids)
+                        AND JSON_LENGTH(rr.reachable_group_ids) > 0
                         AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
             : "AND NOT ST_Intersects(g.polyindex, rr.polygon)";
 
@@ -1633,10 +1597,24 @@ class ExpandService
      * The budget used is the post's CURRENT tick re-read from a fresh schedule,
      * so a post mid-expansion keeps its place in the hazard timetable.
      *
+     * Resumable and shardable: by default only rows the new algorithm has not yet
+     * touched are candidates - reachable_group_ids IS NULL, which is exactly the
+     * pre-gate population (init/advance now populate it) - so each run continues
+     * where the last stopped and a drained run finds nothing. $all overrides that
+     * for a full re-sweep (e.g. after a later algorithm change). $shardCount/$shardIndex
+     * partition candidates by msgid % shardCount so disjoint shards run in parallel;
+     * total routing load ~= shards, so keep it within the routing server's headroom.
+     *
      * @return array{candidates:int,updated:int,skipped:int,would_retract_groups:int,pulled_out_of_reach:int,memberships_removed:int}
      */
-    public function backfillReach(bool $dryRun = false, int $limit = 500, ?int $onlyMsgid = null): array
-    {
+    public function backfillReach(
+        bool $dryRun = false,
+        int $limit = 500,
+        ?int $onlyMsgid = null,
+        ?int $shardCount = null,
+        ?int $shardIndex = null,
+        bool $all = false
+    ): array {
         $stats = [
             'candidates' => 0, 'updated' => 0, 'skipped' => 0,
             'would_retract_groups' => 0, 'pulled_out_of_reach' => 0,
@@ -1646,6 +1624,9 @@ class ExpandService
         $rows = DB::table('rippling_reach')
             ->select(['msgid', 'lat', 'lng', 'tick', 'rejected_groups', 'status'])
             ->whereIn('status', ['expanding', 'stopped', 'done']) // held = frozen for moderation
+            ->when(!$all, fn ($q) => $q->whereNull('reachable_group_ids'))
+            ->when($shardCount !== null && $shardCount > 1,
+                fn ($q) => $q->whereRaw('msgid % ? = ?', [$shardCount, (int) $shardIndex]))
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
             ->orderBy('msgid')
             ->limit($limit)

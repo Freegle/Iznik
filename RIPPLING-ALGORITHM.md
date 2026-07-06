@@ -162,8 +162,8 @@ The same decision is computed **per tick**: every entry in the ripple schedule c
 `reachable_group_ids` for its drive-time (a threshold over the already-computed member
 drive-times - no extra routing). The Rippling Explorer tints groups from exactly this field,
 so the animation you watch is the targeting decision at each step, not a geometric
-approximation of it. Gated by `freegle.ripple.reachable_gate` for dark rollout; with the gate
-off, targeting falls back to the previous polygon-overlap test.
+approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
+targeting and retraction to the polygon-overlap test.
 
 ### Rejected targeting approaches
 

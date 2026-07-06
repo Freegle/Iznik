@@ -803,7 +803,9 @@ class ExpandServiceTest extends TestCase
     public function test_reachable_gate_retracts_a_rippled_group_outside_the_reachable_set(): void
     {
         config(['freegle.ripple.reachable_gate' => true]);
-        [$msgid, $rippledId] = $this->seedRippledCopyWithReach([]); // reachable set excludes it (empty -> not contained)
+        // A NON-EMPTY set that excludes the rippled group: an empty set means "gate
+        // could not compute" and never id-retracts (see test_empty_reachable_set_never_id_retracts).
+        [$msgid, $rippledId] = $this->seedRippledCopyWithReach([999999999]);
 
         $stats = [];
         $this->service()->retractOutOfReachCopies($msgid, false, $stats);
@@ -2469,122 +2471,6 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $far->id)->count(), 'far ripple-membership removed');
     }
 
-    // ── ripple:backfill (ExpandService::backfill) ─────────────────────────────────────────────
-    //
-    // The go-live arrival cutoff (freegle.ripple.enabled_at) leaves every post that arrived
-    // before go-live without a reach row, so it would never ripple. backfill() lifts ONLY that
-    // cutoff and reuses initialiseNew, seeding those still-live posts identically to new ones.
-
-    /**
-     * The gap the backfill fixes: a live post whose messages_spatial.arrival predates the go-live
-     * cutoff is excluded by initialiseNew (so process() seeds nothing), but backfill() — which lifts
-     * the cutoff — seeds it, and the seeded row is a normal reach row (polygon, tick, status).
-     */
-    public function test_backfill_seeds_reach_for_a_live_post_predating_go_live(): void
-    {
-        $this->fakeRouting(3);
-        // Go-live was an hour ago; this post arrived two hours ago (pre-cutoff).
-        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
-        $msgid = $this->seedSpatialPost(now()->subHours(2));
-
-        // The normal path leaves it alone (proves the gap the backfill exists to close).
-        $this->service()->process(false, 500);
-        $this->assertSame(
-            0,
-            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
-            'the normal cron never seeds a pre-go-live post'
-        );
-
-        $stats = $this->service()->backfill(false, 500);
-
-        $this->assertSame(1, $stats['initialized'], 'backfill seeds the pre-go-live post');
-        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertNotNull($row, 'a reach row is written by the backfill');
-        $this->assertContains($row->status, ['expanding', 'done']);
-        $this->assertSame(3, (int) $row->total_ticks);
-        $this->assertSame(
-            'POLYGON',
-            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
-        );
-    }
-
-    /**
-     * Idempotent/resumable: a second backfill run seeds nothing new and leaves the existing reach
-     * row untouched (it is skipped by the same LEFT JOIN rippling_reach ... IS NULL the live path
-     * uses), so the command can be re-run until the backlog is drained.
-     */
-    public function test_backfill_is_idempotent_and_leaves_existing_rows_untouched(): void
-    {
-        $this->fakeRouting(3);
-        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
-        $msgid = $this->seedSpatialPost(now()->subHours(2));
-
-        $first = $this->service()->backfill(false, 500);
-        $this->assertSame(1, $first['initialized']);
-        $before = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-
-        $second = $this->service()->backfill(false, 500);
-
-        $this->assertSame(0, $second['initialized'], 'a second run seeds nothing new');
-        $this->assertSame(
-            1,
-            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
-            'still exactly one reach row for the post'
-        );
-        $after = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertEquals($before->updated_at, $after->updated_at, 'the existing reach row is not rewritten');
-        $this->assertEquals($before->tick, $after->tick);
-    }
-
-    /**
-     * Same eligibility rules as the live path: a pre-go-live post that is already reply-saturated
-     * (>= threshold distinct Interested repliers) has enough interest and is NOT seeded by the
-     * backfill — it applies initialiseNew's saturation stop just like the normal cron.
-     */
-    public function test_backfill_respects_reply_saturation_eligibility(): void
-    {
-        $this->fakeRouting(3);
-        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
-        $msgid = $this->seedSpatialPost(now()->subHours(2));
-        $this->seedInterestedRepliers($msgid, 5); // at the saturation threshold
-
-        $stats = $this->service()->backfill(false, 500);
-
-        $this->assertSame(0, $stats['initialized'], 'a saturated post is skipped by the backfill');
-        $this->assertSame(
-            0,
-            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
-            'no reach row for an already-saturated post, even in a backfill'
-        );
-    }
-
-    /**
-     * Gated like process(): while global rippling is off an UNSCOPED backfill is inert (seeds
-     * nothing), matching the master activation switch. (A within-poly scope is still allowed
-     * through — that path is the experiment case and is covered by the scoped process() tests.)
-     */
-    public function test_backfill_is_inert_when_rippling_disabled_and_unscoped(): void
-    {
-        config(['freegle.ripple.enabled' => false]);
-        $this->fakeRouting(3);
-        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
-        $msgid = $this->seedSpatialPost(now()->subHours(2));
-
-        $stats = $this->service()->backfill(false, 500);
-
-        $this->assertSame(0, $stats['initialized'], 'no seeding while global rippling is off');
-        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count());
-    }
-
-    /**
-     * Repost re-qualification (forward-looking, no code change needed — this proves the existing
-     * mechanism). A pre-go-live post is excluded by the arrival cutoff. When it is auto-reposted,
-     * AutoRepostService bumps messages_groups.arrival to NOW(); the messages:update-spatial-index
-     * cron (MessageSpatialService) then refreshes messages_spatial.arrival to match, which now
-     * satisfies initialiseNew's `ms.arrival >= enabled_at` gate — so the next ripple:expand tick
-     * seeds a reach row with no backfill involved. This test exercises that whole chain with the
-     * REAL spatial-refresh service.
-     */
     public function test_reposted_pre_go_live_post_gets_reach_after_spatial_refresh(): void
     {
         // fakeRouting stubs the ripple-schedule endpoint; any other HTTP (the spatial-admin
@@ -2644,119 +2530,6 @@ class ExpandServiceTest extends TestCase
             1,
             DB::table('rippling_reach')->where('msgid', $msgid)->count(),
             'a reposted pre-go-live post ends up with a reach row via the arrival refresh'
-        );
-    }
-
-    /**
-     * Sharding partitions the candidate set by msgid % shards, so several backfill instances can
-     * drain DISJOINT slices in parallel. A shard only seeds posts whose msgid maps to it; the
-     * complementary shard seeds the rest. No post is seeded by the wrong shard, none is missed.
-     */
-    public function test_backfill_sharding_partitions_candidates_by_msgid(): void
-    {
-        $this->fakeRouting(3);
-        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
-        $a = $this->seedSpatialPost(now()->subHours(2));
-        $b = $this->seedSpatialPost(now()->subHours(2));
-        $c = $this->seedSpatialPost(now()->subHours(2));
-
-        // Shard 0 of 2 seeds only even msgids; shard 1 only odd.
-        $this->service()->backfill(false, 500, null, 2, 0);
-        foreach ([$a, $b, $c] as $msgid) {
-            $this->assertSame(
-                $msgid % 2 === 0 ? 1 : 0,
-                DB::table('rippling_reach')->where('msgid', $msgid)->count(),
-                "shard 0/2 seeds msgid {$msgid} iff it is even"
-            );
-        }
-
-        // Shard 1 of 2 seeds the remainder; together the two shards cover everything exactly once.
-        $this->service()->backfill(false, 500, null, 2, 1);
-        foreach ([$a, $b, $c] as $msgid) {
-            $this->assertSame(
-                1,
-                DB::table('rippling_reach')->where('msgid', $msgid)->count(),
-                "both shards together seed msgid {$msgid} exactly once"
-            );
-        }
-    }
-
-    /** Insert a placeholder "DPA" reach seed (group-area polygon, no schedule) like the quick
-     *  geometry pass lays down: status='stopped', schedule NULL — the recompute candidate shape. */
-    private function seedDpaPlaceholder(int $msgid, float $lat, float $lng, Carbon $arrival): void
-    {
-        DB::insert(
-            "INSERT INTO rippling_reach
-                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
-                 status, schedule, next_expansion_at, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
-                     ?, 'drive', 0, 0, 0, 'stopped', NULL, NULL, NOW(), NOW())",
-            [$msgid, $lat, $lng, $arrival]
-        );
-    }
-
-    /**
-     * Recompute: the placeholder (DPA) seed — status='stopped', schedule NULL — is upgraded to real
-     * routed reach IN PLACE (upsert, so the post is never momentarily without a reach row). A plain
-     * backfill leaves it alone (it is not in the anti-join candidate set); only --recompute touches it.
-     */
-    public function test_recompute_replaces_placeholder_dpa_seed_in_place(): void
-    {
-        $this->fakeRouting(3);
-        $arrival = now()->subMinutes(30);
-        $msgid = $this->seedSpatialPost($arrival); // origin (51.5, -0.1)
-        $this->seedDpaPlaceholder($msgid, 51.5, -0.1, $arrival);
-        $before = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertNull($before->schedule, 'placeholder starts with no schedule');
-        $this->assertSame('stopped', $before->status);
-
-        // A plain (non-recompute) backfill must NOT touch a placeholder: the anti-join excludes it.
-        $noop = $this->service()->backfill(false, 500);
-        $this->assertSame(0, $noop['initialized'], 'plain backfill ignores placeholders');
-        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('schedule'));
-
-        // Recompute upgrades it in place.
-        $stats = $this->service()->backfill(false, 500, null, null, null, true);
-        $this->assertSame(1, $stats['initialized'], 'recompute processes the placeholder');
-        $after = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'still exactly one row (upsert)');
-        $this->assertNotNull($after->schedule, 'placeholder now carries a real schedule');
-        $this->assertContains($after->status, ['expanding', 'done']);
-        $this->assertSame(3, (int) $after->total_ticks);
-        $this->assertEquals($before->created_at, $after->created_at, 'created_at preserved — replaced in place, never deleted/reinserted');
-    }
-
-    /**
-     * Reuse: reach is deterministic per blurred origin, so a co-located post copies an existing
-     * computed reach instead of hitting the routing server again. Post B at the same origin as an
-     * already-computed post A reuses A's schedule (stats['reused'] rises) and gets the same ticks.
-     */
-    public function test_recompute_reuses_a_colocated_reach_without_a_routing_call(): void
-    {
-        $this->fakeRouting(3);
-        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
-        $arrival = now()->subMinutes(30);
-
-        // Post A at origin L gets a real reach via a normal backfill (routing computed once).
-        $a = $this->seedSpatialPost($arrival, 51.5, -0.1);
-        $this->service()->backfill(false, 500);
-        $aReach = DB::table('rippling_reach')->where('msgid', $a)->first();
-        $this->assertNotNull($aReach->schedule, 'post A has a real reach');
-
-        // Post B at the SAME raw origin, with a placeholder to recompute.
-        $b = $this->seedSpatialPost($arrival, 51.5, -0.1);
-        $this->seedDpaPlaceholder($b, 51.5, -0.1, $arrival);
-
-        $stats = $this->service()->backfill(false, 500, null, null, null, true);
-
-        $this->assertSame(1, $stats['initialized'], 'B is recomputed');
-        $this->assertGreaterThanOrEqual(1, $stats['reused'], 'B reused a co-located reach rather than routing');
-        $bReach = DB::table('rippling_reach')->where('msgid', $b)->first();
-        $this->assertNotNull($bReach->schedule);
-        $this->assertEquals(
-            json_decode($aReach->schedule, true),
-            json_decode($bReach->schedule, true),
-            'B got the same reach schedule as the co-located post A'
         );
     }
 
@@ -2924,6 +2697,9 @@ class ExpandServiceTest extends TestCase
         $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($copy);
 
+        // Simulate a pre-gate row (the backfill's real target population).
+        DB::statement('UPDATE rippling_reach SET reachable_group_ids = NULL WHERE msgid = ?', [$msgid]);
+
         // The new algorithm says only the origin is reachable.
         $phase = 'narrow';
 
@@ -2947,8 +2723,9 @@ class ExpandServiceTest extends TestCase
         $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
         $this->service()->process(false, 500);
 
-        // Freeze the mail signal so we can assert the backfill preserves it.
-        DB::statement('UPDATE rippling_reach SET updated_at = ? WHERE msgid = ?', ['2026-01-01 00:00:00', $msgid]);
+        // Freeze the mail signal so we can assert the backfill preserves it, and
+        // simulate a pre-gate row (NULL ids = the backfill's candidate filter).
+        DB::statement('UPDATE rippling_reach SET updated_at = ?, reachable_group_ids = NULL WHERE msgid = ?', ['2026-01-01 00:00:00', $msgid]);
 
         // The new algorithm says only the origin is reachable.
         $phase = 'narrow';
@@ -2969,8 +2746,52 @@ class ExpandServiceTest extends TestCase
             'the copy in the no-longer-covered group is retracted'
         );
 
-        // Idempotent: a second run changes nothing further.
+        // Resumable: the rebuilt row now has ids set, so a second run has no candidates.
         $r2 = $this->service()->backfillReach(false, 500);
-        $this->assertSame(0, $r2['pulled_out_of_reach'], 'second run finds nothing left to retract');
+        $this->assertSame(0, $r2['candidates'], 'second run skips already-rebuilt rows');
+    }
+
+    public function test_empty_reachable_set_never_id_retracts(): void
+    {
+        // An empty stored set means "gate could not compute" (transient members-query
+        // failure looks identical to genuinely-zero members), so id-based retraction
+        // must not fire - otherwise one bad query would pull every copy of the post.
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $phase = 'wide';
+        $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
+        $this->service()->process(false, 500); // ripples into B
+
+        DB::statement('UPDATE rippling_reach SET reachable_group_ids = ? WHERE msgid = ?', ['[]', $msgid]);
+
+        $stats = ['pulled_out_of_reach' => 0, 'memberships_removed' => 0, 'pulled_on_removal' => 0];
+        $this->service()->retractOutOfReachCopies($msgid, false, $stats);
+
+        $this->assertSame(
+            0,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('deleted'),
+            'a copy in a polygon-covered group survives an empty stored reachable set'
+        );
+    }
+
+    public function test_backfill_reach_shards_partition_disjointly(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgidA = $this->seedSpatialPost(now()->subMinutes(30));
+        $msgidB = $this->seedSpatialPost(now()->subMinutes(30), 51.55, -0.15);
+        $originA = (int) DB::table('messages_groups')->where('msgid', $msgidA)->value('groupid');
+        $phase = 'wide';
+        $this->fakePhasedRouting($originA, 0, $phase);
+        $this->service()->process(false, 500);
+        DB::statement('UPDATE rippling_reach SET reachable_group_ids = NULL');
+
+        $r0 = $this->service()->backfillReach(true, 500, null, 2, 0);
+        $r1 = $this->service()->backfillReach(true, 500, null, 2, 1);
+
+        $evens = (int) ($msgidA % 2 === 0) + (int) ($msgidB % 2 === 0);
+        $this->assertSame($evens, $r0['candidates'], 'shard 0 sees exactly the msgid%2==0 rows');
+        $this->assertSame(2 - $evens, $r1['candidates'], 'shard 1 sees exactly the rest');
     }
 }
