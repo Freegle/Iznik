@@ -72,7 +72,7 @@ class ReachService
      * — the container has no UK graph loaded). Callers treat null as "leave the
      * reach unchanged this run".
      *
-     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>}|null
+     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>,reachable_group_ids:int[]}|null
      */
     public function computeSchedule(float $lat, float $lng): ?array
     {
@@ -236,7 +236,7 @@ class ReachService
      * Parse a /v1/ripple-schedule JSON body into the schedule structure, or null if it
      * carries no usable ticks. Shared by the single and batch paths.
      *
-     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>}|null
+     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>,reachable_group_ids:int[]}|null
      */
     public function parseScheduleResponse(array $body): ?array
     {
@@ -266,6 +266,10 @@ class ReachService
             'total_freeglers' => (int) ($body['total_freeglers'] ?? 0),
             'max_drive_min' => (float) ($body['max_drive_min'] ?? $this->maxMinutes),
             'ticks' => $ticks,
+            // Groups containing a road node reachable from the origin - the
+            // water/toll-correct ripple-targeting signal. Empty when the server
+            // omits it (older build); the gate treats [] as "not available".
+            'reachable_group_ids' => array_map('intval', $body['reachable_group_ids'] ?? []),
         ];
     }
 

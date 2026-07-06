@@ -224,12 +224,13 @@ class ExpandService
             DB::statement(
                 'UPDATE rippling_reach
                     SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                        schedule = ?, total_freeglers = ?, max_drive_min = ?,
+                        schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?,
                         updated_at = updated_at
                   WHERE msgid = ?',
                 [
                     $storeWkt,
                     json_encode($ticks),
+                    json_encode($schedule['reachable_group_ids'] ?? []),
                     (int) $schedule['total_freeglers'],
                     $schedule['max_drive_min'],
                     $row->msgid,
@@ -448,7 +449,19 @@ class ExpandService
         }
 
         // Rippled-in groups whose polyindex no longer intersects the post's current
-        // (capped) reach polygon — i.e. groups we would NOT ripple into now.
+        // (capped) reach polygon — i.e. groups we would NOT ripple into now. With the
+        // reachable-gate on, ALSO retract groups the polygon still covers but which are
+        // no longer in the node-reachable set (rr.reachable_group_ids), so a reach that
+        // overshot water self-heals. The `rr.reachable_group_ids IS NOT NULL` guard means
+        // reaches computed before the gate rolled out (NULL column) are never retracted by
+        // it - only polygon-based retraction applies to them.
+        $reachClause = $this->reachableGateEnabled()
+            ? "AND (NOT ST_Intersects(g.polyindex, rr.polygon)
+                    OR (rr.reachable_group_ids IS NOT NULL
+                        AND JSON_VALID(rr.reachable_group_ids)
+                        AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
+            : "AND NOT ST_Intersects(g.polyindex, rr.polygon)";
+
         $rows = DB::select(
             "SELECT g.id
                FROM messages_groups mg
@@ -457,7 +470,7 @@ class ExpandService
               WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
                 AND rr.status <> 'held'
                 AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
-                AND NOT ST_Intersects(g.polyindex, rr.polygon)",
+                " . $reachClause,
             [$msgid]
         );
 
@@ -861,24 +874,27 @@ class ExpandService
                     DB::statement(
                         'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
-                            total_freeglers, max_drive_min, schedule, next_expansion_at, status,
-                            created_at, updated_at)
-                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            total_freeglers, max_drive_min, schedule, reachable_group_ids,
+                            next_expansion_at, status, created_at, updated_at)
+                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
                             lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon),
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
+                            reachable_group_ids = VALUES(reachable_group_ids),
                             next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
                             updated_at = NOW()',
                         [
                             $row->msgid, $lat, $lng, $storeWkt, $arrival,
                             $this->reach->mode(), $tick, $total,
                             $schedule['total_freeglers'], $schedule['max_drive_min'],
-                            json_encode($schedule['ticks']), $next, $status,
+                            json_encode($schedule['ticks']),
+                            json_encode($schedule['reachable_group_ids'] ?? []),
+                            $next, $status,
                         ]
                     );
-                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
+                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $schedule['reachable_group_ids'] ?? null);
                     // Reach mail is decoupled into the sharded `mail:digest:unified --mode=reach`
                     // pass (UnifiedDigestService::sendReachDigests). It must NOT run inline here:
                     // the 2026-06-24 live profile showed it was ~75% of this serial Phase-2 loop's
@@ -1000,7 +1016,15 @@ class ExpandService
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats);
+                    // The reachable-group set was computed at init and cached on the reach
+                    // row; later ticks re-ripple against the same set (a cheap keyed lookup,
+                    // only when the gate is on).
+                    $cachedReachable = null;
+                    if ($this->reachableGateEnabled()) {
+                        $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
+                        $cachedReachable = $raw ? json_decode($raw, true) : null;
+                    }
+                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $cachedReachable);
                     // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
                     // initialiseNew and UnifiedDigestService::sendReachDigests.
                 }
@@ -1018,6 +1042,16 @@ class ExpandService
     }
 
     /**
+     * True when the road-reachable ripple gate is enabled (plan 2026-07-06). Off by
+     * default and independent of RIPPLE_ENABLED; enable only once the routing server
+     * that returns reachable_group_ids is deployed and validated.
+     */
+    private function reachableGateEnabled(): bool
+    {
+        return (bool) config('freegle.ripple.reachable_gate', false);
+    }
+
+    /**
      * Ripple a post INTO every published group whose area the reach now covers (#6).
      *
      * "Crosses into a new group" = the reach polygon intersects the group's area. A
@@ -1032,7 +1066,7 @@ class ExpandService
      * (the default - no Pending flicker, since the post was already vetted on origin), else
      * Pending so AutoApproveService approves it after the mod-veto window.
      */
-    private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats): void
+    private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
     {
         try {
             // Never ripple a post that has already been taken/received/withdrawn into new groups,
@@ -1080,6 +1114,17 @@ class ExpandService
                 return;
             }
 
+            // Reachable-gate (plan 2026-07-06): when enabled AND the routing server sent a
+            // reachable-group set, restrict targets to groups containing a road node
+            // reachable from the origin - so a reach polygon that overshoots water can't
+            // ripple across an uncrossable barrier. The polygon ST_Intersects stays as the
+            // cheap spatial-index prefilter; this is an AND gate on top. IDs are
+            // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
+            // off => clause omitted => unchanged behaviour (fall back to polygon only).
+            $reachableGate = ($this->reachableGateEnabled() && !empty($reachableGroupIds))
+                ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
+                : '';
+
             $targetGroups = DB::select(
                 "SELECT g.id
                  FROM `groups` g
@@ -1089,7 +1134,7 @@ class ExpandService
                    AND g.nameshort NOT LIKE '%playground%'
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
-                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))
+                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )
