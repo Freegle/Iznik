@@ -73,6 +73,37 @@ class MessageMailTest extends TestCase
         $this->assertEquals(Message::OUTCOME_TAKEN, $mail->outcomeType);
     }
 
+    public function test_deadline_reached_names_the_origin_group_not_a_rippled_copy(): void
+    {
+        // Rippling adds messages_groups rows (rippled_in=1, arrival=ripple time)
+        // and auto-joins the poster to those groups, so the old "recipient's
+        // membership with the most recent arrival" pick told a poster their
+        // deadline was on whichever distant group the post last rippled into.
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        $this->createMembership($user, $origin);
+        $this->createMembership($user, $rippled);
+
+        $message = $this->createTestMessage($user, $origin, [
+            'arrival' => now()->subDays(2),
+        ]);
+        // A rippled-in copy with a NEWER arrival - the bait the old pick took.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $rippled->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+            'rippled_in' => 1,
+        ]);
+
+        $mail = new DeadlineReached($message->fresh(), $user);
+        $mail->build();
+
+        $mjmlData = (new \ReflectionProperty($mail, 'mjmlData'))->getValue($mail);
+        $this->assertEquals($origin->nameshort, $mjmlData['groupName']);
+    }
+
     public function test_deadline_reached_wanted_has_received_outcome(): void
     {
         $user = $this->createTestUser();
@@ -115,10 +146,12 @@ class MessageMailTest extends TestCase
         $this->assertEquals('Deadline reached: OFFER: Test Item (Location)', $envelope->subject);
     }
 
-    public function test_deadline_reached_tracking_uses_recipients_group_for_cross_post(): void
+    public function test_deadline_reached_tracking_uses_origin_group_for_cross_post(): void
     {
-        // Message on groupA and groupB; recipient is a member of groupB only.
-        // Tracking groupid must reference groupB, not the arbitrary first group.
+        // Message posted to groupA, also on groupB; recipient (the poster) is a
+        // member of groupB only. Tracking must reference the ORIGIN group (where
+        // they posted), not whichever copy their memberships happen to match -
+        // under rippling that heuristic picked the most-recently-rippled group.
         $groupA = $this->createTestGroup();
         $groupB = $this->createTestGroup();
 
@@ -131,13 +164,14 @@ class MessageMailTest extends TestCase
             'groupid' => $groupB->id,
             'collection' => MessageGroup::COLLECTION_APPROVED,
             'arrival' => now(),
+            'rippled_in' => 1,
         ]);
         $message = Message::with('groups')->find($message->id);
 
         $mail = new DeadlineReached($message, $user);
 
-        $this->assertEquals($groupB->id, $mail->getTracking()->groupid);
-        $this->assertNotEquals($groupA->id, $mail->getTracking()->groupid);
+        $this->assertEquals($groupA->id, $mail->getTracking()->groupid);
+        $this->assertNotEquals($groupB->id, $mail->getTracking()->groupid);
     }
 
     public function test_deadline_reached_falls_back_to_first_group_when_no_membership_overlap(): void
