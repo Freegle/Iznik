@@ -555,7 +555,7 @@ async function sendReply(callback) {
   if (replybox.value && replybox.value.trim()) {
     const msg = untwem(replybox.value)
 
-    await newsfeedStore.send(
+    const newid = await newsfeedStore.send(
       msg,
       replyingTo.value,
       props.threadhead,
@@ -563,6 +563,12 @@ async function sendReply(callback) {
     )
 
     // New message will be shown because it's in the store and we have a computed property.
+    //
+    // The refetch after send re-renders the thread in the server's new order
+    // (the server bumps the replied-to parent to the end), so the content
+    // under the viewport changes and the fresh reply can land off-screen.
+    // Keep the poster anchored to what they just wrote.
+    scrollReplyIntoView(newid)
 
     // Clear and hide the textarea now it's sent.
     replybox.value = null
@@ -580,6 +586,18 @@ async function sendReply(callback) {
   if (typeof callback === 'function') {
     callback()
   }
+}
+
+function scrollReplyIntoView(id) {
+  if (!id) return
+  nextTick(() => {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-reply-id="${id}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 100)
+  })
 }
 
 function newlineReply() {
@@ -667,8 +685,11 @@ function scrollIntoView() {
     // Try later
     setTimeout(scrollIntoView, 100)
   } else {
-    // No outstanding requests, so we can scroll.
-    const el = document.getElementById(`newsreply-${props.id}`)
+    // No outstanding requests, so we can scroll. The reply rows are stamped
+    // with data-reply-id by NewsReplies; the historical getElementById
+    // ('newsreply-{id}') target was never rendered anywhere, so notification
+    // deep-links (/chitchat/{replyid}) silently failed to scroll.
+    const el = document.querySelector(`[data-reply-id="${props.id}"]`)
     if (el) {
       el.scrollIntoView({
         behavior: 'smooth',

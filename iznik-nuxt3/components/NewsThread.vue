@@ -509,9 +509,27 @@ async function sendComment(callback) {
   if (threadcomment.value && threadcomment.value.trim()) {
     // Encode up any emojis.
     const msg = untwem(threadcomment.value)
-    await newsfeedStore.send(msg, replyingTo.value, props.id, imageid.value)
+    const newid = await newsfeedStore.send(
+      msg,
+      replyingTo.value,
+      props.id,
+      imageid.value
+    )
 
-    // New message will be shown because it's in the store and we have a computed property.
+    // New message will be shown because it's in the store and we have a computed
+    // property. Keep the poster anchored to their reply: the post-send refetch
+    // re-renders in the server's new order (replied-to parents get bumped), so
+    // without this the viewport content swaps and the reply lands off-screen.
+    if (newid) {
+      nextTick(() => {
+        setTimeout(() => {
+          const el = document.querySelector(`[data-reply-id="${newid}"]`)
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+        }, 100)
+      })
+    }
 
     // Clear the textarea now it's sent.
     threadcomment.value = null
