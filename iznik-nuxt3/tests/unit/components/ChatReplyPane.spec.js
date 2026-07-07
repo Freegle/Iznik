@@ -100,6 +100,16 @@ vi.mock('~/constants', () => ({
   FAR_AWAY: 20,
 }))
 
+// ChatReplyPane captures the current route at setup to derive the reply surface
+// (provenance) at send time.
+vi.mock('#imports', async () => {
+  const actual = await vi.importActual('#imports')
+  return {
+    ...actual,
+    useRoute: () => ({ path: '/browse', query: {}, params: {} }),
+  }
+})
+
 vi.hoisted(() => {
   vi.resetModules()
 })

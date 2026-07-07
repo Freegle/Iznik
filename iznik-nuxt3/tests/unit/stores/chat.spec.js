@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
+// Import the REAL store directly — vitest.config.mts aliases ~/stores/chat
+// to a global mock for other tests. We need the actual implementation here.
+import { useChatStore } from '../../../stores/chat'
+
 const mockListChats = vi.fn().mockResolvedValue([])
 const mockListChatsMT = vi.fn().mockResolvedValue({ chatrooms: [] })
 const mockFetchChat = vi.fn().mockResolvedValue(null)
@@ -18,9 +22,7 @@ const mockSendMT = vi.fn().mockResolvedValue()
 const mockUnseenCountMT = vi.fn().mockResolvedValue(0)
 const mockAllSeen = vi.fn().mockResolvedValue()
 const mockRsvp = vi.fn().mockResolvedValue()
-const mockFetchReviewChatsMT = vi
-  .fn()
-  .mockResolvedValue({ chatmessages: [] })
+const mockFetchReviewChatsMT = vi.fn().mockResolvedValue({ chatmessages: [] })
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -80,12 +82,7 @@ vi.mock('~/stores/user', () => ({
   }),
 }))
 
-// Import the REAL store directly — vitest.config.mts aliases ~/stores/chat
-// to a global mock for other tests. We need the actual implementation here.
-import { useChatStore } from '../../../stores/chat'
-
 describe('chat store', () => {
-
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
@@ -228,7 +225,10 @@ describe('chat store', () => {
 
       await store.send(10, 'new message')
 
-      expect(mockSend).toHaveBeenCalledWith({ roomid: 10, message: 'new message' })
+      expect(mockSend).toHaveBeenCalledWith({
+        roomid: 10,
+        message: 'new message',
+      })
       expect(store.listByChatId[10].snippet).toBe('new message')
     })
 
@@ -238,7 +238,7 @@ describe('chat store', () => {
       store.listByChatId[10] = { id: 10 }
       mockFetchMessages.mockResolvedValue([])
 
-      await store.send(10, 'hi', 1, 2, 3, true)
+      await store.send(10, 'hi', 1, 2, 3, true, 'browse')
 
       expect(mockSend).toHaveBeenCalledWith({
         roomid: 10,
@@ -247,6 +247,7 @@ describe('chat store', () => {
         imageid: 2,
         refmsgid: 3,
         modnote: true,
+        replysource: 'browse',
       })
     })
 
@@ -256,6 +257,19 @@ describe('chat store', () => {
       mockFetchMessages.mockResolvedValue([])
 
       await store.send(10, 'hi', null, null, null, false)
+
+      expect(mockSend).toHaveBeenCalledWith({
+        roomid: 10,
+        message: 'hi',
+      })
+    })
+
+    it('only sends replysource alongside a refmsgid (reply provenance, not chat chatter)', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send(10, 'hi', null, null, null, false, 'browse')
 
       expect(mockSend).toHaveBeenCalledWith({
         roomid: 10,

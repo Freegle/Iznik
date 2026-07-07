@@ -69,9 +69,12 @@ func TestReportVerdictMemberQuorumPendsAllGroupsAndFreezes(t *testing.T) {
 	}
 }
 
-// A moderator's report is scoped to the community they reported on; other communities
-// (including the origin) are unaffected and the reach keeps running.
-func TestReportVerdictModScopedToReportedGroup(t *testing.T) {
+// A moderator's report counts as quorum on its own: EVERY community's copy (origin and
+// rippled) goes to Pending and the reach is frozen, so the post leaves browse and can
+// never make the next digest (digests only send Approved copies). Edward's decision on
+// Discourse 9862: a scoped mod report left 11 of 12 copies live, so the reported post
+// kept appearing in browse and the daily digest.
+func TestReportVerdictModReportIsQuorum(t *testing.T) {
 	db := database.DBConn
 	poster := CreateTestUser(t, "rvmodposter", "User")
 	origin := CreateTestGroup(t, "rvmodorigin")
@@ -85,13 +88,34 @@ func TestReportVerdictModScopedToReportedGroup(t *testing.T) {
 	microvolunteering.RecordReportVerdict(db, mod, msgid, rippled, "not ok here")
 
 	if collectionOf(msgid, rippled) != utils.COLLECTION_PENDING {
-		t.Errorf("a mod's report on the rippled group must pend that copy, got %s", collectionOf(msgid, rippled))
+		t.Errorf("a mod's report must pend the reported group's copy, got %s", collectionOf(msgid, rippled))
 	}
+	if collectionOf(msgid, origin) != utils.COLLECTION_PENDING {
+		t.Errorf("a mod's report must pend the origin copy too, got %s", collectionOf(msgid, origin))
+	}
+	if reachStatusOf(msgid) != "held" {
+		t.Errorf("a mod's report must freeze the reach (origin Pending), got %s", reachStatusOf(msgid))
+	}
+}
+
+// A member who is NOT a moderator of the reported group still needs the quorum - one
+// member report alone must not pend anything anywhere.
+func TestReportVerdictMemberBelowQuorumScopedNothing(t *testing.T) {
+	db := database.DBConn
+	poster := CreateTestUser(t, "rvbmposter", "User")
+	origin := CreateTestGroup(t, "rvbmorigin")
+	member := CreateTestUser(t, "rvbmmember", "User")
+	CreateTestMembership(t, member, origin, "Member")
+	msgid := CreateTestMessage(t, poster, origin, "OFFER: rvbelowquorum", 51.5, -0.1)
+	addReachRow(msgid, "expanding")
+
+	microvolunteering.RecordReportVerdict(db, member, msgid, origin, "spam")
+
 	if collectionOf(msgid, origin) != utils.COLLECTION_APPROVED {
-		t.Errorf("the origin must stay Approved when a mod reports only a rippled group, got %s", collectionOf(msgid, origin))
+		t.Errorf("a single member report must not pend the post, got %s", collectionOf(msgid, origin))
 	}
 	if reachStatusOf(msgid) == "held" {
-		t.Errorf("reach must NOT be frozen while the origin is still live")
+		t.Errorf("a single member report must not freeze the reach")
 	}
 }
 

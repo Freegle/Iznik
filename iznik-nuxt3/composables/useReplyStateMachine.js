@@ -1143,6 +1143,9 @@ export function useReplyStateMachine(messageId, options = {}) {
     }
 
     replyStore.replyingAt = Date.now()
+    // Persist the committing surface too, so provenance survives the
+    // login/registration redirect and reaches the server with the send.
+    replyStore.replySource = replySource.value
     persistState()
 
     log('Reply saved to store:', {

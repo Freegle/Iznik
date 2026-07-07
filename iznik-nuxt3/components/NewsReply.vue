@@ -170,7 +170,8 @@
     </div>
     <!-- Forward rendered events from nested replies: without this the
          notification deep-link scroll in NewsThread never hears about
-         depth 2+ replies mounting. -->
+         depth 2+ replies mounting. When the nested list reports that its
+         whole subtree has mounted, this reply's subtree is complete too. -->
     <NewsReplies
       v-if="reply?.replies?.length"
       :id="id"
@@ -179,6 +180,7 @@
       :reply-to="reply.id"
       :depth="depth + 1"
       @rendered="$emit('rendered', $event)"
+      @subtree-rendered="$emit('subtree-rendered', id)"
     />
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
@@ -331,7 +333,9 @@ import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
 import {
   scrollToAndPin,
-  fixedHeaderOffset,
+  imagesComplete,
+  whenImagesComplete,
+  whenAllSettled,
 } from '~/composables/useScrollAnchor'
 import { twem, untwem } from '~/composables/useTwem'
 import NewsUserInfo from '~/components/NewsUserInfo'
@@ -384,7 +388,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['rendered', 'expand-combined'])
+const emit = defineEmits(['rendered', 'subtree-rendered', 'expand-combined'])
 
 // Stores
 const newsfeedStore = useNewsfeedStore()
@@ -506,15 +510,6 @@ const hasMoreActions = computed(() => {
 
 // Watchers
 watch(
-  () => props.scrollTo,
-  (newVal) => {
-    if (parseInt(props.scrollTo) === props.id && scrollIntoView) {
-      scrollIntoView()
-    }
-  }
-)
-
-watch(
   currentAtts,
   (newVal) => {
     if (newVal.length > 0) {
@@ -533,8 +528,15 @@ let ownPin = null
 // Lifecycle hooks
 onMounted(() => {
   // This will get propogated up the stack so that we know if the reply to which we'd like to scroll has been
-  // rendered.  We'll then come through the watch above.
+  // rendered.  The deep-link scroll in NewsThread is driven by these events.
   emit('rendered', props.id)
+
+  // Completion signal for the deep-link pin: a reply with no children IS its
+  // whole subtree. With children, the nested <NewsReplies> reports when all
+  // of them (recursively) have mounted - forwarded below in the template.
+  if (!reply.value?.replies?.length) {
+    emit('subtree-rendered', props.id)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -606,14 +608,41 @@ async function sendReply(callback) {
 function scrollReplyIntoView(id) {
   if (!id) return
   nextTick(() => {
-    // The pin re-resolves the selector every frame, so it simply waits for
-    // the refetched thread to render the new reply, then holds it centered
-    // through the re-order shuffle.
+    // The pin re-resolves the selector on every correction, so it simply
+    // waits for the refetched thread to render the new reply, then holds it
+    // centered until the post-send refetch and image loads are complete.
     ownPin = scrollToAndPin(
       () => document.querySelector(`[data-reply-id="${id}"]`),
-      { block: 'center' }
+      { block: 'center', done: contentSettled() }
     )
   })
+}
+
+// Resolves when nothing that could still move the layout is outstanding:
+// no in-flight API requests and no images still loading. Event-driven -
+// built on store reactivity and image load/error events, not timers.
+function contentSettled() {
+  return whenAllSettled([
+    {
+      ok: () => !miscStore.apiCount,
+      wait: () =>
+        new Promise((resolve) => {
+          const stop = watch(
+            () => miscStore.apiCount,
+            (n) => {
+              if (!n) {
+                stop()
+                resolve()
+              }
+            }
+          )
+        }),
+    },
+    {
+      ok: () => imagesComplete(),
+      wait: () => whenImagesComplete(),
+    },
+  ])
 }
 
 function newlineReply() {
@@ -692,17 +721,6 @@ function photoAdd() {
   // Flag that we're uploading. This will trigger the render of the filepond instance and subsequently the
   // init callback below.
   uploading.value = true
-}
-
-function scrollIntoView() {
-  // The reply rows are stamped with data-reply-id by NewsReplies. Long
-  // threads keep rendering async reply chunks and images for several seconds
-  // after this fires, so a one-shot smooth scroll aims at a stale position -
-  // pin the row instead and let the pin follow the layout until it settles.
-  ownPin = scrollToAndPin(
-    () => document.querySelector(`[data-reply-id="${props.id}"]`),
-    { block: 'start', offset: fixedHeaderOffset() }
-  )
 }
 
 function showReplyPhotoModal() {
