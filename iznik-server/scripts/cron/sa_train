@@ -1,0 +1,10 @@
+#!/bin/bash
+rm -rf /tmp/sa_train
+mkdir /tmp/sa_train
+mkdir /tmp/sa_train/spam
+mkdir /tmp/sa_train/ham
+
+php sa_train.php  >> /tmp/sa_train.log 2>&1
+
+sa-learn --spam /tmp/sa_train/spam/ >> /tmp/sa_train.log 2>&1
+sa-learn --ham /tmp/sa_train/ham/ >> /tmp/sa_train.log 2>&1

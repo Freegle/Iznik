@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# FSM runtime instance store (ai-flower JSONFileStorage)
+instance-store.json
+
+# SQLite database + WAL/SHM sidecars (runtime state, regenerated)
+monitor.db
+monitor.db-journal
+monitor.db-wal
+monitor.db-shm
+
+# Local log
+*.log

@@ -1,0 +1,986 @@
+<template>
+  <client-only v-if="me">
+    <ContactDetailsAskModal
+      v-if="showContactDetailsAskModal"
+      @hidden="showContactDetailsAskModal = false"
+    />
+    <!-- ChatMobileNavbar replaces the default navbar only at xs/sm (when chat list is hidden) -->
+    <Teleport
+      v-if="loggedIn && id && showMobileNavbar"
+      to="#chat-navbar-portal"
+    >
+      <ChatMobileNavbar v-if="chat" :id="id" />
+      <div v-else class="ourBack layout fixed-top pt-1 pb-1">
+        <div class="backbutton nav-back-btn">
+          <v-icon icon="arrow-left" class="back-icon" />
+        </div>
+        <div class="name d-flex flex-column justify-content-around text-center">
+          <h1 class="text-white truncate text-center header--size5 m-0">
+            Loading...
+          </h1>
+        </div>
+      </div>
+    </Teleport>
+    <div>
+      <h1 class="visually-hidden">Chats</h1>
+      <b-row class="m-0">
+        <b-col
+          id="chatlist"
+          cols="12"
+          md="5"
+          lg="4"
+          xl="3"
+          class="p-0 bg-white"
+        >
+          <VisibleWhen
+            :at="
+              selectedChatId
+                ? ['md', 'lg', 'xl', 'xxl']
+                : ['xs', 'sm', 'md', 'lg', 'xl', 'xxl']
+            "
+          >
+            <div
+              class="chatlist"
+              :class="{
+                stickyAdRendered,
+              }"
+            >
+              <div
+                v-if="me?.settings?.simplemail === 'None'"
+                class="emails-off-warning text-danger text--smallest d-flex justify-content-around"
+              >
+                <div>
+                  Emails off. Check here regularly. Change in
+                  <nuxt-link no-prefetch to="/settings">Settings</nuxt-link>.
+                </div>
+              </div>
+              <div ref="chatlistRef" class="notda">
+                <div class="chat-toolbar">
+                  <form role="search" class="search-form" @submit.prevent>
+                    <label for="search-bar" class="visually-hidden"
+                      >Search chats</label
+                    >
+                    <div class="search-wrapper">
+                      <v-icon icon="search" class="search-icon" />
+                      <b-form-input
+                        id="search-bar"
+                        v-model="search"
+                        placeholder="Search chats"
+                        class="search-input"
+                      />
+                    </div>
+                  </form>
+                  <button class="mark-read-btn" @click="markAllRead">
+                    <v-icon icon="check-double" />
+                    <span class="d-none d-sm-inline">Mark all read</span>
+                    <b-badge
+                      v-if="chatStore.unreadCount > 0"
+                      variant="danger"
+                      class="mark-all-read-badge"
+                    >
+                      {{ chatStore.unreadCount }}
+                    </b-badge>
+                  </button>
+                </div>
+                <div
+                  v-if="!visibleChats?.length && !closedChats?.length"
+                  class="empty-state"
+                >
+                  <div v-if="searching" class="empty-state-content">
+                    <v-icon icon="spinner" class="empty-state-icon fa-spin" />
+                    <p class="empty-state-text">Searching...</p>
+                  </div>
+                  <div v-else class="empty-state-content">
+                    <v-icon icon="comments" class="empty-state-icon" />
+                    <p class="empty-state-text">No chats to show.</p>
+                    <p class="empty-state-hint">
+                      Start a conversation by replying to a post.
+                    </p>
+                  </div>
+                </div>
+                <div v-else>
+                  <div
+                    v-if="closedChats.length"
+                    class="d-flex justify-content-around"
+                  >
+                    <b-button
+                      variant="link"
+                      size="sm"
+                      @click="toggleShowClosed"
+                    >
+                      <b-badge
+                        v-if="closedCount"
+                        variant="danger"
+                        class="closedCount me-1"
+                        title="Closed chats with unread messages"
+                      >
+                        {{ closedCount }}
+                      </b-badge>
+                      <span v-if="showClosed"
+                        >Return to chats that are not hidden</span
+                      >
+                      <span v-else
+                        >Show {{ closedChats.length }} hidden/blocked chat<span
+                          v-if="closedChats.length > 1"
+                          >s</span
+                        ></span
+                      >
+                    </b-button>
+                  </div>
+                  <div v-if="showClosed">
+                    <div
+                      v-for="c in closedChats"
+                      :key="'chat-' + c.id"
+                      :class="{
+                        chat: true,
+                        active: selectedChatId === c?.id,
+                      }"
+                      @click="gotoChat(c.id)"
+                    >
+                      <ChatListEntry
+                        v-if="c.lastmsg > 0 || selectedChatId === c?.id"
+                        :id="c.id"
+                        :active="selectedChatId === c?.id"
+                      />
+                    </div>
+                  </div>
+                  <div v-else>
+                    <div
+                      v-for="c in visibleChats"
+                      :key="'chat-' + c.id"
+                      :class="{
+                        chat: true,
+                        active: selectedChatId === c?.id,
+                      }"
+                      @click="gotoChat(c.id)"
+                    >
+                      <ChatListEntry
+                        v-if="c.lastmsg > 0 || selectedChatId === c?.id"
+                        :id="c.id"
+                        :active="selectedChatId === c?.id"
+                      />
+                    </div>
+                  </div>
+                  <infinite-loading
+                    :identifier="bump"
+                    :distance="distance"
+                    @infinite="loadMore"
+                  >
+                    <template #error>&nbsp;</template>
+                    <template #complete>&nbsp;</template>
+                    <template #spinner>&nbsp;</template>
+                  </infinite-loading>
+                </div>
+                <div class="chat-actions">
+                  <button
+                    v-if="
+                      !search && mightBeOldChats && complete && !showingOlder
+                    "
+                    class="chat-action-btn"
+                    @click="fetchOlder"
+                  >
+                    <v-icon icon="history" class="action-icon" />
+                    <span>Show older chats</span>
+                  </button>
+                  <button
+                    v-if="
+                      complete &&
+                      visibleChats &&
+                      visibleChats.length &&
+                      !showClosed
+                    "
+                    class="chat-action-btn"
+                    @click="showHideAll"
+                  >
+                    <v-icon icon="eye-slash" class="action-icon" />
+                    <span>Hide all chats</span>
+                  </button>
+                </div>
+              </div>
+              <VisibleWhen
+                v-if="!selectedChatId"
+                :at="['md', 'lg']"
+                class="chatda"
+              >
+                <ExternalDa
+                  ad-unit-path="/22794232631/freegle_chat_app"
+                  max-height="50px"
+                  max-width="300px"
+                  div-id="div-gpt-ad-1691925773522-0"
+                  class="mt-2"
+                  placement="chat_list"
+                />
+              </VisibleWhen>
+            </div>
+          </VisibleWhen>
+        </b-col>
+        <b-col cols="12" md="7" lg="8" xl="6" class="chatback p-0">
+          <VisibleWhen
+            :at="
+              selectedChatId
+                ? ['xs', 'sm', 'md', 'lg', 'xl', 'xxl']
+                : ['md', 'lg', 'xl', 'xxl']
+            "
+          >
+            <p
+              v-if="!visibleChats?.length && !closedChats?.length"
+              class="ms-2"
+            >
+              <span v-if="searching" class="pulsate"> Searching... </span>
+              <span v-else> No chats to show. </span>
+            </p>
+            <ChatPane
+              :id="selectedChatId"
+              :key="'chatpane-' + selectedChatId"
+            />
+          </VisibleWhen>
+        </b-col>
+        <b-col cols="0" xl="3" class="p-0 ps-1">
+          <VisibleWhen :at="['xl', 'xxl']">
+            <SidebarRight
+              show-job-opportunities
+              ad-unit-path="/22794232631/freegle_chat_app"
+              ad-div-id="div-gpt-ad-1691925773522-0"
+            />
+          </VisibleWhen>
+        </b-col>
+      </b-row>
+      <ChatHideModal
+        v-if="showHideAllModal"
+        @confirm="hideAll"
+        @hidden="showHideAllModal = false"
+      />
+    </div>
+  </client-only>
+</template>
+<script setup>
+import dayjs from 'dayjs'
+
+import { storeToRefs } from 'pinia'
+import { buildHead } from '~/composables/useBuildHead'
+import { useMe } from '~/composables/useMe'
+import { useAuthStore } from '~/stores/auth'
+import { ref, nextTick, useRoute, useRouter } from '#imports'
+import VisibleWhen from '~/components/VisibleWhen'
+import InfiniteLoading from '~/components/InfiniteLoading'
+import { useChatStore } from '~/stores/chat'
+import SidebarRight from '~/components/SidebarRight'
+import ChatMobileNavbar from '~/components/ChatMobileNavbar.vue'
+import ExternalDa from '~/components/ExternalDa.vue'
+
+// We can't use async on ChatListEntry else the infinite scroll kicks in and tries to load everything while we are
+// still waiting for the import to complete.
+import ChatListEntry from '~/components/ChatListEntry.vue'
+import { useMiscStore } from '~/stores/misc'
+
+const ContactDetailsAskModal = defineAsyncComponent(() =>
+  import('~/components/ContactDetailsAskModal.vue')
+)
+
+const ChatHideModal = defineAsyncComponent(() =>
+  import('~/components/ChatHideModal')
+)
+
+const chatStore = useChatStore()
+const authStore = useAuthStore()
+const miscStore = useMiscStore()
+
+const stickyAdRendered = computed(() => {
+  return miscStore.stickyAdRendered
+})
+
+// Show mobile navbar only at xs/sm breakpoints (when chat list is hidden on mobile)
+const showMobileNavbar = computed(() => {
+  const bp = miscStore.breakpoint
+  return bp === 'xs' || bp === 'sm'
+})
+
+const { me } = useMe()
+const loggedIn = computed(() => authStore.user !== null)
+
+definePageMeta({
+  layout: 'login',
+})
+
+let title = 'Chats'
+let description = "See the conversations you're having with other freeglers."
+
+const runtimeConfig = useRuntimeConfig()
+const route = useRoute()
+
+const myid = authStore.user?.id
+const showChats = ref(20)
+
+// When there's a flag in the chat store to show the modal.  Don't reset the value in the store here otherwise
+// reactivity will stop the modal being shown.
+const showContactDetailsAskModal =
+  storeToRefs(chatStore).showContactDetailsAskModal
+
+const id = route.params.id ? parseInt(route.params.id) : 0
+
+let chat = null
+
+const search = ref(null)
+
+if (route.query.search) {
+  search.value = route.query.search
+}
+
+if (myid && process.client) {
+  // Fetch the list of chats. Only on client — SSR has no auth token
+  // and the template uses <client-only> anyway.
+  await chatStore.fetchChats(search.value, true, id)
+
+  // Is this chat in the list?
+  chat = chatStore.byChatId(id)
+
+  if (!chat) {
+    // Might be old.  Try fetching it specifically.
+    try {
+      chat = await chatStore.fetchChat(id)
+    } catch (e) {
+      console.log("Couldn't fetch chat", id, e)
+    }
+  } else {
+    // We have the chat, but maybe it's not quite up to date (e.g. a new message).  So fetch, but don't wait.
+    title = chat.name
+    description = 'Chat with ' + chat.name
+
+    chatStore.fetchChat(id)
+  }
+
+  if (id) {
+    // Find id in the list of chats.
+    const index = chatStore.list.findIndex((c) => c.id === id)
+    showChats.value = Math.max(showChats.value, index + 1)
+  }
+}
+
+useHead(buildHead(route, runtimeConfig, title, description))
+
+const chatlistRef = ref(null)
+const showHideAllModal = ref(false)
+const minShowChats = ref(20)
+const searching = ref(false)
+const searchlast = ref(null)
+const complete = ref(false)
+const bump = ref(1)
+let searchGeneration = 0
+const distance = ref(1000)
+const selectedChatId = ref(null)
+
+// If no chats were found initially, mark as complete so "Show older chats" button appears.
+if (chatStore.list.length === 0) {
+  complete.value = true
+}
+const showClosed = computed(() => chatStore.showClosed)
+
+// Watch for external changes to showClosed (e.g., from store's unhide function)
+// to trigger reactivity updates that normally happen in toggleShowClosed.
+watch(showClosed, () => {
+  showChats.value = 20
+  bump.value++
+})
+
+function toggleShowClosed() {
+  chatStore.showClosed = !chatStore.showClosed
+  showChats.value = 20
+  bump.value++
+}
+
+const chats = computed(() => {
+  return chatStore?.list ? chatStore.list : []
+})
+const showingOlder = computed(() => {
+  return chatStore.searchSince !== null
+})
+const closedChats = computed(() => {
+  return scanChats(true, chats.value)
+})
+const closedCount = computed(() => {
+  let ret = 0
+
+  for (const chat of closedChats.value) {
+    if (chat.status === 'Closed') {
+      ret += chat.unseen
+    }
+  }
+
+  return ret
+})
+
+const filteredChats = computed(() => {
+  return scanChats(showClosed.value, chats.value)
+})
+
+const visibleChats = computed(() => {
+  const chats =
+    bump.value && filteredChats.value
+      ? filteredChats.value.slice(0, showChats.value)
+      : []
+
+  return chats
+})
+
+const mightBeOldChats = computed(() => {
+  const now = dayjs()
+
+  const me = authStore.user
+  if (me) {
+    const daysago = now.diff(dayjs(me.added), 'days')
+
+    if (daysago > 31) {
+      // They've been on the platform log enough that there might be old chats
+      return true
+    }
+  }
+
+  return false
+})
+
+watch(search, (newVal, oldVal) => {
+  showChats.value = minShowChats.value
+  bump.value++
+
+  if (!newVal) {
+    // Force a refresh to remove any old chats.
+    searchGeneration++
+    chatStore.fetchChats()
+  } else if (newVal.length > 2) {
+    // Force a server search to pick up old chats or more subtle matches.
+    searchMore()
+  } else {
+    // Short search term — refetch without server search to restore the
+    // normal list (prevents stale search results from staying in the store).
+    searchGeneration++
+    chatStore.fetchChats()
+  }
+})
+
+onMounted(async () => {
+  selectedChatId.value = null
+
+  if (authStore.user) {
+    const route = useRoute()
+    selectedChatId.value = route.params.id ? parseInt(route.params.id) : 0
+
+    if (selectedChatId.value) {
+      // Ensure enough chats are rendered so the target chat can be scrolled
+      // to the top of the panel (needs entries below it too).
+      const SCROLL_SLACK = 50
+      let idx = filteredChats.value.findIndex(
+        (c) => c.id === selectedChatId.value
+      )
+
+      if (idx < 0 && !chatStore.searchSince) {
+        // Selected chat is not in the current list.  This happens for brand-new
+        // User2Mod chats (latestmessage=0) which the API excludes by default.
+        // Fetch with keepChat so the API force-includes it regardless of the
+        // latestmessage filter.
+        await fetchOlder()
+        idx = filteredChats.value.findIndex(
+          (c) => c.id === selectedChatId.value
+        )
+      }
+
+      if (idx >= 0) {
+        const below = filteredChats.value.length - 1 - idx
+        if (below < SCROLL_SLACK && !chatStore.searchSince) {
+          // Not enough chats below the target to scroll it to the top of the
+          // panel. Fetch all historical chats to populate entries below it.
+          await fetchOlder()
+          idx = filteredChats.value.findIndex(
+            (c) => c.id === selectedChatId.value
+          )
+        }
+
+        if (idx >= 0) {
+          showChats.value = Math.max(showChats.value, idx + 1 + SCROLL_SLACK)
+        }
+      }
+
+      await nextTick()
+      const activeEl = chatlistRef.value?.querySelector('.chat.active')
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: 'start' })
+      }
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  if (chatStore) {
+    chatStore.searchSince = null
+  }
+})
+
+async function fetchOlder() {
+  chatStore.searchSince = '2009-09-11'
+  await chatStore.fetchChats(
+    undefined,
+    undefined,
+    selectedChatId.value || undefined
+  )
+  bump.value++
+}
+
+function showHideAll() {
+  showHideAllModal.value = true
+}
+
+async function hideAll() {
+  // Snapshot IDs before iterating: filteredChats covers all loaded chats
+  // (not just the visible page) and a plain array avoids skipping entries
+  // when the reactive computed shrinks as each chat is hidden.
+  // Exclude User2Mod (volunteer) chats — members must never lose access to them.
+  const ids = filteredChats.value
+    .filter((c) => c.chattype !== 'User2Mod')
+    .map((c) => c.id)
+  for (const id of ids) {
+    await chatStore.hide(id)
+  }
+
+  const router = useRouter()
+  router.push('/chats')
+}
+
+function scanChats(closed, chats) {
+  if (chats && search.value) {
+    const l = search.value.toLowerCase()
+    chats = chats.filter((chat) => {
+      // The API flags chats found via message content search with search=true.
+      // Include those even if the snippet (latest message) doesn't contain
+      // the search term — the match is in an older message.
+      if (chat.search) {
+        return true
+      }
+
+      if (
+        (chat.name?.toLowerCase() ?? '').includes(l) ||
+        (chat.snippet && chat.snippet.toLowerCase().includes(l))
+      ) {
+        return true
+      }
+
+      return false
+    })
+  }
+
+  chats = chats.filter((chat) => {
+    if (id && !closed && chat.id === id) {
+      return true
+    }
+
+    if (chat.status === 'Blocked' || chat.status === 'Closed') {
+      return closed
+    }
+
+    return !closed
+  })
+
+  // Sort by last date.
+  chats.sort((a, b) => {
+    if (a.lastdate && b.lastdate) {
+      return dayjs(b.lastdate).diff(dayjs(a.lastdate))
+    } else if (a.lastdate) {
+      return -1
+    } else if (b.lastdate) {
+      return 1
+    } else {
+      return 0
+    }
+  })
+
+  return chats
+}
+
+function loadMore($state) {
+  // We use an infinite scroll on the list of chats because even though we have all the data in hand, the less
+  // we render onscreen the faster vue is to do so.
+  if (!me.value) {
+    $state.loaded()
+    return
+  }
+
+  const chats = filteredChats.value
+  showChats.value++
+
+  if (showChats.value > chats.length) {
+    showChats.value = chats.length
+
+    if (chats.length === 0) {
+      // Chats haven't loaded yet — don't call complete() prematurely.
+      $state.loaded()
+    } else {
+      $state.complete()
+      complete.value = true
+    }
+  } else {
+    $state.loaded()
+  }
+}
+
+async function markAllRead() {
+  await chatStore.markAllRead()
+  chatStore.fetchChats()
+}
+
+function gotoChat(id) {
+  const router = useRouter()
+
+  if (selectedChatId.value) {
+    // We just replace the route, which is quicker than navigating and re-rendering this page.
+    //
+    // This means that history won't get updated, which means that Back will go to the top-level /chats page.
+    // That is nice behaviour otherwise you have to hit Back a lot if you've viewed several chats.
+    selectedChatId.value = id
+    let url = id ? '/chats/' + id : '/chats'
+
+    if (search.value) {
+      url += '?search=' + search.value
+    }
+
+    router.replace(url)
+  } else {
+    router.push(id ? '/chats/' + id : '/chats')
+  }
+}
+
+async function searchMore() {
+  if (searching.value) {
+    // Queue until we've finished.
+    searchlast.value = search.value
+  } else {
+    searching.value = search.value
+    const gen = ++searchGeneration
+
+    await chatStore.fetchChats(search.value)
+
+    // Only apply results if this is still the latest search.
+    // Prevents stale responses from overwriting newer results.
+    if (gen === searchGeneration) {
+      showChats.value = minShowChats.value
+      bump.value++
+    }
+
+    while (searchlast.value) {
+      // We have another search queued.
+      const val2 = searchlast.value
+      searching.value = searchlast.value
+      searchlast.value = null
+      const gen2 = ++searchGeneration
+      await chatStore.fetchChats(val2)
+
+      if (gen2 === searchGeneration) {
+        showChats.value = minShowChats.value
+        bump.value++
+      }
+    }
+
+    searching.value = null
+  }
+}
+</script>
+<style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'bootstrap/scss/mixins/_breakpoints';
+@import 'assets/css/_color-vars.scss';
+@import 'assets/css/sticky-banner.scss';
+@import 'assets/css/sidebar-ads.scss';
+@import 'assets/css/navbar.scss';
+
+.chatback {
+  background-color: $color-yellow--light;
+}
+
+.chat {
+  border-left: 3px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.active {
+  background-color: rgba($color-green-background, 0.15) !important;
+  border-left-color: $color-green-background;
+}
+
+.chat:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+// Modern chat toolbar
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--color-gray-50);
+  border-bottom: 1px solid $color-gray-3;
+}
+
+.search-form {
+  flex: 1;
+}
+
+.search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  color: $color-gray--base;
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.search-input {
+  padding-left: 32px !important;
+  border-radius: var(--radius-xl, 1.25rem) !important;
+  border: 1px solid $color-gray-4 !important;
+  background: white !important;
+  font-size: 0.9rem !important;
+  height: 36px !important;
+
+  &:focus {
+    border-color: $color-green-background !important;
+    box-shadow: 0 0 0 2px rgba($color-green-background, 0.1) !important;
+  }
+}
+
+/* Red outline + count badge, consistent with the individual chat's mark-read button
+ * (.navbar-mark-read in ChatMobileNavbar.vue) so the "mark read" affordance looks the
+ * same in the list and in a conversation. */
+.mark-read-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid $color-red;
+  border-radius: var(--radius-xl, 1.25rem);
+  color: $color-red;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+
+  &:hover {
+    background: $color-red;
+    border-color: $color-red;
+    color: white;
+  }
+}
+
+.mark-all-read-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 0.6rem;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  line-height: 18px;
+}
+
+/* Empty state styling */
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px 20px;
+}
+
+.empty-state-content {
+  text-align: center;
+}
+
+.empty-state-icon {
+  font-size: 2.5rem;
+  color: $color-gray--light;
+  margin-bottom: 12px;
+}
+
+.empty-state-text {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-gray-600);
+  margin-bottom: 4px;
+}
+
+.empty-state-hint {
+  font-size: 0.85rem;
+  color: var(--color-gray-600);
+  margin: 0;
+}
+
+/* Chat action buttons (Show older, Hide all) */
+.chat-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+}
+
+.chat-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid $color-gray-4;
+  border-radius: var(--radius-xl, 1.25rem);
+  color: var(--color-gray-600);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  .action-icon {
+    font-size: 0.85rem;
+    color: $color-green-background;
+  }
+
+  &:hover {
+    background: rgba($color-green-background, 0.08);
+    border-color: $color-green-background;
+    color: $color-green--dark;
+  }
+}
+
+.chatlist {
+  // On mobile we substitute a different height navbar on this page.
+  // The layout provides ~60px padding-top but the navbar is 66px; add 6px to clear the overlap.
+  padding-top: 6px;
+  height: calc(100vh - $navbar-mobile-chat-height);
+
+  @include media-breakpoint-up(md) {
+    height: calc(100vh - var(--header-navbar-height));
+  }
+
+  &.stickyAdRendered {
+    height: calc(
+      100vh - $navbar-mobile-chat-height - $sticky-banner-height-mobile
+    );
+
+    @media (min-height: $mobile-tall) {
+      height: calc(
+        100vh - $navbar-mobile-chat-height - $sticky-banner-height-mobile-tall
+      );
+    }
+
+    @include media-breakpoint-up(md) {
+      height: calc(
+        100vh - var(--header-navbar-height) - $sticky-banner-height-desktop
+      );
+
+      @media (min-height: $desktop-tall) {
+        height: calc(
+          100vh - var(--header-navbar-height) -
+            $sticky-banner-height-desktop-tall
+        );
+      }
+    }
+  }
+
+  @supports (height: 100dvh) {
+    height: calc(100dvh - $navbar-mobile-chat-height);
+
+    @include media-breakpoint-up(md) {
+      height: calc(100dvh - var(--header-navbar-height));
+    }
+
+    &.stickyAdRendered {
+      height: calc(
+        100dvh - $navbar-mobile-chat-height - $sticky-banner-height-mobile
+      );
+
+      @media (min-height: $mobile-tall) {
+        height: calc(
+          100dvh - $navbar-mobile-chat-height -
+            $sticky-banner-height-mobile-tall
+        );
+      }
+
+      @include media-breakpoint-up(md) {
+        height: calc(
+          100dvh - var(--header-navbar-height) - $sticky-banner-height-desktop
+        );
+
+        @media (min-height: $desktop-tall) {
+          height: calc(
+            100dvh - var(--header-navbar-height) -
+              $sticky-banner-height-desktop-tall
+          );
+        }
+      }
+    }
+  }
+
+  display: flex;
+  flex-direction: column;
+
+  .emails-off-warning {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    background: var(--color-gray-50);
+    border-bottom: 1px solid $color-gray-3;
+  }
+
+  .notda {
+    flex-shrink: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+  }
+
+  .chatda {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.closedCount {
+  border-radius: 50%;
+}
+
+// Loading navbar (before chat data loads) - must match ChatMobileNavbar exactly
+// Total height should match $navbar-mobile-chat-height
+.layout {
+  display: grid;
+  grid-template-columns: 0.25em 40px 1fr 48px 0.25em;
+  grid-column-gap: 0.25em;
+  align-items: center;
+  min-height: 56px;
+
+  .backbutton {
+    grid-row: 1 / 2;
+    grid-column: 2 / 3;
+  }
+
+  .name {
+    grid-row: 1 / 2;
+    grid-column: 3 / 4;
+  }
+}
+
+.nav-back-btn {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: var(--radius-md, 0.5rem);
+}
+
+.back-icon {
+  color: white;
+  font-size: 1.25rem;
+}
+</style>

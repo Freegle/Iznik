@@ -1,0 +1,245 @@
+<template>
+  <div>
+    <div class="intro-text mb-3">
+      <p>
+        Posts with images work better, so we use AI-generated images for posts
+        and jobs. We reuse the same image &mdash; we don't generate a new one
+        each time. So it's important the image is a good one. Can you help?
+      </p>
+    </div>
+
+    <div class="image-card mb-3">
+      <div class="image-container">
+        <img
+          :src="currentImageUrl"
+          :alt="'AI image for ' + aiimage.name"
+          class="review-image"
+          @error="brokenImage"
+        />
+      </div>
+      <div class="image-caption">
+        <strong>{{ aiimage.name }}</strong>
+      </div>
+    </div>
+
+    <div v-if="!submitted" class="questions">
+      <div class="question-block mb-3">
+        <p class="question-label">
+          Does this image contain pictures of people?
+        </p>
+        <div class="d-flex gap-2">
+          <b-button
+            :variant="containsPeople === true ? 'primary' : 'outline-primary'"
+            @click="containsPeople = true"
+          >
+            <v-icon icon="check" class="me-1" />
+            Yes
+          </b-button>
+          <b-button
+            :variant="containsPeople === false ? 'primary' : 'outline-primary'"
+            @click="containsPeople = false"
+          >
+            <v-icon icon="times" class="me-1" />
+            No
+          </b-button>
+        </div>
+      </div>
+
+      <div class="question-block mb-3">
+        <p class="question-label">
+          Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
+        </p>
+        <p v-if="containsPeople === null" class="help-hint">
+          Please answer the question above first
+        </p>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" @click="regenerate">
+            Regenerate
+          </button>
+          <button
+            class="btn btn-outline-secondary"
+            :disabled="currentIndex === 0"
+            @click="previous"
+          >
+            Previous
+          </button>
+          <button
+            class="btn btn-outline-secondary"
+            :disabled="currentIndex >= images.length - 1"
+            @click="next"
+          >
+            Next
+          </button>
+        </div>
+        <div class="d-flex gap-2">
+          <SpinButton
+            variant="danger"
+            icon-name="thumbs-down"
+            label="No, not great"
+            :disabled="containsPeople === null"
+            @handle="reject"
+          />
+          <SpinButton
+            variant="success"
+            icon-name="thumbs-up"
+            label="Accept - looks good"
+            :disabled="containsPeople === null"
+            @handle="approve"
+          />
+        </div>
+      </div>
+
+      <div class="question-block mb-3">
+        <p class="question-label">Not suitable for a picture at all?</p>
+        <SpinButton
+          variant="outline-danger"
+          icon-name="ban"
+          label="This item shouldn't have an AI image"
+          @handle="suppress"
+        />
+        <p class="help-hint mt-2">
+          Use this for things that shouldn't have a generated picture at all
+          (e.g. cash, a lift, a voucher). We won't create an image for this item
+          again.
+        </p>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+import SpinButton from './SpinButton'
+import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
+import AIImagesAPI from '~/api/AIImagesAPI'
+
+const props = defineProps({
+  aiimage: {
+    type: Object,
+    required: true,
+  },
+})
+
+const emit = defineEmits(['next'])
+
+const microVolunteeringStore = useMicroVolunteeringStore()
+
+const containsPeople = ref(null)
+const submitted = ref(false)
+
+const images = ref([props.aiimage.url])
+const currentIndex = ref(0)
+
+const currentImageUrl = computed(() => images.value[currentIndex.value])
+
+async function regenerate() {
+  const api = new AIImagesAPI()
+  const result = await api.regenerate(props.aiimage.id)
+  images.value.push(result.url)
+  currentIndex.value = images.value.length - 1
+}
+
+function previous() {
+  if (currentIndex.value > 0) {
+    currentIndex.value--
+  }
+}
+
+function next() {
+  if (currentIndex.value < images.value.length - 1) {
+    currentIndex.value++
+  }
+}
+
+async function approve(callback) {
+  await microVolunteeringStore.respond({
+    aiimageid: props.aiimage.id,
+    response: 'Approve',
+    containspeople: containsPeople.value,
+  })
+
+  submitted.value = true
+  callback()
+  emit('next')
+}
+
+async function reject(callback) {
+  await microVolunteeringStore.respond({
+    aiimageid: props.aiimage.id,
+    response: 'Reject',
+    containspeople: containsPeople.value,
+  })
+
+  submitted.value = true
+  callback()
+  emit('next')
+}
+
+// Suppress: the item itself shouldn't have an AI image at all (terminal — once
+// enough reviewers agree, we never generate or show an image for this item again).
+// Distinct from Reject, which just means "this generated image is poor".
+async function suppress(callback) {
+  await microVolunteeringStore.respond({
+    aiimageid: props.aiimage.id,
+    response: 'Suppress',
+    containspeople: containsPeople.value,
+  })
+
+  submitted.value = true
+  callback()
+  emit('next')
+}
+
+function brokenImage(event) {
+  event.target.src = '/defaultprofile.png'
+}
+</script>
+
+<style scoped lang="scss">
+@import 'assets/css/_color-vars.scss';
+
+.intro-text {
+  color: $color-gray--darker;
+  line-height: 1.6;
+}
+
+.image-card {
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  background: $color-white;
+}
+
+.image-container {
+  width: 100%;
+  background: $color-gray--light;
+}
+
+.review-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 400px;
+  object-fit: contain;
+}
+
+.image-caption {
+  padding: 0.75rem 1rem;
+  background: $color-gray--lighter;
+  text-align: center;
+  font-size: 1.1rem;
+}
+
+.question-label {
+  font-weight: 600;
+  color: $color-gray--darker;
+  margin-bottom: 0.5rem;
+}
+
+.help-hint {
+  color: var(--color-gray-600);
+  font-size: 0.85rem;
+}
+</style>

@@ -1,0 +1,33 @@
+#!/bin/bash
+EMAIL=log@ehibbert.org.uk
+#
+# Restore the last backup into MySQL.  For use on the archive server.
+service mysql stop
+killall -9 mysqld
+sleep 10
+rm -rf /archive/mysql
+mkdir /archive/mysql
+cd /archive/backups
+(ls -t|head -n 5;ls)|sort|uniq -u|xargs rm
+back=`ls -1tr *xbstream | tail -1`
+cd /archive/mysql
+echo xbstream
+nice xbstream -x < /archive/backups/$back
+echo qpress
+for bf in `find . -iname "*\.qp"`
+do
+ nice qpress -d $bf $(dirname $bf)
+ rm $bf
+done
+echo prepare
+cd /archive/mysql
+nice xtrabackup --prepare --apply-log-only --target-dir=/archive/mysql
+chown -R mysql:mysql /archive/mysql
+service mysql start
+sleep 300
+maxdate=`mysql -A --execute="use iznik; SELECT MAX(arrival) FROM messages;" | grep -`
+if [ $? == 0 ]; then
+    cat /tmp/restore.out | mail -s "RESTORE: DB restored on backup update $maxdate" $EMAIL
+else
+    cat /tmp/restore.out | mail -s "RESTORE: FAILED on backup" $EMAIL
+fi

@@ -1,0 +1,1726 @@
+<template>
+  <div
+    v-observe-visibility="visibilityChanged"
+    class="my-message-mobile"
+    :style="!visible ? 'min-height: 150px' : ''"
+  >
+    <div v-if="visible && message?.id">
+      <div
+        v-if="showOld || !message.outcomes?.length"
+        class="message-card-border"
+        :class="{
+          'message-card-border--offer': message.type === 'Offer',
+          'message-card-border--wanted': message.type === 'Wanted',
+        }"
+      >
+        <div class="message-card" :data-message-id="message.id">
+          <!-- Rejected notice -->
+          <notice-message v-if="rejected" class="mb-2" variant="warning">
+            <v-icon icon="exclamation-triangle" /> This post has been returned
+            to you. It is not public yet.
+          </notice-message>
+
+          <!-- Main content area — side-by-side at lg+ -->
+          <div class="content-row">
+            <div class="photo-section">
+              <!-- Photo area -->
+              <div class="photo-area">
+                <!-- Status overlays -->
+                <b-img
+                  v-if="taken || received"
+                  lazy
+                  src="/freegled.jpg"
+                  class="status-overlay"
+                  alt="Completed"
+                />
+                <!-- Promised image overlay (matches browse page style) -->
+                <b-img
+                  v-else-if="message.promised && !message.outcomes?.length"
+                  lazy
+                  src="/promised.jpg"
+                  class="status-overlay"
+                  alt="Promised"
+                />
+
+                <!-- Photo count badge (desktop, multiple photos) -->
+                <div
+                  v-if="hasPhoto && message.attachments?.length > 1"
+                  class="photo-counter d-none d-lg-flex"
+                >
+                  <v-icon icon="camera" class="me-1" />{{
+                    message.attachments.length
+                  }}
+                </div>
+
+                <!-- Photo (desktop: click opens zoom modal) -->
+                <div
+                  v-if="hasPhoto"
+                  class="photo-container"
+                  @click.stop="showMessagePhotosModal = true"
+                >
+                  <OurUploadedImage
+                    v-if="message.attachments[0]?.ouruid"
+                    :src="message.attachments[0].ouruid"
+                    :modifiers="message.attachments[0].externalmods"
+                    alt="Item Photo"
+                    class="photo-image"
+                    :width="400"
+                    :height="200"
+                  />
+                  <NuxtPicture
+                    v-else-if="message.attachments[0]?.externaluid"
+                    format="webp"
+                    provider="uploadcare"
+                    :src="message.attachments[0].externaluid"
+                    :modifiers="message.attachments[0].externalmods"
+                    alt="Item Photo"
+                    class="photo-image"
+                    :width="400"
+                    :height="200"
+                  />
+                  <ProxyImage
+                    v-else-if="message.attachments[0]?.path"
+                    class-name="photo-image"
+                    alt="Item picture"
+                    :src="message.attachments[0].path"
+                    :width="400"
+                    :height="200"
+                    fit="cover"
+                  />
+                </div>
+
+                <!-- No photo placeholder -->
+                <div
+                  v-else
+                  class="no-photo-placeholder"
+                  :class="placeholderClass"
+                >
+                  <div class="placeholder-pattern"></div>
+                  <div class="icon-circle">
+                    <v-icon :icon="categoryIcon" class="placeholder-icon" />
+                  </div>
+                </div>
+
+                <!-- Title overlay (mobile only) -->
+                <div class="title-overlay d-lg-none">
+                  <div class="title-row">
+                    <div class="title-content">
+                      <MessageTag
+                        :id="message.id"
+                        :inline="true"
+                        class="title-tag ps-1 pe-1"
+                      />
+                      <span class="title-subject"
+                        >{{ strippedSubject }}
+                        <b-badge
+                          v-if="message.availablenow > 1"
+                          variant="info"
+                          class="ms-1"
+                          style="font-size: 0.55em; vertical-align: middle"
+                        >
+                          {{ message.availablenow }} available
+                        </b-badge></span
+                      >
+                    </div>
+                    <div class="photo-actions">
+                      <button class="photo-action-btn" @click.stop="share">
+                        <v-icon icon="share-alt" />
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="message.area" class="info-row">
+                    <span class="location">
+                      <v-icon icon="map-marker-alt" class="me-1" />{{
+                        message.area
+                      }}
+                    </span>
+                  </div>
+                  <div class="group-row">
+                    <ShowMore :items="messageGroups" :limit="3" inline>
+                      <template #item="{ item }"
+                        ><v-icon
+                          v-if="item.isHome"
+                          icon="home"
+                          class="me-1 text-muted"
+                          title="Home community (where this was originally posted)"
+                        /><nuxt-link
+                          :to="'/explore/' + item.nameshort"
+                          class="group-link"
+                          @click.stop
+                          >{{ item.namedisplay }}</nuxt-link
+                        ></template
+                      >
+                    </ShowMore>
+                    <span
+                      v-if="messageGroups.length && timeAgoExpandedDisplay"
+                      class="group-time-separator"
+                      >·</span
+                    >
+                    <span v-if="timeAgoExpandedDisplay" class="group-time">{{
+                      timeAgoExpandedDisplay
+                    }}</span>
+                    <span class="group-time-separator">·</span>
+                    <nuxt-link
+                      :to="'/message/' + message.id"
+                      class="post-id-link"
+                      @click.stop
+                    >
+                      #{{ message.id }}
+                    </nuxt-link>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Desktop details panel (lg+) -->
+            <div class="desktop-details d-none d-lg-flex">
+              <!-- Title row with edit button inline -->
+              <div class="desktop-header-row">
+                <div class="desktop-title-area">
+                  <div class="desktop-title-row">
+                    <MessageTag
+                      :id="message.id"
+                      :inline="true"
+                      class="desktop-tag"
+                    />
+                    <span class="desktop-subject"
+                      >{{ strippedSubject }}
+                      <b-badge
+                        v-if="message.availablenow > 1"
+                        variant="info"
+                        class="ms-1"
+                        style="font-size: 0.7em; vertical-align: middle"
+                      >
+                        {{ message.availablenow }} available
+                      </b-badge></span
+                    >
+                  </div>
+                  <div class="desktop-info">
+                    <template v-if="message.area">
+                      <v-icon icon="map-marker-alt" class="me-1" />
+                      <span>{{ message.area }}</span>
+                    </template>
+                    <template v-if="messageGroups.length">
+                      <span v-if="message.area" class="desktop-sep">·</span>
+                      <ShowMore :items="messageGroups" :limit="3" inline>
+                        <template #item="{ item }"
+                          ><v-icon
+                            v-if="item.isHome"
+                            icon="home"
+                            class="me-1 text-muted"
+                            title="Home community (where this was originally posted)"
+                          /><nuxt-link
+                            :to="'/explore/' + item.nameshort"
+                            class="desktop-group-link"
+                            @click.stop
+                            >{{ item.namedisplay }}</nuxt-link
+                          ></template
+                        >
+                      </ShowMore>
+                    </template>
+                    <template v-if="timeAgoExpandedDisplay">
+                      <span class="desktop-sep">·</span>
+                      <span>{{ timeAgoExpandedDisplay }}</span>
+                    </template>
+                    <span class="desktop-sep">·</span>
+                    <nuxt-link
+                      :to="'/message/' + message.id"
+                      class="desktop-id-link"
+                      @click.stop
+                    >
+                      #{{ message.id }}
+                    </nuxt-link>
+                  </div>
+                </div>
+                <button
+                  v-if="
+                    !rejected &&
+                    (!message.outcomes?.length || props.action === 'extend')
+                  "
+                  class="desktop-edit-btn"
+                  title="Edit this post"
+                  @click.stop="edit"
+                >
+                  <v-icon icon="pen" />
+                  <span class="desktop-edit-label">Edit</span>
+                </button>
+              </div>
+
+              <!-- Promised banner (desktop) -->
+              <div
+                v-if="
+                  message.promised &&
+                  !message.outcomes?.length &&
+                  !(taken || received)
+                "
+                class="desktop-promised"
+              >
+                <v-icon icon="handshake" class="me-1" />
+                Promised to&nbsp;<strong>{{ promisedToName }}</strong>
+                <button class="unpromise-btn ms-auto" @click.stop="unpromise">
+                  Unpromise
+                </button>
+              </div>
+
+              <!-- Action buttons at bottom -->
+              <div v-if="!rejected" class="desktop-actions">
+                <button
+                  v-if="message.type === 'Offer' && !taken && !withdrawn"
+                  class="action-btn action-btn--primary"
+                  title="Mark as taken"
+                  @click.stop="outcome('Taken', $event)"
+                >
+                  <v-icon icon="check" />
+                  <span>TAKEN</span>
+                </button>
+                <button
+                  v-if="message.type === 'Wanted' && !received && !withdrawn"
+                  class="action-btn action-btn--primary"
+                  title="Mark as received"
+                  @click.stop="outcome('Received', $event)"
+                >
+                  <v-icon icon="check" />
+                  <span>RECEIVED</span>
+                </button>
+                <button
+                  v-if="
+                    message.type === 'Offer' &&
+                    !taken &&
+                    !withdrawn &&
+                    !isPromised
+                  "
+                  class="action-btn action-btn--secondary"
+                  title="Promise to someone"
+                  @click.stop="openPromiseModal"
+                >
+                  <v-icon icon="handshake" />
+                  <span>Promise</span>
+                </button>
+                <button
+                  v-if="!taken && !received && !withdrawn"
+                  class="action-btn action-btn--light"
+                  title="Withdraw this post"
+                  @click.stop="outcome('Withdrawn', $event)"
+                >
+                  <v-icon icon="trash-alt" />
+                  <span>Withdraw</span>
+                </button>
+                <button
+                  v-if="message.canrepost && message.location && message.item"
+                  class="action-btn action-btn--light"
+                  title="Repost this"
+                  @click.stop="repost"
+                >
+                  <v-icon icon="sync" />
+                  <span>Repost</span>
+                </button>
+              </div>
+              <div v-else class="desktop-actions">
+                <button
+                  v-if="message.location && message.item"
+                  class="action-btn action-btn--warning"
+                  title="Edit and resend"
+                  @click.stop="repost"
+                >
+                  <v-icon icon="pen" />
+                  <span>Edit & Resend</span>
+                </button>
+                <button
+                  v-if="!withdrawn"
+                  class="action-btn action-btn--light"
+                  title="Withdraw this post"
+                  @click.stop="outcome('Withdrawn', $event)"
+                >
+                  <v-icon icon="trash-alt" />
+                  <span>Withdraw</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Action buttons - mobile only -->
+          <div v-if="!rejected" class="action-buttons d-lg-none">
+            <div class="action-buttons-left">
+              <button
+                v-if="message.type === 'Offer' && !taken && !withdrawn"
+                class="action-btn action-btn--primary"
+                @click="outcome('Taken', $event)"
+              >
+                <v-icon icon="check" />
+                <span>TAKEN</span>
+              </button>
+              <button
+                v-if="message.type === 'Wanted' && !received && !withdrawn"
+                class="action-btn action-btn--primary"
+                @click="outcome('Received', $event)"
+              >
+                <v-icon icon="check" />
+                <span>RECEIVED</span>
+              </button>
+              <button
+                v-if="
+                  message.type === 'Offer' &&
+                  !taken &&
+                  !withdrawn &&
+                  !isPromised
+                "
+                class="action-btn action-btn--secondary"
+                @click="openPromiseModal"
+              >
+                <v-icon icon="handshake" />
+                <span>Promise</span>
+              </button>
+              <button
+                v-if="!taken && !received && !withdrawn"
+                class="action-btn action-btn--light"
+                @click="outcome('Withdrawn', $event)"
+              >
+                <v-icon icon="trash-alt" />
+                <span>Withdraw</span>
+              </button>
+              <button
+                v-if="message.canrepost && message.location && message.item"
+                class="action-btn action-btn--light"
+                @click="repost"
+              >
+                <v-icon icon="sync" />
+                <span>Repost</span>
+              </button>
+            </div>
+            <div class="action-buttons-right">
+              <button
+                v-if="!message.outcomes?.length || props.action === 'extend'"
+                class="action-btn action-btn--light"
+                @click="edit"
+              >
+                <v-icon icon="pen" />
+                <span>Edit</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Rejected actions - mobile only -->
+          <div v-if="rejected" class="action-buttons d-lg-none">
+            <button
+              v-if="message.location && message.item"
+              class="action-btn action-btn--warning"
+              @click="repost"
+            >
+              <v-icon icon="pen" />
+              <span>Edit & Resend</span>
+            </button>
+            <button
+              v-if="!withdrawn"
+              class="action-btn action-btn--light"
+              @click="outcome('Withdrawn', $event)"
+            >
+              <v-icon icon="trash-alt" />
+              <span>Withdraw</span>
+            </button>
+          </div>
+
+          <!-- Replies section -->
+          <div v-if="replies?.length > 0" class="replies-section">
+            <div class="replies-header" @click="toggleExpanded">
+              <div class="replies-avatars">
+                <ProfileImage
+                  v-for="(reply, index) in repliesPreview"
+                  :key="'avatar-' + reply.userid"
+                  :image="getUserProfile(reply.userid)?.paththumb"
+                  :externaluid="getUserProfile(reply.userid)?.externaluid"
+                  :ouruid="getUserProfile(reply.userid)?.ouruid"
+                  :externalmods="getUserProfile(reply.userid)?.externalmods"
+                  :name="getUserName(reply.userid)"
+                  class="reply-avatar"
+                  :style="{ zIndex: index + 1 }"
+                  is-thumbnail
+                  size="sm"
+                />
+                <div v-if="replies.length > 3" class="more-count">
+                  +{{ replies.length - 3 }}
+                </div>
+              </div>
+              <div class="replies-text">
+                <span class="replies-count"
+                  >{{ replies.length }}
+                  {{ replies.length === 1 ? 'reply' : 'replies' }}</span
+                >
+                <v-icon
+                  :icon="expanded ? 'caret-up' : 'caret-down'"
+                  class="expand-icon"
+                />
+              </div>
+            </div>
+
+            <Transition name="replies-slide">
+              <div v-if="expanded" class="replies-list">
+                <MyMessageReply
+                  v-for="reply in replies"
+                  :key="'reply-' + reply.id"
+                  :reply="reply"
+                  :chats="chats"
+                  :message="message"
+                  :taken="taken"
+                  :received="received"
+                  :withdrawn="withdrawn"
+                  :closest="reply.userid === closestUser"
+                  :best="reply.userid === bestRatedUser"
+                  :quickest="reply.userid === quickestUser"
+                />
+              </div>
+            </Transition>
+          </div>
+          <div v-else-if="willAutoRepost" class="no-replies">
+            <p class="text-muted small">
+              No replies yet. Will auto-repost {{ canrepostatago }}.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modals -->
+      <MessagePhotosModal
+        v-if="showMessagePhotosModal && hasPhoto"
+        :id="id"
+        @hidden="showMessagePhotosModal = false"
+      />
+      <OutcomeModal
+        v-if="showOutcomeModal"
+        :id="id"
+        :type="outcomeType"
+        @outcome="bump++"
+        @hidden="onOutcomeHidden"
+      />
+      <MessageShareModal
+        v-if="showShareModal"
+        :id="message.id"
+        @hidden="showShareModal = false"
+      />
+      <MessageEditModal v-if="showEditModal" :id="id" @hidden="hidden" />
+      <LazyPromiseModal
+        v-if="showPromiseModal"
+        :messages="[message]"
+        :selected-message="message.id"
+        :users="replyusers"
+        @hidden="showPromiseModal = false"
+      />
+      <RenegeModal
+        v-if="showRenegeModal && promisedTo.length > 0"
+        :messages="[message.id]"
+        :selected-message="message.id"
+        :users="promisedToUsers"
+        :selected-user="promisedTo[0]?.id"
+        @hidden="showRenegeModal = false"
+      />
+    </div>
+  </div>
+</template>
+
+<script setup>
+import dayjs from 'dayjs'
+import { useComposeStore } from '~/stores/compose'
+import { useMessageStore } from '~/stores/message'
+import { useChatStore } from '~/stores/chat'
+import { useUserStore } from '~/stores/user'
+import { useTrystStore } from '~/stores/tryst'
+import { useLocationStore } from '~/stores/location'
+import { useGroupStore } from '~/stores/group'
+import { timeago } from '~/composables/useTimeFormat'
+import { milesAway } from '~/composables/useDistance'
+import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
+import { useMe } from '~/composables/useMe'
+import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
+import ProfileImage from '~/components/ProfileImage'
+import MessageTag from '~/components/MessageTag'
+import OurUploadedImage from '~/components/OurUploadedImage'
+
+const MyMessageReply = defineAsyncComponent(() =>
+  import('./MyMessageReply.vue')
+)
+const MessageShareModal = defineAsyncComponent(() =>
+  import('./MessageShareModal')
+)
+const NoticeMessage = defineAsyncComponent(() =>
+  import('~/components/NoticeMessage')
+)
+const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
+const MessageEditModal = defineAsyncComponent(() =>
+  import('./MessageEditModal')
+)
+const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('~/components/MessagePhotosModal')
+)
+
+const props = defineProps({
+  id: {
+    type: Number,
+    required: true,
+  },
+  showOld: {
+    type: Boolean,
+    required: true,
+  },
+  expand: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  action: {
+    type: String,
+    required: false,
+    default: null,
+  },
+})
+
+const messageStore = useMessageStore()
+const chatStore = useChatStore()
+const userStore = useUserStore()
+const trystStore = useTrystStore()
+const composeStore = useComposeStore()
+const locationStore = useLocationStore()
+const groupStore = useGroupStore()
+const router = useRouter()
+const { me } = useMe()
+
+// Use shared display composable
+const idRef = toRef(props, 'id')
+const {
+  message,
+  strippedSubject,
+  gotAttachments: hasPhoto,
+  timeAgoExpandedDisplay,
+  placeholderClass,
+  categoryIcon,
+} = useMessageDisplay(idRef)
+
+// Start visible immediately if data is already in the store (prefetched before mount)
+const visible = ref(!!messageStore.byId(props.id))
+const expanded = ref(false)
+const showOutcomeModal = ref(false)
+const outcomeType = ref(null)
+const showEditModal = ref(false)
+const showShareModal = ref(false)
+const showPromiseModal = ref(false)
+const showRenegeModal = ref(false)
+const showMessagePhotosModal = ref(false)
+const bump = ref(0)
+
+// Computed
+const hasOutcome = (val) => {
+  if (message.value?.outcomes?.length) {
+    return message.value.outcomes.some((o) => o.outcome === val)
+  }
+  return false
+}
+
+const taken = computed(() => hasOutcome('Taken'))
+const received = computed(() => hasOutcome('Received'))
+const withdrawn = computed(() => hasOutcome('Withdrawn'))
+
+const rejected = computed(() => {
+  if (message.value?.groups) {
+    return message.value.groups.some((g) => g.collection === 'Rejected')
+  }
+  return false
+})
+
+const replies = computed(() => {
+  if (message.value?.replies) {
+    const promisedUserIds = new Set(
+      (message.value.promises || []).map((p) => p.userid)
+    )
+    return [...message.value.replies].sort((a, b) => {
+      // Promised users come first
+      const aPromised = promisedUserIds.has(a.userid)
+      const bPromised = promisedUserIds.has(b.userid)
+      if (aPromised && !bPromised) return -1
+      if (!aPromised && bPromised) return 1
+      // Then sort by date (most recent first)
+      return new Date(b.date).getTime() - new Date(a.date).getTime()
+    })
+  }
+  return []
+})
+
+const repliesPreview = computed(() => {
+  return replies.value.slice(0, 3)
+})
+
+const replyuserids = computed(() => {
+  const ret = []
+  const seen = {}
+
+  // First add users who sent "Interested" replies to this post
+  if (message.value?.replies) {
+    for (const reply of message.value.replies) {
+      if (!seen[reply.userid]) {
+        ret.push(reply.userid)
+        seen[reply.userid] = true
+      }
+    }
+  }
+
+  // Then add users who are already promised
+  if (message.value?.promises) {
+    for (const promise of message.value.promises) {
+      if (!seen[promise.userid]) {
+        ret.push(promise.userid)
+        seen[promise.userid] = true
+      }
+    }
+  }
+
+  // Finally add all users from all chats (so we can promise to anyone we've chatted with)
+  const chatsList = chatStore?.list || []
+  for (const chat of chatsList) {
+    if (chat.otheruid && !seen[chat.otheruid]) {
+      ret.push(chat.otheruid)
+      seen[chat.otheruid] = true
+    }
+  }
+
+  return ret
+})
+
+const replyusers = computed(() => {
+  return replyuserids.value.map((uid) => userStore?.byId(uid)).filter((u) => u)
+})
+
+const closestUser = computed(() => {
+  let ret = null
+  let dist = null
+
+  if (replyusers.value?.length > 1 && me.value) {
+    replyusers.value.forEach((u) => {
+      if (u) {
+        const miles = milesAway(u.lat, u.lng, me.value.lat, me.value.lng)
+        if (dist === null || miles < dist) {
+          dist = miles
+          ret = u.id
+        }
+      }
+    })
+  }
+
+  return ret
+})
+
+const bestRatedUser = computed(() => {
+  let ret = null
+  let rating = null
+
+  if (replyusers.value?.length > 1) {
+    replyusers.value.forEach((u) => {
+      if (u && u.info?.ratings?.Up + u.info?.ratings?.Down > 2) {
+        const thisrating =
+          u.info.ratings.Up / (u.info.ratings.Up + u.info.ratings.Down)
+        if (
+          u.info.ratings.Up > u.info.ratings.Down &&
+          u.info.ratings.Up > 2 &&
+          (rating === null || thisrating > rating)
+        ) {
+          rating = thisrating
+          ret = u.id
+        }
+      }
+    })
+  }
+
+  return ret
+})
+
+const quickestUser = computed(() => {
+  let ret = null
+  let replytime = null
+
+  if (replyusers.value?.length > 1) {
+    replyusers.value.forEach((u) => {
+      if (
+        u &&
+        u.info?.replytime &&
+        (replytime === null || u.info.replytime < replytime)
+      ) {
+        replytime = u.info.replytime
+        ret = u.id
+      }
+    })
+  }
+
+  return ret
+})
+
+const chats = computed(() => {
+  const chatsList = chatStore?.list || []
+  return chatsList.filter((c) => message.value?.refchatids?.includes(c.id))
+})
+
+const promisedTo = computed(() => {
+  const ret = []
+  if (message.value?.promises?.length) {
+    message.value.promises.forEach((p) => {
+      const isSomeone = p.userid === me.value?.id
+      const user = userStore?.byId(p.userid)
+      if (isSomeone || user) {
+        const tryst = trystStore?.getByUser(p.userid)
+        const date = tryst
+          ? dayjs(tryst.arrangedfor).format('ddd Do HH:mm')
+          : null
+        ret.push({
+          id: p.userid,
+          name: isSomeone ? 'Someone' : user.displayname,
+          trystdate: date,
+        })
+      }
+    })
+  }
+  return ret
+})
+
+const promisedToName = computed(() => {
+  if (promisedTo.value.length > 0) {
+    return promisedTo.value[0].name
+  }
+  return ''
+})
+
+const promisedToUsers = computed(() => {
+  return promisedTo.value.map((p) => userStore?.byId(p.id)).filter((u) => u)
+})
+
+const isPromised = computed(() => {
+  return message.value?.promised && !message.value?.outcomes?.length
+})
+
+const willAutoRepost = computed(() => {
+  if (taken.value || received.value || !message.value?.canrepostat) {
+    return false
+  }
+  return dayjs(message.value.canrepostat).isAfter(dayjs())
+})
+
+const canrepostatago = computed(() => {
+  return message.value?.canrepostat ? timeago(message.value.canrepostat) : null
+})
+
+const messageGroups = computed(() => {
+  const raw = message.value?.groups
+  if (raw?.length) {
+    // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+    // the home group could be hidden behind "more". Flag it for the home icon.
+    return homeGroupFirst(raw)
+      .map((g) => {
+        const grp = groupStore?.get(g.groupid)
+        return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
+      })
+      .filter(Boolean)
+  }
+  return []
+})
+
+// Methods
+function getUserProfile(userid) {
+  return userStore?.byId(userid)?.profile
+}
+
+function getUserName(userid) {
+  return userStore?.byId(userid)?.displayname
+}
+
+function toggleExpanded() {
+  expanded.value = !expanded.value
+}
+
+const visibilityChanged = async (isVisible) => {
+  if (isVisible) {
+    // If already cached, show immediately without waiting for batch timer
+    if (messageStore.byId(props.id)) {
+      visible.value = true
+    }
+
+    const msg = await messageStore.fetch(props.id)
+    visible.value = true
+
+    // Fetch group info for display
+    if (msg?.groups?.length) {
+      msg.groups.forEach((g) => groupStore.fetch(g.groupid))
+    }
+  }
+}
+
+const outcome = (type, e) => {
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  showOutcomeModal.value = true
+  outcomeType.value = type
+}
+
+const onOutcomeHidden = () => {
+  showOutcomeModal.value = false
+
+  if (props.action === 'withdraw' || props.action === 'completed') {
+    router.push('/myposts')
+  }
+}
+
+const share = (e) => {
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  showShareModal.value = true
+}
+
+const openPromiseModal = (e) => {
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  // Fetch chats so we can show users with active chats
+  chatStore.fetchChats()
+  showPromiseModal.value = true
+}
+
+const unpromise = (e) => {
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  showRenegeModal.value = true
+}
+
+const edit = async (e) => {
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  await messageStore.fetch(props.id, true)
+  showEditModal.value = true
+}
+
+const repost = async (e) => {
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  // Repost may be triggered via ?action=repost before the store has loaded
+  // the message (e.g. direct link from an email). Sentry 7421179445 caught
+  // message.value.id crashing here — fetch if missing.
+  const msg = message.value || (await messageStore.fetch(props.id, true))
+  if (!msg) return
+
+  await composeStore.clearMessages()
+
+  await composeStore.setMessage(
+    0,
+    {
+      id: msg.id,
+      savedBy: msg.fromuser,
+      item: msg.item?.name.trim(),
+      description: msg.textbody?.trim() || null,
+      availablenow: msg.availablenow,
+      type: msg.type,
+      repostof: props.id,
+      deadline: null,
+    },
+    me
+  )
+
+  if (msg.location?.name) {
+    const locs = await locationStore.typeahead(msg.location.name)
+    composeStore.postcode = locs[0]
+  }
+
+  // Set the group from the original message so the dropdown shows the correct
+  // group rather than falling back to groupsnear[0] or a stale localStorage value.
+  // For multi-group originals, default to the most-recent arrival — the user
+  // can still change it in the compose dropdown.
+  if (msg.groups?.length > 0) {
+    const mostRecent = [...msg.groups].sort(
+      (a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0)
+    )[0]
+    composeStore.group = mostRecent.groupid
+  }
+
+  await composeStore.setAttachmentsForMessage(0, msg.attachments)
+  router.push(msg.type === 'Offer' ? '/give' : '/find')
+}
+
+const hidden = () => {
+  showEditModal.value = false
+  messageStore.fetch(props.id)
+}
+
+// Watchers
+watch(
+  message,
+  (newVal) => {
+    if (newVal?.promises) {
+      newVal.promises.forEach((p) => userStore.fetch(p.userid))
+    }
+    if (newVal?.replycount === 1) {
+      expanded.value = true
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  replies,
+  (newVal) => {
+    if (newVal?.length === 1) {
+      expanded.value = true
+    }
+  },
+  { immediate: true }
+)
+
+watch(replyuserids, (newVal) => {
+  newVal.forEach((uid) => userStore.fetch(uid))
+})
+
+onMounted(async () => {
+  expanded.value = props.expand
+
+  // Auto-open edit modal for extend action
+  if (props.action === 'extend') {
+    await messageStore.fetch(props.id, true)
+    showEditModal.value = true
+  }
+
+  // Auto-open outcome modal for withdraw/completed actions
+  if (props.action === 'withdraw') {
+    outcomeType.value = 'Withdrawn'
+    showOutcomeModal.value = true
+  } else if (props.action === 'completed') {
+    const msg = message.value || (await messageStore.fetch(props.id, true))
+    outcomeType.value = msg?.type === 'Offer' ? 'Taken' : 'Received'
+    showOutcomeModal.value = true
+  } else if (props.action === 'repost') {
+    repost()
+  }
+})
+</script>
+
+<style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'bootstrap/scss/mixins/_breakpoints';
+@import 'assets/css/_color-vars.scss';
+
+.my-message-mobile {
+  margin-bottom: 16px;
+  min-height: 1px;
+}
+
+/* Wrapper clips content to rounded shape — photo fills to the outer edge */
+.message-card-border {
+  position: relative;
+  border-radius: var(--radius-md, 0.5rem);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  margin-bottom: 12px;
+}
+
+.message-card {
+  background: white;
+  overflow: hidden;
+}
+
+.photo-section {
+  @include media-breakpoint-up(lg) {
+    width: 200px;
+    height: 200px;
+    flex-shrink: 0;
+  }
+}
+
+.content-row {
+  @include media-breakpoint-up(lg) {
+    display: flex;
+    align-items: stretch;
+  }
+}
+
+.photo-area {
+  position: relative;
+  width: 100%;
+  height: 0;
+  padding-bottom: 50%;
+  background: $color-gray--light;
+  overflow: hidden;
+
+  @include media-breakpoint-up(lg) {
+    width: 200px;
+    height: 200px;
+    padding-bottom: 0;
+  }
+}
+
+.photo-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+
+  @include media-breakpoint-up(lg) {
+    width: 200px;
+    height: 200px;
+  }
+}
+
+:deep(.photo-image),
+:deep(picture),
+:deep(picture img) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.no-photo-placeholder {
+  @include media-breakpoint-up(lg) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 200px;
+    height: 200px;
+  }
+}
+
+.photo-counter {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 0.2rem 0.5rem;
+  border-radius: 1rem;
+  font-size: 0.75rem;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+/* Desktop details panel */
+.desktop-details {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: details-panel;
+}
+
+.desktop-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-gray-400, #ced4da);
+  border-radius: var(--radius-xl, 1.25rem);
+  background: $color-gray--lighter;
+  color: var(--color-gray-700, #495057);
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition-normal);
+
+  @include media-breakpoint-between(lg, xxl) {
+    padding: 4px 8px;
+
+    .desktop-edit-label {
+      display: none;
+    }
+  }
+
+  &:hover {
+    background: darken($color-gray--lighter, 10%);
+  }
+}
+
+.desktop-header-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.desktop-title-area {
+  flex: 1;
+  min-width: 0;
+}
+
+.desktop-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+
+  /* Below xxl the panel is narrow — reduce subject font size slightly */
+  @include media-breakpoint-between(lg, xxl) {
+    .desktop-subject {
+      font-size: 0.95rem;
+    }
+  }
+}
+
+.desktop-tag {
+  flex-shrink: 0;
+}
+
+:deep(.desktop-tag .tagbadge) {
+  font-size: 0.75rem;
+}
+
+.desktop-subject {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: $color-gray--darker;
+  line-height: 1.3;
+}
+
+.desktop-info {
+  font-size: 0.78rem;
+  color: $color-gray--normal;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  line-height: 1.4;
+}
+
+.desktop-sep {
+  margin: 0 3px;
+  opacity: 0.5;
+}
+
+.desktop-group-link {
+  color: $color-gray--normal;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.desktop-id-link {
+  color: $color-gray--base;
+  text-decoration: none;
+  font-size: 0.8rem;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.desktop-promised {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: $color-blue--x-light;
+  border-radius: var(--radius-sm, 0.375rem);
+  font-size: 0.85rem;
+  color: $color-blue--1;
+}
+
+.desktop-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: nowrap;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid $color-gray--lighter;
+}
+
+.no-photo-placeholder {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &.offer-gradient {
+    background: radial-gradient(
+        ellipse at 30% 20%,
+        rgba(129, 199, 132, 0.9) 0%,
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse at 70% 80%,
+        rgba(56, 142, 60, 0.8) 0%,
+        transparent 50%
+      ),
+      linear-gradient(160deg, #66bb6a 0%, #43a047 50%, #2e7d32 100%);
+
+    .placeholder-pattern {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70' viewBox='0 0 70 70'%3E%3Ctext x='35' y='52' font-family='Arial,sans-serif' font-size='50' font-weight='bold' fill='white' fill-opacity='0.12' text-anchor='middle'%3E?%3C/text%3E%3C/svg%3E");
+      background-size: 70px 70px;
+    }
+  }
+
+  &.wanted-gradient {
+    background: radial-gradient(
+        ellipse at 25% 25%,
+        rgba(144, 202, 249, 0.9) 0%,
+        transparent 45%
+      ),
+      radial-gradient(
+        ellipse at 75% 75%,
+        rgba(66, 165, 245, 0.7) 0%,
+        transparent 45%
+      ),
+      linear-gradient(160deg, #64b5f6 0%, #42a5f5 50%, #1e88e5 100%);
+
+    .placeholder-pattern {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70' viewBox='0 0 70 70'%3E%3Ctext x='35' y='52' font-family='Arial,sans-serif' font-size='50' font-weight='bold' fill='white' fill-opacity='0.12' text-anchor='middle'%3E?%3C/text%3E%3C/svg%3E");
+      background-size: 70px 70px;
+    }
+  }
+}
+
+.placeholder-pattern {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.icon-circle {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.placeholder-icon {
+  font-size: 1.5rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.status-overlay {
+  position: absolute;
+  z-index: 10;
+  transform: rotate(15deg) translate(-50%, -50%);
+  top: 50%;
+  left: 50%;
+  width: 60%;
+  max-width: 160px;
+  height: auto;
+  pointer-events: none;
+}
+
+.unpromise-btn {
+  background: $color-orange--dark;
+  border: none;
+  border-radius: var(--radius-sm, 0.375rem);
+  color: white;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background var(--transition-normal);
+
+  &:hover {
+    background: darken($color-orange--dark, 10%);
+  }
+}
+
+.photo-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.photo-action-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.4);
+  }
+
+  svg {
+    font-size: 0.75rem;
+  }
+}
+
+.title-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 2rem 0.75rem 0.5rem;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.6) 70%,
+    transparent 100%
+  );
+  color: white;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0.15rem;
+}
+
+.title-content {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.title-tag {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+}
+
+:deep(.title-tag .tagbadge) {
+  font-size: 0.6rem;
+}
+
+.title-subject {
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  opacity: 0.9;
+}
+
+.group-row {
+  font-size: 0.65rem;
+  opacity: 0.85;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.group-link {
+  color: white;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.group-time-separator {
+  opacity: 0.6;
+}
+
+.group-time {
+  opacity: 0.7;
+}
+
+.post-id-link {
+  color: rgba(255, 255, 255, 0.5);
+  text-decoration: none;
+  font-size: 0.6rem;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: underline;
+  }
+}
+
+.action-buttons {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid $color-gray--lighter;
+}
+
+.action-buttons-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action-buttons-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-xl, 1.25rem);
+  corner-shape: round;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+
+  &--primary {
+    background: $color-green-background;
+    color: white;
+
+    &:hover {
+      background: darken($color-green-background, 10%);
+    }
+  }
+
+  &--secondary {
+    background: $color-blue--bright;
+    color: white;
+
+    &:hover {
+      background: darken($color-blue--bright, 10%);
+    }
+  }
+
+  &--warning {
+    background: $color-orange--dark;
+    color: white;
+
+    &:hover {
+      background: darken($color-orange--dark, 10%);
+    }
+  }
+
+  &--light {
+    background: $color-gray--lighter;
+    color: var(--color-gray-700, #495057);
+    border: 1px solid var(--color-gray-400, #ced4da);
+
+    &:hover {
+      background: darken($color-gray--lighter, 10%);
+    }
+  }
+}
+
+/* Shrink action buttons when the details panel content box is narrow (must come after .action-btn base styles) */
+@container details-panel (max-width: 400px) {
+  .desktop-actions {
+    gap: 3px;
+  }
+
+  .action-btn {
+    padding: 5px 7px;
+    font-size: 0.72rem;
+    gap: 3px;
+  }
+}
+
+.replies-section {
+  padding: 0;
+}
+
+.replies-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+  background: lighten($color-green-background, 45%);
+  border-left: 4px solid $color-green-background;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background: lighten($color-green-background, 40%);
+  }
+
+  @include media-breakpoint-up(lg) {
+    background: $color-gray--lighter;
+    border-left: none;
+    border-top: 1px solid $color-gray--light;
+    padding: 8px 14px;
+
+    &:hover {
+      background: darken($color-gray--lighter, 5%);
+    }
+  }
+}
+
+.replies-avatars {
+  display: flex;
+  align-items: center;
+  height: 36px;
+}
+
+.reply-avatar {
+  margin-left: -8px;
+  position: relative;
+  width: 32px;
+  height: 32px;
+
+  &:first-child {
+    margin-left: 0;
+  }
+
+  :deep(.ProfileImage__container) {
+    width: 32px !important;
+    height: 32px !important;
+  }
+
+  :deep(.profile) {
+    width: 32px !important;
+    height: 32px !important;
+    display: block !important;
+  }
+
+  :deep(.circle) {
+    width: 32px !important;
+    height: 32px !important;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    display: block !important;
+  }
+
+  :deep(picture) {
+    width: 32px !important;
+    height: 32px !important;
+    display: block !important;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+
+  :deep(img) {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+    display: block !important;
+    border: none !important;
+    border-radius: 50%;
+  }
+
+  :deep(.generated-avatar) {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+
+    svg {
+      width: 32px !important;
+      height: 32px !important;
+      display: block !important;
+    }
+  }
+}
+
+.more-count {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: $color-green-background;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: white;
+  margin-left: 4px;
+  border: 2px solid white;
+  box-shadow: var(--shadow-sm);
+  z-index: 10;
+  position: relative;
+}
+
+.replies-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: $color-green-background;
+  color: white;
+  padding: 8px 14px;
+  border-radius: var(--radius-xl, 1.25rem);
+  font-weight: 600;
+}
+
+.replies-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.expand-icon {
+  color: white;
+}
+
+.replies-list {
+  padding: 0 12px 12px;
+}
+
+.no-replies {
+  padding: 12px;
+  text-align: center;
+}
+
+.replies-slide-enter-active,
+.replies-slide-leave-active {
+  transition: all var(--transition-slow);
+  overflow: hidden;
+}
+
+.replies-slide-enter-from,
+.replies-slide-leave-to {
+  opacity: 0;
+  max-height: 0;
+  transform: translateY(-10px);
+}
+
+.replies-slide-enter-to,
+.replies-slide-leave-from {
+  opacity: 1;
+  max-height: 2000px;
+  transform: translateY(0);
+}
+</style>

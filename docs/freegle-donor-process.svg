@@ -1,0 +1,406 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 1460" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#666"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3B7DD8"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#43A047"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#EF6C00"/>
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7B1FA2"/>
+    </marker>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2E7D32"/>
+      <stop offset="100%" stop-color="#1B5E20"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FAFAFA"/>
+      <stop offset="100%" stop-color="#F0F0F0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1520" height="1460" rx="12" fill="url(#bgGrad)"/>
+
+  <!-- Header -->
+  <rect x="0" y="0" width="1520" height="72" rx="12" fill="url(#headerGrad)"/>
+  <rect x="0" y="40" width="1520" height="32" fill="url(#headerGrad)"/>
+  <text x="760" y="32" text-anchor="middle" fill="white" font-size="26" font-weight="bold">Freegle Donor Process</text>
+  <text x="760" y="58" text-anchor="middle" fill="#C8E6C9" font-size="13">Updated February 2026 &#x2014; Based on Nov 2023 v3 diagram, reviewed against codebase</text>
+
+  <!-- Legend -->
+  <rect x="1250" y="85" width="255" height="120" rx="8" fill="white" stroke="#DDD" filter="url(#shadow)"/>
+  <text x="1265" y="105" font-size="12" font-weight="bold" fill="#333">Responsible Person</text>
+  <rect x="1265" y="112" width="14" height="14" rx="3" fill="#3B7DD8"/>
+  <text x="1285" y="124" font-size="12" fill="#333">Jacky (Admin)</text>
+  <rect x="1265" y="132" width="14" height="14" rx="3" fill="#43A047"/>
+  <text x="1285" y="144" font-size="12" fill="#333">Jane (Treasurer)</text>
+  <rect x="1265" y="152" width="14" height="14" rx="3" fill="#EF6C00"/>
+  <text x="1285" y="164" font-size="12" fill="#333">Edward (Tech)</text>
+  <rect x="1265" y="172" width="14" height="14" rx="3" fill="#7B1FA2"/>
+  <text x="1285" y="184" font-size="12" fill="#333">Automation (Code)</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Donation Sources (Top Row) -->
+  <!-- ============================================================ -->
+  <text x="760" y="102" text-anchor="middle" font-size="15" font-weight="bold" fill="#444">Donation Sources</text>
+
+  <!-- Col 1: One-off Stripe/PayPal -->
+  <rect x="20" y="115" width="190" height="55" rx="8" fill="#E8F5E9" stroke="#4CAF50" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="115" y="138" text-anchor="middle" font-size="12" font-weight="bold" fill="#2E7D32">One-off Donation</text>
+  <text x="115" y="155" text-anchor="middle" font-size="10" fill="#555">Stripe (primary) / PayPal</text>
+
+  <!-- Col 2: Monthly Subscription -->
+  <rect x="225" y="115" width="190" height="55" rx="8" fill="#E8F5E9" stroke="#4CAF50" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="320" y="138" text-anchor="middle" font-size="12" font-weight="bold" fill="#2E7D32">Monthly Subscription</text>
+  <text x="320" y="155" text-anchor="middle" font-size="10" fill="#555">Stripe / PayPal recurring</text>
+
+  <!-- Col 3: PayPal Giving Fund (incl eBay) -->
+  <rect x="430" y="115" width="190" height="55" rx="8" fill="#E3F2FD" stroke="#1976D2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="525" y="135" text-anchor="middle" font-size="12" font-weight="bold" fill="#1565C0">PayPal Giving Fund</text>
+  <text x="525" y="150" text-anchor="middle" font-size="10" fill="#555">Incl. eBay selling for charity</text>
+  <text x="525" y="163" text-anchor="middle" font-size="10" fill="#555">CSV import by script</text>
+
+  <!-- Col 4: Cheque -->
+  <rect x="635" y="115" width="190" height="55" rx="8" fill="#FFF3E0" stroke="#F57C00" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="730" y="138" text-anchor="middle" font-size="12" font-weight="bold" fill="#E65100">Cheque</text>
+  <text x="730" y="155" text-anchor="middle" font-size="10" fill="#555">Posted to Treasurer</text>
+
+  <!-- Col 5: Direct Debit / Standing Order -->
+  <rect x="840" y="115" width="190" height="55" rx="8" fill="#FFF3E0" stroke="#F57C00" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="935" y="138" text-anchor="middle" font-size="12" font-weight="bold" fill="#E65100">Direct Debit / SO</text>
+  <text x="935" y="155" text-anchor="middle" font-size="10" fill="#555">Bank transfer</text>
+
+
+  <!-- Col 7: Give as you Live -->
+  <rect x="1250" y="215" width="190" height="65" rx="8" fill="#F5F5F5" stroke="#9E9E9E" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="1345" y="235" text-anchor="middle" font-size="12" font-weight="bold" fill="#616161">Give as you Live</text>
+  <text x="1345" y="250" text-anchor="middle" font-size="9" fill="#888">GAYL sends confirmation to donor.</text>
+  <text x="1345" y="263" text-anchor="middle" font-size="9" fill="#888">No user details shared with Freegle.</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Platform Auto-Receipt Emails -->
+  <!-- ============================================================ -->
+  <!-- Small callout boxes showing what the platforms send automatically -->
+
+  <!-- Stripe/PayPal receipt note (near cols 1-2) -->
+  <rect x="20" y="175" width="395" height="20" rx="4" fill="#F1F8E9" stroke="#AED581" stroke-width="0.5"/>
+  <text x="217" y="189" text-anchor="middle" font-size="9" fill="#558B2F">Platform auto-email: Stripe receipt (if Dashboard enabled) / PayPal always sends receipt</text>
+
+  <!-- Subscription amounts note -->
+  <rect x="225" y="195" width="190" height="18" rx="4" fill="#F1F8E9" stroke="#AED581" stroke-width="0.5"/>
+  <text x="320" y="208" text-anchor="middle" font-size="9" fill="#558B2F">&#xA3;1 / &#xA3;2 / &#xA3;5 / &#xA3;10 / &#xA3;15 / &#xA3;25 per month</text>
+
+  <!-- PPGF receipt note -->
+  <rect x="430" y="175" width="190" height="20" rx="4" fill="#E3F2FD" stroke="#90CAF9" stroke-width="0.5"/>
+  <text x="525" y="189" text-anchor="middle" font-size="9" fill="#1565C0">PPGF sends receipt + tracker link</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Automated Processing (Columns 1-2) -->
+  <!-- ============================================================ -->
+
+  <!-- Arrows from source boxes down -->
+  <line x1="115" y1="170" x2="115" y2="220" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+  <line x1="320" y1="170" x2="320" y2="220" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- Col 1-2 shared: Webhook Processing -->
+  <rect x="20" y="225" width="395" height="45" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="217" y="245" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Webhook Auto-Records Donation</text>
+  <text x="217" y="260" text-anchor="middle" font-size="10" fill="#666">Payment notification received and stored automatically</text>
+
+  <!-- Arrow down -->
+  <line x1="217" y1="270" x2="217" y2="290" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- User Matching -->
+  <rect x="20" y="295" width="395" height="60" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="217" y="315" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Automated User Matching</text>
+  <text x="217" y="330" text-anchor="middle" font-size="10" fill="#666">1. Logged-in donor matched directly &#x2192; 2. Email address lookup</text>
+  <text x="217" y="343" text-anchor="middle" font-size="10" fill="#666">3. Unlinked if no match found</text>
+
+  <!-- Split into two paths -->
+  <line x1="130" y1="355" x2="130" y2="380" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+  <line x1="310" y1="355" x2="310" y2="380" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- Left: Linked donor path -->
+  <rect x="20" y="385" width="210" height="45" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1" filter="url(#shadow)"/>
+  <text x="125" y="403" text-anchor="middle" font-size="10" font-weight="bold" fill="#2E7D32">Linked (matched to user)</text>
+  <text x="125" y="418" text-anchor="middle" font-size="9" fill="#666">Thank-you tracked per user</text>
+
+  <!-- Right: Unlinked donor path -->
+  <rect x="245" y="385" width="170" height="45" rx="8" fill="#FFF8E1" stroke="#F9A825" stroke-width="1" filter="url(#shadow)"/>
+  <text x="330" y="403" text-anchor="middle" font-size="10" font-weight="bold" fill="#F57F17">Unlinked (no user match)</text>
+  <text x="330" y="418" text-anchor="middle" font-size="9" fill="#666">Thanked via Payer email</text>
+
+  <!-- Arrows down from both paths -->
+  <line x1="125" y1="430" x2="125" y2="450" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+  <line x1="330" y1="430" x2="330" y2="450" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- Both converge to batch thank-you -->
+  <rect x="20" y="455" width="395" height="55" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="217" y="473" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Batch Thank-You Email (daily 09:00)</text>
+  <text x="217" y="488" text-anchor="middle" font-size="10" fill="#666">Linked: email to user's preferred address</text>
+  <text x="217" y="500" text-anchor="middle" font-size="10" fill="#666">Unlinked: email to Payer address from payment</text>
+
+  <!-- Arrow down -->
+  <line x1="217" y1="510" x2="217" y2="525" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- Info@ notification -->
+  <rect x="20" y="530" width="395" height="50" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="217" y="548" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Info@ Notification (if &#x2265;&#xA3;20 or first recurring)</text>
+  <text x="217" y="565" text-anchor="middle" font-size="10" fill="#666">Email to info@ilovefreegle.org &#x2014; monitored by Jacky</text>
+
+  <!-- Manual identification process (from Canva original) -->
+  <!-- Arrow right from Info@ to manual ID box -->
+  <line x1="415" y1="555" x2="440" y2="555" stroke="#3B7DD8" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <rect x="445" y="535" width="175" height="70" rx="8" fill="#E3F2FD" stroke="#3B7DD8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="532" y="553" text-anchor="middle" font-size="10" font-weight="bold" fill="#1565C0">Manual Thank-You</text>
+  <text x="532" y="566" text-anchor="middle" font-size="9" fill="#666">Jacky sends personal thanks.</text>
+  <text x="532" y="579" text-anchor="middle" font-size="9" fill="#666">If name unknown, Jane queries</text>
+  <text x="532" y="592" text-anchor="middle" font-size="9" fill="#666">ModTools to find Freegle ID.</text>
+
+  <!-- Arrow down -->
+  <line x1="217" y1="580" x2="217" y2="595" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- Gift Aid notification -->
+  <rect x="20" y="600" width="395" height="45" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="217" y="618" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Gift Aid Prompt (if no declaration)</text>
+  <text x="217" y="633" text-anchor="middle" font-size="10" fill="#666">Automatic email asking donor to declare Gift Aid status</text>
+
+  <!-- Arrow down to recovery (dashed from unlinked path) -->
+  <line x1="310" y1="430" x2="380" y2="430" stroke="#7B1FA2" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="380" y1="430" x2="380" y2="660" stroke="#7B1FA2" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="380" y1="660" x2="217" y2="660" stroke="#7B1FA2" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-purple)"/>
+
+  <!-- Recovery mechanism -->
+  <rect x="20" y="665" width="395" height="45" rx="8" fill="#EDE7F6" stroke="#7B1FA2" stroke-width="1" filter="url(#shadow)" stroke-dasharray="4,3"/>
+  <text x="217" y="683" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Auto-Retry User Matching (every 10 min)</text>
+  <text x="217" y="698" text-anchor="middle" font-size="10" fill="#666">Matches unlinked donations to users by email address</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Column 3 - PayPal Giving Fund -->
+  <!-- ============================================================ -->
+  <line x1="525" y1="170" x2="525" y2="220" stroke="#EF6C00" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+
+  <!-- CSV Upload -->
+  <rect x="430" y="225" width="190" height="45" rx="8" fill="#FFF3E0" stroke="#EF6C00" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="525" y="243" text-anchor="middle" font-size="11" font-weight="bold" fill="#EF6C00">Edward: CSV Upload</text>
+  <text x="525" y="258" text-anchor="middle" font-size="10" fill="#666">Import via script</text>
+
+  <line x1="525" y1="270" x2="525" y2="290" stroke="#EF6C00" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+
+  <!-- Auto source detection -->
+  <rect x="430" y="295" width="190" height="55" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="525" y="315" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Auto Source Detection</text>
+  <text x="525" y="330" text-anchor="middle" font-size="10" fill="#666">PayPal Giving / eBay /</text>
+  <text x="525" y="342" text-anchor="middle" font-size="10" fill="#666">Facebook</text>
+
+  <line x1="525" y1="350" x2="525" y2="370" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- User matching by email -->
+  <rect x="430" y="375" width="190" height="45" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="525" y="393" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">User Match by Email</text>
+  <text x="525" y="408" text-anchor="middle" font-size="10" fill="#666">Dedup by date range</text>
+
+  <line x1="525" y1="420" x2="525" y2="440" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- Thank-you if >=20 -->
+  <rect x="430" y="445" width="190" height="45" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="525" y="463" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Thank-you if &#x2265;&#xA3;20</text>
+  <text x="525" y="478" text-anchor="middle" font-size="10" fill="#666">Non-anonymous only</text>
+
+  <!-- Excluded payers note -->
+  <rect x="430" y="505" width="190" height="25" rx="4" fill="#FFEBEE" stroke="#E53935" stroke-width="0.5"/>
+  <text x="525" y="522" text-anchor="middle" font-size="9" fill="#C62828">Excluded: PPGF payer account (claims GA itself)</text>
+
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Column 4 - Cheque -->
+  <!-- ============================================================ -->
+  <line x1="730" y1="170" x2="730" y2="220" stroke="#3B7DD8" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- Jacky receives -->
+  <rect x="635" y="225" width="190" height="45" rx="8" fill="#E3F2FD" stroke="#3B7DD8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="730" y="243" text-anchor="middle" font-size="11" font-weight="bold" fill="#1565C0">Jacky receives cheque</text>
+  <text x="730" y="258" text-anchor="middle" font-size="10" fill="#666">Updates spreadsheet</text>
+
+  <line x1="730" y1="270" x2="730" y2="290" stroke="#3B7DD8" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- Photo to Jane -->
+  <rect x="635" y="295" width="190" height="45" rx="8" fill="#E3F2FD" stroke="#3B7DD8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="730" y="313" text-anchor="middle" font-size="11" font-weight="bold" fill="#1565C0">Sends photo to Jane</text>
+  <text x="730" y="328" text-anchor="middle" font-size="10" fill="#666">With any correspondence</text>
+
+  <line x1="730" y1="340" x2="730" y2="360" stroke="#3B7DD8" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- Jane adds to Xero -->
+  <rect x="635" y="365" width="190" height="55" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="730" y="383" text-anchor="middle" font-size="11" font-weight="bold" fill="#2E7D32">Jane: Xero entry</text>
+  <text x="730" y="398" text-anchor="middle" font-size="10" fill="#666">Create "receive money"</text>
+  <text x="730" y="410" text-anchor="middle" font-size="10" fill="#666">Add to Freegle contacts</text>
+
+  <!-- Arrow down to shared CSV box -->
+  <line x1="730" y1="420" x2="730" y2="460" stroke="#43A047" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Column 5 - Direct Debit / Standing Order -->
+  <!-- ============================================================ -->
+  <line x1="935" y1="170" x2="935" y2="220" stroke="#43A047" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <!-- Jane records bank donations -->
+  <rect x="840" y="225" width="190" height="45" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="935" y="243" text-anchor="middle" font-size="11" font-weight="bold" fill="#2E7D32">Jane: records donations</text>
+  <text x="935" y="258" text-anchor="middle" font-size="10" fill="#666">From bank statements</text>
+
+  <line x1="935" y1="270" x2="935" y2="290" stroke="#43A047" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <!-- Jane reconciliation -->
+  <rect x="840" y="295" width="190" height="45" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="935" y="313" text-anchor="middle" font-size="11" font-weight="bold" fill="#2E7D32">Jane: reconciliation</text>
+  <text x="935" y="328" text-anchor="middle" font-size="10" fill="#666">Xero + bank statements</text>
+
+  <!-- Arrow down to shared CSV box (longer drop) -->
+  <line x1="935" y1="340" x2="935" y2="460" stroke="#43A047" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <!-- ============================================================ -->
+  <!-- SHARED: ModTools CSV Upload (Cheque + DD/SO combined) -->
+  <!-- ============================================================ -->
+  <rect x="635" y="465" width="395" height="50" rx="8" fill="#FFF3E0" stroke="#EF6C00" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="832" y="485" text-anchor="middle" font-size="11" font-weight="bold" fill="#EF6C00">ModTools CSV Upload (Cheque + DD/SO)</text>
+  <text x="832" y="500" text-anchor="middle" font-size="10" fill="#666">External donations recorded to system via ModTools</text>
+
+  <line x1="832" y1="515" x2="832" y2="535" stroke="#EF6C00" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+
+  <!-- Auto thank-you (shared) -->
+  <rect x="635" y="540" width="395" height="45" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="832" y="558" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Auto Thank-You Email</text>
+  <text x="832" y="573" text-anchor="middle" font-size="10" fill="#666">Sent automatically after CSV import records donation</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Donation Ask Emails -->
+  <!-- ============================================================ -->
+  <rect x="20" y="730" width="600" height="55" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="320" y="752" text-anchor="middle" font-size="12" font-weight="bold" fill="#7B1FA2">Donation Ask Emails (daily 17:00)</text>
+  <text x="320" y="768" text-anchor="middle" font-size="10" fill="#666">Sent to users who received items (last 24h window) &#x2014; min 7 days between asks</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Supporter Advantage -->
+  <!-- ============================================================ -->
+  <rect x="640" y="730" width="580" height="55" rx="8" fill="#FFF8DC" stroke="#DAA520" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="930" y="748" text-anchor="middle" font-size="12" font-weight="bold" fill="#B8860B">Supporter Advantage (after donating)</text>
+  <text x="930" y="763" text-anchor="middle" font-size="10" fill="#666">Gold supporter badge on profile/chats for 360 days. Ad-free for 31 days (41 for bank transfers).</text>
+  <text x="930" y="776" text-anchor="middle" font-size="9" fill="#888">Also earned by moderating or microvolunteering.</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Gift Aid Process -->
+  <!-- ============================================================ -->
+  <rect x="20" y="810" width="1480" height="5" rx="2" fill="#E0E0E0"/>
+  <text x="760" y="840" text-anchor="middle" font-size="15" font-weight="bold" fill="#444">Gift Aid Process</text>
+
+  <!-- Gift Aid Row 1: Chase-up → /giftaid page → Team Review -->
+  <rect x="20" y="860" width="300" height="55" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="170" y="882" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Auto Gift Aid Chase-up</text>
+  <text x="170" y="897" text-anchor="middle" font-size="10" fill="#666">Email donors without GA declaration (cron)</text>
+
+  <line x1="320" y1="888" x2="345" y2="888" stroke="#7B1FA2" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <rect x="350" y="860" width="300" height="55" rx="8" fill="#F3E5F9" stroke="#7B1FA2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="500" y="878" text-anchor="middle" font-size="11" font-weight="bold" fill="#7B1FA2">Donor Declares on /giftaid</text>
+  <text x="500" y="893" text-anchor="middle" font-size="10" fill="#666">Web page shown after donation or via email</text>
+  <text x="500" y="906" text-anchor="middle" font-size="9" fill="#888">This / Since / Future / Past4Years / Declined</text>
+
+  <line x1="650" y1="888" x2="675" y2="888" stroke="#3B7DD8" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <rect x="680" y="860" width="300" height="55" rx="8" fill="#E3F2FD" stroke="#3B7DD8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="830" y="882" text-anchor="middle" font-size="11" font-weight="bold" fill="#1565C0">Gift Aid Team Review (Jools + Ray)</text>
+  <text x="830" y="897" text-anchor="middle" font-size="10" fill="#666">Approve / edit / reject declarations</text>
+
+  <!-- Arrow from Team Review down-left to Edward Generate -->
+  <line x1="830" y1="915" x2="325" y2="965" stroke="#3B7DD8" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- Gift Aid Row 2: Generate Excel → Submit HMRC → PPGF note -->
+  <rect x="20" y="940" width="300" height="55" rx="8" fill="#FFF3E0" stroke="#EF6C00" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="170" y="962" text-anchor="middle" font-size="11" font-weight="bold" fill="#EF6C00">Edward: Generate Excel (script)</text>
+  <text x="170" y="977" text-anchor="middle" font-size="10" fill="#666">Gift Aid data for HMRC submission</text>
+
+  <!-- Arrow from Edward Generate right to Jane Submit -->
+  <line x1="320" y1="968" x2="345" y2="968" stroke="#EF6C00" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+
+  <rect x="350" y="940" width="300" height="55" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="500" y="962" text-anchor="middle" font-size="11" font-weight="bold" fill="#2E7D32">Jane: Submit to HMRC</text>
+  <text x="500" y="977" text-anchor="middle" font-size="10" fill="#666">Year-end Gift Aid claim (manual)</text>
+
+  <!-- PPGF GA note -->
+  <rect x="680" y="940" width="300" height="55" rx="8" fill="#FFEBEE" stroke="#E53935" stroke-width="1" filter="url(#shadow)"/>
+  <text x="830" y="958" text-anchor="middle" font-size="10" font-weight="bold" fill="#C62828">Note: PPGF claims</text>
+  <text x="830" y="973" text-anchor="middle" font-size="10" fill="#C62828">Gift Aid themselves</text>
+  <text x="830" y="988" text-anchor="middle" font-size="9" fill="#888">(excluded from our claims)</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: No Thank-You Possible (by design) -->
+  <!-- ============================================================ -->
+  <rect x="20" y="1020" width="1480" height="5" rx="2" fill="#E0E0E0"/>
+  <text x="760" y="1050" text-anchor="middle" font-size="15" font-weight="bold" fill="#795548">No Thank-You Possible (by design)</text>
+  <text x="760" y="1065" text-anchor="middle" font-size="10" fill="#999">These are accepted limitations, not bugs &#x2014; no donor contact details available</text>
+
+  <rect x="20" y="1080" width="350" height="60" rx="8" fill="#EFEBE9" stroke="#795548" stroke-width="1" filter="url(#shadow)"/>
+  <text x="30" y="1098" font-size="10" font-weight="bold" fill="#4E342E">Anonymous Stripe / PPGF donations</text>
+  <text x="30" y="1113" font-size="9" fill="#666">Some donors donate without logging in or share</text>
+  <text x="30" y="1126" font-size="9" fill="#666">no email. No contact details, no thank-you possible.</text>
+
+  <rect x="390" y="1080" width="350" height="60" rx="8" fill="#EFEBE9" stroke="#795548" stroke-width="1" filter="url(#shadow)"/>
+  <text x="400" y="1098" font-size="10" font-weight="bold" fill="#4E342E">Give as you Live</text>
+  <text x="400" y="1113" font-size="9" fill="#666">GAYL sends confirmation to donor but does not</text>
+  <text x="400" y="1126" font-size="9" fill="#666">share user details with Freegle. Cannot thank.</text>
+
+  <rect x="760" y="1080" width="350" height="60" rx="8" fill="#EFEBE9" stroke="#795548" stroke-width="1" filter="url(#shadow)"/>
+  <text x="770" y="1098" font-size="10" font-weight="bold" fill="#4E342E">JustGiving</text>
+  <text x="770" y="1113" font-size="9" fill="#666">No integration. Possible donations arrive via</text>
+  <text x="770" y="1126" font-size="9" fill="#666">mailbox. Not actively promoted.</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Known Issues -->
+  <!-- ============================================================ -->
+  <rect x="20" y="1160" width="1480" height="5" rx="2" fill="#E0E0E0"/>
+  <text x="760" y="1190" text-anchor="middle" font-size="15" font-weight="bold" fill="#C62828">Known Issues</text>
+
+  <rect x="20" y="1205" width="540" height="65" rx="8" fill="#FFEBEE" stroke="#E53935" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="30" y="1223" font-size="10" font-weight="bold" fill="#C62828">PPGF: infrequent import + exposure concern</text>
+  <text x="30" y="1238" font-size="9" fill="#666">Edward runs PPGF import manually and very intermittently.</text>
+  <text x="30" y="1251" font-size="9" fill="#666">Donations may go unrecorded for extended periods and may not be fully accounted for.</text>
+
+  <rect x="580" y="1205" width="540" height="65" rx="8" fill="#FFF8E1" stroke="#F9A825" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="590" y="1223" font-size="10" font-weight="bold" fill="#F57F17">Unmatched donations &#x2014; manual support tool searches</text>
+  <text x="590" y="1238" font-size="9" fill="#666">Jane and Jacky search using support tools to identify donors.</text>
+  <text x="590" y="1251" font-size="9" fill="#666">Could this matching be automated?</text>
+
+  <!-- ============================================================ -->
+  <!-- SECTION: Area for Improvement -->
+  <!-- ============================================================ -->
+  <text x="760" y="1305" text-anchor="middle" font-size="15" font-weight="bold" fill="#1565C0">Area for Improvement</text>
+
+  <rect x="20" y="1320" width="480" height="60" rx="8" fill="#E3F2FD" stroke="#1976D2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="30" y="1340" font-size="10" font-weight="bold" fill="#1565C0">Manual thank-yous for donations under &#xA3;20</text>
+  <text x="30" y="1355" font-size="9" fill="#666">Only Jacky currently sends personal thank-yous. A larger team</text>
+  <text x="30" y="1368" font-size="9" fill="#666">of volunteers would allow more donors to be thanked personally.</text>
+
+  <rect x="520" y="1320" width="480" height="60" rx="8" fill="#E3F2FD" stroke="#1976D2" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="530" y="1340" font-size="10" font-weight="bold" fill="#1565C0">Many small donations don't trigger manual thank-you</text>
+  <text x="530" y="1355" font-size="9" fill="#666">Info@ notification only fires for single donations &#x2265;&#xA3;20. A donor giving</text>
+  <text x="530" y="1368" font-size="9" fill="#666">e.g. &#xA3;1/month for years is never flagged for a personal thank-you.</text>
+
+  <!-- ============================================================ -->
+  <!-- Footer -->
+  <!-- ============================================================ -->
+  <rect x="0" y="1410" width="1520" height="40" rx="0" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="760" y="1435" text-anchor="middle" font-size="10" fill="#999">Freegle Donor Process &#x2014; Generated from codebase review Feb 2026 &#x2014; Replaces "Freegle donor process Nov 23 v3"</text>
+</svg>

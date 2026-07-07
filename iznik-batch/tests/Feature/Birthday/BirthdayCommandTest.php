@@ -1,0 +1,425 @@
+<?php
+
+namespace Tests\Feature\Birthday;
+
+use App\Mail\Birthday\BirthdayMail;
+use App\Services\BirthdayService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Tests\TestCase;
+
+class BirthdayCommandTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Mail::fake();
+    }
+
+    private function createMemberInGroup(int $groupId, array $userAttributes = []): object
+    {
+        $user = $this->createTestUser(array_merge([
+            'marketingconsent' => 1,
+            'bouncing'         => 0,
+            'lastaccess'       => now(),
+        ], $userAttributes));
+
+        DB::table('memberships')->insert([
+            'userid'     => $user->id,
+            'groupid'    => $groupId,
+            'role'       => 'Member',
+            'collection' => 'Approved',
+            'added'      => now(),
+        ]);
+
+        return $user;
+    }
+
+    public function test_command_runs_cleanly_with_no_birthday_groups(): void
+    {
+        $this->artisan('birthday:send-emails')
+            ->assertExitCode(0);
+    }
+
+    public function test_dry_run_is_accepted(): void
+    {
+        $this->artisan('birthday:send-emails', ['--dry-run' => true])
+            ->assertExitCode(0);
+    }
+
+    public function test_sends_birthday_email_to_group_member(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, 1);
+    }
+
+    public function test_skips_group_not_founded_today(): void
+    {
+        $founded = now()->subYear()->subDays(5)->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_group_with_null_founded(): void
+    {
+        $group = $this->createTestGroup(['founded' => null]);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_group_founded_this_year(): void
+    {
+        $founded = now()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_member_without_marketing_consent(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id, ['marketingconsent' => 0]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_bouncing_member(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id, ['bouncing' => 1]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_deleted_user(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id, ['deleted' => now()]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_inactive_member(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id, ['lastaccess' => now()->subDays(200)]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_member_recently_sent_birthday_appeal(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $settings = ['lastbirthdayappeal' => now()->subDays(10)->format('Y-m-d H:i:s')];
+        $this->createMemberInGroup($group->id, ['settings' => $settings]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_sends_to_member_with_old_birthday_appeal(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $settings = ['lastbirthdayappeal' => now()->subDays(40)->format('Y-m-d H:i:s')];
+        $this->createMemberInGroup($group->id, ['settings' => $settings]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, 1);
+    }
+
+    public function test_records_birthday_appeal_sent_in_settings(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $member = $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        $settings = json_decode(DB::table('users')->where('id', $member->id)->value('settings'), true);
+        $this->assertNotNull($settings['lastbirthdayappeal'] ?? null);
+    }
+
+    // -------------------------------------------------------------------------
+    // Volunteer selection — users.settings.showmod, default true.
+    //
+    // Regression cover for the bug where the previous publishconsent=1 filter
+    // silently excluded almost every active mod (publishconsent defaults to 0
+    // and is never set by the modtools UI toggle, which writes to showmod).
+    // The Go API's group/groupVolunteer.go uses the same default-true semantics.
+    // -------------------------------------------------------------------------
+
+    public function test_owner_with_no_showmod_setting_is_listed_as_volunteer(): void
+    {
+        // Default-true case: a typical owner who never touched the
+        // "Show me as a volunteer" toggle has no `showmod` key in settings.
+        // The query must treat the missing key as TRUE and include them.
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+
+        // A regular member who will receive the email.
+        $this->createMemberInGroup($group->id);
+
+        // An owner with default settings — no `showmod` key present.
+        $owner = $this->createTestUser([
+            'lastaccess' => now(),
+            'fullname'   => 'Louise',
+        ]);
+        DB::table('memberships')->insert([
+            'userid'     => $owner->id,
+            'groupid'    => $group->id,
+            'role'       => 'Owner',
+            'collection' => 'Approved',
+            'added'      => now(),
+        ]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, function (BirthdayMail $mail) {
+            $firstnames = array_column($mail->volunteers, 'firstname');
+            return in_array('Louise', $firstnames, true);
+        });
+    }
+
+    public function test_moderator_with_showmod_false_is_excluded_from_volunteer_list(): void
+    {
+        // Opt-out case: a mod who toggled "Show me as a volunteer" off has
+        // settings.showmod=false. The query must exclude them.
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+
+        $this->createMemberInGroup($group->id);
+
+        $opted_out = $this->createTestUser([
+            'lastaccess' => now(),
+            'fullname'   => 'Hidden Mod',
+        ]);
+        DB::table('users')
+            ->where('id', $opted_out->id)
+            ->update(['settings' => json_encode(['showmod' => false])]);
+        DB::table('memberships')->insert([
+            'userid'     => $opted_out->id,
+            'groupid'    => $group->id,
+            'role'       => 'Moderator',
+            'collection' => 'Approved',
+            'added'      => now(),
+        ]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, function (BirthdayMail $mail) {
+            $firstnames = array_column($mail->volunteers, 'firstname');
+            return ! in_array('Hidden', $firstnames, true);
+        });
+    }
+
+    public function test_moderator_with_showmod_true_is_listed_as_volunteer(): void
+    {
+        // Explicit-true case (belt-and-braces alongside default-true): a mod
+        // whose settings JSON has showmod=true must also be included.
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+
+        $this->createMemberInGroup($group->id);
+
+        $mod = $this->createTestUser([
+            'lastaccess' => now(),
+            'fullname'   => 'Visible Mod',
+        ]);
+        DB::table('users')
+            ->where('id', $mod->id)
+            ->update(['settings' => json_encode(['showmod' => true])]);
+        DB::table('memberships')->insert([
+            'userid'     => $mod->id,
+            'groupid'    => $group->id,
+            'role'       => 'Moderator',
+            'collection' => 'Approved',
+            'added'      => now(),
+        ]);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, function (BirthdayMail $mail) {
+            $firstnames = array_column($mail->volunteers, 'firstname');
+            return in_array('Visible', $firstnames, true);
+        });
+    }
+
+    public function test_filters_to_specified_group_ids(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group1 = $this->createTestGroup(['founded' => $founded]);
+        $group2 = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group1->id);
+        $this->createMemberInGroup($group2->id);
+
+        (new BirthdayService())->sendBirthdayEmails(null, [$group1->id]);
+
+        Mail::assertSent(BirthdayMail::class, 1);
+    }
+
+    public function test_email_override_sends_to_specified_address(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id);
+
+        $overrideEmail = 'override@test.com';
+        (new BirthdayService())->sendBirthdayEmails($overrideEmail);
+
+        Mail::assertSent(BirthdayMail::class, function (BirthdayMail $mail) use ($overrideEmail) {
+            return $mail->recipientEmail === $overrideEmail;
+        });
+    }
+
+    public function test_email_override_stops_after_one_email(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails('override@test.com');
+
+        Mail::assertSent(BirthdayMail::class, 1);
+    }
+
+    public function test_returns_count_of_emails_sent(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup(['founded' => $founded]);
+        $this->createMemberInGroup($group->id);
+        $this->createMemberInGroup($group->id);
+
+        $count = (new BirthdayService())->sendBirthdayEmails();
+
+        $this->assertSame(2, $count);
+    }
+
+    public function test_uses_contactmail_when_set(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup([
+            'founded'     => $founded,
+            'contactmail' => 'custom@example.com',
+        ]);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, function (BirthdayMail $mail) {
+            return $mail->fromEmail === 'custom@example.com';
+        });
+    }
+
+    public function test_uses_volunteers_group_address_when_no_contactmail(): void
+    {
+        $founded = now()->subYear()->format('Y-m-d');
+        $group = $this->createTestGroup([
+            'founded'     => $founded,
+            'contactmail' => null,
+        ]);
+        $this->createMemberInGroup($group->id);
+
+        (new BirthdayService())->sendBirthdayEmails();
+
+        Mail::assertSent(BirthdayMail::class, function (BirthdayMail $mail) use ($group) {
+            return str_ends_with($mail->fromEmail, '-volunteers@' . config('freegle.mail.group_domain'));
+        });
+    }
+
+    public function test_renders_with_no_volunteers(): void
+    {
+        // Regression: the template's @else branch indexed
+        // $volunteers[count($volunteers) - 1] — i.e. $volunteers[-1] — on an
+        // empty list, throwing "Undefined array key -1". Mail::fake() never
+        // built the view so it stayed hidden; render it for real here. The
+        // empty case should render no volunteers sentence at all.
+        $mail = new BirthdayMail(
+            groupName: 'Test Group',
+            groupNameShort: 'testgroup',
+            groupAge: 5,
+            groupId: 1,
+            recipientEmail: 'member@example.com',
+            fromEmail: 'group@example.com',
+            fromName: 'Test Group Volunteers',
+            volunteers: [],
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringNotContainsString('Your local volunteer', $html);
+        $this->assertStringContainsString('Happy Birthday to Test Group', $html);
+    }
+
+    public function test_renders_with_three_volunteers(): void
+    {
+        // The >=3 branch must still produce the Oxford-comma list.
+        $mail = new BirthdayMail(
+            groupName: 'Test Group',
+            groupNameShort: 'testgroup',
+            groupAge: 5,
+            groupId: 1,
+            recipientEmail: 'member@example.com',
+            fromEmail: 'group@example.com',
+            fromName: 'Test Group Volunteers',
+            volunteers: [
+                ['firstname' => 'Ann'],
+                ['firstname' => 'Bob'],
+                ['firstname' => 'Cat'],
+            ],
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Your local volunteers are Ann, Bob, and Cat.', $html);
+    }
+
+    public function test_renders_with_one_volunteer(): void
+    {
+        $mail = new BirthdayMail(
+            groupName: 'Test Group',
+            groupNameShort: 'testgroup',
+            groupAge: 5,
+            groupId: 1,
+            recipientEmail: 'member@example.com',
+            fromEmail: 'group@example.com',
+            fromName: 'Test Group Volunteers',
+            volunteers: [['firstname' => 'Ann']],
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Your local volunteer is Ann.', $html);
+    }
+}

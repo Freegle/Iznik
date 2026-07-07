@@ -1,0 +1,290 @@
+/**
+ * ModTools Edits Flow Test
+ *
+ * Tests the full edit review lifecycle through the UI only:
+ * 1. Post a message as testEnv.user (member of both test groups)
+ * 2. Edit the message text on My Posts page
+ * 3. Log in as a mod via ModTools, see the edit on the edits page
+ * 4. Approve the edit via the UI, verify it disappears
+ */
+
+const { test, expect } = require('./fixtures')
+const { timeouts, environment } = require('./config')
+const { loginViaModTools, clearSessionData, loginViaHomepage } = require('./utils/user')
+
+const MODTOOLS_URL = environment.modtoolsBaseUrl
+const API_V2 = environment.apiV2BaseUrl
+
+async function dismissAllModals(page) {
+  await page.evaluate(() => {
+    document
+      .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+      .forEach((el) => {
+        el.classList.remove('show')
+        el.style.display = 'none'
+      })
+    document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove())
+    document.body.classList.remove('modal-open')
+    document.body.style.removeProperty('overflow')
+    document.body.style.removeProperty('padding-right')
+  })
+}
+
+test.describe('ModTools Edits Flow', () => {
+  test('post message, edit it, mod sees edit on edits page, approve clears it', async ({
+    page,
+    testEnv,
+    postMessage,
+  }) => {
+    const modEmail = testEnv.mod.email
+
+    console.log('=== EDITS FLOW TEST ===')
+    console.log(`User: ${testEnv.user.email}, Mod: ${modEmail}`)
+    console.log(
+      `Test group: ${testEnv.group.name}, postcode: ${testEnv.postcode}`
+    )
+
+    // Step 1: Log in as testEnv.user before posting. The user is a pre-existing
+    // account (member of testEnv groups), so the browser context must be
+    // authenticated before calling postMessage — otherwise filling the existing
+    // email on the whoami page hits the "already registered" path and fails to
+    // navigate to /myposts.
+    console.log('\n--- Step 1: Login as testEnv.user ---')
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+
+    // Post a message as testEnv.user. Using a pre-existing user (member
+    // of testEnv groups) ensures the message always goes to a group the mod
+    // moderates, avoiding the isolation issue where a fresh user's post could
+    // go to a real production group invisible to the test mod.
+    console.log('\n--- Step 1b: Post message as testEnv.user ---')
+    const posted = await postMessage({
+      type: 'OFFER',
+      item: `EditTest ${Date.now()}`,
+      description: 'Original description for edit test',
+      email: testEnv.user.email,
+    })
+    console.log(`Posted: id=${posted.id}, item=${posted.item}`)
+
+    // Step 1c: Approve the message and set user as moderated so the edit
+    // creates a review record. Edit reviews are only created when:
+    // (a) the message is Approved, and (b) the editor's posting status is Moderated.
+    // Use Playwright's request API (not page.evaluate fetch) to avoid CORS issues.
+    console.log('\n--- Step 1c: Approve message via API ---')
+
+    // Login as mod to get JWT via V2 API
+    const loginResp = await page.request.post(
+      `${API_V2}/session`,
+      {
+        data: { email: modEmail, password: 'freegle' },
+      }
+    )
+    const loginData = await loginResp.json()
+    console.log(`Mod login: jwt=${loginData.jwt ? 'present' : 'missing'}`)
+    expect(loginData.jwt).toBeTruthy()
+    const modJwt = loginData.jwt
+
+    // Get the message FIRST to find actual groupid and poster's user ID.
+    // The message may have been posted to a different group than testEnv.group.id
+    // (e.g. postMessage() picks a group from the postcode area, not necessarily the
+    // test group). Using the wrong groupid in the approve call silently updates 0 rows,
+    // leaving collection='Pending', which prevents edit review creation.
+    // Poll until groups is populated — a freshly posted message may still be
+    // in an intermediate state where groups is empty on the first GET.
+    let msgData = null
+    await expect
+      .poll(
+        async () => {
+          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
+            headers: { Authorization: modJwt },
+          })
+          msgData = await resp.json()
+          return msgData?.groups?.length > 0
+        },
+        {
+          message: 'Waiting for message to have groups populated',
+          timeout: timeouts.api.slowApi,
+          intervals: [500, 500, 1000, 1000, 2000],
+        }
+      )
+      .toBe(true)
+    const fromUserId = msgData?.fromuser
+    const actualGroupId = msgData?.groups?.[0]?.groupid ?? testEnv.group.id
+    console.log(`Message fromuser: ${fromUserId}, actual groupid: ${actualGroupId}`)
+    expect(fromUserId).toBeTruthy()
+
+    // Approve the message via V2 API using the actual groupid
+    const approveResp = await page.request.post(
+      `${API_V2}/message`,
+      {
+        data: {
+          action: 'Approve',
+          id: Number(posted.id),
+          groupid: Number(actualGroupId),
+        },
+        headers: { Authorization: modJwt },
+      }
+    )
+    console.log(`Approve status: ${approveResp.status()}`)
+    expect(approveResp.ok()).toBeTruthy()
+
+    // Set the poster's posting status to MODERATED on this group
+    const memberResp = await page.request.patch(
+      `${API_V2}/memberships`,
+      {
+        data: {
+          userid: Number(fromUserId),
+          groupid: Number(actualGroupId),
+          ourPostingStatus: 'MODERATED',
+        },
+        headers: { Authorization: modJwt },
+      }
+    )
+    console.log(`Set moderated status: ${memberResp.status()}`)
+    expect(memberResp.ok()).toBeTruthy()
+    console.log('Message approved and user set to moderated')
+
+    // Step 2: Edit the message on My Posts page.
+    console.log('\n--- Step 2: Edit message on My Posts ---')
+    await expect(page).toHaveURL(/\/myposts/, {
+      timeout: timeouts.navigation.default,
+    })
+
+    const messageCard = page
+      .locator(`.message-card:has-text("${posted.item}")`)
+      .first()
+    await expect(messageCard).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    const editButton = messageCard.locator('button:has-text("Edit")').first()
+    await expect(editButton).toBeVisible({ timeout: timeouts.ui.appearance })
+    await editButton.click()
+
+    const editModal = page.locator('.modal.show')
+    await expect(editModal).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    const editText = `Edited at ${new Date().toISOString()}`
+    const textarea = editModal.locator('textarea').first()
+    await expect(textarea).toBeVisible({ timeout: timeouts.ui.appearance })
+    await textarea.clear()
+    await textarea.fill(editText)
+
+    // Wait for the PATCH to succeed
+    const patchPromise = page.waitForResponse(
+      (r) => r.url().includes('/message') && r.request().method() === 'PATCH',
+      { timeout: timeouts.api.slowApi }
+    )
+
+    const saveButton = editModal.locator('button:has-text("Save")').first()
+    await saveButton.click()
+
+    const patchResponse = await patchPromise
+    expect(patchResponse.status()).toBe(200)
+
+    await expect(editModal).not.toBeVisible({ timeout: timeouts.api.default })
+    console.log('Edit saved successfully')
+
+    // Step 3: Log in as mod and verify edit appears on the edits page.
+    console.log('\n--- Step 3: Check edits page as mod ---')
+    console.log(`Message ID: ${posted.id}, Edit text: ${editText}`)
+    await clearSessionData(page)
+    await loginViaModTools(page, modEmail)
+
+    await page.goto(`${MODTOOLS_URL}/messages/edits`, {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+    })
+
+    const groupSelect = page.locator('#communitieslist')
+    await expect(groupSelect).toBeVisible({
+      timeout: timeouts.navigation.slowPage,
+    })
+    await dismissAllModals(page)
+
+    // Select the group where the edit was created (by actualGroupId value).
+    // This is more robust than matching by name — the mod may moderate multiple
+    // groups and we need to look at the one where the edit actually lives.
+    let selectedGroup = false
+    const options = await groupSelect.locator('option').all()
+    for (const option of options) {
+      const value = await option.getAttribute('value')
+      if (value && value === String(actualGroupId)) {
+        const text = await option.textContent()
+        console.log(`Selecting group: ${text} (value=${value})`)
+        await groupSelect.selectOption(value)
+        selectedGroup = true
+        break
+      }
+    }
+    if (!selectedGroup) {
+      console.log(
+        `Group ${actualGroupId} not found in dropdown, using All Communities`
+      )
+    }
+
+    // Poll for edits to appear — the edit review may take a moment to propagate
+    let pollAttempts = 0
+    await expect
+      .poll(
+        async () => {
+          pollAttempts++
+          await dismissAllModals(page)
+          const bodyText = await page.textContent('body')
+          const hasNoMessages = bodyText.includes(
+            'There are no messages at the moment'
+          )
+
+          if (pollAttempts <= 3 || pollAttempts % 10 === 0) {
+            console.log(
+              `Poll #${pollAttempts}: noMessages=${hasNoMessages}, URL=${page.url()}`
+            )
+          }
+
+          return !hasNoMessages
+        },
+        {
+          message: `Waiting for edit to appear on edits page (group: ${actualGroupId})`,
+          timeout: timeouts.navigation.slowPage,
+        }
+      )
+      .toBe(true)
+
+    console.log('Edit visible on edits page')
+
+    await page.screenshot({
+      path: 'playwright-screenshots/edits-page-with-edit.png',
+      fullPage: true,
+    })
+
+    // Step 4: Approve the edit via the UI "Accept Edit" button.
+    console.log('\n--- Step 4: Approve edit via UI ---')
+
+    // The Accept Edit button may take a moment to render after the message
+    // card expands. Use getByRole for more reliable matching.
+    const acceptButton = page
+      .getByRole('button', { name: /Accept Edit/i })
+      .first()
+    await expect(acceptButton).toBeVisible({ timeout: timeouts.ui.appearance })
+    console.log('Accept Edit button found')
+
+    // Wait for the POST to succeed (ApproveEdits action)
+    const approvePromise = page.waitForResponse(
+      (r) => r.url().includes('/message') && r.request().method() === 'POST',
+      { timeout: timeouts.api.slowApi }
+    )
+
+    await acceptButton.click()
+    console.log('Clicked Accept Edit')
+
+    const approveResponse = await approvePromise
+    console.log(`Approve response: ${approveResponse.status()}`)
+    expect(approveResponse.status()).toBe(200)
+
+    // Verify the edit disappears from the page — the message card should
+    // no longer be visible after approval removes it from the store.
+    await expect(page.getByText(editText)).not.toBeVisible({
+      timeout: timeouts.api.slowApi,
+    })
+
+    console.log('Edit approved and cleared from edits page')
+    console.log('\n=== TEST COMPLETE ===')
+  })
+})

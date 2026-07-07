@@ -1,0 +1,202 @@
+<mjml>
+  <mj-head>
+    <mj-style>
+      a { color: #288c0a; text-decoration: none; font-weight: bold } ol { margin-top: 0; margin-bottom: 0; /* margin-left: 2.2em; For Outlook */ padding-left: 2.4em; /* For the rest */ } li { margin: 0.5em 0; }
+    </mj-style>
+    <mj-attributes>
+      <mj-all font-family="Trebuchet MS, Helvetica, Arial" />
+    </mj-attributes>
+    <mj-preview>{{ textbody }} </mj-preview>
+  </mj-head>
+  <mj-body>
+    <mj-container>
+      <mj-wrapper full-width="full-width">
+        <!-- header section -->
+        <mj-section background-url="https://www.ilovefreegle.org/wallpaper.png" background-color="#e5e4db" border-top="5px solid #61AE24" padding="0">
+          <mj-group>
+            <mj-column>
+              <mj-text align="center">
+                <a font-weight="bold" href="https://www.ilovefreegle.org/communityevents">Add</a>
+              </mj-text>
+            </mj-column>
+            <mj-column>
+              <mj-text align="center">
+                <a font-weight="bold" href="{{ visit }}">Browse</a>
+              </mj-text>
+            </mj-column>
+            <mj-column>
+              <mj-text align="center">
+                <a font-weight="bold" href="{{ unsubscribe }}">Unsubscribe</a>
+              </mj-text>
+            </mj-column>
+          </mj-group>
+        </mj-section>
+        <mj-section background-color="#FFF8DC" padding="0px">
+          <mj-column>
+            <mj-text background-color="#FFF8DC" color="#61AE24" line-height="1.25em">
+              Here are the current Community Events. Depending on
+              your email client you may be able to click on a link to move down this email;
+              otherwise please scroll down.
+            </mj-text>
+            <mj-raw>
+              {% for event in events %}
+            </mj-raw>
+            <mj-text color="#61AE24" font-weight="bold" padding-top="0px" padding-bottom="2px">
+              <a href="#msg-{{ event.id }}">
+                {{ event.title }}
+              </a>
+            </mj-text>
+            <mj-raw>
+              {% endfor %}
+            </mj-raw>
+            <mj-text padding-bottom="0px">
+              <hr style="border: 0; border-top: 1px solid #aaa; " />
+            </mj-text>
+          </mj-column>
+        </mj-section>
+        <mj-raw>
+          {% for event in events %}
+        </mj-raw>
+        <mj-section background-color="#FFF8DC" padding="0px">
+          <mj-column padding="0px">
+            <mj-text padding="0px">
+              <a id="msg-{{ event.id }}" name="msg-{{ event.id }}" />
+            </mj-text>
+            <mj-text padding-top="0px" padding-bottom="0px" color="#61AE24" font-size="18pt" line-height="1.25em">{{ event.title }} </mj-text>
+            <mj-text padding-top="0px" padding-bottom="0px" color="black" font-size="13pt" line-height="1.25em">{{ event.start }} <span style="color:grey">&nbsp;to&nbsp;</span> {{ event.end }}</mj-text>
+            <mj-text padding-top="0px" padding-bottom="0px" color="black" font-size="12pt" line-height="1.25em">{{ event.location }} </mj-text>
+            <mj-raw>
+              {% if event.photo is defined and event.photo is not null %}
+            </mj-raw>
+            <mj-section padding-top="0px" padding-bottom="0px">
+              <mj-column>
+                <mj-raw>
+                  {% if event.otherdates is defined and event.otherdates is not null %}
+                </mj-raw>
+                  <mj-text>
+                    Other dates: {{ event.otherdates }}
+                  </mj-text>
+                <mj-raw>
+                  {% endif %}
+                </mj-raw>
+                <mj-text>
+                  {{ event.description|nl2br }}
+                </mj-text>
+              </mj-column>
+              <mj-column>
+                <mj-image alt="Event picture" align="right" border-radius="5px" src="{{ event.photo.paththumb }}" width="80px"> </mj-image>
+              </mj-column>
+            </mj-section>
+            <mj-raw>
+              {% else %}
+            </mj-raw>
+            <mj-section padding-top="0px" padding-bottom="0px">
+              <mj-column>
+                <mj-raw>
+                  {% if event.otherdates is defined and event.otherdates is not null %}
+                </mj-raw>
+                  <mj-text>
+                    Other dates: {{ event.otherdates }}
+                  </mj-text>
+                <mj-raw>
+                  {% endif %}
+                </mj-raw>
+                <mj-text>
+                  {{ event.description|nl2br }}
+                </mj-text>
+              </mj-column>
+            </mj-section>
+            <mj-raw>
+              {% endif %}
+            </mj-raw>
+          </mj-column>
+        </mj-section>
+        <mj-section background-color="#FFF8DC" padding="0px">
+          <mj-column>
+            <mj-raw>
+              {% if (event.contactname is defined and event.contactname is not null) or (event.contactphone is defined and event.contactphone is not null) or (event.contactemail is defined and event.contactemail is not null) or (event.contacturl is defined and event.contacturl is not null) %}
+            </mj-raw>
+              <mj-text color="black" font-size="14pt" line-height="1.25em">Contact details:</mj-text>
+            <mj-raw>
+              {% endif %}
+            </mj-raw>
+            <mj-raw>
+              {% if event.contactname is defined and event.contactname is not null %}
+            </mj-raw>
+            <mj-text padding-top="0px" padding-bottom="4px">{{ event.contactname }}<br /></mj-text>
+            <mj-raw>
+              {% endif %}
+            </mj-raw>
+            <mj-raw>
+              {% if event.contactphone is defined and event.contactphone is not null %}
+            </mj-raw>
+            <mj-text padding-top="0px" padding-bottom="4px">
+              Phone: <a href="tel:{{ event.contactphone }}">{{ event.contactphone }}</a><br /></mj-text>
+            <mj-raw>
+              {% endif %}
+            </mj-raw>
+            <mj-raw>
+              {% if event.contactemail is defined and event.contactemail is not null %}
+            </mj-raw>
+            <mj-text padding-top="0px" padding-bottom="4px">
+              Email: <a href="mailto:{{ event.contactemail }}">{{ event.contactemail }}</a><br />
+              </mj-text>
+            <mj-raw>
+              {% endif %}
+            </mj-raw>
+            <mj-raw>
+              {% if event.contacturl is defined and event.contacturl is not null %}
+            </mj-raw>
+            <mj-text padding-top="0px" padding-bottom="4px">
+              Web: <a href="{{ event.contacturl }}">{{ event.contacturl }}</a><br /></mj-text>
+            <mj-raw>
+              {% endif %}
+            </mj-raw>
+            <mj-text padding-bottom="2px" padding-top="0px">
+              <hr style="border: 0; border-top: 1px solid #AAA; " />
+            </mj-text>
+          </mj-column>
+        </mj-section>
+        <mj-raw>
+          {% endfor %}
+        </mj-raw>
+        <mj-section background-color="#F7F6EC" padding=0>
+          <mj-column>
+            <mj-text background-color="#FFF8DC" color="#61AE24" font-size="20pt" line-height="1.25em" padding-bottom="0px">
+              Jobs near you<br />
+            </mj-text>
+            <mj-text background-color="#FFF8DC">
+              If you are interested and click then it will raise a little to help keep Freegle running and free to use.<br />
+            </mj-text>
+          </mj-column>
+          <mj-column>
+            <mj-button align="right" href="https://www.ilovefreegle.org/jobs/{{ joblocation }}" font-family="Helvetica" background-color="darkblue" color="white">
+              View more jobs
+            </mj-button>
+            <mj-button align="right" href="https://freegle.in/paypal1510" font-family="Helvetica" background-color="darkgreen" color="white">
+              Donating helps too!
+            </mj-button>
+          </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding=0>
+          <mj-column>
+            <mj-text>
+              {{ jobads }}
+            </mj-text>
+          </mj-column>
+        </mj-section>
+        <mj-section background-color="#E0E0E0">
+          <mj-column>
+            <mj-text font-size="9pt" color="#707070">
+              You've received this automated mail because you're a member of <a href="{{ visit }}">{{ groupname }}</a>. You are set to receive Community Events for&nbsp;{{ groupname }}.<br /> <br /> You can change your settings by clicking <a href="{{ settings }}">here</a>,
+              You can unsubscribe and leave Freegle completely <a href="{{ unsubscribe }}">here</a>.
+              <br /> <br /> This mail was sent to&nbsp;{{ email }}.
+              <br />
+              <hr style="border: 0; border-top: 1px solid #AAA; " /> Freegle is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.  Registered address: 64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE
+            </mj-text>
+          </mj-column>
+        </mj-section>
+      </mj-wrapper>
+    </mj-container>
+  </mj-body>
+</mjml>

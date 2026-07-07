@@ -1,0 +1,2801 @@
+<?php
+
+namespace Tests\Unit\Queue;
+
+use App\Mail\Chat\ChatSpamReportMail;
+use App\Mail\Chat\ReferToSupportMail;
+use App\Mail\Donation\DonateExternalMail;
+use App\Mail\Newsfeed\ChitchatReportMail;
+use App\Mail\Session\ForgotPasswordMail;
+use App\Mail\Session\MergeOfferMail;
+use App\Mail\Session\UnsubscribeConfirmMail;
+use App\Mail\Session\VerifyEmailMail;
+use App\Mail\Message\ModStdMessageMail;
+use App\Services\PushNotificationService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
+use Tests\TestCase;
+
+class ProcessBackgroundTasksCommandTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Ensure the background_tasks table exists in the test database.
+        DB::statement('CREATE TABLE IF NOT EXISTS background_tasks (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            task_type VARCHAR(50) NOT NULL,
+            data JSON NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP NULL,
+            failed_at TIMESTAMP NULL,
+            error_message TEXT NULL,
+            attempts INT UNSIGNED DEFAULT 0,
+            INDEX idx_task_type (task_type),
+            INDEX idx_pending (processed_at, created_at)
+        )');
+    }
+
+    protected function tearDown(): void
+    {
+        // Clean up any tasks created during tests.
+        DB::table('background_tasks')->truncate();
+        parent::tearDown();
+    }
+
+    public function test_processes_push_notify_group_mods_task(): void
+    {
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Owner']);
+
+        // Insert a task simulating what Go would insert.
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_group_mods',
+            'data' => json_encode(['group_id' => $group->id]),
+            'created_at' => now(),
+        ]);
+
+        // Mock the push service - Firebase won't be configured in test.
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(1);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify task was marked as processed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+        $this->assertEquals(1, $task->attempts);
+    }
+
+    public function test_processes_push_notify_chat_message_task(): void
+    {
+        // Insert a task simulating what ChatProcessService enqueues after
+        // a chat message passes spam/review/ban checks.
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_chat_message',
+            'data' => json_encode(['message_id' => 12345]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyChatMessage')
+            ->once()
+            ->with(12345)
+            ->andReturn(2);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+        $this->assertEquals(1, $task->attempts);
+    }
+
+    public function test_push_notify_chat_message_without_message_id_fails(): void
+    {
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_chat_message',
+            'data' => json_encode([]),  // missing message_id
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Bad task should be marked failed after MAX_ATTEMPTS=3 but not crash the worker.
+        $task = DB::table('background_tasks')->first();
+        $this->assertGreaterThanOrEqual(1, $task->attempts);
+        $this->assertNull($task->processed_at);
+        $this->assertStringContainsString('message_id', $task->error_message);
+    }
+
+    public function test_processes_email_chitchat_report_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 12345,
+                'user_name' => 'Test Reporter',
+                'user_email' => 'reporter@test.com',
+                'newsfeed_id' => 67890,
+                'reason' => 'Inappropriate content',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        // Mock push service (not needed for this test but required by command).
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify email was sent.
+        Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
+            return $mail->reporterName === 'Test Reporter'
+                && $mail->reporterId === 12345
+                && $mail->reporterEmail === 'reporter@test.com'
+                && $mail->newsfeedId === 67890
+                && $mail->reason === 'Inappropriate content';
+        });
+
+        // Verify task was marked as processed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_email_chitchat_report_falls_back_when_user_name_blank(): void
+    {
+        // Users without a fullname (or whose fullname is blank) used to fail
+        // the report with "email_chitchat_report requires user_name". The report
+        // should still send — id + email identify the reporter; the name is cosmetic.
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 42076407,
+                'user_name' => '',
+                'user_email' => 'mail@mattbloomfield.co.uk',
+                'newsfeed_id' => 604243,
+                'reason' => 'This is a bot or AI post.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
+            return $mail->reporterName === 'A Freegle user'
+                && $mail->reporterId === 42076407
+                && $mail->reporterEmail === 'mail@mattbloomfield.co.uk';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
+    public function test_email_chitchat_report_sends_without_user_email(): void
+    {
+        // Regression: reporter with no preferred=1 email queues an empty user_email.
+        // The consumer must still send the report — user_id identifies the reporter.
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 99001,
+                'user_name' => 'No-Email Reporter',
+                'user_email' => '',
+                'newsfeed_id' => 88001,
+                'reason' => 'Spam',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
+            return $mail->reporterId === 99001
+                && $mail->newsfeedId === 88001
+                && $mail->reporterEmail === '';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
+    public function test_skips_already_processed_tasks(): void
+    {
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_group_mods',
+            'data' => json_encode(['group_id' => 1]),
+            'created_at' => now(),
+            'processed_at' => now(),  // Already processed.
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldNotReceive('notifyGroupMods');
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+    }
+
+    public function test_marks_failed_after_max_attempts(): void
+    {
+        DB::table('background_tasks')->insert([
+            'task_type' => 'unknown_task_type',
+            'data' => json_encode(['test' => TRUE]),
+            'created_at' => now(),
+            'attempts' => 2,  // Already tried twice.
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should be marked as permanently failed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->failed_at);
+        $this->assertNotNull($task->error_message);
+        $this->assertStringContains('Unknown task type', $task->error_message);
+    }
+
+    public function test_handles_missing_required_fields(): void
+    {
+        // Email report with missing required fields.
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode(['user_id' => 123]),  // Missing user_name, user_email, etc.
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should have recorded the error but not permanently failed yet (attempts < 3).
+        $task = DB::table('background_tasks')->first();
+        $this->assertNull($task->processed_at);
+        $this->assertNotNull($task->error_message);
+        $this->assertEquals(1, $task->attempts);
+    }
+
+    public function test_processes_multiple_tasks_in_order(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        // Insert tasks in order.
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_group_mods',
+            'data' => json_encode(['group_id' => $group->id]),
+            'created_at' => now()->subSeconds(2),
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 1,
+                'user_name' => 'Reporter',
+                'user_email' => 'test@test.com',
+                'newsfeed_id' => 100,
+                'reason' => 'Test reason',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Both should be processed.
+        $tasks = DB::table('background_tasks')->get();
+        $this->assertCount(2, $tasks);
+        foreach ($tasks as $task) {
+            $this->assertNotNull($task->processed_at);
+        }
+    }
+
+    public function test_processes_email_donate_external_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_donate_external',
+            'data' => json_encode([
+                'user_id' => 54321,
+                'user_name' => 'Generous Donor',
+                'user_email' => 'donor@test.com',
+                'amount' => 25.50,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify email was sent with correct data and defaults to external source.
+        Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
+            return $mail->userName === 'Generous Donor'
+                && $mail->userId === 54321
+                && $mail->userEmail === 'donor@test.com'
+                && $mail->amount === 25.50
+                && $mail->source === DonateExternalMail::SOURCE_EXTERNAL;
+        });
+
+        // Verify task was marked as processed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_processes_email_donate_paypal_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_donate_external',
+            'data' => json_encode([
+                'user_id' => 111,
+                'user_name' => 'PayPal Donor',
+                'user_email' => 'paypal@test.com',
+                'amount' => 30.00,
+                'source' => 'paypal',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
+            return $mail->source === DonateExternalMail::SOURCE_PAYPAL
+                && $mail->getChannelPhrase() === 'PayPal Donate'
+                && str_contains($mail->envelope()->subject, 'via PayPal Donate');
+        });
+    }
+
+    public function test_processes_email_donate_stripe_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_donate_external',
+            'data' => json_encode([
+                'user_id' => 222,
+                'user_name' => 'Stripe Donor',
+                'user_email' => 'stripe@test.com',
+                'amount' => 40.00,
+                'source' => 'stripe',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
+            return $mail->source === DonateExternalMail::SOURCE_STRIPE
+                && $mail->getChannelPhrase() === 'Stripe'
+                && str_contains($mail->envelope()->subject, 'via Stripe');
+        });
+    }
+
+    public function test_email_donate_external_fails_with_missing_fields(): void
+    {
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_donate_external',
+            'data' => json_encode(['user_id' => 123]),  // Missing user_name, user_email, amount.
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should have recorded the error.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNull($task->processed_at);
+        $this->assertNotNull($task->error_message);
+        $this->assertStringContains('email_donate_external requires', $task->error_message);
+    }
+
+    public function test_processes_email_forgot_password_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_forgot_password',
+            'data' => json_encode([
+                'user_id' => 11111,
+                'email' => 'forgetful@test.com',
+                'reset_url' => 'https://www.ilovefreegle.org/settings?u=11111&k=abc123&src=forgotpass',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify email was sent with correct data.
+        Mail::assertSent(ForgotPasswordMail::class, function (ForgotPasswordMail $mail) {
+            return $mail->userId === 11111
+                && $mail->email === 'forgetful@test.com'
+                && $mail->resetUrl === 'https://www.ilovefreegle.org/settings?u=11111&k=abc123&src=forgotpass';
+        });
+
+        // Verify task was marked as processed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_processes_email_unsubscribe_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_unsubscribe',
+            'data' => json_encode([
+                'user_id' => 22222,
+                'email' => 'leaving@test.com',
+                'unsub_url' => 'https://www.ilovefreegle.org/unsubscribe/22222?u=22222&k=def456&confirm=1',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify email was sent with correct data.
+        Mail::assertSent(UnsubscribeConfirmMail::class, function (UnsubscribeConfirmMail $mail) {
+            return $mail->userId === 22222
+                && $mail->email === 'leaving@test.com'
+                && $mail->unsubUrl === 'https://www.ilovefreegle.org/unsubscribe/22222?u=22222&k=def456&confirm=1';
+        });
+
+        // Verify task was marked as processed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_exits_after_max_iterations(): void
+    {
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 3,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Command should have exited cleanly after 3 iterations.
+    }
+
+    public function test_mod_stdmsg_reject_sends_email_from_group_volunteers(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Wendy Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'WANTED: Something (Test AB1)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'MODERATOR MESSAGE -: WANTED: Something (Test AB1)',
+                'body' => 'Dear member, please repost with more detail.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify email was sent with correct from address and content.
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group, $mod) {
+            $this->assertEquals('Wendy Moderator', $mail->modName);
+            $this->assertEquals($group->nameshort, $mail->groupNameShort);
+            $this->assertEquals('MODERATOR MESSAGE -: WANTED: Something (Test AB1)', $mail->stdSubject);
+            $this->assertEquals('Dear member, please repost with more detail.', $mail->stdBody);
+            return TRUE;
+        });
+
+        // Verify log entry was created.
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Rejected')
+            ->first();
+        $this->assertNotNull($log, 'Rejected log entry should be created');
+        $this->assertEquals($mod->id, $log->byuser);
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_mod_stdmsg_approve_without_content_skips_email(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $mod = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => '',
+                'body' => '',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // No email should be sent for empty stdmsg.
+        Mail::assertNothingSent();
+
+        // But the log entry should always be created (even without email content).
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Approved')
+            ->first();
+        $this->assertNotNull($log, 'Approved log entry should be created even without email content');
+
+        // And the task should be marked as processed (not failed).
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_mod_stdmsg_falls_back_to_messages_groups_for_groupid(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Mod']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'WANTED: Widget',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        // Queue task WITHOUT groupid (old Go API format).
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_reply',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'subject' => 'Re: WANTED: Widget',
+                'body' => 'Thanks for posting!',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group) {
+            $this->assertEquals($group->nameshort, $mail->groupNameShort);
+            return TRUE;
+        });
+
+        // The "Replied" mod-log entry is now written synchronously by the Go handleReply
+        // handler, NOT by the batch. The batch INSERT was unconditional and re-ran on task
+        // retry, duplicating the log row (Discourse 9672/6). In this batch-only test the Go
+        // handler did not run, so there must be NO Replied log row from the batch.
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Replied')
+            ->first();
+        $this->assertNull($log, 'Batch must not create the Replied log (Go writes it synchronously)');
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_mod_stdmsg_creates_chat_room_and_message(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Chat Mod']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Chat test',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Rejection notice',
+                'body' => 'Please repost.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify a User2Mod chat room was created.
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $poster->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', 'User2Mod')
+            ->first();
+        $this->assertNotNull($chatRoom, 'User2Mod chat room should be created');
+
+        // Verify a chat message was created.
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'ModMail chat message should be created');
+        $this->assertEquals($msgId, $chatMsg->refmsgid);
+        $this->assertStringContains('Rejection notice', $chatMsg->message);
+        $this->assertStringContains('Please repost.', $chatMsg->message);
+    }
+
+    public function test_message_rejected_reopens_mods_previously_closed_chat(): void
+    {
+        // Regression (Discourse #9481/541, reporter Derek): a mod actions a member
+        // via a User2Mod chat they had previously CLOSED. The modmail is delivered
+        // and latestmessage is bumped, but the mod's roster stays 'Closed', so the
+        // ModTools chats list (which filters status != 'Closed') hides it — while
+        // the member still sees it. Sending the modmail must reopen the mod's
+        // closed roster so the chat reappears for them.
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Closed Roster Mod']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'WANTED: Something (Test ZZ1)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        // Pre-existing User2Mod chat that the mod had previously CLOSED, with a
+        // stale latestmessage (as in the real report, an old chat).
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'user1' => $poster->id,
+            'chattype' => 'User2Mod',
+            'groupid' => $group->id,
+            'latestmessage' => now()->subDays(400),
+        ]);
+        DB::table('chat_roster')->insert([
+            'chatid' => $chatId,
+            'userid' => $mod->id,
+            'status' => 'Closed',
+            'date' => now()->subDays(400),
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Message not approved: WANTED: Something (Test ZZ1)',
+                'body' => 'Please repost with more detail.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The modmail must have gone into the pre-existing chat (not a new one).
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'ModMail should be added to the existing chat');
+
+        // The mod's roster must no longer be 'Closed', so the chat reappears in
+        // their ModTools chats list.
+        $status = DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->value('status');
+        $this->assertNotEquals('Closed', $status, "Mod's previously-closed roster should be reopened after sending modmail");
+        $this->assertEquals('Offline', $status);
+    }
+
+    public function test_mod_stdmsg_to_member_reopens_mods_previously_closed_chat(): void
+    {
+        // Mirrors test_message_rejected_reopens_mods_previously_closed_chat but for the
+        // email_mod_stdmsg (direct mod-to-member message) code path handled by
+        // handleModStdMessageForMember — which also calls reopenClosedRosters().
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Closed Roster Mod 2']);
+
+        // Pre-existing User2Mod chat that the mod had previously CLOSED.
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'user1' => $member->id,
+            'chattype' => 'User2Mod',
+            'groupid' => $group->id,
+            'latestmessage' => now()->subDays(30),
+        ]);
+        DB::table('chat_roster')->insert([
+            'chatid' => $chatId,
+            'userid' => $mod->id,
+            'status' => 'Closed',
+            'date' => now()->subDays(30),
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'A note from your moderator',
+                'body' => 'Please read our group rules.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The modmail must have gone into the pre-existing chat (not a new one).
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'ModMail should be added to the existing User2Mod chat');
+
+        // The mod's roster must no longer be 'Closed' so the chat reappears.
+        $status = DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->value('status');
+        $this->assertNotEquals('Closed', $status, "Mod's previously-closed roster should be reopened after sending mod stdmsg");
+        $this->assertEquals('Offline', $status);
+    }
+
+    public function test_message_outcome_logs_and_notifies_interested_users(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        // Create a User2User chat room where the replier expressed interest.
+        $chatRoomId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $poster->id,
+            'user2' => $replier->id,
+        ]);
+        DB::table('chat_messages')->insert([
+            'chatid' => $chatRoomId,
+            'userid' => $replier->id,
+            'message' => 'Is this still available?',
+            'type' => 'Interested',
+            'refmsgid' => $msgId,
+            'date' => now(),
+            'reviewrequired' => 0,
+            'reviewrejected' => 0,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'message_outcome',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $poster->id,
+                'outcome' => 'Taken',
+                'happiness' => 'Happy',
+                'comment' => 'Great experience',
+                'userid' => 0,
+                'message' => 'Sorry, this has now been taken.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify log entry was created.
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Outcome')
+            ->first();
+        $this->assertNotNull($log, 'Outcome log entry should be created');
+        $this->assertEquals($poster->id, $log->user);
+        $this->assertEquals($group->id, $log->groupid);
+        $this->assertStringContains('Taken', $log->text);
+
+        // Verify the interested replier got a Completed chat message.
+        $completedMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoomId)
+            ->where('type', 'Completed')
+            ->first();
+        $this->assertNotNull($completedMsg, 'Completed chat message should be created');
+        $this->assertEquals($poster->id, $completedMsg->userid);
+        $this->assertEquals($msgId, $completedMsg->refmsgid);
+        $this->assertEquals('Sorry, this has now been taken.', $completedMsg->message);
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_message_outcome_skips_message_for_unpromised_chats(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        $chatRoomId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $poster->id,
+            'user2' => $replier->id,
+        ]);
+        // Interested message.
+        DB::table('chat_messages')->insert([
+            'chatid' => $chatRoomId,
+            'userid' => $replier->id,
+            'message' => 'I want this',
+            'type' => 'Interested',
+            'refmsgid' => $msgId,
+            'date' => now(),
+            'reviewrequired' => 0,
+            'reviewrejected' => 0,
+        ]);
+        // Reneged (unpromised) message — poster changed their mind.
+        DB::table('chat_messages')->insert([
+            'chatid' => $chatRoomId,
+            'userid' => $poster->id,
+            'message' => null,
+            'type' => 'Reneged',
+            'refmsgid' => $msgId,
+            'date' => now(),
+            'reviewrequired' => 0,
+            'reviewrejected' => 0,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'message_outcome',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $poster->id,
+                'outcome' => 'Taken',
+                'happiness' => '',
+                'comment' => '',
+                'userid' => 0,
+                'message' => 'Sorry, this has been taken.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The Completed message should have null message body (unpromised).
+        $completedMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoomId)
+            ->where('type', 'Completed')
+            ->first();
+        $this->assertNotNull($completedMsg, 'Completed chat message should be created');
+        $this->assertNull($completedMsg->message, 'Message should be null for unpromised chat');
+    }
+
+    public function test_message_outcome_excludes_user_who_got_item(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $taker = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        $chatRoomId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $poster->id,
+            'user2' => $taker->id,
+        ]);
+        DB::table('chat_messages')->insert([
+            'chatid' => $chatRoomId,
+            'userid' => $taker->id,
+            'message' => 'I want this',
+            'type' => 'Interested',
+            'refmsgid' => $msgId,
+            'date' => now(),
+            'reviewrequired' => 0,
+            'reviewrejected' => 0,
+        ]);
+
+        // Record that this user actually got the item.
+        DB::table('messages_by')->insert([
+            'msgid' => $msgId,
+            'userid' => $taker->id,
+            'count' => 1,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'message_outcome',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $poster->id,
+                'outcome' => 'Taken',
+                'happiness' => '',
+                'comment' => '',
+                'userid' => $taker->id,
+                'message' => 'Sorry, taken.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // No Completed message should be created — the taker already got it.
+        $completedMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoomId)
+            ->where('type', 'Completed')
+            ->first();
+        $this->assertNull($completedMsg, 'Should not notify user who got the item');
+
+        // But the log should still be there.
+        $log = DB::table('logs')
+            ->where('msgid', $msgId)
+            ->where('type', 'Message')
+            ->where('subtype', 'Outcome')
+            ->first();
+        $this->assertNotNull($log);
+    }
+
+    public function test_mod_stdmsg_for_member_sends_email_and_creates_chat(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $memberEmail = $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Location Required please',
+                'body' => 'Hello, can you please advise your postcode?',
+                'action' => 'Leave Approved Member',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify email was sent.
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($mod) {
+            $this->assertEquals('Test Moderator', $mail->modName);
+            $this->assertEquals('Location Required please', $mail->stdSubject);
+            $this->assertEquals('Hello, can you please advise your postcode?', $mail->stdBody);
+            return TRUE;
+        });
+
+        // Verify task was processed.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+
+        // Verify chat room and message were created.
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $member->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', 'User2Mod')
+            ->first();
+        $this->assertNotNull($chatRoom, 'Chat room should be created');
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'Chat message should be created');
+        $this->assertStringContains('Location Required please', $chatMsg->message);
+    }
+
+    public function test_mod_stdmsg_for_tn_user_sends_email_to_tn_proxy(): void
+    {
+        // Regression: on 2026-04-03 a stdmsg sent to TN user 41825411 was never received.
+        // The member's only emails are @user.trashnothing.com proxies. Verify the batch
+        // processor sends to the TN proxy address and does not silently skip the member.
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
+        $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Membership of Hertford Freegle',
+                'body' => 'Dear member, please update your location.',
+                'stdmsgid' => 219508,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Email must be sent to the TN proxy — not skipped because the address is external.
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($tnEmail) {
+            return collect($mail->to)->pluck('address')->contains($tnEmail);
+        });
+
+        // Chat message must be created so the conversation appears in modtools.
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $member->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', 'User2Mod')
+            ->first();
+        $this->assertNotNull($chatRoom, 'Chat room should be created for TN user');
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'ModMail chat message should be created for TN user');
+    }
+
+    public function test_mod_stdmsg_for_member_sets_lastmsgemailed_after_direct_send(): void
+    {
+        // Regression: on 2026-04-03 the notification daemon found lastmsgemailed equal to
+        // the new ModMail message ID and skipped emailing the member — they got nothing.
+        // After handleModStdMessageForMember sends the email and creates the chat message,
+        // it must update chat_roster.lastmsgemailed to that message ID so the notification
+        // daemon (NotifyUser2ModCommand) does not send a duplicate and then mark it done.
+        // Without this update the daemon would either:
+        //   (a) send a duplicate notification (double email to member), or
+        //   (b) find lastmsgemailed already set by some other path and skip sending entirely.
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
+        $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Membership of Hertford Freegle',
+                'body' => 'Dear member, please update your location.',
+                'stdmsgid' => 219508,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $member->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', 'User2Mod')
+            ->first();
+        $this->assertNotNull($chatRoom);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg);
+
+        // After the direct email send, lastmsgemailed MUST equal the new message ID.
+        // This prevents NotifyUser2ModCommand from treating it as unnotified and either
+        // sending a duplicate or (if something else already set it) silently skipping the member.
+        $roster = DB::table('chat_roster')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $member->id)
+            ->first();
+        $this->assertNotNull($roster, 'Member must have a roster entry');
+        $this->assertEquals(
+            $chatMsg->id,
+            $roster->lastmsgemailed,
+            'lastmsgemailed must be set to the ModMail message ID after direct send, ' .
+            'otherwise the notification daemon will attempt to re-send'
+        );
+    }
+
+    public function test_mod_stdmsg_only_marks_member_as_emailed_not_other_mods(): void
+    {
+        // After handleModStdMessageForMember runs:
+        // - The member's lastmsgemailed must be set (direct email already sent — daemon must not duplicate).
+        // - Other mods' lastmsgemailed must NOT be pre-set, so the notification daemon CAN notify them
+        //   that a stdmsg was sent (V1 parity: mods see ModMail messages in their chat queue).
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
+        $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
+        $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
+
+        $this->createMembership($otherMod, $group, ['role' => 'Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Membership of Hertford Freegle',
+                'body' => 'Dear member, please update your location.',
+                'stdmsgid' => 219508,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $member->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', 'User2Mod')
+            ->first();
+        $this->assertNotNull($chatRoom);
+
+        // Member's lastmsgemailed must be set — direct email already sent.
+        $memberRoster = DB::table('chat_roster')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $member->id)
+            ->first();
+        $this->assertNotNull($memberRoster->lastmsgemailed, 'Member lastmsgemailed must be set');
+
+        // Other mod's roster must NOT have lastmsgemailed pre-set — the notification daemon
+        // should be able to notify them that a stdmsg was sent to the member.
+        $otherModRoster = DB::table('chat_roster')
+            ->where('chatid', $chatRoom->id)
+            ->where('userid', $otherMod->id)
+            ->first();
+        if ($otherModRoster) {
+            $this->assertNull(
+                $otherModRoster->lastmsgemailed,
+                'Other mod lastmsgemailed must not be pre-set — daemon must be able to notify them'
+            );
+        }
+    }
+
+    public function test_mod_stdmsg_for_member_creates_log_and_modmails_record(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Please read our group rules',
+                'body' => 'Welcome to the group. Please read our rules.',
+                'action' => 'Leave Approved Member',
+                'stdmsgid' => 42,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Verify a log entry was created (so modmail appears in mod logs).
+        // V1 parity: modmails are logged as User/Mailed (not Message/Replied).
+        $logEntry = DB::table('logs')
+            ->where('type', 'User')
+            ->where('subtype', 'Mailed')
+            ->where('byuser', $mod->id)
+            ->where('user', $member->id)
+            ->where('groupid', $group->id)
+            ->first();
+        $this->assertNotNull($logEntry, 'Log entry should be created so modmail appears in logs');
+        $this->assertEquals('Please read our group rules', $logEntry->text);
+        $this->assertEquals(42, $logEntry->stdmsgid);
+
+        // users_modmails is no longer populated here — the syncModMailCounts cron job
+        // populates it by scanning the logs table.
+    }
+
+    public function test_mod_stdmsg_for_member_without_content_skips_email(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => '',
+                'body' => '',
+                'action' => 'Leave Approved Member',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNothingSent();
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_email_membership_approved_task_type_no_longer_exists(): void
+    {
+        // email_membership_approved was removed — membership approve now queues
+        // email_mod_stdmsg directly (when content is provided) or nothing (no content).
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_membership_approved',
+            'data' => json_encode([
+                'userid' => 1,
+                'byuser' => 2,
+                'groupid' => 3,
+                'subject' => 'Welcome',
+                'body' => 'You have been approved.',
+            ]),
+            'created_at' => now(),
+            'attempts' => 2,  // Already tried twice — next attempt marks as failed.
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should fail with "Unknown task type" on the third (final) attempt.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->failed_at, 'Unknown task type should be permanently failed');
+        $this->assertStringContains('Unknown task type', $task->error_message ?? '');
+    }
+
+    public function test_email_membership_rejected_task_type_no_longer_exists(): void
+    {
+        // email_membership_rejected was removed — membership reject now queues
+        // email_mod_stdmsg directly (when content is provided) or nothing (no content).
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_membership_rejected',
+            'data' => json_encode([
+                'userid' => 1,
+                'byuser' => 2,
+                'groupid' => 3,
+                'subject' => 'Sorry',
+                'body' => 'Your application was rejected.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+            'attempts' => 2,  // Already tried twice — next attempt marks as failed.
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should fail with "Unknown task type" on the third (final) attempt.
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->failed_at, 'Unknown task type should be permanently failed');
+        $this->assertStringContains('Unknown task type', $task->error_message ?? '');
+    }
+
+    public function test_refer_to_support_sends_plain_text_email(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser(['fullname' => 'Alice Mod']);
+        $otherUser = $this->createTestUser(['fullname' => 'Bob Member']);
+        $group = $this->createTestGroup();
+
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $otherUser->id,
+            'user2' => $user->id,
+            'groupid' => $group->id,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'refer_to_support',
+            'data' => json_encode([
+                'chatid' => $chatId,
+                'userid' => $user->id,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ReferToSupportMail::class, function (ReferToSupportMail $mail) use ($user, $chatId) {
+            $this->assertEquals('Alice Mod', $mail->userName);
+            $this->assertEquals($user->id, $mail->userId);
+            $this->assertEquals($chatId, $mail->chatId);
+            return TRUE;
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_processes_email_chat_spam_report_task(): void
+    {
+        Mail::fake();
+
+        $reporter = $this->createTestUser(['fullname' => 'Melissa Reporter']);
+        $other = $this->createTestUser(['fullname' => 'Creepy Guy']);
+
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $reporter->id,
+            'user2' => $other->id,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chat_spam_report',
+            'data' => json_encode([
+                'chatid' => $chatId,
+                'userid' => $reporter->id,
+                'reason' => 'Spam',
+                'comment' => 'asked me out',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) use ($reporter, $other, $chatId) {
+            $this->assertEquals('Melissa Reporter', $mail->reporterName);
+            $this->assertEquals($reporter->id, $mail->reporterId);
+            $this->assertEquals('Creepy Guy', $mail->otherUserName);
+            $this->assertEquals($chatId, $mail->chatId);
+            $this->assertEquals('Spam', $mail->reason);
+            $this->assertEquals('asked me out', $mail->comment);
+            return TRUE;
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_email_chat_spam_report_sends_without_a_comment(): void
+    {
+        Mail::fake();
+
+        $reporter = $this->createTestUser(['fullname' => 'Melissa Reporter']);
+        $other = $this->createTestUser(['fullname' => 'Creepy Guy']);
+
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $reporter->id,
+            'user2' => $other->id,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chat_spam_report',
+            'data' => json_encode([
+                'chatid' => $chatId,
+                'userid' => $reporter->id,
+                'reason' => 'Other',
+                'comment' => '',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) {
+            $this->assertEquals('', $mail->comment);
+            $this->assertEquals('Other', $mail->reason);
+            return TRUE;
+        });
+    }
+
+    public function test_email_chat_spam_report_skips_when_chat_missing(): void
+    {
+        Mail::fake();
+
+        $reporter = $this->createTestUser();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chat_spam_report',
+            'data' => json_encode([
+                'chatid' => 99999999,
+                'userid' => $reporter->id,
+                'reason' => 'Spam',
+                'comment' => '',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])
+            ->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ChatSpamReportMail::class);
+    }
+
+    public function test_email_verify_sends_verification_email(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_verify',
+            'data' => json_encode([
+                'user_id' => $user->id,
+                'email' => 'newemail@test.com',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(VerifyEmailMail::class, function (VerifyEmailMail $mail) use ($user) {
+            $this->assertEquals($user->id, $mail->userId);
+            $this->assertEquals('newemail@test.com', $mail->email);
+            $this->assertNotEmpty($mail->confirmUrl);
+            return TRUE;
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+
+        // Verify a validation key was created in users_emails.
+        $emailRow = DB::table('users_emails')
+            ->where('email', 'newemail@test.com')
+            ->first();
+        $this->assertNotNull($emailRow);
+        $this->assertNotNull($emailRow->validatekey);
+    }
+
+    public function test_email_verify_skips_existing_validated_email(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        // Already on the account AND already validated -> no need to re-verify.
+        $userEmail = $this->createTestUserEmail($user, ['preferred' => 1, 'validated' => now()]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_verify',
+            'data' => json_encode([
+                'user_id' => $user->id,
+                'email' => $userEmail->email,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should NOT re-send verification for an already-validated email.
+        Mail::assertNothingSent();
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    /**
+     * REGRESSION: an address already on the account but UNVALIDATED (validated IS NULL) must still
+     * get a (re)sent verification. The handler previously short-circuited on ANY existing address and
+     * returned without sending, so an unconfirmed address could never be verified and the user was
+     * stuck re-clicking "verify" with no mail arriving.
+     */
+    public function test_email_verify_resends_for_existing_unvalidated_email(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        // Already on the account, but never validated - the stuck state.
+        $userEmail = $this->createTestUserEmail($user, ['preferred' => 0]);
+        $this->assertNull($userEmail->validated, 'precondition: the existing email is unvalidated');
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_verify',
+            'data' => json_encode([
+                'user_id' => $user->id,
+                'email' => $userEmail->email,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The verification mail MUST go out despite the address already being on the account.
+        Mail::assertSent(VerifyEmailMail::class, function (VerifyEmailMail $mail) use ($user, $userEmail) {
+            return $mail->userId === $user->id
+                && $mail->email === $userEmail->email
+                && ! empty($mail->confirmUrl);
+        });
+
+        // And a fresh validatekey must have been written so the confirm link works.
+        $emailRow = DB::table('users_emails')->where('email', $userEmail->email)->first();
+        $this->assertNotNull($emailRow->validatekey, 'validatekey should be set for the re-sent verification');
+    }
+
+    public function test_email_merge_sends_to_both_users(): void
+    {
+        Mail::fake();
+
+        $user1 = $this->createTestUser(['fullname' => 'User One']);
+        $user1Email = $this->createTestUserEmail($user1, ['preferred' => 1]);
+        $user2 = $this->createTestUser(['fullname' => 'User Two']);
+        $user2Email = $this->createTestUserEmail($user2, ['preferred' => 1]);
+
+        // Create a merge record.
+        $mergeId = DB::table('merges')->insertGetId([
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+            'offeredby' => $user1->id,
+            'uid' => 'testuid123',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_merge',
+            'data' => json_encode([
+                'merge_id' => $mergeId,
+                'uid' => 'testuid123',
+                'user1' => $user1->id,
+                'user2' => $user2->id,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should send to both users.
+        Mail::assertSent(MergeOfferMail::class, 2);
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_bcc_specific_sends_extra_email_for_message_reject(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'BCC Test Mod']);
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        // Create a mod_config with ccrejectto = Specific.
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'BCC Test Config',
+            'createdby' => $mod->id,
+            'ccrejectto' => 'Specific',
+            'ccrejectaddr' => 'bcc-archive@example.com',
+            'ccfollowupto' => 'Nobody',
+            'ccfollowupaddr' => '',
+            'ccrejmembto' => 'Nobody',
+            'ccrejmembaddr' => '',
+            'ccfollmembto' => 'Nobody',
+            'ccfollmembaddr' => '',
+            'network' => 'Freegle',
+        ]);
+
+        // Assign config to the mod's membership.
+        DB::table('memberships')
+            ->where('userid', $mod->id)
+            ->where('groupid', $group->id)
+            ->update(['configid' => $configId]);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: BCC Test',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Pending',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Sorry, not suitable',
+                'body' => 'Your post does not meet guidelines.',
+                'stdmsgid' => 0,
+                'action' => 'Reject',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Two emails: one to poster, one BCC.
+        Mail::assertSent(ModStdMessageMail::class, 2);
+
+        // Verify BCC copy was sent to the specific address.
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
+            return collect($mail->to)->pluck('address')->contains('bcc-archive@example.com');
+        });
+
+        // Verify BCC body has the V1 prefix.
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
+            if (! collect($mail->to)->pluck('address')->contains('bcc-archive@example.com')) {
+                return FALSE;
+            }
+            return str_contains($mail->stdBody, '(This is a BCC of');
+        });
+    }
+
+    public function test_bcc_me_resolves_to_mod_email_for_member_action(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $memberEmail = $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'BCC Me Mod']);
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        // Create a mod_config with ccfollmembto = Me.
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'BCC Me Config',
+            'createdby' => $mod->id,
+            'ccrejectto' => 'Nobody',
+            'ccrejectaddr' => '',
+            'ccfollowupto' => 'Nobody',
+            'ccfollowupaddr' => '',
+            'ccrejmembto' => 'Nobody',
+            'ccrejmembaddr' => '',
+            'ccfollmembto' => 'Me',
+            'ccfollmembaddr' => '',
+            'network' => 'Freegle',
+        ]);
+
+        DB::table('memberships')
+            ->where('userid', $mod->id)
+            ->where('groupid', $group->id)
+            ->update(['configid' => $configId]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Location Required',
+                'body' => 'Please update your location.',
+                'stdmsgid' => 0,
+                'action' => 'Leave Approved Member',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Two emails: one to member, one BCC to the mod.
+        Mail::assertSent(ModStdMessageMail::class, 2);
+
+        // The mod's preferred email should be the BCC recipient.
+        $modEmail = DB::table('users_emails')
+            ->where('userid', $mod->id)
+            ->where('preferred', 1)
+            ->value('email');
+
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($modEmail) {
+            return collect($mail->to)->pluck('address')->contains($modEmail);
+        });
+    }
+
+    public function test_bcc_nobody_sends_no_extra_email(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'No BCC Mod']);
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        // Config with all CC set to Nobody.
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'No BCC Config',
+            'createdby' => $mod->id,
+            'ccrejectto' => 'Nobody',
+            'ccrejectaddr' => '',
+            'ccfollowupto' => 'Nobody',
+            'ccfollowupaddr' => '',
+            'ccrejmembto' => 'Nobody',
+            'ccrejmembaddr' => '',
+            'ccfollmembto' => 'Nobody',
+            'ccfollmembaddr' => '',
+            'network' => 'Freegle',
+        ]);
+
+        DB::table('memberships')
+            ->where('userid', $mod->id)
+            ->where('groupid', $group->id)
+            ->update(['configid' => $configId]);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: No BCC Test',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Pending',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Not suitable',
+                'body' => 'Sorry.',
+                'stdmsgid' => 0,
+                'action' => 'Reject',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Only one email — to the poster. No BCC.
+        Mail::assertSent(ModStdMessageMail::class, 1);
+    }
+
+    public function test_bcc_groupname_substitution_in_address(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Subst Mod']);
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        // Config with $groupname in the BCC address.
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'Groupname BCC Config',
+            'createdby' => $mod->id,
+            'ccrejectto' => 'Specific',
+            'ccrejectaddr' => '$groupname-archive@example.com',
+            'ccfollowupto' => 'Nobody',
+            'ccfollowupaddr' => '',
+            'ccrejmembto' => 'Nobody',
+            'ccrejmembaddr' => '',
+            'ccfollmembto' => 'Nobody',
+            'ccfollmembaddr' => '',
+            'network' => 'Freegle',
+        ]);
+
+        DB::table('memberships')
+            ->where('userid', $mod->id)
+            ->where('groupid', $group->id)
+            ->update(['configid' => $configId]);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Subst Test',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Approved!',
+                'body' => 'Your message is approved.',
+                'stdmsgid' => 0,
+                'action' => 'Approve',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // BCC address should have $groupname replaced with the group's nameshort.
+        $expectedBcc = $group->nameshort . '-archive@example.com';
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($expectedBcc) {
+            return collect($mail->to)->pluck('address')->contains($expectedBcc);
+        });
+    }
+
+    public function test_bcc_config_fallback_to_other_mod_config(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $modWithConfig = $this->createTestUser(['fullname' => 'Configured Mod']);
+        $modWithoutConfig = $this->createTestUser(['fullname' => 'New Mod']);
+        $this->createMembership($modWithConfig, $group, ['role' => 'Owner']);
+        $this->createMembership($modWithoutConfig, $group, ['role' => 'Moderator']);
+
+        // Only modWithConfig has a config.
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'Fallback Config',
+            'createdby' => $modWithConfig->id,
+            'ccrejectto' => 'Specific',
+            'ccrejectaddr' => 'fallback-bcc@example.com',
+            'ccfollowupto' => 'Nobody',
+            'ccfollowupaddr' => '',
+            'ccrejmembto' => 'Nobody',
+            'ccrejmembaddr' => '',
+            'ccfollmembto' => 'Nobody',
+            'ccfollmembaddr' => '',
+            'network' => 'Freegle',
+        ]);
+
+        DB::table('memberships')
+            ->where('userid', $modWithConfig->id)
+            ->where('groupid', $group->id)
+            ->update(['configid' => $configId]);
+
+        // modWithoutConfig has no configid set — should fall back.
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Fallback Test',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Pending',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $modWithoutConfig->id,
+                'groupid' => $group->id,
+                'subject' => 'Rejected',
+                'body' => 'Not allowed.',
+                'stdmsgid' => 0,
+                'action' => 'Reject',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Should still send BCC using the fallback config from the other mod.
+        Mail::assertSent(ModStdMessageMail::class, 2);
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
+            return collect($mail->to)->pluck('address')->contains('fallback-bcc@example.com');
+        });
+    }
+
+    public function test_freebie_alerts_add_calls_api_for_offer(): void
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test sofa',
+            'textbody' => 'Free sofa, good condition',
+            'type' => 'Offer',
+            'lat' => 52.5,
+            'lng' => -1.8,
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'arrival' => now(),
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'freebie_alerts_add',
+            'data' => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.freebiealerts.app/freegle/post/create' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertSent(function ($request) {
+            return str_contains($request->url(), '/freegle/post/create')
+                && $request->header('Key')[0] === 'test-key-123';
+        });
+
+        $task = DB::table('background_tasks')->where('task_type', 'freebie_alerts_add')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_freebie_alerts_add_skips_wanted_messages(): void
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'WANTED: Test sofa',
+            'type' => 'Wanted',
+            'lat' => 52.5,
+            'lng' => -1.8,
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'freebie_alerts_add',
+            'data' => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // No HTTP call should be made for Wanted messages.
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_freebie_alerts_add_skips_when_no_api_key(): void
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test sofa',
+            'type' => 'Offer',
+            'lat' => 52.5,
+            'lng' => -1.8,
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'freebie_alerts_add',
+            'data' => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => '']);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // No HTTP call when API key is empty.
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_freebie_alerts_add_skips_messages_with_outcome(): void
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test sofa',
+            'type' => 'Offer',
+            'lat' => 52.5,
+            'lng' => -1.8,
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgId,
+            'outcome' => 'Taken',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'freebie_alerts_add',
+            'data' => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_freebie_alerts_add_skips_clearance_posts(): void
+    {
+        // Defense-in-depth: even if a freebie_alerts_add task was somehow enqueued for a
+        // clearance/bulk-offer post, the handler must not call freebiealerts.app.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject'  => 'OFFER: Office Clearance',
+            'textbody' => 'Desks and chairs available.',
+            'type'     => 'Offer',
+            'lat'      => 52.5,
+            'lng'      => -1.8,
+            'date'     => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+        ]);
+        // Mark as a clearance post.
+        DB::table('messages_bulk_items')->insert([
+            'msgid'     => $msgId,
+            'position'  => 0,
+            'name'      => 'Office desk',
+            'quantity'  => 2,
+            'condition' => 'Good',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep'          => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // No HTTP call should be made for clearance posts.
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_freebie_alerts_remove_calls_api(): void
+    {
+        $msgId = 99999;
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'freebie_alerts_remove',
+            'data' => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake([
+            "api.freebiealerts.app/freegle/post/{$msgId}/delete" => \Illuminate\Support\Facades\Http::response([], 200),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertSent(function ($request) use ($msgId) {
+            return str_contains($request->url(), "/freegle/post/{$msgId}/delete")
+                && $request->header('Key')[0] === 'test-key-123';
+        });
+
+        $task = DB::table('background_tasks')->where('task_type', 'freebie_alerts_remove')->first();
+        $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_freebie_alerts_remove_skips_when_no_api_key(): void
+    {
+        DB::table('background_tasks')->insert([
+            'task_type' => 'freebie_alerts_remove',
+            'data' => json_encode(['msgid' => 99999]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => '']);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_handle_fatal_shutdown_does_nothing_for_null_error(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')->never();
+
+        $command->handleFatalShutdown(null);
+    }
+
+    public function test_handle_fatal_shutdown_does_nothing_for_non_fatal_error(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')->never();
+
+        $command->handleFatalShutdown([
+            'type' => E_WARNING,
+            'message' => 'Some warning',
+            'file' => '/app/foo.php',
+            'line' => 42,
+        ]);
+    }
+
+    public function test_handle_fatal_shutdown_logs_and_skips_sentry_when_not_bound(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')
+            ->once()
+            ->withArgs(function (string $message, array $context) {
+                return str_contains($message, 'Fatal error in queue:background-tasks')
+                    && str_contains($message, 'Allowed memory size')
+                    && str_contains($message, '/app/Service.php:99');
+            });
+
+        $command->handleFatalShutdown([
+            'type' => E_ERROR,
+            'message' => 'Allowed memory size of 134217728 bytes exhausted',
+            'file' => '/app/Service.php',
+            'line' => 99,
+        ]);
+    }
+
+    public function test_user_forget_task_forgets_user(): void
+    {
+        $user = $this->createTestUser();
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['user_id' => $user->id, 'reason' => 'Support purge']),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        // Task should be marked processed.
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be marked as processed');
+        $this->assertNull($task->failed_at, 'Task should not be marked as failed');
+
+        // User personal data should be wiped.
+        $updated = DB::table('users')->where('id', $user->id)->first();
+        $this->assertNull($updated->firstname);
+        $this->assertEquals("Deleted User #{$user->id}", $updated->fullname);
+        $this->assertNotNull($updated->forgotten);
+    }
+
+    public function test_user_forget_task_records_error_without_user_id(): void
+    {
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['reason' => 'Support purge']),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNull($task->processed_at, 'Task with missing user_id should not be processed successfully');
+        $this->assertNotNull($task->error_message, 'Task with missing user_id should record an error message');
+        $this->assertStringContainsString('user_id', $task->error_message);
+    }
+
+    public function test_tn_sync_command_task_passes_local_testing_flag(): void
+    {
+        // When local_testing is true in the task data, tn:sync must use fixture files
+        // and never hit the live TN API. preventStrayRequests() enforces this: any
+        // unexpected Http call will throw, failing the test.
+        config([
+            'freegle.trashnothing.api_base_url' => 'https://trashnothing.com/fd/api',
+            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir() . '/tn_sync_test_' . uniqid() . '.txt',
+        ]);
+
+        Http::preventStrayRequests();
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type' => 'tn_sync_command',
+            'data' => json_encode([
+                'from' => '2026-01-01T00:00:00Z',
+                'to' => '2026-01-02T00:00:00Z',
+                'local_testing' => true,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be processed when local_testing is true');
+        $this->assertNull($task->failed_at, 'Task should not fail when local_testing is true');
+    }
+
+    public function test_tn_sync_command_task_without_local_testing_calls_http(): void
+    {
+        // When local_testing is absent the command must hit the TN API.
+        // Fake the Http calls to avoid real network requests.
+        config([
+            'freegle.trashnothing.api_base_url' => 'https://trashnothing.com/fd/api',
+            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir() . '/tn_sync_test_' . uniqid() . '.txt',
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type' => 'tn_sync_command',
+            'data' => json_encode([
+                'from' => '2026-01-01T00:00:00Z',
+                'to' => '2026-01-02T00:00:00Z',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be processed without local_testing');
+        $this->assertNull($task->failed_at, 'Task should not fail without local_testing');
+        Http::assertSent(fn ($request) => str_contains((string) $request->url(), 'ratings'));
+    }
+
+    /**
+     * Custom assertion for string containment (PHPUnit 10+ compatible).
+     */
+    private function assertStringContains(string $needle, string $haystack): void
+    {
+        $this->assertTrue(
+            str_contains($haystack, $needle),
+            "Failed asserting that '{$haystack}' contains '{$needle}'."
+        );
+    }
+}

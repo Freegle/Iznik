@@ -1,0 +1,91 @@
+# Yesterday Server Override Configuration
+# Copy this to docker-compose.override.yml on the yesterday server
+#
+# Set in .env:
+#   COMPOSE_PROFILES=frontend,database,backend,dev,monitoring
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.ports.yml:docker-compose.override.yesterday.yml
+#   COMPOSE_PROJECT_NAME=freegle
+#
+# This configuration:
+# - Disables production-build containers (not needed on Yesterday, dev containers are faster)
+# - Disables MCP containers (not needed on Yesterday, and port 8084 conflicts with 2FA)
+# - Disables playwright and apiv1-phpunit (not needed on Yesterday)
+# - Remaps API ports to avoid conflicts with yesterday-traefik
+# - Exposes dev containers on external ports for yesterday access
+#
+# Note: We use deploy.replicas: 0 instead of overriding profiles because
+# Docker Compose merges profile arrays (so profiles: [disabled] gets combined
+# with the base profile, not replaced).
+
+services:
+  # Disable production-build containers (dev containers are sufficient for Yesterday)
+  freegle-prod-local:
+    deploy:
+      replicas: 0
+
+  modtools-prod-local:
+    deploy:
+      replicas: 0
+
+  # Disable MCP support tools (not needed on Yesterday, mcp-query-sanitizer uses port 8084
+  # which conflicts with yesterday-2fa)
+  mcp-query-sanitizer:
+    deploy:
+      replicas: 0
+
+  mcp-interface:
+    deploy:
+      replicas: 0
+
+  mcp-pseudonymizer:
+    deploy:
+      replicas: 0
+
+  # Note: batch-prod (profile: production) and postfix (profile: mail) don't start
+  # because Yesterday doesn't enable those profiles.
+
+  # Disable test containers (not needed on Yesterday)
+  playwright:
+    deploy:
+      replicas: 0
+
+  apiv1-phpunit:
+    deploy:
+      replicas: 0
+
+  # Remap API ports to avoid conflicts with yesterday-traefik (which uses 8181 and 8193)
+  apiv1:
+    ports: !reset
+      - "8182:80"
+
+  apiv2:
+    ports: !reset
+      - "8195:8192"
+
+  # Disable batch container - scheduled jobs should not run against backup database
+  # Uses deploy.replicas: 0 because Docker Compose merges profile arrays
+  # (profiles: [disabled] would merge with profiles: [dev] and still start)
+  batch:
+    deploy:
+      replicas: 0
+
+  # Spatial servers (iznik-spatial-go / iznik-routing-go, added in #459). Both are
+  # in the `frontend` profile, so they start on Yesterday. The KNN server
+  # (spatial-knn) only needs the DB (percona) and comes up as-is. The routing
+  # server (spatial) depends on spatial-knn being healthy AND defaults to the full
+  # UK OSM graph (/data/uk-latest.osm.pbf), which isn't downloaded on Yesterday —
+  # so point it at the committed Bristol extract baked into the image (same as CI)
+  # so it starts and serves the Bristol area instead of exiting on the missing file.
+  spatial:
+    environment:
+      - OSM_PBF_PATH=/app/testdata/bristol.osm.pbf
+      - DEPRIVATION_CSV=/app/testdata/bristol_lsoa.csv
+
+  # Expose dev containers on external ports for yesterday server
+  freegle-dev-local:
+    ports:
+      - "3002:3002"
+
+  modtools-dev-local:
+    ports:
+      - "3003:3000"

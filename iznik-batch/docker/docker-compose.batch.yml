@@ -1,0 +1,198 @@
+# Docker Compose configuration for iznik-batch production deployment
+#
+# This file is designed for deploying batch services independently of the
+# full Freegle stack. It uses git-based deployment for code updates.
+#
+# Usage:
+#   docker-compose -f docker/docker-compose.batch.yml up -d
+#
+# Code updates:
+#   1. Push changes to master branch
+#   2. Tests pass in CI
+#   3. Auto-merge to production branch
+#   4. git-sync container pulls changes
+#   5. deploy:watch detects version change and triggers refresh
+
+services:
+  # Redis for worker pool semaphores and caching
+  redis:
+    image: redis:7-alpine
+    container_name: batch-redis
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - batch-internal
+
+  # MJML compilation server
+  mjml:
+    image: adrianrudnik/mjml-server:latest
+    container_name: batch-mjml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - batch-internal
+
+  # Git sync for automatic code updates from production branch
+  git-sync:
+    image: registry.k8s.io/git-sync/git-sync:v4.2.1
+    container_name: batch-git-sync
+    volumes:
+      - code:/app
+      - ${GIT_SSH_KEY_PATH:-./ssh}:/etc/git-secret:ro
+    environment:
+      - GITSYNC_REPO=${GIT_REPO:-git@github.com:Freegle/iznik-batch.git}
+      - GITSYNC_BRANCH=${GIT_BRANCH:-production}
+      - GITSYNC_ROOT=/app
+      - GITSYNC_PERIOD=60s
+      - GITSYNC_ONE_TIME=false
+      - GITSYNC_DEPTH=1
+      - GITSYNC_SSH_KNOWN_HOSTS=false
+    restart: unless-stopped
+    networks:
+      - batch-internal
+
+  # Main batch application
+  batch:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: batch-app
+    depends_on:
+      redis:
+        condition: service_healthy
+      mjml:
+        condition: service_healthy
+    volumes:
+      - code:/app:ro
+      - spool-data:/app/storage/spool
+      - batch-logs:/app/storage/logs
+      - sqlite-dbs:/app/storage/databases
+    environment:
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+      # MJML configuration (HTTP mode for worker pool back pressure)
+      - MJML_URL=http://mjml:3000/v1/render
+      - MJML_HTTP_TIMEOUT=30
+
+      # Worker pool configuration
+      - POOL_MJML_MAX=${POOL_MJML_MAX:-20}
+      - POOL_MJML_TIMEOUT=${POOL_MJML_TIMEOUT:-30}
+      - POOL_DIGEST_MAX=${POOL_DIGEST_MAX:-10}
+
+      # Database configuration (external - not in Docker)
+      - DB_CONNECTION=mysql
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_DATABASE=${DB_DATABASE:-iznik}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+
+      # Mail configuration
+      - MAIL_MAILER=${MAIL_MAILER:-smtp}
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_FROM_ADDRESS=${MAIL_FROM_ADDRESS}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-Freegle}
+
+      # Sentry configuration
+      - SENTRY_LARAVEL_DSN=${SENTRY_LARAVEL_DSN}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
+
+      # Application configuration
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_KEY=${APP_KEY}
+    restart: unless-stopped
+    networks:
+      - batch-internal
+
+  # Scheduler - runs cron jobs
+  scheduler:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: batch-scheduler
+    command: php artisan schedule:work
+    depends_on:
+      - batch
+    volumes:
+      - code:/app:ro
+      - spool-data:/app/storage/spool
+      - batch-logs:/app/storage/logs
+      - sqlite-dbs:/app/storage/databases
+    environment:
+      - REDIS_HOST=redis
+      - MJML_URL=http://mjml:3000/v1/render
+      - DB_HOST=${DB_HOST}
+      - DB_DATABASE=${DB_DATABASE:-iznik}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - APP_ENV=production
+      - APP_KEY=${APP_KEY}
+    restart: unless-stopped
+    networks:
+      - batch-internal
+
+  # Mail spooler daemon
+  mail-spooler:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: batch-mail-spooler
+    command: php artisan mail:spool:process --daemon
+    depends_on:
+      - batch
+    volumes:
+      - code:/app:ro
+      - spool-data:/app/storage/spool
+      - batch-logs:/app/storage/logs
+    environment:
+      - REDIS_HOST=redis
+      - DB_HOST=${DB_HOST}
+      - DB_DATABASE=${DB_DATABASE:-iznik}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - MAIL_MAILER=${MAIL_MAILER:-smtp}
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - APP_ENV=production
+      - APP_KEY=${APP_KEY}
+    restart: unless-stopped
+    networks:
+      - batch-internal
+
+volumes:
+  # Redis data - low priority for backup (permits auto-initialize)
+  redis-data:
+
+  # Code volume - populated by git-sync
+  code:
+
+  # Mail spool - HIGH PRIORITY for backup (pending emails)
+  spool-data:
+
+  # Application logs
+  batch-logs:
+
+  # SQLite databases (Sentry tracking, etc.)
+  sqlite-dbs:
+
+networks:
+  batch-internal:
+    driver: bridge

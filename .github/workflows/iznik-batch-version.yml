@@ -1,0 +1,50 @@
+name: Update Version File
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'iznik-batch/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit version file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          COMMIT_SHA="${{ github.sha }}"
+          COMMIT_SHORT=$(echo "$COMMIT_SHA" | cut -c1-7)
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          # Pull latest so we read the most recent version number
+          git pull --rebase origin master
+
+          # Read current version from latest master
+          if [ -f iznik-batch/version.txt ]; then
+            CURRENT_VERSION=$(head -n1 iznik-batch/version.txt | grep -oP '^\d+' || echo "0")
+          else
+            CURRENT_VERSION=0
+          fi
+          NEW_VERSION=$((CURRENT_VERSION + 1))
+
+          printf '%s\ncommit: %s\nsha: %s\ntimestamp: %s\n' \
+            "${NEW_VERSION}" "${COMMIT_SHORT}" "${COMMIT_SHA}" "${TIMESTAMP}" \
+            > iznik-batch/version.txt
+
+          git add iznik-batch/version.txt
+          git commit -m "Update version file [skip ci]" || { echo "Nothing to commit"; exit 0; }
+          # Push; if another concurrent run already pushed a newer version, that's fine
+          git push || echo "Push skipped — concurrent update already applied"

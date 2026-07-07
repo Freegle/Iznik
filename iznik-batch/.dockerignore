@@ -1,0 +1,6 @@
+storage/logs/*
+storage/spool/*
+storage/incoming-archive/*
+node_modules
+.git
+vendor

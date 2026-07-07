@@ -1,0 +1,36 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="241"
+    android:viewportHeight="241">
+
+    <!-- SVG root transform: matrix(1.25, 0, 0, -1.25, 0, 240.95)
+         = scale(1.25, -1.25) around pivot(0,0), then translate(0, 240.95) -->
+    <group
+        android:scaleX="1.25"
+        android:scaleY="-1.25"
+        android:pivotX="0"
+        android:pivotY="0"
+        android:translateX="0"
+        android:translateY="240.95">
+
+        <!-- Arrow 1 (clockwise, top-right sweep) — translate(105.3594, 152.8521) -->
+        <group
+            android:translateX="105.3594"
+            android:translateY="152.8521">
+            <path
+                android:pathData="M0,0C31.889,29.569 57.332,14.995 69.094,-4.978 93.145,-45.822 54.478,-107.184 10.63,-126.229l6.642,-11.958 -31.003,5.315 10.63,30.896 6.644,-13.623c32.604,19.66 67.668,68.226 50.491,102.206C46.392,1.726 22.588,10.63 0,0Z"
+                android:fillColor="#000000" />
+        </group>
+
+        <!-- Arrow 2 (counter-clockwise, bottom-left sweep) — translate(88.085, 20.7598) -->
+        <group
+            android:translateX="88.085"
+            android:translateY="20.7598">
+            <path
+                android:pathData="M0,0c-26.162,4.981 -70.671,47.691 -76.18,96.111 -5.581,49.045 29.74,66.915 62.007,46.948l4.872,15.059 14.616,-30.232 -29.216,-12.362 4.856,14.69c-30.118,12.402 -44.48,1.072 -39.419,-33.66C-55.084,73.358 -23.109,6.882 0,0Z"
+                android:fillColor="#000000" />
+        </group>
+
+    </group>
+</vector>

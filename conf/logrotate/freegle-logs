@@ -1,0 +1,33 @@
+# Logrotate configuration for Freegle JSON log files
+# These logs are shipped to Loki by Alloy before rotation
+
+/var/log/freegle/*.log {
+    # Rotate daily
+    daily
+
+    # Keep 7 days of logs (Alloy has 4h WAL buffer, so this is plenty)
+    rotate 7
+
+    # Don't error if log file is missing
+    missingok
+
+    # Don't rotate empty files
+    notifempty
+
+    # Compress old logs
+    compress
+    delaycompress
+
+    # Create new log files with same permissions
+    create 0644 www-data www-data
+
+    # Use copytruncate to avoid issues with processes holding file handles
+    # This is important since PHP and Go have the files open
+    copytruncate
+
+    # Optional: Post-rotate script to clean up very old compressed logs
+    postrotate
+        # Remove logs older than 14 days
+        find /var/log/freegle -name "*.gz" -mtime +14 -delete 2>/dev/null || true
+    endscript
+}

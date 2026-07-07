@@ -1,0 +1,67 @@
+{
+  "description": "Maps tool patterns to parser scripts. Used by pre-tool hook to suggest parsers and post-tool hook to log savings.",
+  "parsers": [
+    {
+      "id": "git-log",
+      "tool": "Bash",
+      "command_pattern": "git log",
+      "script": "scripts/parsers/parse-git-log.sh",
+      "typical_savings_pct": 80,
+      "description": "Summarises git log output — keeps commit hashes + subjects, strips diffs"
+    },
+    {
+      "id": "docker-logs",
+      "tool": "Bash",
+      "command_pattern": "docker logs",
+      "script": "scripts/parsers/parse-docker-logs.sh",
+      "typical_savings_pct": 90,
+      "description": "Extracts errors/warnings from container logs, shows last 20 lines"
+    },
+    {
+      "id": "test-output",
+      "tool": "Bash",
+      "command_pattern": "(phpunit|go test|vitest|playwright test|npm test|npm run test)",
+      "script": "scripts/parsers/parse-test-output.sh",
+      "typical_savings_pct": 85,
+      "description": "Extracts pass/fail counts and failure context from test runners"
+    },
+    {
+      "id": "grep-results",
+      "tool": "Bash",
+      "command_pattern": "(grep -r|rg |grep -rn)",
+      "script": "scripts/parsers/parse-grep-results.sh",
+      "typical_savings_pct": 70,
+      "description": "Groups grep results by file, limits matches per file"
+    },
+    {
+      "id": "ci-output",
+      "tool": "Bash",
+      "command_pattern": "(circle-artifacts\\.com|circleci\\.com/api|gh run view)",
+      "script": "scripts/parsers/parse-ci-output.sh",
+      "typical_savings_pct": 80,
+      "description": "Extracts failures and test summaries from CircleCI logs/artifacts"
+    },
+    {
+      "id": "loki-logs",
+      "tool": "Bash",
+      "command_pattern": "localhost:3100",
+      "script": "scripts/parsers/parse-docker-logs.sh",
+      "typical_savings_pct": 85,
+      "description": "Extracts errors/warnings from Loki query results"
+    },
+    {
+      "id": "large-file",
+      "tool": "Read",
+      "command_pattern": null,
+      "min_output_bytes": 20000,
+      "script": "scripts/parsers/parse-large-file.sh",
+      "typical_savings_pct": 90,
+      "description": "Shows file structure outline instead of full content for large files"
+    }
+  ],
+  "thresholds": {
+    "warn_bytes": 10000,
+    "suggest_parser_bytes": 20000,
+    "log_all_above_bytes": 5000
+  }
+}

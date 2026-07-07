@@ -1,0 +1,16 @@
+<template>
+  <div>
+    <!-- Redirect to photos page -->
+  </div>
+</template>
+
+<script setup>
+import { onMounted } from 'vue'
+import { useRouter } from '#imports'
+
+const router = useRouter()
+
+onMounted(() => {
+  router.replace('/give/mobile/photos')
+})
+</script>

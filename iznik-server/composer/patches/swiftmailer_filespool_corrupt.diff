@@ -1,0 +1,15 @@
+--- a/lib/classes/Swift/FileSpool.php
++++ b/lib/classes/Swift/FileSpool.php
+@@ -163,6 +163,12 @@
+             if (rename($file, $file.'.sending')) {
+                 $message = unserialize(file_get_contents($file.'.sending'));
+
++                if (!$message instanceof \Swift_Mime_SimpleMessage) {
++                    // Corrupt or empty spool file - remove it.
++                    unlink($file.'.sending');
++                    continue;
++                }
++
+                 $count += $transport->send($message, $failedRecipients);
+
+                 unlink($file.'.sending');

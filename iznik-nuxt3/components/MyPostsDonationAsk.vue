@@ -1,0 +1,492 @@
+<template>
+  <div v-if="!dismissed" class="donation-ask-container">
+    <button
+      type="button"
+      class="donation-dismiss"
+      aria-label="Dismiss donation request"
+      title="Maybe later"
+      @click="onDismiss"
+    >
+      <span aria-hidden="true">×</span>
+    </button>
+    <div class="donation-ask-content">
+      <!-- Solution Framing Variation (#5) - Environmental focus -->
+      <p v-if="variation === 'solution-framing'" class="donation-message">
+        <strong>Help us continue the solution!</strong><br />
+        Our 4.6M freeglers kept 11,000 tonnes out of landfill last year. Donate
+        to keep Freegle growing?
+      </p>
+
+      <!-- Minimal Friction Variation (#10) - Simple and direct -->
+      <p v-else class="donation-message">
+        Freegle is volunteer-run and free to use. Donate to help us continue?
+      </p>
+
+      <!-- Amount selection: slider (minimal friction) -->
+      <div class="donation-controls">
+        <div class="amount-display">
+          <div class="amount-label">Donation Amount</div>
+          <div class="amount-value">£{{ selectedAmount.toFixed(2) }}</div>
+        </div>
+        <input
+          v-model.number="selectedAmount"
+          type="range"
+          min="0.5"
+          max="10"
+          step="0.5"
+          class="amount-slider"
+        />
+        <div class="slider-labels">
+          <span>£0.50</span>
+          <span>£10</span>
+        </div>
+      </div>
+
+      <!-- Stripe Donation Component (minimal friction - no extra steps) -->
+      <div class="stripe-container text-center">
+        <div v-show="payPalFallback">
+          <DonationButton
+            :key="selectedAmount"
+            :text="`Donate £${selectedAmount}`"
+            :value="selectedAmount"
+          />
+        </div>
+        <div v-show="!payPalFallback">
+          <StripeDonate
+            :key="selectedAmount"
+            :price="selectedAmount"
+            @success="onDonationSuccess"
+            @no-payment-methods="payPalFallback = true"
+            @error="payPalFallback = true"
+          />
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, watch, onMounted } from '#imports'
+import DonationButton from '~/components/DonationButton.vue'
+import StripeDonate from '~/components/StripeDonate.vue'
+import Api from '~/api'
+import { action } from '~/composables/useClientLog'
+
+const emit = defineEmits(['donation-made', 'dismissed'])
+
+const runtimeConfig = useRuntimeConfig()
+const api = Api(runtimeConfig)
+
+// A/B Test configuration - will be set by bandit API
+const variation = ref('minimal-friction')
+const testAmount = ref(1)
+
+// Use test amount as the selected amount (can be changed by slider)
+const selectedAmount = ref(testAmount.value)
+const payPalFallback = ref(false)
+const dismissed = ref(false)
+
+// Let a non-donor quietly close the ask. It's an inline card (not a blocking
+// modal), but on mobile it dominates the fold, so a subtle dismiss lets people
+// get to their posts without feeling nagged. Mirrors DonationAskModal's dismiss.
+function onDismiss() {
+  dismissed.value = true
+
+  action('donation_ask_dismissed', {
+    variant: variation.value,
+    context: 'myposts_inline',
+  })
+
+  emit('dismissed')
+}
+
+// Watch testAmount changes from bandit API
+watch(testAmount, (newVal) => {
+  selectedAmount.value = newVal
+})
+
+let amountChangeTimer = null
+
+watch(selectedAmount, (newVal, oldVal) => {
+  // Debounce — slider drags fire many values.
+  if (amountChangeTimer) {
+    clearTimeout(amountChangeTimer)
+  }
+
+  amountChangeTimer = setTimeout(() => {
+    action('donation_amount_changed', {
+      old_amount: oldVal,
+      new_amount: newVal,
+      input_method: 'slider',
+      context: 'myposts_inline',
+    })
+  }, 500)
+})
+
+// Track donation success
+async function onDonationSuccess() {
+  action('donation_payment_completed', {
+    amount: selectedAmount.value,
+    variant: variation.value,
+    context: 'myposts_inline',
+  })
+
+  emit('donation-made')
+
+  // Record A/B test conversion
+  try {
+    await api.bandit.chosen({
+      uid: 'mypostsdonation',
+      variant: `${variation.value}-${selectedAmount.value}`,
+      score: selectedAmount.value,
+    })
+  } catch (err) {
+    console.error('Error recording donation conversion:', err)
+  }
+}
+
+// Choose and record A/B test variant on mount
+onMounted(async () => {
+  try {
+    // Let the bandit algorithm choose the best variant
+    const chosen = await api.bandit.choose({
+      uid: 'mypostsdonation',
+    })
+
+    if (chosen && chosen.variant) {
+      // Parse variant (format: "solution-framing-1.5" or "minimal-friction-2")
+      const parts = chosen.variant.split('-')
+      const amount = parseFloat(parts[parts.length - 1])
+      const varType = parts.slice(0, -1).join('-')
+
+      variation.value = varType
+      testAmount.value = amount
+      selectedAmount.value = amount
+    }
+
+    // Record that this variant was shown
+    await api.bandit.shown({
+      uid: 'mypostsdonation',
+      variant: chosen?.variant || `${variation.value}-${testAmount.value}`,
+    })
+
+    action('donation_ask_shown', {
+      variant: variation.value,
+      default_amount: testAmount.value,
+      context: 'myposts_inline',
+    })
+  } catch (err) {
+    console.error('Error with bandit API:', err)
+  }
+})
+</script>
+
+<style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'bootstrap/scss/mixins/_breakpoints';
+@import 'assets/css/_color-vars.scss';
+
+// Variation #10: Minimal Friction Design
+// Based on NextAfter 2024 research: reduce friction, increase conversions
+
+.donation-ask-container {
+  position: relative;
+  background: linear-gradient(135deg, $color-white, #f8f9ff);
+  border-radius: var(--radius-xl, 1.25rem);
+  padding: 2rem;
+  margin: 1rem auto 1.5rem; // Center with auto horizontal margins
+  max-width: calc(100% - 2rem); // Leave 1rem space on each side
+  border: 1px solid $color-gray-3;
+
+  // Animated rainbow border using pseudo-element
+  &::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: -5px;
+    right: -5px;
+    bottom: -5px;
+    border-radius: var(--radius-xl, 1.25rem);
+    background: linear-gradient(
+      45deg,
+      rgba(255, 0, 0, 0.7),
+      rgba(255, 127, 0, 0.7),
+      rgba(255, 255, 0, 0.7),
+      rgba(0, 255, 0, 0.7),
+      rgba(0, 127, 255, 0.7),
+      rgba(0, 0, 255, 0.7),
+      rgba(75, 0, 130, 0.7),
+      rgba(148, 0, 211, 0.7),
+      rgba(255, 0, 0, 0.7)
+    );
+    background-size: 300% 300%;
+    z-index: -1;
+    filter: blur(8px);
+    animation: rainbow-glow 8s ease-in-out infinite;
+  }
+
+  // Main shadow for depth
+  box-shadow: var(--shadow-xl);
+}
+
+@keyframes rainbow-glow {
+  0% {
+    background-position: 0% 50%;
+    filter: blur(6px) brightness(1);
+  }
+  25% {
+    background-position: 50% 50%;
+    filter: blur(8px) brightness(1.2);
+  }
+  50% {
+    background-position: 100% 50%;
+    filter: blur(6px) brightness(1);
+  }
+  75% {
+    background-position: 50% 50%;
+    filter: blur(8px) brightness(1.2);
+  }
+  100% {
+    background-position: 0% 50%;
+    filter: blur(6px) brightness(1);
+  }
+}
+
+.donation-dismiss {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.5rem;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-gray-600);
+  font-size: 1.75rem;
+  line-height: 1;
+  padding: 0.25rem 0.6rem;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity var(--transition-normal);
+
+  &:hover,
+  &:focus {
+    opacity: 1;
+  }
+}
+
+.donation-ask-content {
+  max-width: 600px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.donation-message {
+  font-size: 1.25rem;
+  color: $color-gray--darker;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+
+  strong {
+    color: var(--color-gray-900);
+    font-weight: 600;
+  }
+}
+
+.donation-controls {
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto 1.5rem;
+}
+
+.amount-display {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.amount-label {
+  font-size: 0.9rem;
+  color: var(--color-gray-600);
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.amount-value {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: $color-blue--bright;
+  line-height: 1;
+}
+
+.amount-slider {
+  width: 100%;
+  height: 8px;
+  border-radius: var(--radius-sm, 0.375rem);
+  background: transparent; // Make transparent so we can control the track color
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  margin: 1rem 0 0.5rem;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: $color-blue--bright;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.5);
+    transition: all var(--transition-normal);
+    margin-top: -10px; // Vertically center thumb (half of thumb height minus half of track height)
+
+    &:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.6);
+    }
+
+    &:active {
+      transform: scale(1.1);
+    }
+  }
+
+  &::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: $color-blue--bright;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.5);
+    transition: all var(--transition-normal);
+
+    &:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.6);
+    }
+
+    &:active {
+      transform: scale(1.1);
+    }
+  }
+
+  &::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 8px;
+    border-radius: var(--radius-sm, 0.375rem);
+    background: linear-gradient(
+      to right,
+      $color-gray-3 0%,
+      $color-blue--bright 100%
+    );
+  }
+
+  &::-moz-range-track {
+    width: 100%;
+    height: 8px;
+    border-radius: var(--radius-sm, 0.375rem);
+    background: linear-gradient(
+      to right,
+      $color-gray-3 0%,
+      $color-blue--bright 100%
+    );
+  }
+}
+
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--color-gray-600);
+  font-weight: 500;
+  margin-top: 0.5rem;
+}
+
+.stripe-container {
+  margin-top: 1.5rem;
+  text-align: center;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+
+  // Force centering of child elements
+  :deep(> div) {
+    width: 100%;
+    max-width: 400px;
+  }
+}
+
+// Mobile optimization - keep the card compact so the user's posts stay near
+// the fold, while keeping touch targets large.
+@include media-breakpoint-down(md) {
+  .donation-ask-container {
+    padding: 1rem 1rem 1.25rem;
+    margin: 0.5rem auto 1rem;
+    max-width: calc(100% - 2rem); // Ensure equal space on both sides
+  }
+
+  .donation-message {
+    font-size: 1rem;
+    line-height: 1.4;
+    margin-bottom: 1rem;
+  }
+
+  .donation-controls {
+    margin-bottom: 1rem;
+  }
+
+  .amount-display {
+    margin-bottom: 0.5rem;
+  }
+
+  .amount-value {
+    font-size: 1.75rem;
+  }
+
+  .amount-slider {
+    margin: 0.5rem 0 0.25rem;
+  }
+
+  .stripe-container {
+    margin-top: 1rem;
+    gap: 0.75rem;
+  }
+}
+
+@include media-breakpoint-down(sm) {
+  .donation-ask-container {
+    margin: 0.5rem auto 1rem;
+    max-width: calc(100% - 2rem); // Ensure equal space on both sides
+  }
+
+  .amount-value {
+    font-size: 1.6rem;
+  }
+
+  // Larger slider thumb for mobile (easier to touch)
+  .amount-slider {
+    height: 10px;
+
+    &::-webkit-slider-thumb {
+      width: 32px;
+      height: 32px;
+      margin-top: -11px; // Recalculate for mobile: (32-10)/2 = 11px
+    }
+
+    &::-moz-range-thumb {
+      width: 32px;
+      height: 32px;
+    }
+
+    &::-webkit-slider-runnable-track {
+      height: 10px;
+    }
+
+    &::-moz-range-track {
+      height: 10px;
+    }
+  }
+}
+</style>

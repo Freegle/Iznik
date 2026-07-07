@@ -1,0 +1,256 @@
+<?php
+
+namespace Tests\Feature\LoveJunk;
+
+use App\Services\EmailSpoolerService;
+use App\Services\LoveJunkInvoiceService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Mockery;
+use Tests\TestCase;
+
+class LoveJunkTnInvoiceTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Mail::fake();
+    }
+
+    private function insertMessage(string $sourceheader, string $timestamp): int
+    {
+        return DB::table('messages')->insertGetId([
+            'type' => 'Offer',
+            'source' => 'Platform',
+            'subject' => 'OFFER: test item (location)',
+            'textbody' => 'test',
+            'sourceheader' => $sourceheader,
+            'date' => $timestamp,
+            'arrival' => $timestamp,
+        ]);
+    }
+
+    private function insertLoveJunkRow(int $msgId, string $timestamp): void
+    {
+        DB::table('lovejunk')->insert([
+            'msgid' => $msgId,
+            'timestamp' => $timestamp,
+            'success' => 1,
+            'status' => 'ok',
+        ]);
+    }
+
+    public function test_command_runs_with_no_data(): void
+    {
+        $this->artisan('lovejunk:send-tn-invoice', ['--period' => '2020-01', '--dry-run' => true])
+            ->assertExitCode(0);
+    }
+
+    public function test_invoice_email_uses_current_registered_name(): void
+    {
+        // Our registered name is "Freegle" (formerly "Freegle Limited"/"Freegle Ltd").
+        // The invoice template must use the current name.
+        $html = view('emails.mjml.lovejunk.tn-invoice', [
+            'tnAmount'      => '250.00',
+            'start'         => '2020-01-01',
+            'end'           => '2020-02-01',
+            'tnPercent'     => 50,
+            'treasurerAddr' => 'treasurer@example.com',
+            'email'         => 'partner@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('raise an invoice on Freegle for', $html);
+        $this->assertStringNotContainsString('Freegle Ltd', $html);
+        $this->assertStringNotContainsString('Freegle Limited', $html);
+    }
+
+    public function test_preheader_contains_amount_and_period(): void
+    {
+        // The mj-preview should carry the invoice amount and date range so the
+        // inbox preview line is informative rather than generic.
+        $html = view('emails.mjml.lovejunk.tn-invoice', [
+            'tnAmount'      => '375.50',
+            'start'         => '2025-03-01',
+            'end'           => '2025-04-01',
+            'tnPercent'     => 60,
+            'treasurerAddr' => 'treasurer@example.com',
+            'email'         => 'partner@example.com',
+        ])->render();
+
+        $this->assertStringContainsString(
+            '<mj-preview>Please raise a LoveJunk invoice for £375.50 (2025-03-01 to 2025-04-01)</mj-preview>',
+            $html
+        );
+    }
+
+    public function test_dry_run_does_not_send_email(): void
+    {
+        $msgId = $this->insertMessage('TN-abc123', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_returns_zero_when_no_lovejunk_data(): void
+    {
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(0, $result['tn']);
+        $this->assertSame(0, $result['fd']);
+        $this->assertSame(0.0, $result['tn_amount']);
+    }
+
+    public function test_counts_tn_posts_by_sourceheader(): void
+    {
+        $msgId = $this->insertMessage('TN-abc123', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(1, $result['tn']);
+        $this->assertSame(0, $result['fd']);
+    }
+
+    public function test_counts_fd_posts_without_tn_sourceheader(): void
+    {
+        $msgId = $this->insertMessage('FD-something', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(0, $result['tn']);
+        $this->assertSame(1, $result['fd']);
+    }
+
+    public function test_calculates_percentages_correctly(): void
+    {
+        // 1 TN post, 1 FD post → 50/50
+        $tnMsg = $this->insertMessage('TN-abc', '2020-01-10 12:00:00');
+        $fdMsg = $this->insertMessage('FD-xyz', '2020-01-11 12:00:00');
+        $this->insertLoveJunkRow($tnMsg, '2020-01-10 12:00:00');
+        $this->insertLoveJunkRow($fdMsg, '2020-01-11 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(50, $result['tn_percent']);
+        $this->assertSame(50, $result['fd_percent']);
+    }
+
+    public function test_calculates_tn_amount_as_share_of_500(): void
+    {
+        // 1 TN post out of 2 total → 50% of £500 = £250
+        $tnMsg = $this->insertMessage('TN-abc', '2020-01-10 12:00:00');
+        $fdMsg = $this->insertMessage('FD-xyz', '2020-01-11 12:00:00');
+        $this->insertLoveJunkRow($tnMsg, '2020-01-10 12:00:00');
+        $this->insertLoveJunkRow($fdMsg, '2020-01-11 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertEqualsWithDelta(250.0, $result['tn_amount'], 0.01);
+    }
+
+    public function test_filters_by_period_start_inclusive(): void
+    {
+        // Post on Jan 1st should be included (>= start)
+        $msgId = $this->insertMessage('TN-abc', '2020-01-01 00:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-01 00:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(1, $result['tn']);
+    }
+
+    public function test_filters_out_posts_before_period(): void
+    {
+        // Post on Dec 31st should not be included in January period
+        $msgId = $this->insertMessage('TN-abc', '2019-12-31 23:59:59');
+        $this->insertLoveJunkRow($msgId, '2019-12-31 23:59:59');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(0, $result['tn']);
+    }
+
+    public function test_filters_out_posts_at_period_end(): void
+    {
+        // Post on Feb 1st should not be included in January period (exclusive)
+        $msgId = $this->insertMessage('TN-abc', '2020-02-01 00:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-02-01 00:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        $this->assertSame(0, $result['tn']);
+    }
+
+    public function test_does_not_send_when_recipient_not_configured(): void
+    {
+        // Regression: with no tn_invoice_addr configured the command logged
+        // "Invoice email sent." but actually spooled nothing (the silent gap
+        // that meant the May 2026 invoice never reached TrashNothing).
+        config(['freegle.mail.tn_invoice_addr' => '']);
+
+        $spooler = Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldNotReceive('spool');
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', false);
+
+        $this->assertFalse($result['sent']);
+        $this->assertNull($result['recipient']);
+    }
+
+    public function test_sends_to_configured_recipient(): void
+    {
+        config(['freegle.mail.tn_invoice_addr' => 'partner@example.com']);
+
+        $spooler = Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->once();
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', false);
+
+        $this->assertTrue($result['sent']);
+        $this->assertSame('partner@example.com', $result['recipient']);
+    }
+
+    public function test_command_fails_when_recipient_not_configured(): void
+    {
+        config(['freegle.mail.tn_invoice_addr' => '']);
+
+        $msgId = $this->insertMessage('TN-abc', '2020-01-15 12:00:00');
+        $this->insertLoveJunkRow($msgId, '2020-01-15 12:00:00');
+
+        $this->artisan('lovejunk:send-tn-invoice', ['--period' => '2020-01'])
+            ->assertExitCode(1);
+    }
+
+    public function test_deduplicates_by_subject(): void
+    {
+        // Same subject → counted as one post
+        $msg1 = $this->insertMessage('TN-abc', '2020-01-10 12:00:00');
+        $msg2 = DB::table('messages')->insertGetId([
+            'type' => 'Offer',
+            'source' => 'Platform',
+            'subject' => 'OFFER: test item (location)',
+            'textbody' => 'test',
+            'sourceheader' => 'TN-def',
+            'date' => '2020-01-11 12:00:00',
+            'arrival' => '2020-01-11 12:00:00',
+        ]);
+        $this->insertLoveJunkRow($msg1, '2020-01-10 12:00:00');
+        $this->insertLoveJunkRow($msg2, '2020-01-11 12:00:00');
+
+        $result = (new LoveJunkInvoiceService())->sendInvoice('2020-01', true);
+
+        // Same subject → deduplicated to 1
+        $this->assertSame(1, $result['tn']);
+    }
+}

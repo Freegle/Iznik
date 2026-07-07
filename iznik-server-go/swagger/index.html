@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Iznik API Documentation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { margin: 0; padding: 0; }
+    </style>
+</head>
+<body>
+    <redoc spec-url="/swagger/swagger.json"
+           hide-download-button
+           expand-responses="200"
+           path-in-middle-panel
+           hide-single-request-sample-tab
+           theme='{
+               "colors": { "primary": { "main": "#44a340" } },
+               "typography": { "fontFamily": "system-ui, -apple-system, sans-serif" },
+               "sidebar": { "width": "280px" },
+               "menu": { "level1Items": { "active": { "backgroundColor": "#e8f5e9" } } }
+           }'
+    ></redoc>
+    <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+</body>
+</html>

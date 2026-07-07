@@ -1,0 +1,446 @@
+<?php
+
+namespace Tests\Unit\Models;
+
+use App\Models\Job;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
+use Tests\Support\SeedsSpatialIndex;
+use Tests\TestCase;
+
+class JobModelTest extends TestCase
+{
+    use SeedsSpatialIndex;
+
+    /** @var int[] job ids seeded into the spatial index, removed in tearDown. */
+    private array $seededJobIds = [];
+
+    protected function tearDown(): void
+    {
+        // parent::tearDown() must always run (it cleans up the DB connection);
+        // removeSpatial() is already best-effort, but guard with finally so no
+        // teardown failure can ever leave the connection holding locks and flake
+        // the next test's clearJobsTable() DELETE.
+        try {
+            if ($this->seededJobIds) {
+                $this->removeSpatial('jobs', $this->seededJobIds);
+                $this->seededJobIds = [];
+            }
+        } finally {
+            parent::tearDown();
+        }
+    }
+
+    /**
+     * Clear the jobs table for test isolation, riding out a transient lock-wait.
+     *
+     * This class cannot wrap its tests in a database transaction: seedJob
+     * registers each row with the external spatial index, which only sees
+     * COMMITTED rows, so the cases clear the table with real DELETEs instead.
+     * Under CI load the jobs table can be briefly locked by a concurrent writer
+     * (e.g. a scheduled jobs-sync), which made the bare DELETE fail with
+     * SQLSTATE[HY000] 1205 "Lock wait timeout exceeded" and flaked unrelated
+     * branches. We shorten the lock-wait window so a contended DELETE fails fast,
+     * then retry a few times to ride out a transient lock; a genuinely stuck lock
+     * still surfaces after the retries. The session timeout is restored after.
+     */
+    private function clearJobsTable(): void
+    {
+        $restore = (int) (DB::selectOne('SELECT @@SESSION.innodb_lock_wait_timeout AS t')->t ?? 50);
+        DB::statement('SET SESSION innodb_lock_wait_timeout = 2');
+
+        try {
+            for ($attempt = 1; ; $attempt++) {
+                try {
+                    DB::table('jobs')->delete();
+
+                    return;
+                } catch (QueryException $e) {
+                    // 1205 = lock wait timeout exceeded. Retry a bounded number of
+                    // times; rethrow anything else, or a lock that never clears.
+                    if ($attempt >= 10 || ! str_contains($e->getMessage(), '1205')) {
+                        throw $e;
+                    }
+                    usleep(300_000);
+                }
+            }
+        } finally {
+            DB::statement("SET SESSION innodb_lock_wait_timeout = {$restore}");
+        }
+    }
+
+    /**
+     * Insert a job row AND seed it into the spatial "jobs" index so KNN returns
+     * it. Jobs are polygons in the index (FindNearestPolygon skips nil-WKB
+     * points), so we seed a small box around the point. Defaults to the standard
+     * London test coords and a cpc above the floor; override via $attrs.
+     */
+    private function seedJob(array $attrs = [], float $lat = 51.5074, float $lng = -0.1278): int
+    {
+        $srid = (int) config('freegle.srid', 3857);
+        $attrs += [
+            'location' => 'London',
+            'company' => 'Test',
+            'city' => 'London',
+            'url' => 'https://example.com',
+            'cpc' => 0.20,
+            'clickability' => 1,
+            'visible' => 1,
+        ];
+        $attrs['geometry'] = DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid));
+
+        $id = DB::table('jobs')->insertGetId($attrs);
+
+        $d = 0.0005;
+        $this->seedSpatial('jobs', $id, sprintf(
+            'POLYGON((%F %F, %F %F, %F %F, %F %F, %F %F))',
+            $lng - $d, $lat - $d,
+            $lng + $d, $lat - $d,
+            $lng + $d, $lat + $d,
+            $lng - $d, $lat + $d,
+            $lng - $d, $lat - $d
+        ));
+        $this->seededJobIds[] = $id;
+
+        return $id;
+    }
+
+    public function test_job_model_has_correct_table(): void
+    {
+        $job = new Job();
+        $this->assertEquals('jobs', $job->getTable());
+    }
+
+    public function test_job_model_has_no_timestamps(): void
+    {
+        $job = new Job();
+        $this->assertFalse($job->timestamps);
+    }
+
+    public function test_job_model_casts(): void
+    {
+        $job = new Job();
+        $casts = $job->getCasts();
+
+        $this->assertArrayHasKey('posted_at', $casts);
+        $this->assertArrayHasKey('seenat', $casts);
+        $this->assertArrayHasKey('cpc', $casts);
+        $this->assertEquals('datetime', $casts['posted_at']);
+        $this->assertEquals('datetime', $casts['seenat']);
+        $this->assertEquals('decimal:4', $casts['cpc']);
+    }
+
+    public function test_minimum_cpc_constant(): void
+    {
+        // Matches the spatial "jobs" dataset floor and the public jobs page.
+        $this->assertEquals(0.10, Job::MINIMUM_CPC);
+    }
+
+    public function test_job_model_is_not_guarded_except_id(): void
+    {
+        $job = new Job();
+        $this->assertEquals(['id'], $job->getGuarded());
+    }
+
+    public function test_near_location_returns_collection(): void
+    {
+        // Returns a collection even with nothing seeded for this location.
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertInstanceOf(\Illuminate\Support\Collection::class, $result);
+    }
+
+    public function test_near_location_returns_empty_for_no_jobs(): void
+    {
+        $this->clearJobsTable();
+
+        // Nothing in the test DB, so even if the index returns ids the by-id
+        // enrich finds nothing.
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertTrue($result->isEmpty());
+    }
+
+    public function test_near_location_respects_limit(): void
+    {
+        $this->clearJobsTable();
+
+        // Five eligible jobs at the search point.
+        for ($i = 0; $i < 5; $i++) {
+            $this->seedJob(['title' => 'Test Job ' . $i]);
+        }
+
+        $result = Job::nearLocation(51.5074, -0.1278, 3);
+
+        $this->assertCount(3, $result);
+    }
+
+    public function test_near_location_filters_by_minimum_cpc(): void
+    {
+        $this->clearJobsTable();
+
+        $this->seedJob(['title' => 'Low CPC Job', 'cpc' => 0.05]);  // below 0.10
+        $this->seedJob(['title' => 'Good CPC Job', 'cpc' => 0.20]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertCount(1, $result);
+        $this->assertEquals('Good CPC Job', $result->first()->title);
+    }
+
+    public function test_near_location_filters_by_visibility(): void
+    {
+        $this->clearJobsTable();
+
+        $this->seedJob(['title' => 'Visible Job', 'visible' => 1]);
+        $this->seedJob(['title' => 'Hidden Job', 'visible' => 0]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertCount(1, $result);
+        $this->assertEquals('Visible Job', $result->first()->title);
+    }
+
+    public function test_near_location_varies_picks_within_pool(): void
+    {
+        // With more eligible jobs than the limit, nearLocation shuffles within a
+        // candidate pool (limit * VARIETY_POOL_MULTIPLIER) so consecutive sends
+        // don't always show the same ads. The pool is now the nearest jobs
+        // (matching the web view's KNN selection), not the top-CPC ones, so we
+        // assert the variety invariants only: every result is the right size,
+        // and repeated calls surface more than `limit` distinct jobs.
+        $this->clearJobsTable();
+
+        $limit = 4;
+        $total = $limit * Job::VARIETY_POOL_MULTIPLIER + 3; // 15
+        for ($i = 0; $i < $total; $i++) {
+            $this->seedJob(['title' => 'Job rank ' . $i, 'cpc' => round(1.00 - ($i * 0.01), 4)]);
+        }
+
+        $allSeen = [];
+        for ($call = 0; $call < 8; $call++) {
+            $result = Job::nearLocation(51.5074, -0.1278, $limit);
+            $this->assertCount($limit, $result, 'Result count must always equal limit');
+            foreach ($result as $job) {
+                $allSeen[$job->id] = true;
+            }
+        }
+
+        $this->assertGreaterThan(
+            $limit,
+            count($allSeen),
+            'Repeated calls should surface more than $limit unique jobs from the pool'
+        );
+    }
+
+    public function test_near_location_weights_variety_by_score(): void
+    {
+        // When the pool exceeds the limit, the variety step is WEIGHTED by score
+        // (cpc * clickability * freshness), not a uniform shuffle. A much
+        // higher-cpc job should be drawn into the great majority of sends, while
+        // the floor-cpc jobs still rotate (variety preserved). A uniform shuffle
+        // would put the top job in only ~limit/pool ≈ 33% of draws — the bug this
+        // fixes (clicked ads were averaging a lower cpc than the pool).
+        $this->clearJobsTable();
+
+        mt_srand(424242); // deterministic so the statistical assertion can't flake
+
+        $limit = 4;
+        $top = $this->seedJob(['title' => 'Top CPC', 'cpc' => 1.00]);
+        $floorIds = [];
+        for ($i = 0; $i < 11; $i++) {
+            $floorIds[] = $this->seedJob(['title' => 'Floor ' . $i, 'cpc' => 0.11]);
+        }
+        $sampleFloor = $floorIds[0];
+
+        $runs = 200;
+        $topPicks = 0;
+        $floorPicks = 0;
+        $seen = [];
+        for ($r = 0; $r < $runs; $r++) {
+            $result = Job::nearLocation(51.5074, -0.1278, $limit);
+            $this->assertCount($limit, $result);
+            foreach ($result as $job) {
+                $seen[$job->id] = true;
+            }
+            if ($result->contains('id', $top)) {
+                $topPicks++;
+            }
+            if ($result->contains('id', $sampleFloor)) {
+                $floorPicks++;
+            }
+        }
+
+        $this->assertGreaterThan(
+            (int) ($runs * 0.7),
+            $topPicks,
+            "High-score job should be weighted into most draws (got {$topPicks}/{$runs})"
+        );
+        $this->assertGreaterThan(
+            $floorPicks * 2,
+            $topPicks,
+            "High-score job should be picked far more often than a floor job ({$topPicks} vs {$floorPicks})"
+        );
+        $this->assertGreaterThan(
+            $limit,
+            count($seen),
+            'Variety preserved: repeated calls surface more than $limit distinct jobs'
+        );
+    }
+
+    public function test_near_location_orders_by_cpc_desc(): void
+    {
+        $this->clearJobsTable();
+
+        // All above the 0.10 floor; fewer than the default limit so there is no
+        // variety shuffle and the CPC-desc order is preserved.
+        $this->seedJob(['title' => 'Low CPC', 'cpc' => 0.10]);
+        $this->seedJob(['title' => 'High CPC', 'cpc' => 0.30]);
+        $this->seedJob(['title' => 'Medium CPC', 'cpc' => 0.20]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertEquals('High CPC', $result[0]->title);
+        $this->assertEquals('Medium CPC', $result[1]->title);
+        $this->assertEquals('Low CPC', $result[2]->title);
+    }
+
+    public function test_near_location_prefers_fresher_postings_at_equal_value(): void
+    {
+        $this->clearJobsTable();
+
+        // Equal cpc * clickability, so the only differentiator is posting age:
+        // older WhatJobs postings are likelier already filled/closed, so the
+        // fresher one should rank first.
+        $this->seedJob([
+            'title' => 'Stale',
+            'cpc' => 0.20,
+            'clickability' => 1,
+            'posted_at' => date('Y-m-d H:i:s', strtotime('-7 days')),
+        ]);
+        $this->seedJob([
+            'title' => 'Fresh',
+            'cpc' => 0.20,
+            'clickability' => 1,
+            'posted_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertEquals('Fresh', $result[0]->title);
+        $this->assertEquals('Stale', $result[1]->title);
+    }
+
+    public function test_near_location_title_cases_lowercase_location(): void
+    {
+        // The jobs feed stores location names lowercase ("stoke-on-trent");
+        // nearLocation title-cases them so emails read naturally.
+        $this->clearJobsTable();
+
+        $this->seedJob(['title' => 'Test Job', 'location' => 'stoke-on-trent']);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertCount(1, $result);
+        $this->assertEquals('Stoke-On-Trent', $result->first()->location);
+    }
+
+    public function test_near_location_adds_placeholder_image_for_jobs_without_ai_images(): void
+    {
+        // With no matching ai_images row, image_url falls back to briefcase.png.
+        $this->clearJobsTable();
+        DB::table('ai_images')->delete();
+
+        $this->seedJob(['title' => 'Test Job']);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertCount(1, $result);
+        $job = $result->first();
+        $this->assertNotNull($job->image_url);
+        $this->assertStringContainsString('briefcase.png', $job->image_url);
+    }
+
+    public function test_near_location_uses_ai_image_when_available(): void
+    {
+        $this->clearJobsTable();
+        DB::table('ai_images')->delete();
+
+        $jobTitle = 'Software Developer';
+        $canonicalTitle = strtolower($jobTitle);
+
+        $this->seedJob(['title' => $jobTitle, 'canonical_title' => $canonicalTitle]);
+
+        DB::table('ai_images')->insert([
+            'name' => $canonicalTitle,
+            'externaluid' => 'freegletusd-abc123',
+        ]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertCount(1, $result);
+        $job = $result->first();
+        $this->assertNotNull($job->image_url);
+        $this->assertStringContainsString('abc123', $job->image_url);
+    }
+
+    public function test_build_image_url_returns_null_for_null_externaluid(): void
+    {
+        $reflection = new \ReflectionClass(Job::class);
+        $method = $reflection->getMethod('buildImageUrl');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(null, null);
+
+        $this->assertNull($result);
+    }
+
+    public function test_build_image_url_returns_null_for_invalid_format(): void
+    {
+        $reflection = new \ReflectionClass(Job::class);
+        $method = $reflection->getMethod('buildImageUrl');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(null, 'invalid-format');
+
+        $this->assertNull($result);
+    }
+
+    public function test_build_image_url_extracts_file_id_correctly(): void
+    {
+        $reflection = new \ReflectionClass(Job::class);
+        $method = $reflection->getMethod('buildImageUrl');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(null, 'freegletusd-myfileid123');
+
+        $this->assertNotNull($result);
+        $this->assertStringContainsString('myfileid123', $result);
+    }
+
+    public function test_build_image_url_includes_delivery_service_when_configured(): void
+    {
+        config(['freegle.delivery.base_url' => 'https://delivery.example.com']);
+
+        $reflection = new \ReflectionClass(Job::class);
+        $method = $reflection->getMethod('buildImageUrl');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(null, 'freegletusd-testid');
+
+        $this->assertStringContainsString('delivery.example.com', $result);
+        $this->assertStringContainsString('w=50', $result);
+    }
+
+    public function test_near_location_finds_jobs_within_search_reach(): void
+    {
+        // A job ~5.5km north is still within the spatial KNN's search reach.
+        $this->clearJobsTable();
+
+        $this->seedJob(['title' => 'Distant Job', 'location' => 'North London'], 51.5074 + 0.05, -0.1278);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertCount(1, $result);
+    }
+}

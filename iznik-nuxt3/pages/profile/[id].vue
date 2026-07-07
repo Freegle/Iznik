@@ -1,0 +1,98 @@
+<template>
+  <client-only>
+    <!-- Error state -->
+    <div v-if="notFound" class="error-page">
+      <div class="error-content">
+        <div class="error-card">
+          <v-icon icon="question-circle" class="error-icon" />
+          <h1 class="error-title">Freegler not found</h1>
+          <p class="error-message">
+            Sorry, we couldn't find that profile. They may have left Freegle or
+            the link might be incorrect.
+          </p>
+          <b-button variant="primary" @click="goBack">
+            <v-icon icon="arrow-left" class="me-2" />Go Back
+          </b-button>
+        </div>
+      </div>
+    </div>
+    <ProfileInfo v-else :id="id" />
+  </client-only>
+</template>
+<script setup>
+import { ref, useRoute, useRouter } from '#imports'
+import { useUserStore } from '~/stores/user'
+import ProfileInfo from '~/components/ProfileInfo'
+
+const userStore = useUserStore()
+const route = useRoute()
+const router = useRouter()
+const id = route?.params?.id ? parseInt(route.params.id) : 0
+const notFound = ref(false)
+
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/browse')
+  }
+}
+
+if (id) {
+  try {
+    await userStore.fetch(id)
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      console.log('User not found')
+      notFound.value = true
+    } else {
+      throw e
+    }
+  }
+}
+</script>
+
+<style scoped lang="scss">
+@import 'assets/css/_color-vars.scss';
+
+.error-page {
+  min-height: 100vh;
+  background: $color-gray--lighter;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.error-content {
+  max-width: 400px;
+  width: 100%;
+}
+
+.error-card {
+  background: white;
+  border-radius: var(--radius-lg, 0.75rem);
+  box-shadow: var(--shadow-md);
+  padding: 2rem;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 3rem;
+  color: var(--color-gray-600);
+  margin-bottom: 1rem;
+}
+
+.error-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: $color-gray--darker;
+  margin-bottom: 0.75rem;
+}
+
+.error-message {
+  color: var(--color-gray-600);
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+</style>

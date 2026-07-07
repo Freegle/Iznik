@@ -1,0 +1,69 @@
+<mjml>
+  <mj-head>
+    <mj-style inline="inline">a { color: #288c0a; text-decoration: none; font-weight: bold } ol { margin-top: 0; margin-bottom: 0; /* margin-left: 2.2em; For Outlook */ padding-left: 2.4em; /* For the rest */ } li { margin: 0.5em 0; }</mj-style>
+    <mj-attributes>
+      <mj-all font-family="Trebuchet MS, Helvetica, Arial"></mj-all>
+    </mj-attributes>
+    <mj-preview>{{ textbody }}</mj-preview>
+  </mj-head>
+  <mj-body>
+    <mj-wrapper padding="0px" full-width="full-width">
+      <mj-raw>
+        <!-- header section -->
+      </mj-raw>
+      <mj-section background-url="https://www.ilovefreegle.org/wallpaper.png" background-color="#e5e4db" border-top="5px solid #61AE24" padding="0px">
+        <mj-group>
+          <mj-column>
+            <mj-text align="center"><a font-weight="bold" href="https://www.ilovefreegle.org/">Freegle</a></mj-text>
+          </mj-column>
+          <mj-column>
+            <mj-text align="center"><a font-weight="bold" href="{{ visit }}">Browse</a></mj-text>
+          </mj-column>
+          <mj-column>
+            <mj-text align="center"><a font-weight="bold" href="{{ unsubscribe }}">Unsubscribe</a></mj-text>
+          </mj-column>
+        </mj-group>
+      </mj-section>
+      <mj-section background-color="#FFF8DC">
+        <mj-column>
+          <mj-text padding-top="0" padding-bottom="0" color="#61AE24" font-size="18px" line-height="1.25">{{ subject }}</mj-text>
+        </mj-column>
+      </mj-section>
+      <mj-section background-color="#FFF8DC">
+        <mj-column>
+          <mj-text font-size="18px">{{ textbody|nl2br }}</mj-text>
+        </mj-column>
+      </mj-section>
+      <mj-raw>{% if ctatext is defined and ctatext is not null %}</mj-raw>
+      <mj-section background-color="#FFF8DC">
+        <mj-column width="100%">
+          <mj-button align="center" font-size="30px" href="{{ ctalink }}" background-color="darkgreen">{{ ctatext }}</mj-button>
+        </mj-column>
+      </mj-section>
+      <mj-raw>{% endif %}</mj-raw>
+      <mj-raw>{% for sponsor in sponsors %}</mj-raw>
+      <mj-section background-color="white">
+        <mj-column width="150px">
+          <mj-image alt="Sponsor logo" href="{{ sponsor.linkurl }}" align="left" border-radius="5px" src="{{ sponsor.imageurl }}" width="80px"></mj-image>
+        </mj-column>
+        <mj-column>
+          <mj-text>
+            <p>This community is kindly sponsored by:</p>
+            <a href="{{ sponsor.linkurl }}">{{ sponsor.name }}</a></mj-text>
+          <mj-raw>{% if sponsor.tagline is defined %}</mj-raw>
+          <mj-text><b>{{ sponsor.tagline }}</b></mj-text>
+          <mj-raw>{% endif %}</mj-raw>
+        </mj-column>
+      </mj-section>
+      <mj-raw>{% endfor %}</mj-raw>
+      <mj-section background-color="#E0E0E0">
+        <mj-column>
+          <mj-text font-size="9px" color="#707070">You've received this mail because you're a member of <a href="{{ visit }}">{{ groupname }}</a>. You can unsubscribe and leave Freegle completely from <a href="{{ unsubscribe }}">here</a>.
+              <br /> <br /> This mail was sent to&nbsp;{{ email }}.
+              <br />
+              <hr style="border: 0; border-top: 1px solid #AAA; " /> Freegle is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.  Registered address: 64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE</mj-text>
+        </mj-column>
+      </mj-section>
+    </mj-wrapper>
+  </mj-body>
+</mjml>

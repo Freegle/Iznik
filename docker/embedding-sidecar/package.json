@@ -1,0 +1,9 @@
+{
+  "name": "freegle-embedding-sidecar",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@huggingface/transformers": "^3.3.0",
+    "onnxruntime-node": "^1.20.1"
+  }
+}

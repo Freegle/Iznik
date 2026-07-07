@@ -1,0 +1,8 @@
+[mysqld]
+max_connections = 500
+innodb_data_file_path=ibdata1:2000M;ibdata2:10M:autoextend
+innodb_page_size=16384
+innodb_undo_tablespaces=2
+skip-log-bin
+skip-log-slave-updates
+sql_mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION

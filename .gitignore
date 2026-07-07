@@ -1,0 +1,88 @@
+/.idea
+/data/
+/conf/
+!/conf/loki-config.yaml
+!/conf/grafana-provisioning/
+!/conf/alloy/
+!/conf/logrotate/
+!/conf/postfix/
+!/conf/rspamd/
+/.claude/settings.local.json
+/.claude/monitor-state.json
+/logs/
+/.idea/prettier.xml
+/ssl/
+/.env
+/.env.background
+# Timestamped backups of the secret env files (created before prod deploys) are
+# themselves PRODUCTION SECRETS - keep every variant untrackable so a stray
+# `git add -A` can never stage them into this public repo.
+/.env.bak*
+/.env.background.bak*
+/.env.*.bak*
+/firebase.json
+/rebuild-monitor.log
+yesterday/.env
+yesterday/data/
+iznik-server-my.cnf
+docker-compose.override.yml
+
+# Vim swap files
+*.swp
+*.swo
+*.swn
+
+# Nohup output
+nohup.out
+
+# Downloaded packages
+*.deb
+
+# Temporary scripts
+apiv1-entrypoint.sh
+
+# Node modules
+node_modules/
+package-lock.json
+yesterday/2fa-gateway/node_modules/
+yesterday/api/node_modules/
+
+# Capacitor plugins (local development copies)
+capacitor-push-notifications-cap7/
+
+# Sentry integration database (SQLite)
+sentry-issues.db
+sentry-issues.db-shm
+sentry-issues.db-wal
+sentry-issues.db
+/plans/exploratory-testing-state.json
+/iznik-batch/coverage/
+
+# Ralph working directories (session-specific)
+/ralph/
+
+# Local Netlify folder
+.netlify
+
+# Discourse corpus (training data, large files)
+discourse-corpus/
+
+# Mobile feel prototype (has own node_modules)
+freegle-mobile/
+
+# Superpowers working directories
+.superpowers/
+
+# Stale lock files
+.claude/scheduled_tasks.lock
+
+# Agent worktrees — spawned by Claude Code subagents, ephemeral
+.claude/worktrees/
+
+# Local Claude session log (not committed — updates here don't make PRs go BEHIND)
+.claude-session.md
+monitor.db
+
+# freegle switch: runtime state for the worktree-escape guard
+# (legacy single file + per-session active-worktree.<session-id> files)
+.claude/active-worktree*

@@ -1,0 +1,376 @@
+/**
+ * Claude Agent wrapper for Freegle support queries.
+ *
+ * Uses a step-by-step programmatic approach:
+ * - Each step is a separate focused query
+ * - We drive the investigation, not the LLM
+ * - Data is gathered incrementally
+ */
+
+const { query } = require('@anthropic-ai/claude-agent-sdk')
+
+// Available fact query types
+const FACT_QUERY_TYPES = {
+  find_user_by_name: { params: ['name'], returns: 'array of {id, displayname, role}' },
+  find_user_by_email: { params: ['email'], returns: 'object {id, role, found}' },
+  get_user_role: { params: ['userid'], returns: 'string' },
+  get_user_teams: { params: ['userid'], returns: 'array of team names' },
+  check_team_membership: { params: ['userid', 'teamname'], returns: 'boolean' },
+  get_last_login: { params: ['userid'], returns: 'string (ISO date or "never")' },
+  get_last_activity: { params: ['userid'], returns: 'string (ISO date or "never")' },
+  count_errors: { params: ['userid', 'timerange'], returns: 'number' },
+  get_error_summary: { params: ['userid', 'timerange'], returns: 'array of {statusCode, count}' },
+  has_recent_activity: { params: ['userid', 'timerange'], returns: 'boolean' },
+  get_group_info: { params: ['groupid'], returns: 'object with name, region, membercount' },
+  search_groups: { params: ['search'], returns: 'array of matching groups' },
+}
+
+/**
+ * Step 1: Classify the query and extract identifiers.
+ */
+async function classifyQuery(question, onThinking) {
+  onThinking('Step 1: Understanding your question...')
+
+  const prompt = `Classify this Freegle support question and extract identifiers.
+
+Question: "${question}"
+
+Categories:
+- USER_SPECIFIC: About a specific person (by name, email, or user ID)
+- GROUP_SPECIFIC: About a specific Freegle community/group
+- ERROR_INVESTIGATION: About errors or problems occurring
+- SYSTEM_BEHAVIOR: How does something work in Freegle?
+- GENERAL: Other
+
+Respond with JSON only:
+{
+  "type": "USER_SPECIFIC|GROUP_SPECIFIC|ERROR_INVESTIGATION|SYSTEM_BEHAVIOR|GENERAL",
+  "user_name": "extracted name or null",
+  "user_email": "extracted email or null",
+  "user_id": "extracted ID or null",
+  "group_name": "extracted group name or null",
+  "error_type": "extracted error or null"
+}`
+
+  let classification = { type: 'GENERAL' }
+
+  for await (const message of query({
+    prompt,
+    systemPrompt: 'You classify support questions. Respond with JSON only.',
+    options: {
+      workingDirectory: '/app/codebase',
+      allowedTools: [],
+      customTools: [],
+    },
+  })) {
+    if (message.type === 'assistant' && message.message?.content) {
+      for (const block of message.message.content) {
+        if (block.type === 'text') {
+          try {
+            const jsonMatch = block.text.match(/\{[\s\S]*\}/)
+            if (jsonMatch) classification = JSON.parse(jsonMatch[0])
+          } catch {}
+        }
+      }
+    } else if (message.type === 'result' && message.result) {
+      try {
+        const jsonMatch = message.result.match(/\{[\s\S]*\}/)
+        if (jsonMatch) classification = JSON.parse(jsonMatch[0])
+      } catch {}
+    }
+  }
+
+  onThinking(`→ Type: ${classification.type}`)
+  return classification
+}
+
+/**
+ * Step 2a: Find a user by name or email.
+ */
+async function findUser(classification, requestFactQuery, onThinking) {
+  onThinking('Step 2: Finding user...')
+
+  const results = {}
+
+  if (classification.user_id) {
+    results.userId = classification.user_id
+    onThinking(`→ User ID provided: ${classification.user_id}`)
+  } else if (classification.user_name) {
+    onThinking(`→ Searching for "${classification.user_name}"...`)
+    const users = await requestFactQuery('find_user_by_name', { name: classification.user_name })
+    results.searchResults = users
+    if (users && users.length > 0) {
+      results.userId = users[0].id
+      results.displayName = users[0].displayname
+      onThinking(`→ Found: ${users[0].displayname} (ID: ${users[0].id})`)
+    } else {
+      onThinking(`→ No users found matching "${classification.user_name}"`)
+    }
+  } else if (classification.user_email) {
+    onThinking(`→ Looking up by email...`)
+    const result = await requestFactQuery('find_user_by_email', { email: classification.user_email })
+    results.searchResults = result
+    if (result && result.found) {
+      results.userId = result.id
+      onThinking(`→ Found user ID: ${result.id}`)
+    }
+  }
+
+  return results
+}
+
+/**
+ * Step 3a: Gather user data.
+ */
+async function gatherUserData(userId, requestFactQuery, onThinking) {
+  onThinking('Step 3: Gathering user data...')
+
+  const data = { userId }
+
+  // Get role
+  onThinking('→ Checking role...')
+  data.role = await requestFactQuery('get_user_role', { userid: userId })
+
+  // Get teams
+  onThinking('→ Checking team memberships...')
+  data.teams = await requestFactQuery('get_user_teams', { userid: userId })
+
+  // Get last login
+  onThinking('→ Checking last login...')
+  data.lastLogin = await requestFactQuery('get_last_login', { userid: userId })
+
+  // Get recent errors
+  onThinking('→ Checking for recent errors...')
+  data.errorCount = await requestFactQuery('count_errors', { userid: userId, timerange: '24h' })
+
+  return data
+}
+
+/**
+ * Step 2b: Find a group.
+ */
+async function findGroup(classification, requestFactQuery, onThinking) {
+  onThinking('Step 2: Finding group...')
+
+  if (classification.group_name) {
+    onThinking(`→ Searching for "${classification.group_name}"...`)
+    const groups = await requestFactQuery('search_groups', { search: classification.group_name })
+    if (groups && groups.length > 0) {
+      const group = groups[0]
+      onThinking(`→ Found: ${group.namedisplay || group.nameshort}`)
+
+      onThinking('→ Getting group details...')
+      const info = await requestFactQuery('get_group_info', { groupid: group.id })
+      return { group, info }
+    }
+  }
+  return null
+}
+
+/**
+ * Step 2c: Search codebase for system behavior.
+ */
+async function searchCodebase(question, onThinking) {
+  onThinking('Step 2: Searching codebase...')
+
+  let searchResults = ''
+
+  for await (const message of query({
+    prompt: `Search the Freegle codebase (/app/codebase) to understand: "${question}"
+
+Search in:
+- iznik-nuxt3 (Vue frontend)
+- iznik-server (PHP API)
+- iznik-server-go (Go API)
+
+Use Grep to find relevant files, then Read them. Summarize what you find.`,
+    systemPrompt: 'Search and summarize code. Do not answer the question yet.',
+    options: {
+      workingDirectory: '/app/codebase',
+      allowedTools: ['Grep', 'Glob', 'Read'],
+      customTools: [],
+    },
+  })) {
+    if (message.type === 'assistant' && message.message?.content) {
+      for (const block of message.message.content) {
+        if (block.type === 'text') {
+          searchResults = block.text
+        } else if (block.type === 'tool_use') {
+          const tool = block.name
+          const input = block.input || {}
+          if (tool === 'Grep') onThinking(`→ Searching: ${input.pattern}`)
+          else if (tool === 'Read') {
+            const short = (input.file_path || '').split('/').slice(-2).join('/')
+            onThinking(`→ Reading: ${short}`)
+          }
+        }
+      }
+    } else if (message.type === 'result') {
+      searchResults = message.result || searchResults
+    }
+  }
+
+  return searchResults
+}
+
+/**
+ * Final step: Generate answer based on gathered data.
+ */
+async function generateAnswer(question, context, onThinking) {
+  onThinking('Final step: Generating answer...')
+
+  let answer = ''
+
+  for await (const message of query({
+    prompt: `Answer this Freegle support question based on the data gathered:
+
+Question: "${question}"
+
+Data gathered:
+${context}
+
+Rules:
+- Give a friendly, helpful answer
+- Use the actual data provided
+- Use markdown formatting
+- Don't show SQL or code internals
+- Don't say "I cannot determine" - use the data above`,
+    systemPrompt: 'You are a helpful Freegle support assistant. Answer based on the data provided.',
+    options: {
+      workingDirectory: '/app/codebase',
+      allowedTools: [],
+      customTools: [],
+      continue: true,
+    },
+  })) {
+    if (message.type === 'assistant' && message.message?.content) {
+      for (const block of message.message.content) {
+        if (block.type === 'text') answer = block.text
+      }
+    } else if (message.type === 'result') {
+      answer = message.result || answer
+    }
+  }
+
+  return answer
+}
+
+/**
+ * Main entry point - orchestrates the step-by-step investigation.
+ */
+async function runAgent(question, requestFactQuery, onThinking, continueConversation = false) {
+  const suggestedQueries = []
+
+  // Wrap requestFactQuery to handle errors
+  const safeQuery = async (queryType, params) => {
+    try {
+      return await requestFactQuery(queryType, params)
+    } catch (error) {
+      onThinking(`→ Error: ${error.message}`)
+      return null
+    }
+  }
+
+  // STEP 1: Classify
+  const classification = await classifyQuery(question, onThinking)
+
+  // STEP 2-3: Follow the appropriate path
+  let context = ''
+
+  switch (classification.type) {
+    case 'USER_SPECIFIC': {
+      // Find the user
+      const userSearch = await findUser(classification, safeQuery, onThinking)
+
+      if (userSearch.userId) {
+        // Gather their data
+        const userData = await gatherUserData(userSearch.userId, safeQuery, onThinking)
+
+        context = `User Investigation Results:
+- User ID: ${userData.userId}
+- Display Name: ${userSearch.displayName || 'Unknown'}
+- System Role: ${userData.role || 'User'}
+- Teams: ${userData.teams?.length > 0 ? userData.teams.join(', ') : 'None'}
+- Last Login: ${userData.lastLogin || 'Unknown'}
+- Errors (24h): ${userData.errorCount || 0}`
+
+        // If there's a search with multiple results, mention them
+        if (userSearch.searchResults?.length > 1) {
+          context += `\n\nNote: Found ${userSearch.searchResults.length} users matching the search:`
+          for (const u of userSearch.searchResults.slice(0, 5)) {
+            context += `\n- ${u.displayname} (ID: ${u.id}, Role: ${u.role})`
+          }
+        }
+      } else {
+        context = `User Search Results:
+- No user found matching the criteria
+- Searched for: ${classification.user_name || classification.user_email || 'unknown'}`
+      }
+      break
+    }
+
+    case 'GROUP_SPECIFIC': {
+      const groupData = await findGroup(classification, safeQuery, onThinking)
+
+      if (groupData) {
+        context = `Group Investigation Results:
+- Name: ${groupData.info?.name || groupData.group?.namedisplay || 'Unknown'}
+- Region: ${groupData.info?.region || 'Unknown'}
+- Member Count: ${groupData.info?.membercount || 'Unknown'}`
+      } else {
+        context = `Group Search Results:
+- No group found matching "${classification.group_name}"`
+      }
+      break
+    }
+
+    case 'ERROR_INVESTIGATION': {
+      // Search codebase for the error
+      const codeSearch = await searchCodebase(
+        `error: ${classification.error_type || question}`,
+        onThinking
+      )
+
+      // If user-specific, also get their error data
+      if (classification.user_name || classification.user_id) {
+        const userSearch = await findUser(classification, safeQuery, onThinking)
+        if (userSearch.userId) {
+          onThinking('→ Getting user error details...')
+          const errors = await safeQuery('get_error_summary', {
+            userid: userSearch.userId,
+            timerange: '24h'
+          })
+          context = `Error Investigation:
+
+Code Analysis:
+${codeSearch}
+
+User ${userSearch.userId} Error Summary (24h):
+${errors?.length > 0 ? errors.map(e => `- Status ${e.statusCode}: ${e.count} occurrences`).join('\n') : 'No errors found'}`
+        }
+      } else {
+        context = `Error Investigation:
+
+Code Analysis:
+${codeSearch}`
+      }
+      break
+    }
+
+    case 'SYSTEM_BEHAVIOR':
+    default: {
+      const codeSearch = await searchCodebase(question, onThinking)
+      context = `System Behavior Research:
+
+${codeSearch}`
+      break
+    }
+  }
+
+  // FINAL STEP: Generate the answer
+  const answer = await generateAnswer(question, context, onThinking)
+
+  return { answer, suggestedQueries }
+}
+
+module.exports = { runAgent, FACT_QUERY_TYPES }

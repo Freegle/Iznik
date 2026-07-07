@@ -1,0 +1,489 @@
+{
+  "behaviors": {
+    "http/api/group.php:71": {
+      "reason": "V2 group handler does not make this external HTTP call",
+      "verdict": "TRUE_GAP"
+    },
+    "http/api/image.php:164": {
+      "reason": "V2 image upload uses Tus external upload; V1 fetched image inline",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "http/api/session.php:273": {
+      "reason": "Session OAuth HTTP calls handled differently in V2 (Go OAuth libraries)",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "http/api/session.php:296": {
+      "reason": "Session OAuth HTTP calls handled differently in V2",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "http/api/session.php:297": {
+      "reason": "Session OAuth HTTP calls handled differently in V2",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "http/api/session.php:298": {
+      "reason": "Session OAuth HTTP calls handled differently in V2",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/ai/GeminiHelper.php:49": {
+      "reason": "V2 has no Gemini AI integration \u2014 AI model list fetch absent",
+      "verdict": "TRUE_GAP"
+    },
+    "include/dashboard/Dashboard.php:437": {
+      "reason": "V2 dashboard does not fetch this external data source",
+      "verdict": "TRUE_GAP"
+    },
+    "include/message/Attachment.php:253": {
+      "reason": "V2 handles image upload via Tus externally \u2014 PHP fetches image then uploads; V2 frontend uploads directly",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/message/Attachment.php:293": {
+      "reason": "V2 handles image upload via Tus externally \u2014 PHP fetches image then uploads; V2 frontend uploads directly",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/message/Attachment.php:413": {
+      "reason": "V2 handles image upload via Tus externally",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/message/Attachment.php:534": {
+      "reason": "V2 handles image upload via Tus externally",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/message/Attachment.php:611": {
+      "reason": "V2 handles image upload via Tus externally",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/message/Attachment.php:680": {
+      "reason": "V2 handles image upload via Tus externally",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/message/Message.php:2362": {
+      "reason": "V2 does not fetch remote message attachments/images during message processing",
+      "verdict": "TRUE_GAP"
+    },
+    "include/message/Message.php:2512": {
+      "reason": "V2 does not fetch remote message attachments/images during message processing",
+      "verdict": "TRUE_GAP"
+    },
+    "include/message/Message.php:2651": {
+      "reason": "V2 does not fetch remote message attachments/images during message processing",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/IPBlocker.php:100": {
+      "reason": "Reading local IP whitelist file \u2014 V2 has its own IP blocking mechanism",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/IPBlocker.php:167": {
+      "reason": "Reading local IP whitelist file \u2014 V2 has its own IP blocking mechanism",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/IPBlocker.php:190": {
+      "reason": "Reading local IP whitelist file \u2014 V2 has its own IP blocking mechanism",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/IPBlocker.php:224": {
+      "reason": "Reading local IP whitelist file \u2014 V2 has its own IP blocking mechanism",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/IPBlocker.php:42": {
+      "reason": "Reading local IP whitelist file \u2014 V2 has its own IP blocking mechanism",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/IPBlocker.php:71": {
+      "reason": "Reading local IP whitelist file \u2014 V2 has its own IP blocking mechanism",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Jobs.php:331": {
+      "reason": "Job listing fetch is a batch/cron operation \u2014 not V2 API behaviour",
+      "verdict": "BATCH_ONLY"
+    },
+    "include/misc/Jobs.php:667": {
+      "reason": "Job listing fetch is a batch/cron operation \u2014 not V2 API behaviour",
+      "verdict": "BATCH_ONLY"
+    },
+    "include/misc/Loki.php:593": {
+      "reason": "V2 has native Go Loki log shipping in systemlogs package",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Loki.php:692": {
+      "reason": "V2 has native Go Loki log shipping in systemlogs package",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Mail.php:238": {
+      "reason": "Part of email delivery infrastructure \u2014 batch concern, not V2 API",
+      "verdict": "BATCH_ONLY"
+    },
+    "include/misc/Pollinations.php:1027": {
+      "reason": "V2 has no Pollinations AI image generation integration",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/Pollinations.php:1087": {
+      "reason": "V2 has no Pollinations AI image generation integration",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/Pollinations.php:1313": {
+      "reason": "V2 has no Pollinations AI image generation integration",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/Pollinations.php:567": {
+      "reason": "V2 has no Pollinations AI image generation integration",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/Pollinations.php:648": {
+      "reason": "V2 has no Pollinations AI image generation integration",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/Pollinations.php:788": {
+      "reason": "V2 has no Pollinations AI image generation integration",
+      "verdict": "TRUE_GAP"
+    },
+    "include/misc/Tus.php:118": {
+      "reason": "V2 frontend uploads directly to Tus; V1 PHP acted as proxy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Tus.php:34": {
+      "reason": "V2 frontend uploads directly to Tus; V1 PHP acted as proxy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Tus.php:75": {
+      "reason": "V2 frontend uploads directly to Tus; V1 PHP acted as proxy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Tus.php:9": {
+      "reason": "V2 frontend uploads directly to Tus; V1 PHP acted as proxy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/misc/Utils.php:607": {
+      "reason": "V2 uses Go net/http with its own retry logic \u2014 curlWithRetry wrapper has no V2 equivalent needed",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/session/Facebook.php:276": {
+      "reason": "Facebook OAuth not implemented in V2",
+      "verdict": "INTENTIONAL"
+    },
+    "include/session/Google.php:51": {
+      "reason": "V2 handles Google OAuth with its own Go implementation",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/session/Yahoo.php:69": {
+      "reason": "Yahoo OAuth not implemented in V2",
+      "verdict": "INTENTIONAL"
+    },
+    "include/session/Yahoo.php:88": {
+      "reason": "Yahoo OAuth not implemented in V2",
+      "verdict": "INTENTIONAL"
+    },
+    "include/user/Isochrone.php:257": {
+      "reason": "V2 calls isochrone service differently or inlines the logic",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/Isochrone.php:306": {
+      "reason": "V2 calls isochrone service differently or inlines the logic",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/User.php:1939": {
+      "reason": "V2 does not fetch Gravatar profile images for users",
+      "verdict": "TRUE_GAP"
+    },
+    "include/user/User.php:2004": {
+      "reason": "V2 does not fetch and hash profile images to filter default images",
+      "verdict": "TRUE_GAP"
+    },
+    "include/user/User.php:3983": {
+      "reason": "Reading local word-list files for invented email \u2014 V2 uses different email invention strategy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/User.php:3984": {
+      "reason": "Reading local word-list files for invented email \u2014 V2 uses different email invention strategy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/User.php:3985": {
+      "reason": "Reading local word-list files for invented email \u2014 V2 uses different email invention strategy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/User.php:410": {
+      "reason": "Reading local JSON word files for password/email invention \u2014 V2 uses different name invention strategy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/User.php:411": {
+      "reason": "Reading local JSON word files for password/email invention \u2014 V2 uses different name invention strategy",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "include/user/User.php:412": {
+      "reason": "Reading local JSON word files for password/email invention \u2014 V2 uses different name invention strategy",
+      "verdict": "DIFFERENT_IMPL"
+    }
+  },
+  "columns": {
+    "admins.sendafter": {
+      "reason": "V2 INSERT INTO admins omits sendafter \u2014 scheduled admin sends not supported",
+      "verdict": "FIXED",
+      "notes": "Fixed: added SendAfter to PostAdminRequest and included in INSERT. Test: TestPostAdminCreateWithSendAfter"
+    },
+    "ai_images.imagehash": {
+      "auto": false,
+      "reason": "Written by V1 messages_illustrations.php cron (every 1 min). Fetches AI line drawings from Pollinations.ai and stores them. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "alerts.groupprogress": {
+      "reason": "groupprogress updated by alert-sending batch job, not V2 API",
+      "verdict": "BATCH_ONLY"
+    },
+    "chat_messages.facebookid": {
+      "reason": "Facebook integration absent from V2 \u2014 facebookid intentionally omitted",
+      "verdict": "INTENTIONAL"
+    },
+    "chat_messages.spamscore": {
+      "auto": false,
+      "reason": "Only set by V1 MailRouter during email ingestion (SpamAssassin check on incoming email). Go API never processes incoming email \u2014 not a V2 API gap.",
+      "verdict": "FALSE_POSITIVE"
+    },
+    "chat_roster.lastmsgnotified": {
+      "reason": "V2 never updates lastmsgnotified in chat_roster \u2014 push notification dedup tracking absent",
+      "verdict": "FIXED",
+      "notes": "Fixed in iznik-batch ChatNotificationService: now updates both lastmsgemailed and lastmsgnotified"
+    },
+    "communityevents.externalid": {
+      "reason": "V2 INSERT INTO communityevents omits externalid \u2014 third-party event dedup broken",
+      "verdict": "BATCH_ONLY",
+      "notes": "Written by V1 integration cron scripts (RepairCafeWales.php, RestartProject.php). Go web API creates user-submitted events; external ID is set by batch integrations only."
+    },
+    "groups.welcomereview": {
+      "auto": false,
+      "reason": "Written by V1 group_welcomereview.php cron (daily 01:00 and 15:00). Timestamps when welcome review was last processed per group. Not yet migrated to Laravel.",
+      "verdict": "BATCH_ONLY"
+    },
+    "lovejunk.deletestatus": {
+      "auto": false,
+      "reason": "Written by V1 lovejunk.php cron (every 1 min). Syncs edit/delete status with LoveJunk API. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "messages.envelopefrom": {
+      "reason": "V2 never nulls envelopefrom on message anonymization/withdrawal",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go handleForget(): UPDATE messages SET envelopefrom=NULL... WHERE fromuser=? (both partner and self-service flows). Test: TestForgetBlanksMessagePersonalData"
+    },
+    "messages.htmlbody": {
+      "reason": "V2 never nulls htmlbody on message anonymization/withdrawal",
+      "verdict": "FIXED",
+      "notes": "Fixed together with messages.envelopefrom in Go handleForget(). Test: TestForgetBlanksMessagePersonalData"
+    },
+    "messages.retrycount": {
+      "auto": false,
+      "reason": "Laravel batch IncomingMailService has no recordFailure() equivalent. V1 MailRouter incremented retrycount on SpamAssassin/routing failures. Schema migration defines the column. Batch gap, not Go API gap.",
+      "verdict": "FIXED",
+      "notes": "Fixed in iznik-batch IncomingMailService: added recordFailure() method"
+    },
+    "messages.retrylastfailure": {
+      "auto": false,
+      "reason": "Same as retrycount \u2014 batch IncomingMailService never sets retrylastfailure on routing failure. Batch gap.",
+      "verdict": "FIXED",
+      "notes": "Fixed in iznik-batch IncomingMailService: added recordFailure() method"
+    },
+    "messages_edits.newimages": {
+      "reason": "V2 messages_edits does not record old/new items or images or location changes",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go PatchMessage: edit record now captures items/images/location changes. Test: TestMessageEditRecordsAllColumns"
+    },
+    "messages_edits.newitems": {
+      "reason": "V2 messages_edits does not record old/new items or images or location changes",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go PatchMessage: edit record now captures items/images/location changes. Test: TestMessageEditRecordsAllColumns"
+    },
+    "messages_edits.newlocation": {
+      "reason": "V2 messages_edits does not record old/new items or images or location changes",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go PatchMessage: edit record now captures items/images/location changes. Test: TestMessageEditRecordsAllColumns"
+    },
+    "messages_edits.oldimages": {
+      "reason": "V2 messages_edits does not record old/new items or images or location changes",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go PatchMessage: edit record now captures items/images/location changes. Test: TestMessageEditRecordsAllColumns"
+    },
+    "messages_edits.olditems": {
+      "reason": "V2 messages_edits does not record old/new items or images or location changes",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go PatchMessage: edit record now captures items/images/location changes. Test: TestMessageEditRecordsAllColumns"
+    },
+    "messages_edits.oldlocation": {
+      "reason": "V2 messages_edits does not record old/new items or images or location changes",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go PatchMessage: edit record now captures items/images/location changes. Test: TestMessageEditRecordsAllColumns"
+    },
+    "messages_groups.lastautopostwarning": {
+      "reason": "V2 never writes lastautopostwarning \u2014 auto-post warning dedup tracking absent",
+      "verdict": "BATCH_ONLY",
+      "notes": "Written by V1 auto-repost cron (Message.php line 4719). Not a Go API write path."
+    },
+    "messages_groups.lastchaseup": {
+      "reason": "Chaseup emails are a batch/cron job \u2014 lastchaseup written by batch, not V2 API",
+      "verdict": "BATCH_ONLY"
+    },
+    "microactions.facebook_post": {
+      "reason": "Facebook integration not in V2 \u2014 facebook_post column intentionally absent",
+      "verdict": "INTENTIONAL"
+    },
+    "noticeboards.thanked": {
+      "reason": "V2 never writes thanked timestamp on noticeboards \u2014 thank-you tracking absent",
+      "verdict": "DEFERRED",
+      "notes": "Set by donation thank flow (Noticeboard::thank()). Not a direct Go API gap \u2014 depends on donation-to-noticeboard thank feature not yet migrated."
+    },
+    "trysts.ics1uid": {
+      "auto": false,
+      "reason": "Written by V1 tryst.php cron (every 1 min). Tryst::sendCalendarsDue()/sendRemindersDue() sends ICS calendar invites and reminders. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "trysts.ics2uid": {
+      "auto": false,
+      "reason": "Written by V1 tryst.php cron (every 1 min). Tryst::sendCalendarsDue()/sendRemindersDue() sends ICS calendar invites and reminders. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "trysts.icssent": {
+      "auto": false,
+      "reason": "Written by V1 tryst.php cron (every 1 min). Tryst::sendCalendarsDue()/sendRemindersDue() sends ICS calendar invites and reminders. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "trysts.remindersent": {
+      "auto": false,
+      "reason": "Written by V1 tryst.php cron (every 1 min). Tryst::sendCalendarsDue()/sendRemindersDue() sends ICS calendar invites and reminders. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "users.invitesleft": {
+      "reason": "No invitation system in V2 \u2014 invitesleft column never decremented. Consistent with users_invitations removal.",
+      "verdict": "INTENTIONAL_WARNING"
+    },
+    "users.replyambit": {
+      "reason": "V2 has no geographic reply-ambit spam detection \u2014 replyambit never updated",
+      "verdict": "BATCH_ONLY",
+      "notes": "Updated by V1 Spam.php during chat notification processing. Not a Go API write path \u2014 depends on complex geographic spam detection cron."
+    },
+    "users_expected.expectee": {
+      "reason": "V2 never writes to users_expected \u2014 reply expectation tracking absent",
+      "verdict": "DEFERRED",
+      "notes": "Go chat send path should write users_expected (V1 ChatRoom.php:2344). Deferred \u2014 complex feature with spam/reply expectation tracking."
+    },
+    "users_expected.expecter": {
+      "reason": "V2 never writes to users_expected \u2014 reply expectation tracking absent",
+      "verdict": "DEFERRED",
+      "notes": "Same as users_expected.expectee \u2014 deferred."
+    },
+    "users_modmails.logid": {
+      "auto": false,
+      "reason": "V2 Go inserts to users_modmails without logid FK to logs table. Modmail count for member review still works. Lost: traceability from modmail record to the specific log entry that caused it.",
+      "verdict": "BATCH_ONLY",
+      "notes": "users_modmails is written by V1 modmail send path (User.php:6454). Go API only reads it (count). Modmail sending not yet migrated to V2."
+    },
+    "users_stories.mailedtocentral": {
+      "reason": "Story mailing is batch/newsletter \u2014 mailedtocentral written by batch, not V2 API",
+      "verdict": "BATCH_ONLY"
+    },
+    "users_stories.mailedtomembers": {
+      "reason": "Story mailing is batch/newsletter \u2014 mailedtomembers written by batch, not V2 API",
+      "verdict": "BATCH_ONLY"
+    },
+    "volunteering.externalid": {
+      "reason": "V2 volunteering INSERT does not include externalid column",
+      "verdict": "BATCH_ONLY",
+      "notes": "Same as communityevents.externalid \u2014 written by external integration batch scripts, not the Go API web path."
+    }
+  },
+  "tables": {
+    "admins_users": {
+      "reason": "Dedup table for bulk admin email sends \u2014 batch operation, not V2 API behaviour",
+      "verdict": "BATCH_ONLY"
+    },
+    "groups_facebook_toshare": {
+      "reason": "Facebook integration not implemented in V2",
+      "verdict": "INTENTIONAL"
+    },
+    "jobs_keywords": {
+      "auto": true,
+      "reason": "Table used only by batch/newsletter operations, not API",
+      "verdict": "BATCH_ONLY"
+    },
+    "messages_ai_declined": {
+      "reason": "V2 has no record of user declining AI image \u2014 background job may re-add declined images",
+      "verdict": "INTENTIONAL",
+      "notes": "Go V2 has no AI service in web post path. Table is writable. AI decline via web is not implemented (email path handled by V1 cron). Test documents the gap: TestMessageAiDeclinedWritesTable"
+    },
+    "messages_deadlines": {
+      "auto": false,
+      "reason": "FOP flag has zero references in Nuxt3 client \u2014 feature deliberately absent from V2 UI. messages:process-expired Laravel command exists but scheduler disabled. Deadline expiry still handled by V1 cron for any legacy messages with deadlines.",
+      "verdict": "INTENTIONAL"
+    },
+    "messages_history": {
+      "reason": "Laravel IncomingMailService writes messages_history for email-sourced messages, but V2 Go API never writes it for API-posted messages. Account-merge update (fromuser) also absent from both Laravel and V2.",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go message.go JoinAndPost submit path: INSERT IGNORE INTO messages_history after messages_groups insert. Test: TestMessagePostWritesHistory"
+    },
+    "messages_isochrones": {
+      "auto": false,
+      "reason": "Written by V1 message_spatial.php cron (every 5 min). Message::updateSpatialIndex() builds the isochrone for each message as replies come in, widening search radius. Not yet migrated to Laravel.",
+      "verdict": "BATCH_ONLY"
+    },
+    "newsletters": {
+      "auto": true,
+      "reason": "Table used only by batch/newsletter operations, not API",
+      "verdict": "BATCH_ONLY"
+    },
+    "newsletters_articles": {
+      "auto": true,
+      "reason": "Table used only by batch/newsletter operations, not API",
+      "verdict": "BATCH_ONLY"
+    },
+    "polls": {
+      "auto": true,
+      "reason": "Endpoint explicitly SKIP:no-v2 in mapping",
+      "verdict": "INTENTIONAL"
+    },
+    "polls_users": {
+      "auto": true,
+      "reason": "Endpoint explicitly SKIP:no-v2 in mapping",
+      "verdict": "INTENTIONAL"
+    },
+    "returnpath_seedlist": {
+      "reason": "Email deliverability seed list \u2014 used by mail-sending batch, not V2 API",
+      "verdict": "BATCH_ONLY"
+    },
+    "spam_countries": {
+      "reason": "Laravel SpamCheckService checks spam_countries for incoming email. V2 Go API does not check spam_countries at submission time \u2014 country-based blocking absent for API posts.",
+      "verdict": "INTENTIONAL",
+      "notes": "Email path: covered by Laravel Batch SpamCheckService.checkIPCountry() which reads spam_countries + GeoIP. Web post path: spam from blocked countries goes to pending via existing Go spam check. Country block for web posts is a first-line optimisation, not a correctness requirement. REST GeoIP APIs are too slow (50-100ms) for request middleware; local MMDB would need a new infra dep in apiv2."
+    },
+    "users_active": {
+      "reason": "Neither V2 Go API nor Laravel batch writes users_active. V1 recorded hourly activity for kudos/analytics. Laravel UpdateKudosCommand uses messages_outcomes instead, so kudos still works, but per-hour activity data is lost (analytics gap).",
+      "verdict": "FIXED",
+      "notes": "Fixed in Go notification.List(): INSERT IGNORE INTO users_active with hourly timestamp. Test: TestNotificationListRecordsUsersActive"
+    },
+    "users_approxlocs": {
+      "auto": false,
+      "reason": "Written by V1 nearby.php cron (daily 14:05). Nearby::updateLocations() blurs user positions for nearby-message notifications. Not yet migrated to Laravel. V1 cron still running.",
+      "verdict": "BATCH_ONLY"
+    },
+    "users_dashboard": {
+      "auto": false,
+      "reason": "V2 Go has a dashboard package that recomputes on each request \u2014 no caching table. V1 wrote computed results to users_dashboard for reuse. Performance difference only; dashboard functionality present in V2.",
+      "verdict": "DIFFERENT_IMPL"
+    },
+    "users_donations_asks": {
+      "reason": "Fully covered by Laravel AskDonationsCommand/DonationService \u2014 batch-only, not API behaviour",
+      "verdict": "BATCH_ONLY"
+    },
+    "users_invitations": {
+      "reason": "No /invitation route in V2 \u2014 invitation feature appears deliberately removed. Flag: users_invitations table is never written; invite emails never sent from V2.",
+      "verdict": "INTENTIONAL_WARNING"
+    },
+    "users_kudos": {
+      "reason": "No /kudos route in V2. Laravel UpdateKudosCommand writes users.kudos field instead. users_kudos detailed breakdown table appears deliberately deprecated \u2014 flag as architectural change.",
+      "verdict": "INTENTIONAL_WARNING"
+    },
+    "users_nearby": {
+      "auto": false,
+      "reason": "Written by V1 nearby.php cron (daily 14:05). Nearby::messages() tracks which users have been notified about which messages to avoid re-sending. Not yet migrated to Laravel.",
+      "verdict": "BATCH_ONLY"
+    },
+    "users_stories_requested": {
+      "reason": "Story solicitation is a batch cron job \u2014 users_stories_requested is batch-only, not API",
+      "verdict": "BATCH_ONLY"
+    }
+  }
+}

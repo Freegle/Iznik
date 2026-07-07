@@ -1,0 +1,654 @@
+<?php
+
+namespace Tests\Feature\Mail;
+
+use App\Mail\Event\EventsDigestMail;
+use App\Models\Group;
+use App\Services\EmailSpoolerService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Tests\TestCase;
+
+class EventsDigestCommandTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // EventsDigestService queries communityevents / groups / users globally.
+        // Rows from parallel test classes can slip through DatabaseTransactions
+        // isolation. Delete inside the current transaction so leaked rows are
+        // hidden without affecting other test classes (the DELETE rolls back with
+        // this test's transaction).
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        foreach (['communityevents_images', 'communityevents_dates', 'communityevents_groups', 'communityevents', 'users_digests', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+            DB::table($table)->delete();
+        }
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+    }
+
+    private function createEvent(int $groupId, string $title = 'Test Event', int $daysFromNow = 7, array $fields = []): int
+    {
+        $eventId = DB::table('communityevents')->insertGetId(array_merge([
+            'title'       => $title,
+            'location'    => 'Test Hall, Test Town',
+            'description' => 'A test event description.',
+            'pending'     => 0,
+            'deleted'     => 0,
+            'added'       => now(),
+        ], $fields));
+
+        DB::table('communityevents_groups')->insert([
+            'eventid' => $eventId,
+            'groupid' => $groupId,
+        ]);
+
+        DB::table('communityevents_dates')->insert([
+            'eventid' => $eventId,
+            'start'   => now()->addDays($daysFromNow),
+            'end'     => now()->addDays($daysFromNow)->addHours(2),
+        ]);
+
+        return $eventId;
+    }
+
+    private function linkEventToGroup(int $eventId, int $groupId): void
+    {
+        DB::table('communityevents_groups')->insert([
+            'eventid' => $eventId,
+            'groupid' => $groupId,
+        ]);
+    }
+
+    private function addEventImage(int $eventId, ?string $externalUrl = null): int
+    {
+        return DB::table('communityevents_images')->insertGetId([
+            'eventid'     => $eventId,
+            'contenttype' => 'image/jpeg',
+            'archived'    => 0,
+            'externalmods' => $externalUrl ? json_encode(['url' => $externalUrl]) : null,
+        ]);
+    }
+
+    private function setLastSent(int $userId, \DateTimeInterface|string $when): void
+    {
+        DB::table('users_digests')->insert([
+            'userid'   => $userId,
+            'mode'     => 'events',
+            'lastsent' => $when,
+        ]);
+    }
+
+    public function test_smoke_no_groups(): void
+    {
+        Mail::fake();
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 0 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_group_with_no_upcoming_events(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'eventsallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        // No events created for the group
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_sends_one_email_per_user_with_events_enabled(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member1 = $this->createTestUser();
+        $this->createMembership($member1, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $member2 = $this->createTestUser();
+        $this->createMembership($member2, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 2 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(2);
+    }
+
+    public function test_one_combined_email_covers_all_a_users_groups(): void
+    {
+        // A user in two event-enabled groups, each with its own event, gets ONE
+        // email containing BOTH events — not one email per group.
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $this->createEvent($group1->id, 'Group One Event');
+        $this->createEvent($group2->id, 'Group Two Event');
+
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group1, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+        $this->createMembership($user, $group2, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return count($mail->events) === 2;
+        });
+    }
+
+    public function test_event_cross_posted_to_several_of_users_groups_appears_once(): void
+    {
+        // The same event shared with two of the user's groups must appear ONCE
+        // (deduplicated by event id), annotated with both group names.
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group1, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+        $this->createMembership($user, $group2, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group1->id, 'Cross-posted Event');
+        $this->linkEventToGroup($eventId, $group2->id);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($group1, $group2) {
+            if (count($mail->events) !== 1) {
+                return false;
+            }
+            // Each group is a ['name' => , 'url' => ] pair for the "Posted on
+            // <group>" byline: the friendly name plus its /explore link.
+            $groups = $mail->events[0]['groups'] ?? [];
+            $names = array_column($groups, 'name');
+            sort($names);
+            $expectedNames = [$group1->namefull, $group2->namefull];
+            sort($expectedNames);
+            if ($names !== $expectedNames) {
+                return false;
+            }
+
+            $urls = array_column($groups, 'url');
+            return collect([$group1, $group2])->every(
+                fn ($g) => collect($urls)->contains(fn ($u) => str_contains($u, '/explore/' . $g->nameshort))
+            );
+        });
+    }
+
+    public function test_spool_failure_for_one_user_does_not_abort_digest(): void
+    {
+        // The spooler throws on the first recipient (e.g. a transient MJML render
+        // error, which spool() re-throws). The per-user loop must skip that
+        // recipient and keep going — not let the exception abort the whole run.
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member1 = $this->createTestUser();
+        $this->createMembership($member1, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $member2 = $this->createTestUser();
+        $this->createMembership($member2, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $calls = 0;
+        $spooler = \Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andReturnUsing(function () use (&$calls) {
+            $calls++;
+            if ($calls === 1) {
+                throw new \RuntimeException('simulated transient MJML render failure');
+            }
+            return 'spooled-id';
+        });
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        $this->assertSame(2, $calls, 'Both users should have been attempted');
+    }
+
+    public function test_skips_members_with_events_disabled(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $memberOptedIn = $this->createTestUser();
+        $this->createMembership($memberOptedIn, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $memberOptedOut = $this->createTestUser();
+        $this->createMembership($memberOptedOut, $group, ['eventsallowed' => 0, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_skips_members_with_email_frequency_zero(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $memberActive = $this->createTestUser();
+        $this->createMembership($memberActive, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $memberOptedOut = $this->createTestUser();
+        $this->createMembership($memberOptedOut, $group, ['eventsallowed' => 1, 'emailfrequency' => 0]);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_skips_deleted_users(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $deletedUser = $this->createTestUser(['deleted' => now()]);
+        $this->createMembership($deletedUser, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 0 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_user_recently_sent(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        // Sent only 1 day ago (< 3-day threshold) — must be skipped.
+        $this->setLastSent($member->id, now()->subDays(1));
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_processes_user_not_sent_in_3_days(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        // Last sent 4 days ago (>= 3-day threshold) — must be processed.
+        $this->setLastSent($member->id, now()->subDays(4));
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_records_lastsent_per_user_after_sending(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        $this->assertNotNull(
+            DB::table('users_digests')
+                ->where('userid', $member->id)
+                ->where('mode', 'events')
+                ->value('lastsent')
+        );
+    }
+
+    public function test_skips_events_more_than_30_days_away(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id, 'Far Future Event', 35);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_past_events(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id, 'Past Event', -1);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_non_freegle_group(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup(['type' => Group::TYPE_OTHER]);
+        $this->createEvent($group->id);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_dry_run_does_not_send_or_record(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest', ['--dry-run' => true])
+            ->expectsOutputToContain('DRY RUN')
+            ->expectsOutputToContain('Would send 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+
+        // Dry-run must not record a per-user lastsent.
+        $this->assertNull(
+            DB::table('users_digests')->where('userid', $member->id)->where('mode', 'events')->value('lastsent')
+        );
+    }
+
+    public function test_skips_group_with_communityevents_disabled(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)
+            ->update(['settings' => json_encode(['communityevents' => false])]);
+
+        $this->createEvent($group->id);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_event_with_image_populates_image_url(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Photo Event');
+        $this->addEventImage($eventId, 'https://example.com/photo.jpg');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === 'https://example.com/photo.jpg';
+        });
+    }
+
+    public function test_local_event_image_uses_image_domain_thumbnail(): void
+    {
+        // A locally-uploaded event image (no externalmods url, no external uid) must
+        // resolve to the image domain's community-event thumbnail route. The old code
+        // pointed at {userSite}/communityevent/{id}/image/{imgid}, which is not a real
+        // route and 404'd, so event-digest photos never rendered.
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Local Photo Event');
+        $imageId = $this->addEventImage($eventId);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        $expected = config('freegle.images.domain') . "/tcimg_{$imageId}.jpg";
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($expected) {
+            $url = $mail->events[0]['imageUrl'];
+            return $url === $expected && ! str_contains($url, '/communityevent/');
+        });
+    }
+
+    public function test_tus_uploaded_event_image_uses_delivery_proxy(): void
+    {
+        // A TUS-uploaded image (externaluid contains freegletusd-) routes the raw file
+        // through the delivery/resize proxy, exactly as volunteering does.
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Tus Photo Event');
+        DB::table('communityevents_images')->insert([
+            'eventid'     => $eventId,
+            'contenttype' => 'image/jpeg',
+            'archived'    => 0,
+            'externaluid' => 'freegletusd-abc123',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        $source   = config('freegle.tus_uploader') . '/abc123';
+        $expected = config('freegle.delivery.base_url') . '?url=' . urlencode($source) . '&w=400';
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($expected) {
+            return $mail->events[0]['imageUrl'] === $expected;
+        });
+    }
+
+    public function test_event_without_image_has_null_image_url(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'No Photo Event');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === null;
+        });
+    }
+
+    public function test_archived_image_is_excluded(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Archived Image Event');
+        DB::table('communityevents_images')->insert([
+            'eventid'     => $eventId,
+            'contenttype' => 'image/jpeg',
+            'archived'    => 1,
+            'externalmods' => json_encode(['url' => 'https://example.com/archived.jpg']),
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === null;
+        });
+    }
+
+    public function test_contact_fields_are_passed_through(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'Contactable Event', 7, [
+            'contactname'  => 'Jane Smith',
+            'contactphone' => '01234 567890',
+            'contactemail' => 'jane@example.com',
+            'contacturl'   => 'https://example.com',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            $e = $mail->events[0];
+            return $e['contactname']  === 'Jane Smith'
+                && $e['contactphone'] === '01234 567890'
+                && $e['contactemail'] === 'jane@example.com'
+                && $e['contacturl']   === 'https://example.com';
+        });
+    }
+
+    public function test_event_with_no_contact_fields_has_nulls(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'Minimal Event');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            $e = $mail->events[0];
+            return $e['contactname']  === null
+                && $e['contactphone'] === null
+                && $e['contactemail'] === null
+                && $e['contacturl']   === null;
+        });
+    }
+
+    public function test_description_is_passed_through(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'Described Event', 7, [
+            'description' => 'A detailed description of the event.',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['description'] === 'A detailed description of the event.';
+        });
+    }
+
+    public function test_first_image_used_when_multiple_exist(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Multi-image Event');
+        $this->addEventImage($eventId, 'https://example.com/first.jpg');
+        $this->addEventImage($eventId, 'https://example.com/second.jpg');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === 'https://example.com/first.jpg';
+        });
+    }
+
+    public function test_event_with_no_end_time_has_null_end(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = DB::table('communityevents')->insertGetId([
+            'title'    => 'No End Time Event',
+            'location' => 'Somewhere',
+            'pending'  => 0,
+            'deleted'  => 0,
+            'added'    => now(),
+        ]);
+        DB::table('communityevents_groups')->insert(['eventid' => $eventId, 'groupid' => $group->id]);
+        DB::table('communityevents_dates')->insert([
+            'eventid' => $eventId,
+            'start'   => now()->addDays(7),
+            'end'     => '0000-00-00 00:00:00',  // sentinel for "no end time" — column is NOT NULL
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['end'] === null;
+        });
+    }
+}

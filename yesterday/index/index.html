@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freegle Yesterday - Backup Browser</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+    header {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .logo {
+      margin-bottom: 15px;
+    }
+    .logo img {
+      width: 80px;
+      height: auto;
+    }
+    h1 {
+      color: #2e7d32;
+      margin: 0 0 10px 0;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 16px;
+    }
+    .warning {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px 20px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+    .warning h3 {
+      margin: 0 0 10px 0;
+      color: #856404;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .warning h3:hover {
+      opacity: 0.8;
+    }
+    .warning h3 .toggle-icon {
+      font-size: 14px;
+      transition: transform 0.3s;
+    }
+    .warning h3.collapsed .toggle-icon {
+      transform: rotate(-90deg);
+    }
+    .warning ul {
+      margin: 5px 0;
+      padding-left: 20px;
+    }
+    .warning-content {
+      max-height: 1000px;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+    }
+    .warning-content.collapsed {
+      max-height: 0;
+    }
+    .current-backup {
+      background: #e8f5e9;
+      border-left: 4px solid #4CAF50;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+    .current-backup h2 {
+      margin: 0 0 10px 0;
+      color: #2e7d32;
+    }
+    .current-backup .date {
+      font-size: 24px;
+      font-weight: bold;
+      color: #1b5e20;
+    }
+    .current-backup .links {
+      margin-top: 15px;
+    }
+    .current-backup .links a {
+      display: inline-flex;
+      align-items: center;
+      margin: 5px 10px 5px 0;
+      padding: 10px 20px;
+      background: #4CAF50;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+      font-weight: 500;
+      gap: 8px;
+    }
+    .current-backup .links a:hover {
+      background: #45a049;
+    }
+    .current-backup .links a img {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+    }
+    .backup-list {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .backup-list h2 {
+      margin: 0 0 20px 0;
+      color: #333;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #4CAF50;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th {
+      background: #f8f9fa;
+      font-weight: 600;
+      color: #333;
+    }
+    tr:hover {
+      background: #f8f9fa;
+    }
+    .backup-row.current {
+      background: #e8f5e9;
+    }
+    .backup-row.current td {
+      font-weight: 500;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge.current {
+      background: #4CAF50;
+      color: white;
+    }
+    .badge.available {
+      background: #e0e0e0;
+      color: #666;
+    }
+    .badge.instant {
+      background: #2e7d32;
+      color: white;
+    }
+    .badge.fullrestore {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffe69c;
+    }
+    .badge.restoring {
+      background: #1565c0;
+      color: white;
+    }
+    .backup-row.restoring td {
+      background: #e3f2fd;
+    }
+    button.load.instant {
+      background: #2e7d32;
+    }
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    button.load {
+      background: #2196F3;
+      color: white;
+    }
+    button.load:hover {
+      background: #0b7dda;
+    }
+    button.load:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .progress-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .progress-modal.show {
+      display: flex;
+    }
+    .progress-content {
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      max-width: 600px;
+      width: 90%;
+    }
+    .progress-content h2 {
+      margin: 0 0 20px 0;
+    }
+    .progress-bar-container {
+      background: #e0e0e0;
+      height: 30px;
+      border-radius: 15px;
+      overflow: hidden;
+      margin: 20px 0;
+    }
+    .progress-bar {
+      background: linear-gradient(90deg, #4CAF50, #66BB6A);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .progress-steps {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin-top: 20px;
+    }
+    .progress-steps ol {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .progress-steps li {
+      margin: 5px 0;
+    }
+    footer {
+      margin-top: 40px;
+      padding: 20px;
+      text-align: center;
+      color: #666;
+      font-size: 14px;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 15px;
+    }
+    .status-item {
+      padding: 10px;
+      border-radius: 6px;
+      border: 2px solid #e0e0e0;
+      background: #fafafa;
+    }
+    .status-item.healthy {
+      border-color: #4CAF50;
+      background: #e8f5e9;
+    }
+    .status-item.unhealthy {
+      border-color: #f44336;
+      background: #ffebee;
+    }
+    .status-item.starting {
+      border-color: #ff9800;
+      background: #fff3e0;
+    }
+    .status-item .name {
+      font-weight: 600;
+      margin-bottom: 5px;
+      color: #333;
+    }
+    .status-item .state {
+      font-size: 13px;
+      color: #666;
+    }
+    .status-item .indicator {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .status-item.healthy .indicator {
+      background: #4CAF50;
+    }
+    .status-item.unhealthy .indicator {
+      background: #f44336;
+    }
+    .status-item.starting .indicator {
+      background: #ff9800;
+    }
+    .restore-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      display: none;
+      text-align: center;
+    }
+    .restore-banner.active {
+      display: block;
+    }
+    .restore-banner h3 {
+      margin: 0 0 10px 0;
+      font-size: 20px;
+    }
+    .restore-banner .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .restore-banner .message {
+      font-size: 16px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <img src="https://www.ilovefreegle.org/icon.png" alt="Freegle Logo">
+    </div>
+    <h1 id="page-title">Freegle Yesterday</h1>
+    <p class="subtitle">Access the system using data from backups</p>
+  </header>
+
+  <div class="warning">
+    <h3 onclick="toggleWarning()">
+      <span>⚠️ Important Information</span>
+      <span class="toggle-icon">▼</span>
+    </h3>
+    <div class="warning-content" id="warning-content">
+      <ul>
+        <li><strong>Backup Timing:</strong> Backups are created at 4 AM UTC each day, so they include all data from the previous day. The most recent backup is loaded automatically each night at 6 AM UTC.</li>
+        <li><strong>Single Backup Model:</strong> Only one backup is active at a time. Recent days marked <span class="badge instant">⚡ Instant · ~1 min</span> are pre-loaded and switch in about a minute (brief restart). Older days marked <span class="badge fullrestore">Full restore · ~1–2 h</span> aren't pre-loaded, so they download and rebuild the whole database first — allow 1-2 hours.</li>
+        <li><strong>Isolated Environment:</strong> Runs latest code but with real data from backups. Uses <a href="https://en.wikipedia.org/wiki/Docker_(software)" target="_blank" style="color: #856404; text-decoration: underline;">Docker technology</a> to create a completely isolated copy of the system - changes here don't affect live Freegle.</li>
+        <li><strong>Login:</strong> Use your email/password from the live Freegle system. Social logins (Google, Facebook) don't work here since they're configured for production domains only. If you normally use social login, you can reset your password on the live site first.</li>
+        <li><strong>Email Testing:</strong> All outbound email is captured in Mailhog (a local email testing tool) - nothing is sent externally, so it's safe to test email functionality. Access Mailhog via the link in the "Currently Loaded Backup" section below.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="current-backup">
+    <h2 id="current-backup-title">Currently Loaded Backup</h2>
+    <div id="current-backup-info">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="backup-list" style="margin-bottom: 20px;">
+    <h2>System Status</h2>
+    <div id="system-status">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Checking system status...</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="backup-list" style="margin-bottom: 20px;">
+    <h2>Whitelisted IP Addresses (1-hour access)</h2>
+    <div id="ip-whitelist">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading whitelisted IPs...</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="backup-list">
+    <h2>Available Backups</h2>
+    <div id="backup-list">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading available backups from Google Cloud Storage...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress Modal -->
+  <div id="progress-modal" class="progress-modal">
+    <div class="progress-content">
+      <h2>Loading Backup <span id="progress-date"></span></h2>
+      <div class="spinner"></div>
+      <p id="progress-status" style="font-size: 18px; margin: 20px 0; text-align: center;">Starting...</p>
+
+      <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar">0%</div>
+      </div>
+
+      <p id="progress-estimate" style="text-align: center; color: #666;">Estimating time...</p>
+
+      <div class="progress-steps" id="restore-steps">
+        <strong>Restoration Steps:</strong>
+        <ol>
+          <li>Download backup from cloud storage (~30-45 min for 47GB)</li>
+          <li>Extract backup archive (~10-15 min)</li>
+          <li>Prepare database (apply transaction logs) (~20-30 min)</li>
+          <li>Copy data to database (~10-15 min)</li>
+          <li>Start the isolated test environment (~30 sec)</li>
+        </ol>
+        <p style="color: #666; font-size: 14px; margin-top: 10px;">
+          <strong>Total time:</strong> 1-2 hours for large backups (cached backups load much faster)
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p><strong>GCP Project:</strong> freegle-yesterday | <strong>Backup Source:</strong> gs://freegle_backup_uk</p>
+  </footer>
+
+  <script>
+    let currentBackupDate = null;
+    let progressInterval = null;
+
+    // Toggle warning section
+    function toggleWarning() {
+      const content = document.getElementById('warning-content');
+      const header = document.querySelector('.warning h3');
+      const isCollapsed = content.classList.toggle('collapsed');
+      header.classList.toggle('collapsed');
+
+      // Save state to localStorage
+      localStorage.setItem('warningCollapsed', isCollapsed ? 'true' : 'false');
+    }
+
+    // Restore warning section state from localStorage
+    function restoreWarningState() {
+      const isCollapsed = localStorage.getItem('warningCollapsed') === 'true';
+      if (isCollapsed) {
+        const content = document.getElementById('warning-content');
+        const header = document.querySelector('.warning h3');
+        content.classList.add('collapsed');
+        header.classList.add('collapsed');
+      }
+    }
+
+    // Load current backup info
+    async function loadCurrentBackup() {
+      // For now, we'll read this from a file or API
+      // This will be populated by the restoration script
+      try {
+        const response = await fetch('/api/current-backup');
+        const data = await response.json();
+
+        if (data.date) {
+          currentBackupDate = data.date;
+          // Update page title and section title with backup date
+          const formattedDate = formatDate(data.date);
+          document.getElementById('page-title').textContent = `Freegle Yesterday - ${formattedDate}`;
+          document.getElementById('current-backup-title').textContent = `Currently Loaded Backup: ${formattedDate}`;
+
+          const loadedTime = data.loaded_at ? new Date(data.loaded_at) : null;
+          const loadedTimeStr = loadedTime ?
+            `${loadedTime.toLocaleString()} (${timeAgo(loadedTime)})` :
+            'Unknown';
+          document.getElementById('current-backup-info').innerHTML = `
+            <p>Loaded at: ${loadedTimeStr}</p>
+            <div class="links">
+              <a href="https://${window.location.hostname}:8445" target="_blank">
+                <img src="https://www.ilovefreegle.org/icon.png" alt="Freegle">
+                Freegle
+              </a>
+              <a href="https://${window.location.hostname}:8446" target="_blank">
+                <img src="https://modtools.org/icon_modtools.png" alt="ModTools">
+                ModTools
+              </a>
+            </div>
+            <p style="margin-top: 15px; font-size: 14px; color: #666;"><strong>Geek Tools (Admin Only):</strong></p>
+            <div class="links">
+              <a href="https://${window.location.hostname}:8448" target="_blank" class="admin-tool" id="mailhogLink">📧 Mailhog</a>
+              <a href="https://${window.location.hostname}:8447" target="_blank" class="admin-tool" id="phpmyadminLink">🗄️ PHPMyAdmin</a>
+            </div>
+          `;
+        } else {
+          document.getElementById('current-backup-info').innerHTML = `
+            <p style="color: #666;">No backup currently loaded. Select a backup below to get started.</p>
+          `;
+        }
+      } catch (e) {
+        document.getElementById('current-backup-info').innerHTML = `
+          <p style="color: #666;">No backup currently loaded. Select a backup below to get started.</p>
+        `;
+      }
+    }
+
+    // Load backup list
+    async function loadBackupList() {
+      try {
+        const response = await fetch('/api/backups');
+        const data = await response.json();
+
+        if (data.backups && data.backups.length > 0) {
+          let html = `
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Size</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+          `;
+
+          const ri = (typeof restoreInfo !== 'undefined') ? restoreInfo : { inProgress: false, backupDate: null };
+          data.backups.forEach(backup => {
+            const isCurrent = backup.date === currentBackupDate;
+            const isRestoringThis = ri.inProgress && backup.date === ri.backupDate;
+            const otherRestore = ri.inProgress && !isRestoringThis;
+            const rowClass = (isCurrent ? 'backup-row current' : 'backup-row') + (isRestoringThis ? ' restoring' : '');
+            let badge, button;
+            if (isRestoringThis) {
+              // This is the one actually being restored — make it unmistakable.
+              badge = '<span class="badge restoring">⏳ Restoring now…</span>';
+              button = '<button class="load" disabled>⏳ Restoring this backup…</button>';
+            } else if (isCurrent) {
+              badge = '<span class="badge current">LOADED</span>';
+              button = '<button class="load" disabled>Currently Loaded</button>';
+            } else if (backup.instant) {
+              badge = '<span class="badge instant">⚡ Instant · ~1 min</span>';
+              button = otherRestore
+                ? '<button class="load" disabled>Locked — restore in progress</button>'
+                : `<button class="load instant" onclick="loadBackup('${backup.date}', true)">⚡ Switch (~1 min)</button>`;
+            } else {
+              badge = '<span class="badge fullrestore">Full restore · ~1–2 h</span>';
+              button = otherRestore
+                ? '<button class="load" disabled>Locked — restore in progress</button>'
+                : `<button class="load" onclick="loadBackup('${backup.date}', false)">Load (full restore)</button>`;
+            }
+
+            html += `
+              <tr class="${rowClass}">
+                <td><strong>${formatDate(backup.date)}</strong></td>
+                <td>${backup.size_human}</td>
+                <td>${badge}</td>
+                <td>${button}</td>
+              </tr>
+            `;
+          });
+
+          html += `
+              </tbody>
+            </table>
+            <p style="margin-top: 20px; color: #666;">
+              Showing ${data.total} available backups from Google Cloud Storage
+            </p>
+          `;
+
+          document.getElementById('backup-list').innerHTML = html;
+        } else {
+          document.getElementById('backup-list').innerHTML = `
+            <p style="color: #666;">No backups found in gs://freegle_backup_uk</p>
+          `;
+        }
+      } catch (e) {
+        document.getElementById('backup-list').innerHTML = `
+          <p style="color: red;">Error loading backups: ${e.message}</p>
+        `;
+      }
+    }
+
+    // Format date string
+    function formatDate(dateStr) {
+      // YYYYMMDD -> Month DD, YYYY
+      const year = dateStr.substr(0, 4);
+      const month = dateStr.substr(4, 2);
+      const day = dateStr.substr(6, 2);
+      const date = new Date(year, month - 1, day);
+      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+
+    // Time ago helper
+    function timeAgo(date) {
+      const seconds = Math.floor((new Date() - date) / 1000);
+
+      if (seconds < 60) return 'just now';
+
+      const intervals = {
+        year: 31536000,
+        month: 2592000,
+        week: 604800,
+        day: 86400,
+        hour: 3600,
+        minute: 60
+      };
+
+      for (const [name, secondsInInterval] of Object.entries(intervals)) {
+        const interval = Math.floor(seconds / secondsInInterval);
+        if (interval >= 1) {
+          return `${interval} ${name}${interval !== 1 ? 's' : ''} ago`;
+        }
+      }
+
+      return 'just now';
+    }
+
+    // Load a backup. `instant` = this day already has an LVM snapshot, so it's
+    // a ~1-minute switch rather than a full ~1-2h restore.
+    async function loadBackup(backupDate, instant) {
+      const confirmMsg = instant
+        ? `Switch to the backup from ${formatDate(backupDate)}?\n\nThis day is already prepared, so switching is quick — about a minute, with a brief database restart.`
+        : `Load the backup from ${formatDate(backupDate)}?\n\nThis day is NOT pre-loaded, so it needs a full restore (download + extract + prepare). This can take 1-2 hours.`;
+      if (confirm(confirmMsg)) {
+        // Show progress modal
+        document.getElementById('progress-modal').classList.add('show');
+        document.getElementById('progress-date').textContent = formatDate(backupDate);
+        document.getElementById('progress-bar').style.width = '0%';
+        document.getElementById('progress-bar').textContent = '0%';
+        document.getElementById('progress-status').textContent = instant ? 'Switching backup…' : 'Starting restoration...';
+        document.getElementById('progress-estimate').textContent = instant ? '~1 minute (quick switch)' : 'Initializing...';
+        // The long step-by-step breakdown only applies to full restores.
+        var steps = document.getElementById('restore-steps');
+        if (steps) steps.style.display = instant ? 'none' : '';
+
+        // Start restoration
+        try {
+          const response = await fetch(`/api/backups/${backupDate}/load`, { method: 'POST' });
+          const data = await response.json();
+
+          if (response.ok) {
+            // Poll for progress
+            progressInterval = setInterval(() => checkProgress(backupDate), 2000);
+          } else {
+            alert(`Error: ${data.error}`);
+            document.getElementById('progress-modal').classList.remove('show');
+          }
+        } catch (e) {
+          alert(`Error starting restoration: ${e.message}`);
+          document.getElementById('progress-modal').classList.remove('show');
+        }
+      }
+    }
+
+    // Check progress
+    async function checkProgress(backupDate) {
+      try {
+        const response = await fetch(`/api/backups/${backupDate}/progress`);
+        const data = await response.json();
+
+        updateProgress(data);
+
+        if (data.status === 'completed') {
+          clearInterval(progressInterval);
+          setTimeout(() => {
+            document.getElementById('progress-modal').classList.remove('show');
+            window.location.reload();
+          }, 2000);
+        } else if (data.status === 'failed') {
+          clearInterval(progressInterval);
+          alert(`Restoration failed: ${data.error || data.message}`);
+          document.getElementById('progress-modal').classList.remove('show');
+        }
+      } catch (e) {
+        console.error('Error checking progress:', e);
+      }
+    }
+
+    // Update progress display
+    function updateProgress(data) {
+      const messages = {
+        'starting': 'Starting restoration...',
+        'downloading': 'Downloading backup from GCS...',
+        'extracting': 'Extracting xbstream archive...',
+        'preparing': 'Preparing backup (applying transaction logs)...',
+        'importing': 'Copying data to database volume...',
+        'starting_services': 'Starting all containers...',
+        'completed': 'Restoration completed!'
+      };
+
+      const estimates = {
+        'starting': '~20 min remaining',
+        'downloading': '~15-20 min remaining',
+        'extracting': '~10-15 min remaining',
+        'preparing': '~5-10 min remaining',
+        'importing': '~2-3 min remaining',
+        'starting_services': '~30 sec remaining',
+        'completed': 'Complete!'
+      };
+
+      document.getElementById('progress-status').textContent =
+        messages[data.status] || data.message || 'Processing...';
+      document.getElementById('progress-estimate').textContent =
+        estimates[data.status] || '';
+
+      const progress = data.progress || 0;
+      document.getElementById('progress-bar').style.width = progress + '%';
+      document.getElementById('progress-bar').textContent = progress + '%';
+    }
+
+    // Load system status
+    async function loadSystemStatus() {
+      try {
+        // First check if a restore is in progress
+        const restoreResponse = await fetch('/api/restore-status');
+        const restoreData = await restoreResponse.json();
+
+        const response = await fetch('/api/system-status');
+        const data = await response.json();
+
+        if (data.containers && data.containers.length > 0) {
+          let html = '<div class="status-grid">';
+
+          const keyServices = ['freegle-dev', 'modtools-dev', 'apiv1', 'apiv2', 'percona', 'redis', 'beanstalkd', 'spamassassin'];
+
+          keyServices.forEach(serviceName => {
+            const container = data.containers.find(c => c.name.includes(serviceName));
+            if (container) {
+              // Parse uptime from status (e.g., "Up 2 minutes", "Up 30 seconds")
+              // Nuxt containers can take 3-5 minutes to build, so use longer threshold
+              const uptimeMatch = container.status.match(/Up (\d+) (second|minute|hour)/);
+              const isRecentlyStarted = uptimeMatch &&
+                ((uptimeMatch[2] === 'second') ||
+                 (uptimeMatch[2] === 'minute' && parseInt(uptimeMatch[1]) < 5));
+
+              // Show as starting if: explicit starting health, or recently started with unknown health
+              const isStarting = container.health === 'starting' ||
+                                (container.health === 'unknown' && isRecentlyStarted);
+
+              const statusClass = container.state === 'running' && container.health === 'healthy' ? 'healthy' :
+                                 container.state === 'running' && isStarting ? 'starting' :
+                                 container.state === 'running' ? 'healthy' : 'unhealthy';
+              const displayName = serviceName.replace('freegle-dev', 'Freegle').replace('modtools-dev', 'ModTools')
+                                            .replace('percona', 'Database').replace('apiv1', 'API v1').replace('apiv2', 'API v2')
+                                            .replace('beanstalkd', 'Queue').replace('spamassassin', 'Spam');
+              const stateText = container.state === 'running' && container.health === 'healthy' ? 'Running' :
+                               container.state === 'running' && isStarting ? 'Starting' :
+                               container.state === 'running' ? 'Running' : container.state;
+
+              html += `
+                <div class="status-item ${statusClass}">
+                  <div class="name">
+                    <span class="indicator"></span>${displayName}
+                  </div>
+                  <div class="state">${stateText}</div>
+                </div>
+              `;
+            }
+          });
+
+          html += '</div>';
+          html += `<p style="margin-top: 15px; color: #666; font-size: 14px;">
+            Last updated: ${new Date().toLocaleTimeString()} |
+            <a href="#" onclick="loadSystemStatus(); resetStatusCountdown(); return false;" style="color: #4CAF50;">Refresh</a> |
+            <span id="status-countdown">Next update in 30s</span>
+          </p>`;
+
+          document.getElementById('system-status').innerHTML = html;
+        } else {
+          // Check if a restore is in progress
+          if (restoreData.inProgress) {
+            document.getElementById('system-status').innerHTML = `
+              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center;">
+                <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">
+                  <div style="width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px;"></div>
+                  <h3 style="margin: 0; font-size: 18px;">Restore In Progress</h3>
+                </div>
+                <p style="margin: 0; font-size: 16px;">${restoreData.message}</p>
+                <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.9;">Containers will start automatically when restore completes</p>
+              </div>
+            `;
+          } else {
+            document.getElementById('system-status').innerHTML = `
+              <p style="color: #666;">No containers running. Load a backup to start the system.</p>
+            `;
+          }
+        }
+      } catch (e) {
+        document.getElementById('system-status').innerHTML = `
+          <p style="color: #999;">Unable to load system status. Services may be offline.</p>
+        `;
+      }
+    }
+
+    // Load whitelisted IPs
+    async function loadWhitelistedIps() {
+      try {
+        const response = await fetch('/api/whitelisted-ips');
+        const data = await response.json();
+
+        if (data.ips && data.ips.length > 0) {
+          let html = `
+            <table>
+              <thead>
+                <tr>
+                  <th>IP Address</th>
+                  <th>Username</th>
+                  <th>Expires In</th>
+                  <th>Expires At</th>
+                </tr>
+              </thead>
+              <tbody>
+          `;
+
+          data.ips.forEach(item => {
+            html += `
+              <tr>
+                <td><strong>${item.ip}</strong></td>
+                <td>${item.username}</td>
+                <td>${item.expiresIn}</td>
+                <td>${new Date(item.expires).toLocaleString()}</td>
+              </tr>
+            `;
+          });
+
+          html += `
+              </tbody>
+            </table>
+            <p style="margin-top: 15px; color: #666; font-size: 14px;">
+              ${data.total} active IP${data.total === 1 ? '' : 's'} whitelisted
+            </p>
+          `;
+
+          document.getElementById('ip-whitelist').innerHTML = html;
+        } else {
+          document.getElementById('ip-whitelist').innerHTML = `
+            <p style="color: #666;">No IPs currently whitelisted. Authenticate with 2FA to get 1-hour access.</p>
+          `;
+        }
+      } catch (e) {
+        document.getElementById('ip-whitelist').innerHTML = `
+          <p style="color: #999;">Unable to load whitelisted IPs.</p>
+        `;
+      }
+    }
+
+    // Status countdown timer
+    let statusCountdown = 30;
+    let statusCountdownInterval = null;
+
+    function updateStatusCountdown() {
+      const el = document.getElementById('status-countdown');
+      if (el) {
+        statusCountdown--;
+        if (statusCountdown <= 0) {
+          el.textContent = 'Updating...';
+        } else {
+          el.textContent = `Next update in ${statusCountdown}s`;
+        }
+      }
+    }
+
+    function resetStatusCountdown() {
+      statusCountdown = 30;
+      updateStatusCountdown();
+    }
+
+    // Track which backup (if any) is currently restoring, so the list can show
+    // it specifically rather than greying out every row with a generic label.
+    let restoreInfo = { inProgress: false, backupDate: null, message: '', status: '' };
+    let isRestoreInProgress = false;
+    async function checkRestoreStatus() {
+      try {
+        const response = await fetch('/api/restore-status');
+        const data = await response.json();
+
+        const currentBackupSection = document.querySelector('.current-backup');
+        if (currentBackupSection) {
+          currentBackupSection.style.display = data.inProgress ? 'none' : 'block';
+        }
+
+        // Re-render the backup list only when the state actually changes, so we
+        // don't clobber the instant/full-restore button labels on every poll.
+        const changed = (!!data.inProgress !== restoreInfo.inProgress) ||
+                        ((data.backupDate || null) !== restoreInfo.backupDate);
+        restoreInfo = {
+          inProgress: !!data.inProgress,
+          backupDate: data.backupDate || null,
+          message: data.message || '',
+          status: data.status || ''
+        };
+        isRestoreInProgress = restoreInfo.inProgress;
+        if (changed) loadBackupList();
+      } catch (error) {
+        console.error('Failed to check restore status:', error);
+      }
+    }
+
+    // Initialize
+    restoreWarningState();
+    loadCurrentBackup();
+    loadBackupList();
+    loadSystemStatus();
+    loadWhitelistedIps();
+    checkRestoreStatus();
+
+    // Start countdown
+    statusCountdownInterval = setInterval(updateStatusCountdown, 1000);
+
+    // Refresh system status every 30 seconds
+    setInterval(() => {
+      loadSystemStatus();
+      resetStatusCountdown();
+    }, 30000);
+
+    setInterval(loadWhitelistedIps, 60000); // Refresh IPs every minute
+
+    // Check restore status every 10 seconds
+    setInterval(checkRestoreStatus, 10000);
+  </script>
+</body>
+</html>

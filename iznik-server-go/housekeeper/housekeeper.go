@@ -1,0 +1,476 @@
+package housekeeper
+
+import (
+	"log"
+	"strings"
+	"time"
+
+	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/queue"
+	"github.com/gofiber/fiber/v2"
+)
+
+// TaskHousekeeperNotify is the background_tasks type for housekeeping notifications.
+const TaskHousekeeperNotify = "housekeeper_notify"
+
+// TaskInfo describes a single task from the extension's registry.
+type TaskInfo struct {
+	TaskKey       string `json:"task_key"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	IntervalHours int    `json:"interval_hours"`
+	Enabled       bool   `json:"enabled"`
+	Placeholder   bool   `json:"placeholder"`
+}
+
+// NotifyRequest is the JSON body sent by the Chrome extension.
+type NotifyRequest struct {
+	Task      string      `json:"task"`
+	Status    string      `json:"status"`
+	Summary   string      `json:"summary"`
+	Timestamp string      `json:"timestamp"`
+	Email     string      `json:"email"`
+	Data      interface{} `json:"data"`
+	Registry  []TaskInfo  `json:"registry"`
+}
+
+// HousekeeperTask is the DB row returned by ListTasks.
+type HousekeeperTask struct {
+	ID            uint64     `json:"id"`
+	TaskKey       string     `json:"task_key"`
+	Name          string     `json:"name"`
+	Description   string     `json:"description"`
+	IntervalHours int        `json:"interval_hours"`
+	StartDate     *string    `json:"start_date"`
+	Enabled       bool       `json:"enabled"`
+	Placeholder   bool       `json:"placeholder"`
+	LastRunAt     *time.Time `json:"last_run_at"`
+	LastStatus    *string    `json:"last_status"`
+	LastSummary   *string    `json:"last_summary"`
+	LastLog       *string    `json:"last_log"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	Overdue       bool       `json:"overdue"`
+}
+
+// Notify receives housekeeping task results from the Chrome extension and
+// queues a background task for Laravel to process.
+//
+// Requires system admin authentication via JWT.
+func Notify(c *fiber.Ctx) error {
+	myid := auth.WhoAmI(c)
+
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Not logged in"})
+	}
+
+	if !auth.IsAdminOrSupport(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Admin or support required"})
+	}
+
+	var req NotifyRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid JSON"})
+	}
+
+	if req.Task == "" || req.Status == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "task and status are required"})
+	}
+
+	log.Printf("[Housekeeper] User %d submitted %s result: %s — %s", myid, req.Task, req.Status, req.Summary)
+
+	// Queue for Laravel processing.
+	err := queue.QueueTask(TaskHousekeeperNotify, map[string]interface{}{
+		"task":      req.Task,
+		"status":    req.Status,
+		"summary":   req.Summary,
+		"timestamp": req.Timestamp,
+		"email":     req.Email,
+		"data":      req.Data,
+	})
+
+	if err != nil {
+		log.Printf("[Housekeeper] Failed to queue task: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue"})
+	}
+
+	// Upsert registry entries if provided.
+	if len(req.Registry) > 0 {
+		upsertRegistry(req.Registry)
+	}
+
+	// Update last_run for the current task.
+	upsertLastRun(req.Task, req.Status, req.Summary)
+
+	return c.JSON(fiber.Map{"queued": true})
+}
+
+// upsertRegistry inserts or updates housekeeper_tasks rows from the extension's registry.
+func upsertRegistry(registry []TaskInfo) {
+	db := database.DBConn
+
+	for _, t := range registry {
+		if t.TaskKey == "" {
+			continue
+		}
+
+		db.Exec(`INSERT INTO housekeeper_tasks (task_key, name, description, interval_hours, enabled, placeholder, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, NOW())
+			ON DUPLICATE KEY UPDATE
+				name = VALUES(name),
+				description = VALUES(description),
+				interval_hours = VALUES(interval_hours),
+				enabled = VALUES(enabled),
+				placeholder = VALUES(placeholder),
+				updated_at = NOW()`,
+			t.TaskKey, t.Name, t.Description, t.IntervalHours, t.Enabled, t.Placeholder)
+	}
+}
+
+// upsertLastRun updates the last_run_at, last_status, and last_summary for a task.
+func upsertLastRun(taskKey, status, summary string) {
+	db := database.DBConn
+
+	db.Exec(`INSERT INTO housekeeper_tasks (task_key, name, last_run_at, last_status, last_summary, updated_at)
+		VALUES (?, ?, NOW(), ?, ?, NOW())
+		ON DUPLICATE KEY UPDATE
+			last_run_at = NOW(),
+			last_status = VALUES(last_status),
+			last_summary = VALUES(last_summary),
+			updated_at = NOW()`,
+		taskKey, taskKey, status, summary)
+}
+
+// CompleteTask marks a placeholder (manual) housekeeping task as done.
+//
+// Requires support or admin authentication via JWT.
+func CompleteTask(c *fiber.Ctx) error {
+	myid := auth.WhoAmI(c)
+
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Not logged in"})
+	}
+
+	if !auth.IsAdminOrSupport(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Support or admin required"})
+	}
+
+	taskKey := c.Params("key")
+	if taskKey == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "task key is required"})
+	}
+
+	db := database.DBConn
+
+	result := db.Exec(`UPDATE housekeeper_tasks
+		SET last_run_at = NOW(), last_status = 'success', last_summary = 'Marked done manually', updated_at = NOW()
+		WHERE task_key = ? AND placeholder = 1`,
+		taskKey)
+
+	if result.Error != nil {
+		log.Printf("[Housekeeper] CompleteTask error: %v", result.Error)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update"})
+	}
+
+	if result.RowsAffected == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Task not found or not a manual task"})
+	}
+
+	log.Printf("[Housekeeper] User %d marked %s as done", myid, taskKey)
+
+	return c.JSON(fiber.Map{"completed": true})
+}
+
+// ListTasks returns all housekeeper tasks with an overdue flag.
+//
+// Requires support or admin authentication via JWT.
+func ListTasks(c *fiber.Ctx) error {
+	myid := auth.WhoAmI(c)
+
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Not logged in"})
+	}
+
+	if !auth.IsAdminOrSupport(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Support or admin required"})
+	}
+
+	db := database.DBConn
+
+	var tasks []HousekeeperTask
+	result := db.Raw(`SELECT * FROM housekeeper_tasks ORDER BY task_key`).Scan(&tasks)
+
+	if result.Error != nil {
+		log.Printf("[Housekeeper] ListTasks query error: %v", result.Error)
+		return c.JSON([]HousekeeperTask{})
+	}
+
+	if tasks == nil {
+		tasks = []HousekeeperTask{}
+	}
+
+	// Compute overdue flag.
+	now := time.Now()
+	for i := range tasks {
+		if tasks[i].LastRunAt == nil {
+			// If there's a start_date, only overdue if we're past the first occurrence.
+			if tasks[i].StartDate != nil {
+				sd, err := time.Parse("2006-01-02", *tasks[i].StartDate)
+				if err == nil {
+					tasks[i].Overdue = now.After(sd)
+				} else {
+					tasks[i].Overdue = true
+				}
+			} else {
+				tasks[i].Overdue = true
+			}
+		} else {
+			deadline := tasks[i].LastRunAt.Add(time.Duration(tasks[i].IntervalHours) * time.Hour)
+			tasks[i].Overdue = now.After(deadline)
+		}
+	}
+
+	return c.JSON(tasks)
+}
+
+// CronJob describes a scheduled Laravel command for display in the SysAdmin dashboard.
+type CronJob struct {
+	Command         string     `json:"command"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	Schedule        string     `json:"schedule"`
+	IntervalMinutes int        `json:"interval_minutes"`
+	Category        string     `json:"category"`
+	Active          bool       `json:"active"`
+	LastRunAt       *time.Time `json:"last_run_at"`
+	LastFinishedAt  *time.Time `json:"last_finished_at"`
+	LastExitCode    *int       `json:"last_exit_code"`
+	LastOutput      *string    `json:"last_output"`
+}
+
+// cronJobStatus is the DB row from cron_job_status.
+type cronJobStatus struct {
+	Command        string     `json:"command"`
+	LastRunAt      *time.Time `json:"last_run_at"`
+	LastFinishedAt *time.Time `json:"last_finished_at"`
+	LastExitCode   *int       `json:"last_exit_code"`
+	LastOutput     *string    `json:"last_output"`
+}
+
+// cronJobs is the static registry of all Laravel scheduled commands.
+//
+// To keep this in sync with the live scheduler, run:
+//   docker exec freegledocker-batch-prod php artisan schedule:list
+// and update the entries below to match.
+var cronJobs = []CronJob{
+	// System
+	{Command: "deploy:watch", Name: "Deployment Watcher", Description: "Detects code updates and auto-refreshes application", Schedule: "Every minute", IntervalMinutes: 1, Category: "System", Active: false},
+	{Command: "queue:background-tasks", Name: "Background Task Queue", Description: "Processes tasks queued by Go API (push notifications, emails)", Schedule: "Every minute", IntervalMinutes: 1, Category: "System", Active: true},
+
+	// Email — Chat Notifications
+	{Command: "mail:chat:user2user", Name: "Chat: User to User", Description: "Sends email notifications for user-to-user chat messages", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Chat", Active: true},
+	{Command: "mail:chat:mod2mod", Name: "Chat: Mod to Mod", Description: "Sends email notifications for moderator-to-moderator chat messages", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Chat", Active: true},
+	{Command: "mail:chat:user2mod", Name: "Chat: User to Mod", Description: "Sends email notifications for user-to-moderator chat messages", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Chat", Active: true},
+
+	// Email — Member Engagement
+	{Command: "mail:welcome:send", Name: "Welcome Emails", Description: "Sends welcome emails to new members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
+	{Command: "mail:notifications:chaseup", Name: "Notification Chase-up", Description: "Sends emails for unseen, unmailed site notifications", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Email — Engagement", Active: true},
+
+	// Email — Admin
+	{Command: "mail:admin:copy", Name: "Admin Copy", Description: "Creates per-group copies of suggested admin emails for moderator approval", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Admin", Active: true},
+	{Command: "mail:admin:send", Name: "Admin Send", Description: "Sends approved admin emails to group members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Admin", Active: true},
+	{Command: "mail:admin:chase", Name: "Admin Chase", Description: "Reminds moderators about pending suggested admin emails (after 48h)", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Admin", Active: true},
+
+	// Email — Bounces
+	{Command: "mail:bounced", Name: "Bounce Processing", Description: "Processes bounced emails and marks addresses as invalid", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Bounces", Active: true},
+
+	// Messages — Lifecycle
+	{Command: "messages:auto-approve", Name: "Auto-Approve", Description: "Auto-approves pending messages after 48 hours", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:auto-repost", Name: "Auto-Repost", Description: "Reposts messages based on group repost settings", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:chase-up", Name: "Chase Up", Description: "Chases up messages with replies but no outcome", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:process-expired --spatial", Name: "Process Expired", Description: "Marks deadline-expired messages as expired and cleans up the spatial index entries for already-expired messages", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:remap-subjects", Name: "Remap Subjects", Description: "Updates message subjects when associated location names have changed", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Lifecycle", Active: true},
+
+	// Messages — Index & Search
+	{Command: "messages:update-index", Name: "Index Unindexed", Description: "Adds search index entries for recent approved messages that aren't indexed yet", Schedule: "Every 30 minutes", IntervalMinutes: 30, Category: "Messages — Index", Active: true},
+	{Command: "messages:deindex", Name: "Deindex Old", Description: "Removes search index entries for messages older than 30 days", Schedule: "Daily at 1am", IntervalMinutes: 1440, Category: "Messages — Index", Active: true},
+	{Command: "messages:update-spatial-index", Name: "Spatial Index", Description: "Updates messages_spatial: upserts recent messages, applies outcomes, removes deleted/old/non-approved entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
+	{Command: "embeddings:generate", Name: "Vector Embeddings", Description: "Generates vector embeddings for new messages (semantic search)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
+
+	// Cleanup & Purges
+	{Command: "mail:spool:process --cleanup --cleanup-days=7", Name: "Spool Cleanup", Description: "Cleans up sent emails older than 7 days from spool directory", Schedule: "Daily at 4am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "mail:cleanup-archive", Name: "Email Archive Cleanup", Description: "Removes incoming email archives older than 48 hours", Schedule: "Hourly", IntervalMinutes: 60, Category: "Cleanup", Active: true},
+	{Command: "cleanup:search-duplicates", Name: "Search Dedup", Description: "Deduplicates consecutive searches", Schedule: "Hourly", IntervalMinutes: 60, Category: "Cleanup", Active: true},
+	{Command: "cleanup:chat-duplicates", Name: "Chat Dedup", Description: "Deduplicates consecutive chat messages", Schedule: "Every 2 hours", IntervalMinutes: 120, Category: "Cleanup", Active: true},
+	{Command: "cleanup:sessions", Name: "Session Cleanup", Description: "Cleans up old sessions and login links", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	// NB: the V1 "WhatJobs Spam" cleanup (bodyhash>50 deletion) was deliberately NOT
+	// ported to Laravel. Click analysis (email_tracking_clicks) shows those nationwide
+	// duplicate roles are the top click/revenue driver, so they are deduped to the
+	// nearest copy in the spatial-knn jobs query (jobsDedupKey on bodyhash), not deleted.
+	{Command: "purge:chats", Name: "Purge Chats", Description: "Daily purge of spam chat messages, empty rooms, orphaned chat images", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "purge:logs", Name: "Purge Logs", Description: "Daily log/bounce/likes purge across 16 log tables", Schedule: "Daily at 3:30am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "purge:messages", Name: "Purge Messages", Description: "Purges messages_history, pending/draft/non-Freegle/deleted/stranded messages, HTML body, message source, orphans", Schedule: "Daily at 2:30am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+
+	// Data & Integrations
+	{Command: "data:update-cpi", Name: "CPI Data Update", Description: "Fetches UK CPI inflation data from ONS for reuse benefit calculations", Schedule: "Monthly", IntervalMinutes: 43200, Category: "Data", Active: true},
+	{Command: "data:fetch-app-versions", Name: "App Versions Fetch", Description: "Fetches latest iOS and Android app versions from app stores", Schedule: "Every 6 hours", IntervalMinutes: 360, Category: "Data", Active: true},
+	{Command: "domains:update-common", Name: "Common Domains", Description: "Updates domains_common table with email domains used by > 1000 users", Schedule: "Weekly (Fri 7am)", IntervalMinutes: 10080, Category: "Data", Active: true},
+	{Command: "integrations:sync-lovejunk", Name: "LoveJunk Sync", Description: "Syncs Freegle Offer messages with the LoveJunk partner API", Schedule: "Every minute", IntervalMinutes: 1, Category: "Data", Active: true},
+	{Command: "donations:update-ads-target", Name: "Ads-off Target", Description: "Updates the ads-off donation target based on recent donations", Schedule: "Every minute", IntervalMinutes: 1, Category: "Data", Active: true},
+
+	// Monitoring
+	{Command: "monitor:email-health", Name: "Email Health", Description: "Alerts if incoming/outgoing email flow drops below thresholds", Schedule: "Every 15 minutes", IntervalMinutes: 15, Category: "Monitoring", Active: true},
+	{Command: "emails:validate", Name: "Validate Emails", Description: "Daily syntactic email validation for newly-added addresses (last 30 days)", Schedule: "Daily at 4:30am", IntervalMinutes: 1440, Category: "Monitoring", Active: true},
+
+	// AI & Analytics
+	{Command: "ai:usage-counts:update", Name: "AI Usage Counts", Description: "Updates usage counts for AI-generated images across posts", Schedule: "Hourly", IntervalMinutes: 60, Category: "AI & Analytics", Active: true},
+	{Command: "messages:generate-illustrations", Name: "AI Illustrations: Messages", Description: "Generates AI illustrations for messages with no photos (via pollinations.ai)", Schedule: "Every minute", IntervalMinutes: 1, Category: "AI & Analytics", Active: true},
+	{Command: "jobs:generate-illustrations", Name: "AI Illustrations: Jobs", Description: "Generates AI illustrations for canonical job categories (pre-caching)", Schedule: "Every 30 minutes", IntervalMinutes: 30, Category: "AI & Analytics", Active: true},
+	{Command: "microvolunteering:score", Name: "Microvolunteering Score", Description: "Scores microvolunteering actions by quorum verdict and promotes accurate users from Basic to Moderate trust", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "AI & Analytics", Active: true},
+	{Command: "data:git-summary", Name: "Git Summary", Description: "Sends AI-powered summary of weekly code changes to Discourse", Schedule: "Weekly (Wed 6pm)", IntervalMinutes: 10080, Category: "AI & Analytics", Active: true},
+
+	// Groups & Chats
+	{Command: "groups:update-counts", Name: "Group Member Counts", Description: "Hourly group member/mod count refresh", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
+	{Command: "groups:update-stats", Name: "Group Stats", Description: "Daily group stats: repost settings, polyindex, activity/funding, mod counts, stats_outcomes", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+	{Command: "chats:update-counts", Name: "Chat Counts", Description: "Hourly chat-room message count refresh + reopens closed User2Mod chats with unseen mod replies", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
+	{Command: "chats:update-expected", Name: "Chat Reply Expected", Description: "Updates chat reply-expectation tracking and per-user reply-time metrics", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
+	{Command: "chats:process-incoming", Name: "Process Incoming Chats", Description: "Processes pending chat messages (processingrequired=1) — spam checks, roster update, reopen closed chats", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
+	{Command: "memberships:process", Name: "Process Memberships", Description: "Processes pending membership history entries — sends per-group welcome emails, flags reviewed members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
+
+	// Locations
+	{Command: "locations:fix-skewed", Name: "Fix Skewed Locations", Description: "Fixes locations where latitude and longitude are swapped (and updates referenced messages)", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "Locations", Active: true},
+
+	// User Management
+	{Command: "users:update-ratings", Name: "Rating Visibility", Description: "Updates rating visibility based on whether the rater and ratee actually had chat interaction", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "User Management", Active: true},
+	{Command: "users:update-support-roles", Name: "Support Roles", Description: "Grants or removes Support Tools access based on team membership (never downgrades Admin users)", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
+	{Command: "users:update-lastaccess", Name: "Last Access", Description: "Hourly fallback users.lastaccess update from chat / membership activity", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
+	{Command: "users:update-modmails", Name: "Mod Mails Sync", Description: "Syncs recent mod actions into users_modmails (rejected/deleted/replied) and prunes old entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "User Management", Active: true},
+	{Command: "users:remap-locations", Name: "Remap Locations", Description: "Updates cached location names in user settings when the canonical name has changed", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+	{Command: "users:process-exports", Name: "GDPR Exports", Description: "Processes pending GDPR data export requests; purges export data older than 7 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "User Management", Active: true},
+	{Command: "users:update-engagement", Name: "Engagement Classification", Description: "Updates user engagement classifications (New / Occasional / Frequent / Obsessed / Inactive / Dormant) based on recent activity", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Weekly (Sun 6am)", IntervalMinutes: 10080, Category: "User Management", Active: false},
+	{Command: "users:fix-tn-names", Name: "Fix TN Names", Description: "Extracts display names from TrashNothing email addresses (firstname-groupid@trashnothing.com) for users with no first/last name", Schedule: "Daily at 6:30am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+
+	// Cleanup additions
+	{Command: "cleanup:archive-profile-images", Name: "Archive Profile Images", Description: "Removes older duplicate profile images (keeps most recent per user) and orphan rows where userid IS NULL", Schedule: "Daily at 10:30pm", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+
+	// Messages — Index additions
+	{Command: "messages:update-visualise", Name: "Update Visualise", Description: "Records taken-OFFER messages into the visualise table for the map view (one row per from→to within 30 km)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
+
+	// Groups & Chats additions
+	{Command: "groups:check-boundaries", Name: "Boundary Geometry Check", Description: "Validates each Freegle group's CGA/DPA polygon intersection against authority 74579; emails geeks on error", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
+	{Command: "groups:check-mod-welfare", Name: "Mod Welfare Check", Description: "Detects inactive moderators (no activity for 6 months); emails group owners or mentors", Schedule: "Weekly (Mon 3pm)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
+	{Command: "groups:welcome-review", Name: "Welcome Mail Review", Description: "Sends each group's welcome email to its mods once a year for review (dedupes via groups.welcomereview)", Schedule: "Daily at 3pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+	{Command: "groups:remind-customisation", Name: "Customisation Reminder", Description: "Reminds mods about missing group profile/tagline/welcome customisation", Schedule: "Monthly (1st 8am)", IntervalMinutes: 43200, Category: "Groups & Chats", Active: true},
+	{Command: "groups:alert-no-messages", Name: "Stale Group Alert", Description: "Alerts mentors about active groups that haven't received messages in 7+ days (excludes test groups)", Schedule: "Daily at 7am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+	{Command: "chats:chaseup-mods", Name: "Chase Up Mods on Chats", Description: "Notifies group mods about User2Mod chats where the member has had no reply for 6.55+ days", Schedule: "Daily at 3:30pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+
+	// Newsfeed additions
+	{Command: "newsfeed:generate-link-previews", Name: "Newsfeed Link Previews", Description: "Fetches and caches link previews for URLs in newsfeed posts from the last 2 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "Newsfeed", Active: true},
+	{Command: "mail:newsfeed-mod-notif", Name: "Newsfeed Mod Notify", Description: "Notifies group mods about new chitchat (newsfeed) posts from their members since they last looked", Schedule: "Daily at 1:30pm", IntervalMinutes: 1440, Category: "Newsfeed", Active: true},
+
+	// Stories
+	{Command: "stories:send-to-central", Name: "Stories → Central", Description: "Sends reviewed unsent stories to the central team for newsletter voting", Schedule: "Weekly (Fri 2pm)", IntervalMinutes: 10080, Category: "Stories", Active: true},
+	{Command: "stories:ask", Name: "Ask for Stories", Description: "Asks eligible users with outcomes/offers to share their Freegle story", Schedule: "Weekly (Sat 11am)", IntervalMinutes: 10080, Category: "Stories", Active: true},
+
+	// Data & Integrations additions
+	{Command: "integrations:sync-whatjobs", Name: "WhatJobs Sync", Description: "Imports WhatJobs XML job feeds, geocodes locations, filters spam, scores clickability", Schedule: "Hourly 8am–10pm", IntervalMinutes: 60, Category: "Data", Active: true},
+	{Command: "integrations:sync-restartproject", Name: "Restart Project Sync", Description: "Imports upcoming Restart Project repair café events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
+	{Command: "integrations:sync-repaircafewales", Name: "Repair Cafe Wales Sync", Description: "Imports upcoming Repair Cafe Wales iCal events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
+
+	// Email — Engagement additions
+	{Command: "birthday:send-emails", Name: "Birthday Emails", Description: "Sends birthday celebration emails to members of groups founded on today's date", Schedule: "Daily at noon", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:engage", Name: "Engage Emails", Description: "Sends engagement emails to at-risk (about to be inactive) and inactive users", Schedule: "Daily at 4pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:donations:summary", Name: "Donation Summary", Description: "Sends a running summary of today's donations to the fundraising address", Schedule: "Hourly 6am–10pm", IntervalMinutes: 60, Category: "Email — Engagement", Active: true},
+	{Command: "lovejunk:send-tn-invoice", Name: "LoveJunk → TN Invoice", Description: "Calculates the previous month's LoveJunk/TrashNothing split and emails the invoice to TN", Schedule: "Monthly (1st 3pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
+
+	// AI & Analytics additions
+	{Command: "microvolunteering:notify", Name: "Microvolunteering Notify", Description: "On-site notifications asking active members to review pending/approved messages; per-group eligibility pool + already-notified-today dedup", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "AI & Analytics", Active: true},
+
+	// Spam / abuse
+	{Command: "users:remove-spammers", Name: "Remove Spam Members", Description: "Removes spam-marked users from groups (bans them, deletes memberships, soft-deletes their messages, rejects pending chat messages, clears their newsfeed/notifications/expected/sessions)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Spam / Abuse", Active: true},
+	{Command: "chats:process-spam", Name: "Chat Spam Processing", Description: "Warns innocent users who chatted with spammers; auto-rejects pending chat messages from probable spammers (>5 rejects/31 days, no approved messages, not a mod)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Spam / Abuse", Active: true},
+
+	// Email — Admin / Engagement
+	{Command: "mail:mod-notifs", Name: "Mod Notifications", Description: "Hourly digest of pending mod work to each moderator (08:00-21:00 only); dedup against last summary or 24h gap", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Admin", Active: true},
+
+	// Data & Integrations additions
+	{Command: "donations:update-giftaid", Name: "Gift Aid Update", Description: "Identifies postcodes/house numbers on giftaid records, marks eligible donations as giftaidconsent, and sends one-off chase-up emails to donors 2-30 days post-donation", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Data", Active: true},
+
+	// Final V1 crontab migrations
+	{Command: "notifications:exhort", Name: "Exhort Active Users", Description: "On-site notification nudge (default \"Tell us your Freegle story!\") to recently-active established users; 90-day per-user cooldown", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
+	{Command: "locations:update-postcodes", Name: "Postcode Refresh", Description: "Downloads the Doogal UK postcode dataset and adds new postcodes / refreshes moved lat/lng in the locations table", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Locations", Active: true},
+	{Command: "donations:paypal-download", Name: "PayPal Download (fallback)", Description: "Fallback: scans the last 30 days of PayPal NVP TransactionSearch results and upserts donations the IPN missed", Schedule: "Every 4 hours (:30)", IntervalMinutes: 240, Category: "Data", Active: true},
+	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and mods with TrashNothing preferred emails", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
+}
+
+// ActiveCronJobCount returns the number of active cron jobs in the static registry.
+func ActiveCronJobCount() int {
+	count := 0
+	for _, j := range cronJobs {
+		if j.Active {
+			count++
+		}
+	}
+	return count
+}
+
+// ListCronJobs returns the static list of Laravel scheduled commands enriched
+// with last-run data from the cron_job_status table.
+//
+// Requires support or admin authentication.
+func ListCronJobs(c *fiber.Ctx) error {
+	myid := auth.WhoAmI(c)
+
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Not logged in"})
+	}
+
+	if !auth.IsAdminOrSupport(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Support or admin required"})
+	}
+
+	db := database.DBConn
+
+	var statuses []cronJobStatus
+	statusResult := db.Raw(`SELECT * FROM cron_job_status`).Scan(&statuses)
+
+	if statusResult.Error != nil {
+		log.Printf("[Housekeeper] ListCronJobs cron_job_status query error: %v", statusResult.Error)
+	}
+
+	// Build a map keyed by command for fast lookup.
+	statusMap := make(map[string]*cronJobStatus, len(statuses))
+	for i := range statuses {
+		statusMap[statuses[i].Command] = &statuses[i]
+	}
+
+	// Build result by merging static metadata with DB status.
+	// Match DB rows where the stored command starts with the static command name.
+	result := make([]CronJob, len(cronJobs))
+	for i, job := range cronJobs {
+		result[i] = job
+
+		// Exact match first.
+		if s, ok := statusMap[job.Command]; ok {
+			result[i].LastRunAt = s.LastRunAt
+			result[i].LastFinishedAt = s.LastFinishedAt
+			result[i].LastExitCode = s.LastExitCode
+			result[i].LastOutput = s.LastOutput
+			continue
+		}
+
+		// Prefix match: DB command may include flags (e.g. "mail:chat:user2user --max-iterations=60 --spool").
+		for cmd, s := range statusMap {
+			if strings.HasPrefix(cmd, job.Command+" ") || strings.HasPrefix(cmd, job.Command+"\t") {
+				result[i].LastRunAt = s.LastRunAt
+				result[i].LastFinishedAt = s.LastFinishedAt
+				result[i].LastExitCode = s.LastExitCode
+				result[i].LastOutput = s.LastOutput
+				break
+			}
+		}
+	}
+
+	return c.JSON(result)
+}

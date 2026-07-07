@@ -1,0 +1,34 @@
+*.log
+.DS_Store
+.env
+.env.backup
+.env.production
+.env.local
+.phpactor.json
+.phpunit.result.cache
+/.fleet
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+/auth.json
+/node_modules
+/public/build
+/public/hot
+/public/storage
+/storage/*.key
+/storage/pail
+/storage/framework/scheduler-locks
+/storage/framework/command-locks
+/vendor
+/bootstrap/cache/*.php
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+Thumbs.db
+storage/incoming-archive/
+# Locally-generated EEE classification data (classifications.sqlite, eee-labels.db,
+# bridge). Runtime artifacts, explicitly not deployed - see EeeBackfillClassifiedTableCommand.
+storage/eee/

@@ -1,0 +1,765 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import dayjs from 'dayjs'
+import ModChatReview from '~/modtools/components/ModChatReview.vue'
+
+// Chat moderation methods are on the store, not $api
+const mockApproveChat = vi.fn().mockResolvedValue({})
+const mockApproveAllFutureChat = vi.fn().mockResolvedValue({})
+const mockRejectChat = vi.fn().mockResolvedValue({})
+const mockHoldChat = vi.fn().mockResolvedValue({})
+const mockReleaseChat = vi.fn().mockResolvedValue({})
+const mockRedactChat = vi.fn().mockResolvedValue({})
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({
+    me: { id: 999, displayname: 'Mod User', email: 'mod@example.com' },
+  }),
+}))
+
+vi.mock('~/modtools/composables/useModMe', () => ({
+  useModMe: () => ({
+    checkWork: vi.fn(),
+  }),
+}))
+
+// Chat store is globally mocked via vitest.config alias → tests/unit/mocks/chat-store.js
+// Set test data via globalThis.__mockChatStore in beforeEach
+let mockMessageData = null
+
+// Auth store is globally mocked via vitest.config alias → tests/unit/mocks/auth-store.js
+// Set test data via globalThis.__mockAuthStore in beforeEach
+
+describe('ModChatReview', () => {
+  const createTestMessage = (overrides = {}) => ({
+    id: 123,
+    chatid: 456,
+    date: '2025-01-01T12:00:00Z',
+    fromuser: { id: 100, displayname: 'From User', spammer: false },
+    touser: { id: 200, displayname: 'To User', spammer: false },
+    group: { id: 789, namedisplay: 'Test Group' },
+    groupfrom: null,
+    reviewreason: null,
+    held: null,
+    bymailid: null,
+    msgid: null,
+    widerchatreview: false,
+    ...overrides,
+  })
+
+  function mountComponent(messageOverrides = {}) {
+    mockMessageData = createTestMessage(messageOverrides)
+
+    return mount(ModChatReview, {
+      props: {
+        id: 456,
+        messageid: 123,
+      },
+      global: {
+        plugins: [createPinia()],
+        stubs: {
+          'b-card': {
+            template:
+              '<div class="card"><slot /><slot name="header" /><slot name="body" /><slot name="footer" /></div>',
+          },
+          'b-card-header': {
+            template: '<div class="card-header"><slot /></div>',
+          },
+          'b-card-body': { template: '<div class="card-body"><slot /></div>' },
+          'b-card-footer': {
+            template: '<div class="card-footer"><slot /></div>',
+          },
+          'b-button': {
+            template:
+              '<button :variant="variant" :to="to" @click="$emit(\'click\')"><slot /></button>',
+            props: ['variant', 'size', 'to'],
+          },
+          'v-icon': {
+            template: '<span class="icon" />',
+            props: ['icon', 'scale'],
+          },
+          ModChatReviewUser: {
+            name: 'ModChatReviewUser',
+            template: '<div class="chat-review-user" />',
+            props: ['userid', 'tag', 'groupid'],
+            emits: ['reload'],
+          },
+          ChatMessage: {
+            template: '<div class="chat-message" />',
+            props: ['id', 'chatid', 'pov', 'last', 'highlightEmails', 'isMT'],
+          },
+          NoticeMessage: {
+            template: '<div class="notice-message"><slot /></div>',
+            props: ['variant'],
+          },
+          ExternalLink: {
+            template: '<a :href="href"><slot /></a>',
+            props: ['href'],
+          },
+          ModSpammer: {
+            template: '<div class="mod-spammer" />',
+            props: ['userid'],
+          },
+          ModChatViewButton: {
+            template: '<button class="chat-view-button" />',
+            props: ['id', 'pov'],
+          },
+          SpinButton: {
+            template:
+              '<button class="spin-button" :data-label="label" @click="$emit(\'handle\', () => {})"><slot /></button>',
+            props: ['iconName', 'label', 'variant', 'spinclass', 'confirm'],
+            emits: ['handle'],
+          },
+          ModChatNoteModal: {
+            template: '<div class="chat-note-modal" ref="modal" />',
+            props: ['chatid'],
+            emits: ['hidden'],
+            methods: { show: vi.fn() },
+          },
+          ModMessageEmailModal: {
+            template: '<div class="message-email-modal" />',
+            props: ['id'],
+            emits: ['hidden'],
+          },
+        },
+        mocks: {
+          timeago: (val) => `${dayjs().diff(dayjs(val), 'days')} days ago`,
+        },
+      },
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    mockMessageData = null
+    mockApproveChat.mockClear()
+    mockApproveAllFutureChat.mockClear()
+    mockRejectChat.mockClear()
+    mockHoldChat.mockClear()
+    mockReleaseChat.mockClear()
+    mockRedactChat.mockClear()
+    globalThis.__mockChatStore = {
+      messageById: vi.fn(() => mockMessageData),
+      byChatId: vi.fn(() => ({
+        user1: 456,
+        user2: 789,
+        chattype: 'User2User',
+      })),
+      approveChat: mockApproveChat,
+      approveAllFutureChat: mockApproveAllFutureChat,
+      rejectChat: mockRejectChat,
+      holdChat: mockHoldChat,
+      releaseChat: mockReleaseChat,
+      redactChat: mockRedactChat,
+    }
+    globalThis.__mockAuthStore = {
+      groups: [{ groupid: 789, role: 'Moderator', active: 1 }],
+    }
+  })
+
+  describe('rendering', () => {
+    it('renders card with message details, users, and ChatMessage', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.card').exists()).toBe(true)
+      expect(
+        wrapper.findAll('.chat-review-user').length
+      ).toBeGreaterThanOrEqual(2)
+      expect(wrapper.find('.chat-message').exists()).toBe(true)
+      expect(wrapper.text()).toContain('123')
+      expect(wrapper.text()).toContain('days ago')
+      expect(wrapper.text()).toContain('Test Group')
+      expect(wrapper.text()).toContain('To User')
+    })
+  })
+
+  describe('View Original Email button', () => {
+    it('shows when bymailid or msgid exists, hides when neither', () => {
+      expect(mountComponent({ bymailid: 111 }).text()).toContain(
+        'View original email'
+      )
+      expect(mountComponent({ msgid: 222 }).text()).toContain(
+        'View original email'
+      )
+      expect(
+        mountComponent({ bymailid: null, msgid: null }).text()
+      ).not.toContain('View original email')
+    })
+
+    it('shows email modal when button clicked', async () => {
+      const wrapper = mountComponent({ bymailid: 111 })
+      expect(wrapper.vm.showOriginal).toBe(false)
+      const viewEmailButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('View original email'))
+      await viewEmailButton.trigger('click')
+      expect(wrapper.vm.showOriginal).toBe(true)
+    })
+  })
+
+  describe('review reason notice', () => {
+    it('shows notice when reviewreason exists, hides when null', () => {
+      expect(mountComponent({ reviewreason: 'Force' }).text()).toContain(
+        'This is here because'
+      )
+      expect(mountComponent({ reviewreason: null }).text()).not.toContain(
+        'This is here because'
+      )
+    })
+  })
+
+  describe('reviewreason computed property', () => {
+    it.each([
+      ['Last', 'Earlier message was held for review'],
+      ['Force', 'Possible spam'],
+      ['Fully', 'all chat messages reviewed'],
+      ['TooMany', 'a lot of chat messages recently'],
+      ['User', 'flagged for review'],
+      ['UnknownMessage', 'reply to a post we cannot find'],
+      ['Spam', 'failed spam checks'],
+      ['CountryBlocked', 'country we are blocking'],
+      ['SubjectUsedForDifferentGroups', 'subject line'],
+      ['SpamAssassin', 'SpamAssassin'],
+      ['Greetings spam', 'greetings spam'],
+      ['Referenced known spammer', 'known spammer'],
+      ['Known spam keyword', 'spam keyword'],
+      ['URL on DBL', 'suspicious website'],
+      ['BulkVolunteerMail', 'volunteer@ emails'],
+      ['UsedOurDomain', 'web domain'],
+      ['WorryWord', 'Worry Word'],
+      ['Script', '<script>'],
+      ['Link', 'link'],
+      ['Money', 'money'],
+      ['Email', 'email address'],
+      ['Language', 'English'],
+      ['SameImage', 'Same image'],
+      ['DodgyImage', 'Suspect text or email'],
+    ])('returns correct text for %s reason', (reason, expectedText) => {
+      const wrapper = mountComponent({ reviewreason: reason })
+      expect(wrapper.vm.reviewreason).toContain(expectedText)
+    })
+
+    it('returns original value for unknown reason, null when null', () => {
+      expect(
+        mountComponent({ reviewreason: 'UnknownReason' }).vm.reviewreason
+      ).toBe('UnknownReason')
+      expect(mountComponent({ reviewreason: null }).vm.reviewreason).toBe(null)
+    })
+  })
+
+  describe('held message', () => {
+    const heldByMe = {
+      id: 999,
+      name: 'Mod User',
+      email: 'mod@example.com',
+      timestamp: '2025-01-01T10:00:00Z',
+    }
+    const heldByOther = {
+      id: 888,
+      name: 'Other Mod',
+      email: 'other@example.com',
+      timestamp: '2025-01-01T10:00:00Z',
+    }
+
+    it('shows held notice with correct text and Release button based on who held it', () => {
+      const heldByMeWrapper = mountComponent({ held: heldByMe })
+      expect(heldByMeWrapper.text()).toContain('You held this')
+      expect(heldByMeWrapper.text()).toContain('Release')
+
+      const heldByOtherWrapper = mountComponent({ held: heldByOther })
+      expect(heldByOtherWrapper.text()).toContain('Held by')
+      expect(heldByOtherWrapper.text()).toContain('Other Mod')
+
+      const notHeldWrapper = mountComponent({ held: null })
+      const releaseButton = notHeldWrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Release'))
+      expect(releaseButton).toBeUndefined()
+    })
+  })
+
+  describe('spammer display', () => {
+    it('shows ModSpammer for spammer users, hides when neither is spammer', () => {
+      expect(
+        mountComponent({
+          touser: { id: 200, displayname: 'To User', spammer: true },
+        }).findAll('.mod-spammer').length
+      ).toBeGreaterThanOrEqual(1)
+
+      expect(
+        mountComponent({
+          fromuser: { id: 100, displayname: 'From User', spammer: true },
+        }).findAll('.mod-spammer').length
+      ).toBeGreaterThanOrEqual(1)
+
+      expect(
+        mountComponent({
+          fromuser: { id: 100, displayname: 'From User', spammer: false },
+          touser: { id: 200, displayname: 'To User', spammer: false },
+        })
+          .find('.mod-spammer')
+          .exists()
+      ).toBe(false)
+    })
+  })
+
+  describe('wider chat review', () => {
+    it('shows Quicker Chat Review and hides most buttons when widerchatreview is true', () => {
+      const wrapper = mountComponent({ widerchatreview: true })
+      expect(wrapper.text()).toContain('Quicker Chat Review')
+      expect(wrapper.find('.chat-view-button').exists()).toBe(false)
+
+      const buttons = wrapper.findAll('.spin-button')
+      const hiddenLabels = [
+        'Add Mod Message',
+        'Remove highlighted emails',
+        'Approve and whitelist',
+        'Hold',
+        'Delete',
+        'Spam',
+      ]
+      hiddenLabels.forEach((label) => {
+        expect(
+          buttons.find((b) => b.attributes('data-label') === label)
+        ).toBeUndefined()
+      })
+
+      // Approve button should still be visible
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Approve - Not Spam')
+      ).toBeDefined()
+    })
+
+    it('shows all buttons when widerchatreview is false', () => {
+      const wrapper = mountComponent({ widerchatreview: false })
+      expect(wrapper.text()).not.toContain('Quicker Chat Review')
+      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
+    })
+  })
+
+  describe('isActiveMod — backup mod buttons', () => {
+    it('shows all action buttons for backup mod (active=0, role=Moderator)', () => {
+      globalThis.__mockAuthStore = {
+        groups: [{ groupid: 789, role: 'Moderator', active: 0 }],
+      }
+      const wrapper = mountComponent({ widerchatreview: false, held: null })
+      const buttons = wrapper.findAll('.spin-button')
+      const expectedLabels = [
+        'Approve - Not Spam',
+        'Approve and whitelist',
+        'Hold',
+        'Delete',
+        'Spam',
+      ]
+      expectedLabels.forEach((label) => {
+        expect(
+          buttons.find((b) => b.attributes('data-label') === label)
+        ).toBeDefined()
+      })
+      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
+    })
+
+    it('shows all action buttons for backup owner (active=0, role=Owner)', () => {
+      globalThis.__mockAuthStore = {
+        groups: [{ groupid: 789, role: 'Owner', active: 0 }],
+      }
+      const wrapper = mountComponent({ widerchatreview: false, held: null })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeDefined()
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Delete')
+      ).toBeDefined()
+    })
+
+    it('hides mod buttons when user is not a member of the group', () => {
+      globalThis.__mockAuthStore = {
+        groups: [{ groupid: 999, role: 'Moderator', active: 1 }],
+      }
+      const wrapper = mountComponent({ widerchatreview: false, held: null })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeUndefined()
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Delete')
+      ).toBeUndefined()
+      // Approve should still show (not gated by isActiveMod)
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Approve - Not Spam')
+      ).toBeDefined()
+    })
+
+    it('shows mod buttons when message has no group (isActiveMod defaults true)', () => {
+      const wrapper = mountComponent({
+        group: null,
+        widerchatreview: false,
+        held: null,
+      })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeDefined()
+    })
+  })
+
+  describe('groupfrom info', () => {
+    it('shows group info when groupfrom exists, otherwise shows not modded message', () => {
+      expect(
+        mountComponent({
+          groupfrom: { id: 111, namedisplay: 'From Group' },
+        }).text()
+      ).toContain('From Group')
+
+      expect(mountComponent({ groupfrom: null }).text()).toContain(
+        'not on any groups which you actively mod'
+      )
+    })
+  })
+
+  describe('footer buttons', () => {
+    it('shows all action buttons when not held and not widerchatreview', () => {
+      const wrapper = mountComponent({
+        held: null,
+        widerchatreview: false,
+      })
+      const buttons = wrapper.findAll('.spin-button')
+      const expectedLabels = [
+        'Approve - Not Spam',
+        'Approve and whitelist',
+        'Hold',
+        'Delete',
+        'Spam',
+        'Add Mod Message',
+        'Remove highlighted emails',
+      ]
+      expectedLabels.forEach((label) => {
+        expect(
+          buttons.find((b) => b.attributes('data-label') === label)
+        ).toBeDefined()
+      })
+      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
+    })
+
+    it('hides Hold when already held, hides whitelist when held by another', () => {
+      const heldByOther = {
+        id: 888,
+        name: 'Other',
+        email: 'other@test.com',
+        timestamp: '2025-01-01T10:00:00Z',
+      }
+      const wrapper = mountComponent({ held: heldByOther })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeUndefined()
+      expect(
+        buttons.find(
+          (b) => b.attributes('data-label') === 'Approve and whitelist'
+        )
+      ).toBeUndefined()
+    })
+  })
+
+  describe('methods', () => {
+    it('reload emits reload event', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.reload()
+      expect(wrapper.emitted('reload')).toBeTruthy()
+    })
+
+    it.each([
+      ['release', mockReleaseChat],
+      ['hold', mockHoldChat],
+      ['approve', mockApproveChat],
+      ['reject', mockRejectChat],
+      ['whitelist', mockApproveAllFutureChat],
+      ['redactEmails', mockRedactChat],
+    ])(
+      '%s calls store method with message id, emits reload, calls callback',
+      async (method, mockFn) => {
+        const wrapper = mountComponent()
+        const callback = vi.fn()
+        await wrapper.vm[method](callback)
+        expect(mockFn).toHaveBeenCalledWith(123)
+        expect(wrapper.emitted('reload')).toBeTruthy()
+        if (method !== 'release') {
+          expect(callback).toHaveBeenCalled()
+        }
+      }
+    )
+
+    it('showModnote sets showModChatNoteModal to true and calls callback', () => {
+      const wrapper = mountComponent()
+      const callback = vi.fn()
+      expect(wrapper.vm.showModChatNoteModal).toBe(false)
+      wrapper.vm.showModnote(callback)
+      expect(wrapper.vm.showModChatNoteModal).toBe(true)
+      expect(callback).toHaveBeenCalled()
+    })
+  })
+
+  describe('modals', () => {
+    it('renders ModChatNoteModal and ModMessageEmailModal based on state', async () => {
+      const wrapper = mountComponent({ bymailid: 111 })
+      expect(wrapper.find('.chat-note-modal').exists()).toBe(false)
+      expect(wrapper.find('.message-email-modal').exists()).toBe(false)
+
+      wrapper.vm.showModChatNoteModal = true
+      wrapper.vm.showOriginal = true
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('.chat-note-modal').exists()).toBe(true)
+      expect(wrapper.find('.message-email-modal').exists()).toBe(true)
+    })
+  })
+
+  describe('group link', () => {
+    it('shows membership links with correct routes', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('Go to membership')
+      const membershipButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Go to membership'))
+      expect(membershipButton.attributes('to')).toContain(
+        '/members/approved/789/200'
+      )
+
+      const wrapperWithGroupfrom = mountComponent({
+        groupfrom: { id: 111, namedisplay: 'From Group' },
+      })
+      const membershipButtons = wrapperWithGroupfrom
+        .findAll('button')
+        .filter((b) => b.text().includes('Go to membership'))
+      expect(membershipButtons.length).toBe(2)
+    })
+  })
+
+  describe('chatPov computed', () => {
+    it('returns chat.user2 for User2User chat (normal case)', () => {
+      // Default mock: byChatId returns { user1: 456, user2: 789, chattype: 'User2User' }
+      const wrapper = mountComponent()
+      expect(wrapper.vm.chatPov).toBe(789)
+    })
+
+    it('returns null for User2Mod community modmail where user2 is NULL in DB (Go returns 0, which is not a valid user ID)', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 0,
+        chattype: 'User2Mod',
+      }))
+      const wrapper = mountComponent()
+      // user2=0 is not a real user; null lets useChat.js use myid-based alignment instead
+      expect(wrapper.vm.chatPov).toBeNull()
+    })
+
+    it('prefers touserid (recipient) as pov even when chat is loaded', () => {
+      // Symptom 2 fix: chatPov used to return chat.user2 when the chat was loaded,
+      // ignoring touserid. This placed the sender on the right as "self" in View Chat.
+      // Fix: always prefer touserid so the sender appears on the LEFT (correct reviewer POV).
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 0,
+        chattype: 'User2Mod',
+      }))
+      const wrapper = mountComponent({ touserid: 999 })
+      const viewButton = wrapper.find('.chat-view-button')
+      // touserid present → use it (not chat.user2=0→null)
+      expect(viewButton.exists()).toBe(true)
+      expect(wrapper.vm.chatPov).toBe(999)
+    })
+
+    it('uses touserid (recipient) as pov for User2User so sender appears on left in View Chat', () => {
+      // Symptom 2 (Carol1 #219): chatPov=chat.user2 (sender) put the suspicious sender
+      // on the right as "self". Fix: chatPov=touserid (recipient) puts sender on the left.
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+      }))
+      const wrapper = mountComponent({ touserid: 100 })
+      // pov = recipient (100), so sender (200) appears on the left in View Chat
+      expect(wrapper.vm.chatPov).toBe(100)
+    })
+
+    it('falls back to message.touserid when chat not found', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => null)
+      const wrapper = mountComponent({ touserid: 200 })
+      expect(wrapper.vm.chatPov).toBe(200)
+    })
+
+    it('returns null when chat not found and no touserid', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => null)
+      const wrapper = mountComponent({ touserid: undefined })
+      expect(wrapper.vm.chatPov).toBeNull()
+    })
+  })
+
+  describe('groupid priority: From uses groupidfrom (sender), To uses groupid (recipient)', () => {
+    it('From: panel gets groupidfrom and To: panel gets groupid when both are set', () => {
+      // Bug A: From: was incorrectly prioritising groupid (recipient group) over groupidfrom (sender group).
+      const wrapper = mountComponent({
+        groupid: 789,
+        group: { id: 789, namedisplay: 'Recipient Group' },
+        groupidfrom: 555,
+        groupfrom: { id: 555, namedisplay: 'Sender Group' },
+        touserid: 200,
+        touser: { id: 200, displayname: 'To User', spammer: false },
+      })
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      // First = From:, gets sender's group (groupidfrom)
+      expect(reviewUsers[0].props('groupid')).toBe(555)
+      // Second = To:, gets recipient's group (groupid)
+      expect(reviewUsers[1].props('groupid')).toBe(789)
+    })
+
+    it('both panels fall back to groupidfrom when groupid is 0', () => {
+      const wrapper = mountComponent({
+        groupid: 0,
+        group: null,
+        groupidfrom: 555,
+        groupfrom: { id: 555, namedisplay: 'Sender Group' },
+        touserid: 200,
+        touser: { id: 200, displayname: 'To User', spammer: false },
+      })
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      reviewUsers.forEach((u) => {
+        expect(u.props('groupid')).toBe(555)
+      })
+    })
+  })
+
+  describe('User2Mod: To: position shows chatroom name', () => {
+    beforeEach(() => {
+      // Override byChatId to return a User2Mod chatroom with a name
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 0,
+        chattype: 'User2Mod',
+        name: 'TestGroup',
+        groupid: 555,
+      }))
+    })
+
+    it('shows chatroom name in To: position when touserid is 0 (User2Mod)', () => {
+      // Bug B: To: ModChatReviewUser was hidden entirely for User2Mod (touserid=0).
+      const wrapper = mountComponent({
+        touserid: 0,
+        touser: null,
+      })
+      // No ModChatReviewUser for To: (userid=0 is not a real user)
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      expect(reviewUsers.length).toBe(1) // only From:
+      // But the chatroom name should appear as the To: label
+      expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('To:')
+      expect(wrapper.text()).toContain('TestGroup Volunteers')
+    })
+
+    it('does not show chatroom name when touserid is set (User2User chat)', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+        name: 'SomeChat',
+        groupid: 0,
+      }))
+      const wrapper = mountComponent({
+        touserid: 200,
+        touser: { id: 200, displayname: 'To User', spammer: false },
+      })
+      expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(false)
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      expect(reviewUsers.length).toBe(2) // From: and To:
+    })
+
+    it('chatroomName computed returns null for User2User chattype', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+        name: 'SomeChat',
+      }))
+      const wrapper = mountComponent({ touserid: 0, touser: null })
+      expect(wrapper.vm.chatroomName).toBeNull()
+    })
+
+    it('chatroomName computed returns name for User2Mod chattype', () => {
+      const wrapper = mountComponent({ touserid: 0, touser: null })
+      expect(wrapper.vm.chatroomName).toBe('TestGroup')
+    })
+  })
+
+  describe('rippling held notice', () => {
+    it('shows the rippling held notice when heldbyrippling is true', () => {
+      const wrapper = mountComponent({ heldbyrippling: true })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+    })
+
+    it('does not show the rippling held notice when heldbyrippling is false', () => {
+      const wrapper = mountComponent({ heldbyrippling: false })
+      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('does not show the rippling held notice when heldbyrippling is absent', () => {
+      const wrapper = mountComponent({})
+      // defaultMessage has no heldbyrippling key → should not render the notice
+      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('can show both manual hold notice and rippling held notice together', () => {
+      const wrapper = mountComponent({
+        heldbyrippling: true,
+        held: {
+          id: 888,
+          name: 'Other Mod',
+          email: 'other@example.com',
+          timestamp: '2025-01-01T10:00:00Z',
+        },
+      })
+      const notices = wrapper.findAll('.notice-message')
+      expect(notices.length).toBeGreaterThanOrEqual(2)
+      const fullText = wrapper.text()
+      expect(fullText).toContain('Held: rippling out')
+      expect(fullText).toContain('Held by')
+    })
+  })
+
+  describe('edge cases', () => {
+    it('handles message without group', () => {
+      const wrapper = mountComponent({ group: null })
+      expect(wrapper.find('.card').exists()).toBe(true)
+    })
+
+    it('handles both touser and fromuser as spammers', () => {
+      const wrapper = mountComponent({
+        fromuser: { id: 100, displayname: 'From User', spammer: true },
+        touser: { id: 200, displayname: 'To User', spammer: true },
+      })
+      expect(wrapper.findAll('.mod-spammer')).toHaveLength(2)
+    })
+
+    it('hides action buttons when held by another user', () => {
+      const wrapper = mountComponent({
+        held: {
+          id: 888,
+          name: 'Other',
+          email: 'other@test.com',
+          timestamp: '2025-01-01T10:00:00Z',
+        },
+      })
+      const approveButton = wrapper
+        .findAll('.spin-button')
+        .find((b) => b.attributes('data-label') === 'Approve - Not Spam')
+      expect(approveButton).toBeUndefined()
+    })
+  })
+})

@@ -1,0 +1,28 @@
+{
+  "name": "status-nuxt",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "nuxt": "^3.14.0",
+    "vue": "^3.5.0",
+    "vue-router": "^4.4.0",
+    "@pinia/nuxt": "^0.5.5",
+    "pinia": "^2.2.0",
+    "bootstrap": "^5.3.3",
+    "bootstrap-vue-next": "^0.24.23",
+    "@bootstrap-vue-next/nuxt": "^0.24.23"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "^1.6.0",
+    "sass": "^1.83.0",
+    "typescript": "^5.6.0"
+  }
+}

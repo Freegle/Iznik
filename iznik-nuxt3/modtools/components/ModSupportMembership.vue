@@ -1,0 +1,205 @@
+<template>
+  <div v-if="membership">
+    <b-card no-body>
+      <b-card-body class="ps-3 pe-2 pt-2 pb-0">
+        <b-row>
+          <b-col cols="12" md="4">
+            <div>
+              <h4>
+                <v-icon
+                  v-if="membership.role === 'Owner'"
+                  icon="crown"
+                  class="text-warning"
+                  title="Owner"
+                />
+                <v-icon
+                  v-if="membership.role === 'Moderator'"
+                  icon="crown"
+                  class="text-info"
+                  title="Moderator"
+                />
+                <v-icon
+                  v-if="membership.role === 'Member'"
+                  icon="user"
+                  class="text-success"
+                  title="Member"
+                />
+                {{ membership.nameshort }}
+              </h4>
+            </div>
+          </b-col>
+          <b-col cols="6" md="4">
+            <div class="pt-1">
+              {{ datetimeshort(membership.added) }}
+            </div>
+          </b-col>
+          <b-col cols="6" md="4">
+            <div class="d-flex flex-column justify-content-between">
+              <ModRole
+                :userid="userid"
+                :groupid="membership.groupid"
+                :role="membership.role"
+              />
+              <div>
+                <SpinButton
+                  variant="white"
+                  class="mt-1"
+                  icon-name="trash-alt"
+                  label="Remove"
+                  @handle="remove"
+                />
+              </div>
+            </div>
+          </b-col>
+        </b-row>
+        <div class="d-flex flex-wrap pt-1">
+          <b-form-group label="OFFER and WANTED posts:" class="me-5">
+            <!-- eslint-disable-next-line -->
+            <b-form-select v-model="membership.emailfrequency" @change="changeFrequency">
+              <option value="-1">Immediately</option>
+              <option value="1">Every Hour</option>
+              <option value="2">Every 2 Hours</option>
+              <option value="4">Every 4 Hours</option>
+              <option value="8">Every 8 Hours</option>
+              <option value="24">Every day</option>
+              <option value="0">Never</option>
+            </b-form-select>
+          </b-form-group>
+          <b-form-group label="Moderation status:" class="me-5">
+            <!-- eslint-disable-next-line -->
+            <b-form-select v-model="postingStatus" @change="changePostingStatus">
+              <option value="MODERATED">Moderated</option>
+              <option value="DEFAULT">Group Settings</option>
+              <option value="PROHIBITED">Can't Post</option>
+            </b-form-select>
+          </b-form-group>
+          <b-form-group label="Community Event mails:" class="me-5">
+            <OurToggle
+              :model-value="Boolean(membership.eventsallowed)"
+              class="mt-2"
+              :height="30"
+              :width="100"
+              :font-size="14"
+              :sync="true"
+              :labels="{ checked: 'Weekly', unchecked: 'Off' }"
+              variant="modgreen"
+              @change="changeEvents"
+            />
+          </b-form-group>
+          <b-form-group label="Volunteer Opportunity mails:">
+            <OurToggle
+              :model-value="Boolean(membership.volunteeringallowed)"
+              class="mt-2"
+              :height="30"
+              :width="100"
+              :font-size="14"
+              :sync="true"
+              :labels="{ checked: 'Weekly', unchecked: 'Off' }"
+              variant="modgreen"
+              @change="changeVolunteering"
+            />
+          </b-form-group>
+        </div>
+      </b-card-body>
+    </b-card>
+  </div>
+</template>
+<script setup>
+import { computed } from 'vue'
+import { useMemberStore } from '~/stores/member'
+import { useUserStore } from '~/stores/user'
+import { useModMe } from '~/composables/useModMe'
+
+const props = defineProps({
+  membershipid: {
+    type: Number,
+    required: true,
+  },
+  userid: {
+    type: Number,
+    required: true,
+  },
+})
+
+const emit = defineEmits(['fetchuser'])
+
+const memberStore = useMemberStore()
+const userStore = useUserStore()
+const { checkWork } = useModMe()
+
+const membership = computed(() => {
+  const user = userStore.byId(props.userid)
+
+  if (!user?.memberships) {
+    return null
+  }
+
+  return (
+    user.memberships.find(
+      (m) =>
+        m.id === props.membershipid || m.membershipid === props.membershipid
+    ) || null
+  )
+})
+
+const groupid = computed(
+  () => membership.value?.groupid || membership.value?.id
+)
+
+const postingStatus = computed({
+  get: () => membership.value?.ourpostingstatus || 'DEFAULT',
+  set: (val) => {
+    if (membership.value) {
+      membership.value.ourpostingstatus = val
+    }
+  },
+})
+
+async function changeEvents(newval) {
+  const params = {
+    userid: props.userid,
+    groupid: groupid.value,
+    eventsallowed: newval,
+  }
+
+  await memberStore.update(params)
+}
+
+async function changeVolunteering(newval) {
+  const params = {
+    userid: props.userid,
+    groupid: groupid.value,
+    volunteeringallowed: newval,
+  }
+
+  await memberStore.update(params)
+}
+
+async function changeFrequency() {
+  // membership.emailfrequency has new value via v-model
+  const params = {
+    userid: props.userid,
+    groupid: groupid.value,
+    emailfrequency: membership.value?.emailfrequency,
+  }
+
+  await memberStore.update(params)
+}
+
+async function changePostingStatus() {
+  const params = {
+    userid: props.userid,
+    groupid: groupid.value,
+    ourPostingStatus: postingStatus.value,
+  }
+
+  await memberStore.update(params)
+}
+
+function remove(callback) {
+  memberStore.remove(props.userid, groupid.value, props.membershipid)
+  emit('fetchuser')
+  if (callback) callback()
+  checkWork(true)
+}
+</script>

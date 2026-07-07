@@ -1,0 +1,74 @@
+[2026-01-06 16:07:29] [INFO] Created temporary plan: /home/edward/FreegleDockerWSL/ralph/temp-plans/migrate-authority-endpoint-to-v2-api-20260106-160729.md
+[2026-01-06 16:07:29] [INFO] First run for this plan. Initializing state.
+[2026-01-06 16:07:29] [INFO] Checking git status across all submodules...
+[2026-01-06 16:07:29] [WARN] FreegleDocker has uncommitted changes.
+[2026-01-06 16:07:30] [WARN] There are uncommitted changes. Claude will see these and can build on them.
+[2026-01-06 16:07:30] [INFO] Running initializer agent to set up environment...
+[2026-01-06 16:09:01] [SUCCESS] Initializer agent completed.
+--- Initializer Output ---
+INITIALIZER_COMPLETE
+
+I've analyzed the plan and set up proper status tracking. Here's the summary:
+
+## Initialization Complete
+
+**Current State:**
+- The `/authority/:id/message` route already exists in Go (`authority/message.go`)
+- Tests exist for the messages endpoint (`authority_test.go`)
+- PHP has additional functionality not yet migrated:
+  - `GET /authority/:id` - Single authority details (polygon, centre, groups)
+  - `GET /authority?search=term` - Search authorities by name
+
+**Tasks Identified (6 tasks):**
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | Create authority.go with Single handler | ⬜ Pending |
+| 2 | Create Search handler | ⬜ Pending |
+| 3 | Add area code mapping | ⬜ Pending |
+| 4 | Add routes in router/routes.go | ⬜ Pending |
+| 5 | Add tests for new endpoints | ⬜ Pending |
+| 6 | Run Go tests to verify | ⬜ Pending |
+--- End Initializer ---
+[2026-01-06 16:09:01] [INFO] Starting Ralph loop...
+[2026-01-06 16:09:01] [INFO] ========== Starting iteration 1 of 5 ==========
+[2026-01-06 16:09:02] [INFO] Running Claude with plan prompt...
+[2026-01-06 16:15:46] [SUCCESS] Claude completed iteration 1.
+[2026-01-06 16:15:46] [INFO] Claude output summary saved to progress file.
+--- Iteration 1 Output ---
+All files are staged. The test failure (`TestAMPPostChatReplyWithTracking`) is a pre-existing issue with a missing database column (`replied_at`, `replied_via`) - it's not related to my changes.
+
+## Summary
+
+In this iteration, I successfully migrated the `/authority` endpoint to the v2 Go API:
+
+### Created Files:
+1. **`authority/authority.go`** - New file with:
+   - `Single()` handler for `GET /authority/:id` - Returns authority details with polygon, centre point, and overlapping Freegle groups
+   - `Search()` handler for `GET /authority?search=term` - Searches authorities by name
+   - `AreaCodes` map for converting OS area codes to friendly names
+   - Proper struct definitions matching the PHP implementation
+
+### Modified Files:
+2. **`router/routes.go`** - Added two new routes:
+   - `GET /authority` - Search endpoint
+   - `GET /authority/:id` - Single authority endpoint
+   
+3. **`test/authority_test.go`** - Added 8 new tests:
+   - TestAuthoritySingleEndpoint
+   - TestAuthoritySingleEndpointV2
+   - TestAuthoritySingleEndpointInvalidId
+   - TestAuthoritySearchEndpoint
+   - TestAuthoritySearchEndpointV2
+   - TestAuthoritySearchEndpointNoSearch
+   - TestAuthoritySearchEndpointWithLimit
+   - TestAuthoritySearchEndpointEmptyResult
+
+### Validation:
+- Go code builds successfully
+- Go tests run (126 passed, 1 pre-existing failure unrelated to this change)
+- All new authority tests are included and pass
+
+PLAN_COMPLETE_MARKER_12345
+--- End Iteration 1 ---
+[2026-01-06 16:15:46] [SUCCESS] Plan marked as complete!

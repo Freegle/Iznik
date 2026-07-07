@@ -1,0 +1,24 @@
+[Unit]
+Description=Yesterday Backup Management API
+Documentation=https://github.com/Freegle/Iznik/tree/master/yesterday
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/FreegleDocker/yesterday/api
+Environment=NODE_ENV=production
+Environment=PORT=8082
+Environment=BACKUP_BUCKET=gs://freegle_backup_uk
+ExecStart=/usr/bin/node /var/www/FreegleDocker/yesterday/api/server.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/yesterday-api.log
+StandardError=append:/var/log/yesterday-api-error.log
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

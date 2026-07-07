@@ -1,0 +1,236 @@
+package donations
+
+import (
+	"fmt"
+	"log"
+	"math"
+	"os"
+	"strconv"
+	"sync"
+
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
+	"github.com/gofiber/fiber/v2"
+	stripe "github.com/stripe/stripe-go/v82"
+	"github.com/stripe/stripe-go/v82/customer"
+	"github.com/stripe/stripe-go/v82/paymentintent"
+	"github.com/stripe/stripe-go/v82/product"
+	"github.com/stripe/stripe-go/v82/subscription"
+)
+
+// stripeMu protects stripe.Key from concurrent access. The stripe-go package
+// uses a global key variable which is not safe for concurrent use with
+// different keys (test vs live).
+var stripeMu sync.Mutex
+
+func getStripeKey(test bool) string {
+	if test {
+		return os.Getenv("STRIPE_SECRET_KEY_TEST")
+	}
+	return os.Getenv("STRIPE_SECRET_KEY")
+}
+
+// CreateIntent creates a Stripe PaymentIntent for a one-time donation.
+//
+// @Summary Create Stripe PaymentIntent
+// @Tags donations
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Router /stripecreateintent [post]
+func CreateIntent(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	type CreateIntentRequest struct {
+		Amount      utils.FlexFloat64 `json:"amount"`
+		Test        bool              `json:"test"`
+		PaymentType string            `json:"paymenttype"`
+	}
+
+	var req CreateIntentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.PaymentType == "" {
+		req.PaymentType = "card"
+	}
+
+	// Validate amount: minimum 30p (Stripe minimum for GBP), maximum £250.
+	if req.Amount < 0.30 || req.Amount > 250.00 {
+		return fiber.NewError(fiber.StatusBadRequest, "Amount must be between 0.30 and 250.00")
+	}
+
+	key := getStripeKey(req.Test)
+	if key == "" {
+		return fiber.NewError(fiber.StatusInternalServerError, "Payment processing not available")
+	}
+
+	// Convert amount to pence (Stripe uses smallest currency unit).
+	// Use math.Round to avoid IEEE 754 truncation (e.g. 1.10*100 = 109.999... → 109).
+	amountPence := int64(math.Round(float64(req.Amount) * 100))
+
+	params := &stripe.PaymentIntentParams{
+		Amount:   stripe.Int64(amountPence),
+		Currency: stripe.String("gbp"),
+		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+			Enabled: stripe.Bool(true),
+		},
+	}
+
+	params.AddMetadata("uid", strconv.FormatUint(myid, 10))
+
+	// Protect stripe.Key from concurrent access. The stripe-go library reads
+	// stripe.Key during API calls, so the lock must span key set + API call.
+	stripeMu.Lock()
+	stripe.Key = key
+	pi, err := paymentintent.New(params)
+	stripeMu.Unlock()
+
+	if err != nil {
+		log.Printf("Stripe PaymentIntent creation failed for user %d: %v", myid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Payment processing failed")
+	}
+
+	return c.JSON(fiber.Map{
+		"id":           pi.ID,
+		"clientSecret": pi.ClientSecret,
+	})
+}
+
+// CreateSubscription creates a Stripe subscription for a recurring monthly donation.
+//
+// @Summary Create Stripe subscription
+// @Tags donations
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Router /stripecreatesubscription [post]
+func CreateSubscription(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	type CreateSubRequest struct {
+		Amount utils.FlexFloat64 `json:"amount"`
+		Test   bool              `json:"test"`
+	}
+
+	var req CreateSubRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	// Validate amount is in a reasonable range.
+	if req.Amount < 1.0 || req.Amount > 100.0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid amount - must be between 1 and 100")
+	}
+
+	key := getStripeKey(req.Test)
+	if key == "" {
+		return fiber.NewError(fiber.StatusInternalServerError, "Payment processing not available")
+	}
+
+	// Look up user's email and name in parallel.
+	db := database.DBConn
+
+	var email string
+	var fullname *string
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", myid).Scan(&email)
+	}()
+	go func() {
+		defer wg.Done()
+		db.Raw("SELECT fullname FROM users WHERE id = ?", myid).Scan(&fullname)
+	}()
+	wg.Wait()
+
+	if email == "" {
+		log.Printf("No email found for user %d when creating Stripe subscription", myid)
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not retrieve user email")
+	}
+
+	name := ""
+	if fullname != nil {
+		name = *fullname
+	}
+
+	// Create Stripe customer.
+	custParams := &stripe.CustomerParams{
+		Email: stripe.String(email),
+		Name:  stripe.String(name),
+	}
+	custParams.AddMetadata("uid", strconv.FormatUint(myid, 10))
+
+	// Protect stripe.Key from concurrent access.
+	stripeMu.Lock()
+	stripe.Key = key
+
+	cust, err := customer.New(custParams)
+	if err != nil {
+		stripeMu.Unlock()
+		log.Printf("Stripe customer creation failed for user %d: %v", myid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Payment processing failed")
+	}
+
+	// Create a Stripe product for this subscription.
+	prodParams := &stripe.ProductParams{
+		Name: stripe.String(fmt.Sprintf("Freegle Monthly Donation - £%.2f", float64(req.Amount))),
+	}
+	prod, err := product.New(prodParams)
+	if err != nil {
+		stripeMu.Unlock()
+		log.Printf("Stripe product creation failed for user %d: %v", myid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Payment processing failed")
+	}
+
+	// Create subscription with inline price_data for any whole-pound amount.
+	subParams := &stripe.SubscriptionParams{
+		Customer: stripe.String(cust.ID),
+		Items: []*stripe.SubscriptionItemsParams{
+			{
+				PriceData: &stripe.SubscriptionItemPriceDataParams{
+					Currency:   stripe.String("gbp"),
+					UnitAmount: stripe.Int64(int64(math.Round(float64(req.Amount) * 100))),
+					Recurring: &stripe.SubscriptionItemPriceDataRecurringParams{
+						Interval: stripe.String("month"),
+					},
+					Product: stripe.String(prod.ID),
+				},
+			},
+		},
+		PaymentBehavior: stripe.String("default_incomplete"),
+		PaymentSettings: &stripe.SubscriptionPaymentSettingsParams{
+			SaveDefaultPaymentMethod: stripe.String("on_subscription"),
+		},
+	}
+	subParams.AddExpand("latest_invoice.confirmation_secret")
+
+	sub, err := subscription.New(subParams)
+	stripeMu.Unlock()
+
+	if err != nil {
+		log.Printf("Stripe subscription creation failed for user %d: %v", myid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Payment processing failed")
+	}
+
+	// Extract client secret from the latest invoice's confirmation secret.
+	var clientSecret string
+	if sub.LatestInvoice != nil && sub.LatestInvoice.ConfirmationSecret != nil {
+		clientSecret = sub.LatestInvoice.ConfirmationSecret.ClientSecret
+	}
+
+	return c.JSON(fiber.Map{
+		"subscriptionId": sub.ID,
+		"clientSecret":   clientSecret,
+	})
+}

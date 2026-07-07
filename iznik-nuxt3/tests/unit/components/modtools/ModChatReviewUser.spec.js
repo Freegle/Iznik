@@ -1,0 +1,256 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import ModChatReviewUser from '~/modtools/components/ModChatReviewUser.vue'
+
+// Mock user store
+const mockUserStore = {
+  byId: vi.fn(),
+  fetch: vi.fn(),
+}
+
+vi.mock('~/stores/user', () => ({
+  useUserStore: () => mockUserStore,
+}))
+
+describe('ModChatReviewUser', () => {
+  const defaultUser = {
+    id: 123,
+    displayname: 'Test User',
+    emails: [{ email: 'test@example.com', preferred: true, ourdomain: false }],
+    comments: [],
+  }
+
+  const defaultProps = {
+    userid: 123,
+    groupid: 456,
+  }
+
+  function mountComponent(props = {}, userOverrides = null) {
+    const user = userOverrides
+      ? { ...defaultUser, ...userOverrides }
+      : defaultUser
+    mockUserStore.byId.mockReturnValue(user)
+
+    return mount(ModChatReviewUser, {
+      props: { ...defaultProps, ...props },
+      global: {
+        stubs: {
+          'b-button': {
+            template: '<button @click="$emit(\'click\')"><slot /></button>',
+          },
+          'v-icon': {
+            template: '<span class="icon" />',
+            props: ['icon', 'scale'],
+          },
+          ExternalLink: {
+            template: '<a :href="href"><slot /></a>',
+            props: ['href'],
+          },
+          ModClipboard: {
+            template: '<span class="clipboard" />',
+            props: ['value'],
+          },
+          ModComment: {
+            template: '<div class="comment" />',
+            props: ['commentid', 'userid'],
+          },
+          ModCommentAddModal: {
+            template: '<div class="add-modal" />',
+            props: ['userid', 'groupid'],
+          },
+        },
+      },
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUserStore.byId.mockReturnValue(defaultUser)
+    mockUserStore.fetch.mockResolvedValue(defaultUser)
+  })
+
+  describe('rendering', () => {
+    it('renders the box when userid is provided but user data not yet in store', () => {
+      // Symptom 1 (Carol1 #219): box was gated by v-if="user" — hidden entirely until
+      // the user API fetch completed, causing member info to be missing on initial render.
+      // Fix: v-if="userid" renders the box immediately, showing '#<id>' as fallback.
+      mockUserStore.byId.mockReturnValue(null) // user not yet fetched
+      const wrapper = mount(ModChatReviewUser, {
+        props: { userid: 123, groupid: 456 },
+        global: {
+          stubs: {
+            'b-button': { template: '<button><slot /></button>' },
+            'v-icon': { template: '<span />', props: ['icon', 'scale'] },
+            ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
+            ModClipboard: { template: '<span />', props: ['value'] },
+            ModComment: { template: '<div />', props: ['commentid', 'userid'] },
+            ModCommentAddModal: {
+              template: '<div class="add-modal" />',
+              props: ['userid', 'groupid'],
+            },
+          },
+        },
+      })
+      expect(wrapper.find('.bg-white.rounded').exists()).toBe(true)
+      expect(wrapper.text()).toContain('#123')
+    })
+
+    it('renders user id', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('123')
+    })
+
+    it('renders tag when provided', () => {
+      const wrapper = mountComponent({ tag: 'From: ' })
+      expect(wrapper.text()).toContain('From:')
+    })
+
+    it('does not render tag when not provided', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.text()).not.toContain('From:')
+    })
+
+    it('renders TN user id when present', () => {
+      const wrapper = mountComponent({}, { tnuserid: 789 })
+      expect(wrapper.text()).toContain('TN user id')
+      expect(wrapper.text()).toContain('789')
+    })
+
+    it('renders LoveJunk user id when present', () => {
+      const wrapper = mountComponent({}, { ljuserid: 999 })
+      expect(wrapper.text()).toContain('LoveJunk user id')
+      expect(wrapper.text()).toContain('999')
+    })
+
+    it('renders Add note button', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('Add note')
+    })
+
+    it('renders comments when user has comments', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          comments: [
+            { id: 1, user1: 'Comment 1' },
+            { id: 2, user1: 'Comment 2' },
+          ],
+        }
+      )
+      expect(wrapper.findAll('.comment')).toHaveLength(2)
+    })
+  })
+
+  describe('email computed property', () => {
+    it('returns email when user has emails', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.email).toBe('test@example.com')
+    })
+
+    it('returns null when user has no emails', () => {
+      const wrapper = mountComponent({}, { emails: [] })
+      expect(wrapper.vm.email).toBe(null)
+    })
+
+    it('skips ourdomain emails', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          emails: [
+            {
+              email: 'internal@ourdomain.com',
+              preferred: true,
+              ourdomain: true,
+            },
+            {
+              email: 'external@example.com',
+              preferred: false,
+              ourdomain: false,
+            },
+          ],
+        }
+      )
+      expect(wrapper.vm.email).toBe('external@example.com')
+    })
+
+    it('prefers preferred email', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          emails: [
+            { email: 'first@example.com', preferred: false, ourdomain: false },
+            {
+              email: 'preferred@example.com',
+              preferred: true,
+              ourdomain: false,
+            },
+          ],
+        }
+      )
+      expect(wrapper.vm.email).toBe('preferred@example.com')
+    })
+
+    it('displays email with mailto link', () => {
+      const wrapper = mountComponent()
+      const link = wrapper.find('a[href="mailto:test@example.com"]')
+      expect(link.exists()).toBe(true)
+      expect(link.text()).toBe('test@example.com')
+    })
+  })
+
+  describe('methods', () => {
+    it('addAComment sets showAddCommentModal to true', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.showAddCommentModal).toBe(false)
+      wrapper.vm.addAComment()
+      expect(wrapper.vm.showAddCommentModal).toBe(true)
+    })
+
+    it('updateComments emits reload', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.updateComments()
+      expect(wrapper.emitted('reload')).toHaveLength(1)
+    })
+
+    it('clicking Add note button shows modal', async () => {
+      const wrapper = mountComponent()
+      await wrapper.find('button').trigger('click')
+      expect(wrapper.vm.showAddCommentModal).toBe(true)
+    })
+
+    it('renders modal when Add note clicked even when groupid is 0 (iOS Chat Review regression: topic 9518/234)', async () => {
+      // Bug: v-if="showAddCommentModal && groupid" blocked the modal when groupid=0.
+      // Normal Chat Review can have groupid=0 (no group context for that user);
+      // QCR always has a non-zero group so it appeared to work. Fix: remove the groupid guard.
+      const wrapper = mountComponent({ groupid: 0 })
+      await wrapper.find('button').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showAddCommentModal).toBe(true)
+      expect(wrapper.find('.add-modal').exists()).toBe(true)
+    })
+
+    it('passes null groupid to modal when component groupid is 0', async () => {
+      const wrapper = mountComponent({ groupid: 0 })
+      wrapper.vm.addAComment()
+      await wrapper.vm.$nextTick()
+      const modal = wrapper.findComponent({ name: 'ModCommentAddModal' })
+      if (modal.exists()) {
+        expect(modal.props('groupid')).toBeNull()
+      }
+    })
+
+    it('renders modal when groupid is non-zero', async () => {
+      const wrapper = mountComponent({ groupid: 456 })
+      wrapper.vm.addAComment()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.add-modal').exists()).toBe(true)
+    })
+  })
+
+  describe('props', () => {
+    it('has default null for tag prop', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.props('tag')).toBe(null)
+    })
+  })
+})

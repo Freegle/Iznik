@@ -1,0 +1,23 @@
+{
+    "version": 2,
+    "timestamp": "2026-02-01T13:01:55Z",
+    "envelope": {
+        "from": "hello@kerrycurl.com",
+        "to": "bounce-43109617-1769950904@users.ilovefreegle.org"
+    },
+    "raw_email": "RnJvbSBoZWxsb0BrZXJyeWN1cmwuY29tIFN1biBGZWIgMDEgMTM6MDE6NTQgMjAyNgpSZXR1cm4tcGF0aDogPGhlbGxvQGtlcnJ5Y3VybC5jb20+CkVudmVsb3BlLXRvOiBib3VuY2UtNDMxMDk2MTctMTc2OTk1MDkwNEB1c2Vycy5pbG92ZWZyZWVnbGUub3JnClJlY2VpdmVkOiBmcm9tIHNtdHByZWxheTAwMTYuaG9zdGVkZW1haWwuY29tIChbMjE2LjQwLjQ0LjE2XSBoZWxvPXJlbGF5Lmhvc3RlZGVtYWlsLmNvbSkKCWJ5IGJ1bGs0Lmlsb3ZlZnJlZWdsZS5vcmcgd2l0aCBlc210cHMgIChUTFMxLjMpIHRscyBUTFNfRUNESEVfUlNBX1dJVEhfQUVTXzI1Nl9HQ01fU0hBMzg0CgkoRXhpbSA0Ljk1KQoJKGVudmVsb3BlLWZyb20gPGhlbGxvQGtlcnJ5Y3VybC5jb20+KQoJaWQgMXZtWDVPLTAwMHBnQi1RWQoJZm9yIGJvdW5jZS00MzEwOTYxNy0xNzY5OTUwOTA0QHVzZXJzLmlsb3ZlZnJlZWdsZS5vcmc7CglTdW4sIDAxIEZlYiAyMDI2IDEzOjAxOjU0ICswMDAwClJlY2VpdmVkOiBmcm9tIHNtdHBpbjA2Lmhvc3RlZGVtYWlsLmNvbSAoYTEwLnJvdXRlci5mbG9hdC4xOCBbMTAuMjAwLjE4LjFdKQoJYnkgdW5pcmVsYXkwNi5ob3N0ZWRlbWFpbC5jb20gKFBvc3RmaXgpIHdpdGggRVNNVFAgaWQgRDExMDExQjFGODIKCWZvciA8Ym91bmNlLTQzMTA5NjE3LTE3Njk5NTA5MDRAdXNlcnMuaWxvdmVmcmVlZ2xlLm9yZz47IFN1biwgIDEgRmViIDIwMjYgMTM6MDE6NTMgKzAwMDAgKFVUQykKU3ViamVjdDogKGF1dG9yZXNwb25zZSkgW05vcndpY2ggRnJlZWdsZV0gT0ZGRVJFRDogUmFiYml0IG1hbnVyZSAoRWFybGhhbSBOUjUpIApNZXNzYWdlLUlEOiA8MTc2OTk1MDkxMy0yMTY3NTNAYXV0b3JlcGx5Lmhvc3RlZGVtYWlsLmNvbT4KRnJvbTogaGVsbG9Aa2VycnljdXJsLmNvbQpUbzogYm91bmNlLTQzMTA5NjE3LTE3Njk5NTA5MDRAdXNlcnMuaWxvdmVmcmVlZ2xlLm9yZwpEYXRlOiBTdW4sIDEgRmViIDIwMjYgMTM6MDE6NTMgKzAwMDAgKFVUQykKWC1BdXRvcmVzcG9uZGVyOiBXaWxsIG5vdCBzZW5kIGFub3RoZXIgYXV0b3JlcGx5IGZvciA4NjQwMCBzZWNvbmRzCkNvbnRlbnQtVHlwZTogdGV4dC9wbGFpbjsgY2hhcnNldD1VVEYtODsgZm9ybWF0PWZsb3dlZApDb250ZW50LVRyYW5zZmVyLUVuY29kaW5nOiA4Yml0CgpIaQoKVGhhbmtzIGZvciB5b3VyIGVtYWlsLiBJ4oCZbSBub3cgaW4gb3V0IG9mIG9mZmljZSBtb2RlIHVudGlsIFdlZHMgRmViIDQuIAoKSSBtYXkgbm90IGJlIGNoZWNraW5nIGluIG9uIGVtYWlscyBhbmQgc29jaWFscyBkdXJpbmcgdGhpcyBwZXJpb2QgYnV0IHdpbGwgcmVwbHkgd2hlbiBwb3NzaWJsZS4KClRoYW5rcwoKS2VycnkKCgoK",
+    "legacy_result": {
+        "routing_outcome": "Dropped",
+        "message_id": "119043789",
+        "user_id": 43109617,
+        "group_id": null,
+        "spam_type": null,
+        "spam_reason": null,
+        "subject": "(autoresponse) [Norwich Freegle] OFFERED: Rabbit manure (Earlham NR5) ",
+        "from_address": "hello@kerrycurl.com",
+        "our_posting_status": null,
+        "membership_role": null,
+        "group_moderated": null,
+        "override_moderation": null
+    }
+}

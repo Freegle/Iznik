@@ -1,0 +1,48 @@
+<template>
+  <div v-if="fromuser" class="clickme d-flex" @click="click">
+    <div class="d-flex flex-column justify-content-around">
+      <ProfileImage
+        :image="fromuser?.profile?.path"
+        class="me-1 mb-1 ms-1 inline"
+        is-thumbnail
+        size="lg"
+      />
+    </div>
+    <div class="d-flex flex-column">
+      <div>
+        <span class="fw-bold">{{ fromuser?.displayname }}</span>
+        commented:
+      </div>
+      <div v-if="newsfeed?.message" class="line-clamp-2 fw-bold">
+        "{{ newsfeed.message }}"
+      </div>
+      <abbr class="small text-muted">{{ notificationago }}</abbr>
+    </div>
+  </div>
+</template>
+<script setup>
+import { setupNotification } from '~/composables/useNotification'
+import { useNewsfeedStore } from '~/stores/newsfeed'
+import ProfileImage from '~/components/ProfileImage'
+
+const props = defineProps({
+  id: {
+    type: Number,
+    required: true,
+  },
+})
+
+// Setup notification
+const { fromuser, newsfeed, notificationago } = await setupNotification(
+  props.id
+)
+
+// Make sure we have the up-to-date item in the store
+if (newsfeed?.value?.id) {
+  useNewsfeedStore().fetch(newsfeed.value.id, true)
+}
+
+function click() {
+  // Empty click handler for template - the clickme class indicates this is clickable
+}
+</script>

@@ -1,0 +1,168 @@
+import BaseAPI from '@/api/BaseAPI'
+
+export default class UserAPI extends BaseAPI {
+  async fetch(id) {
+    if (isNaN(id)) {
+      throw new TypeError('Invalid user ID: ' + id)
+    }
+
+    return await this.$getv2('/user/' + id)
+  }
+
+  // Fetch multiple users in a single request
+  async fetchMultiple(ids, modtools = false) {
+    if (!ids || !ids.length) {
+      return []
+    }
+
+    const params = modtools ? { modtools: true } : {}
+    return await this.$getv2('/user/' + ids.join(','), params)
+  }
+
+  async fetchMT(params) {
+    const { id, ...rest } = params
+    if (isNaN(parseInt(id))) {
+      throw new TypeError('Invalid user ID: ' + id)
+    }
+    // 404 = user not found (deleted/banned) — expected, don't log to Sentry.
+    // Go returns { error: 404, message: '...' } for not-found; use selective
+    // suppression so unexpected 500s still surface in Sentry.
+    const data = await this.$getv2(
+      '/user/' + id,
+      { modtools: true, ...rest },
+      (responseData) => responseData?.error !== 404
+    )
+    // Go returns the user directly; wrap for store compatibility
+    return { user: data }
+  }
+
+  async search(q) {
+    return await this.$getv2('/user/search', { q })
+  }
+
+  async fetchByEmail(email, logError = true) {
+    return await this.$getv2('/user/byemail/' + email, {}, logError)
+  }
+
+  async fetchPublicLocation(id) {
+    return await this.$getv2('/user/' + id + '/publiclocation')
+  }
+
+  // Support tools: per-user data endpoints (mod-only).
+  async fetchChatrooms(id) {
+    return await this.$getv2('/user/' + id + '/chatrooms')
+  }
+
+  async fetchEmailHistory(id) {
+    return await this.$getv2('/user/' + id + '/emailhistory')
+  }
+
+  async fetchBans(id) {
+    return await this.$getv2('/user/' + id + '/bans')
+  }
+
+  async fetchNewsfeed(id) {
+    return await this.$getv2('/user/' + id + '/newsfeed')
+  }
+
+  async fetchApplied(id) {
+    return await this.$getv2('/user/' + id + '/applied')
+  }
+
+  async fetchMembershipHistory(id) {
+    return await this.$getv2('/user/' + id + '/membershiphistory')
+  }
+
+  async fetchReplies(id, type) {
+    const params = type ? { type } : {}
+    return await this.$getv2('/user/' + id + '/replies', params)
+  }
+
+  async fetchLogins(id) {
+    return await this.$getv2('/user/' + id + '/logins')
+  }
+
+  rate(id, rating, reason, text) {
+    return this.$postv2('/user', {
+      ratee: id,
+      rating,
+      action: 'Rate',
+      reason,
+      text,
+    })
+  }
+
+  ratingReviewed(ratingid) {
+    return this.$postv2('/user', {
+      ratingid,
+      action: 'RatingReviewed',
+    })
+  }
+
+  unbounce(id) {
+    return this.$postv2('/user', { id, action: 'Unbounce' })
+  }
+
+  unsubscribe(id) {
+    // Puts the user into limbo — account hidden immediately, all data
+    // permanently deleted after a 14-day grace period (User::limbo()).
+    return this.$postv2('/user', { id, action: 'Unsubscribe' })
+  }
+
+  addEmail(id, email, primary) {
+    return this.$postv2('/user', { id, action: 'AddEmail', email, primary })
+  }
+
+  removeEmail(id, email) {
+    return this.$postv2('/user', { id, action: 'RemoveEmail', email })
+  }
+
+  add(email, logError = true) {
+    return this.$putv2('/user', { email }, logError)
+  }
+
+  signUp(params, logError = true) {
+    return this.$putv2('/user', params, logError)
+  }
+
+  merge(email1, email2, id1, id2, reason) {
+    return this.$postv2('/user', {
+      email1,
+      email2,
+      id1,
+      id2,
+      reason,
+      action: 'Merge',
+    })
+  }
+
+  save(event) {
+    return this.$patchv2('/user', event)
+  }
+
+  muteOnChitChat(userid) {
+    return this.$patchv2('/user', {
+      id: userid,
+      newsfeedmodstatus: 'Suppressed',
+    })
+  }
+
+  unMuteOnChitChat(userid) {
+    return this.$patchv2('/user', {
+      id: userid,
+      newsfeedmodstatus: 'Unmoderated',
+    })
+  }
+
+  purge(id) {
+    return this.$delv2('/user', {
+      id,
+    })
+  }
+
+  engaged(engageid) {
+    return this.$postv2('/user', {
+      engageid,
+    })
+  }
+}

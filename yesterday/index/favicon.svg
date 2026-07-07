@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Database cylinder -->
+  <ellipse cx="32" cy="18" rx="20" ry="8" fill="#4CAF50" stroke="#2e7d32" stroke-width="2"/>
+  <rect x="12" y="18" width="40" height="28" fill="#4CAF50"/>
+  <ellipse cx="32" cy="46" rx="20" ry="8" fill="#66BB6A" stroke="#2e7d32" stroke-width="2"/>
+  <ellipse cx="32" cy="18" rx="20" ry="8" fill="#66BB6A"/>
+
+  <!-- Circular arrow for backup/restore -->
+  <g transform="translate(42, 10)">
+    <circle cx="0" cy="0" r="12" fill="#FFF" stroke="#2e7d32" stroke-width="2"/>
+    <path d="M -4,-6 A 8 8 0 1 1 -6,4" fill="none" stroke="#2196F3" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M -6,4 L -8,7 L -3,5 Z" fill="#2196F3"/>
+    <circle cx="0" cy="0" r="2" fill="#2e7d32"/>
+  </g>
+
+  <!-- Clock hands for "yesterday" -->
+  <line x1="32" y1="32" x2="32" y2="26" stroke="#2e7d32" stroke-width="2" stroke-linecap="round"/>
+  <line x1="32" y1="32" x2="36" y2="32" stroke="#2e7d32" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

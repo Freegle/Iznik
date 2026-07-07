@@ -1,0 +1,70 @@
+import { defineStore } from 'pinia'
+import api from '~/api'
+
+export const useLocationStore = defineStore({
+  id: 'location',
+  state: () => ({
+    list: {},
+  }),
+  actions: {
+    init(config) {
+      this.config = config
+    },
+    async fetch(params) {
+      const response = await api(this.config).location.fetch(params)
+
+      if (response?.locations) {
+        return response
+      } else {
+        return response?.location ? response.location : response?.locations
+      }
+    },
+    async typeahead(query) {
+      return await api(this.config).location.typeahead(query)
+    },
+    async resolve(name) {
+      // Returns the location for an exact place name, or null if it isn't a known
+      // place (404) — used to offer "search near <place>" on an empty item search.
+      try {
+        const loc = await api(this.config).location.resolve(name)
+        return loc && loc.lat && loc.lng ? loc : null
+      } catch (e) {
+        return null
+      }
+    },
+    async fetchByLatLng(lat, lng) {
+      return await api(this.config).location.latlng(lat, lng)
+    },
+    async fetchv2(id) {
+      const loc = await api(this.config).location.fetchv2(id)
+
+      if (loc) {
+        this.list[loc.id] = loc
+      }
+
+      return loc
+    },
+    async delete(loc) {
+      await api(this.config).location.del(loc.id, loc.groupid)
+      // Server doesn't support fetching of an individual location so we don't fetch - but will need reload
+      delete this.list[loc.id]
+    },
+    async add(params) {
+      const { id } = await api(this.config).location.add(params)
+      // Server doesn't support fetching of an individual location so we don't fetch.
+      return id
+    },
+    async update(params) {
+      await api(this.config).location.update(params)
+    },
+    async convertKML(kml) {
+      const { wkt } = await api(this.config).location.convertKML(kml)
+      return wkt
+    },
+  },
+  getters: {
+    byId: (state) => (id) => {
+      return state.list[id]
+    },
+  },
+})

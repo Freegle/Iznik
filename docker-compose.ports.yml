@@ -1,0 +1,104 @@
+# Port bindings for exposed services
+# Include this file via COMPOSE_FILE to expose ports on the host.
+# Secondary worktrees should exclude this file to avoid port conflicts.
+#
+# Default: COMPOSE_FILE=docker-compose.yml:docker-compose.ports.yml
+# No ports: COMPOSE_FILE=docker-compose.yml
+
+services:
+  reverse-proxy:
+    ports:
+      - "${PORT_TRAEFIK_HTTP:-80}:80"
+      - "${PORT_TRAEFIK_API:-8192}:8192"
+      - "${PORT_TRAEFIK_DASHBOARD:-8080}:8080"
+
+  phpmyadmin:
+    ports:
+      - "0.0.0.0:${PORT_PHPMYADMIN:-8086}:80"
+
+  mailpit:
+    ports:
+      - "0.0.0.0:${PORT_MAILPIT_WEB:-8025}:8025"
+      - "0.0.0.0:${PORT_MAILPIT_SMTP:-1025}:1025"
+
+  spamassassin-app:
+    ports:
+      - ${PORT_SPAMASSASSIN:-783}:783
+
+  rspamd:
+    ports:
+      - "${PORT_RSPAMD:-11334}:11334"
+
+  tusd:
+    ports:
+      - "${PORT_TUSD:-1080}:8080"
+
+  status:
+    ports:
+      - "${PORT_STATUS:-8081}:3000"
+
+  ai-support-helper:
+    ports:
+      - "${PORT_AI_SUPPORT:-8083}:3000"
+
+  apiv1:
+    ports:
+      - "${PORT_APIV1_SSH:-1023}:22"
+      - "${PORT_APIV1_HTTP:-83}:80"
+      - "${PORT_APIV1_HTTP2:-8181}:80"
+
+  apiv2:
+    ports:
+      - "${PORT_APIV2:-8193}:8192"
+
+  apiv2-live:
+    ports:
+      - "${PORT_APIV2_LIVE:-8194}:8192"
+
+  freegle-dev-local:
+    ports:
+      - "0.0.0.0:${PORT_FREEGLE_DEV_LOCAL:-3002}:3002"
+
+  freegle-dev-live:
+    ports:
+      - "0.0.0.0:${PORT_FREEGLE_DEV_LIVE:-3005}:3002"
+
+  freegle-prod-local:
+    ports:
+      - "0.0.0.0:${PORT_FREEGLE_PROD_LOCAL:-3012}:3003"
+
+  modtools-dev-local:
+    ports:
+      - "0.0.0.0:${PORT_MODTOOLS_DEV_LOCAL:-3003}:3000"
+
+  modtools-dev-live:
+    ports:
+      - "0.0.0.0:${PORT_MODTOOLS_DEV_LIVE:-3006}:3000"
+
+  modtools-prod-local:
+    ports:
+      - "0.0.0.0:${PORT_MODTOOLS_PROD_LOCAL:-3013}:3001"
+
+  loki:
+    ports:
+      - "${PORT_LOKI:-3100}:3100"
+
+  postfix:
+    ports:
+      - "${PORT_POSTFIX_SMTP:-25}:25"
+
+  mcp-query-sanitizer:
+    ports:
+      - "${PORT_MCP_SANITIZER:-8084}:8080"
+
+  embedding-sidecar:
+    ports:
+      - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"
+
+  spatial:
+    ports:
+      - "0.0.0.0:${PORT_SPATIAL:-8196}:8196"
+
+  spatial-live:
+    ports:
+      - "0.0.0.0:${PORT_SPATIAL_LIVE:-8197}:8196"

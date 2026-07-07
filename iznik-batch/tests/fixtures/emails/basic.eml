@@ -1,0 +1,29 @@
+Return-Path: <test@test.com>
+From: "Test User" <test@test.com>
+To: testgroup@groups.ilovefreegle.org
+Subject: OFFER: Test item (Test Location)
+Date: Tue, 27 Jan 2026 10:00:00 +0000
+Message-ID: <test-message-id-12345@test.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="----=_Part_12345"
+
+------=_Part_12345
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+This is a test offer message.
+
+I have a test item available for collection.
+
+------=_Part_12345
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html>
+<body>
+<p>This is a test offer message.</p>
+<p>I have a test item available for collection.</p>
+</body>
+</html>
+------=_Part_12345--

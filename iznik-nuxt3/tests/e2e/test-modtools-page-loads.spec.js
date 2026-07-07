@@ -1,0 +1,240 @@
+// @ts-check
+/**
+ * Tests for ModTools page load integrity: member review, edits, chat review, admins.
+ */
+
+const { test, expect } = require('./fixtures')
+const { timeouts, environment } = require('./config')
+const { loginViaModTools } = require('./utils/user')
+
+const MODTOOLS_URL = environment.modtoolsBaseUrl
+
+// Helper: dismiss any overlay modals  that block interaction.
+async function dismissAllModals(page) {
+  await page.evaluate(() => {
+    document
+      .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+      .forEach((el) => {
+        el.classList.remove('show')
+        el.style.display = 'none'
+      })
+    document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove())
+    document.body.classList.remove('modal-open')
+    document.body.style.removeProperty('overflow')
+    document.body.style.removeProperty('padding-right')
+  })
+}
+
+// Helper: check page for common error indicators.
+async function assertNoErrors(page) {
+  const body = await page.textContent('body')
+  expect(body).not.toContain('something went wrong')
+  expect(body).not.toContain('Oh dear')
+  expect(body).not.toContain('undefined is not an object')
+  expect(body).not.toContain('Cannot read properties of undefined')
+}
+
+test.describe('ModTools Page Loads', () => {
+  test('Member Review page loads and shows members or "no members" message without errors', async ({
+    page,
+    testEnv,
+  }) => {
+    // Issue #22: Member Review page fails to load
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/members/review`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
+  test('Edits page loads without errors', async ({ page, testEnv }) => {
+    // Issue #25: Edits page fails
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/messages/edits`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
+  test('Chat Review page loads without "something went wrong"', async ({
+    page,
+    testEnv,
+  }) => {
+    // Issue #24: Chat Review shows "something went wrong"
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/chats/review`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
+  test('Admins page loads and shows admin users', async ({ page, testEnv }) => {
+    // Issue #20: Admins page broken
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/admins`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
+  test('AI Images page loads and shows image review or empty state without errors', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/images`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+
+    // Wait for the loading spinner to disappear (fetchReview completes).
+    const spinner = page.locator('.spinner-border').first()
+    if (await spinner.isVisible({ timeout: timeouts.ui.appearance }).catch(() => false)) {
+      await expect(spinner).not.toBeVisible({ timeout: timeouts.navigation.default })
+    }
+
+    // The page heading should always be visible after load.
+    const imageList = page.locator('h1:has-text("AI Images")')
+    await expect(imageList).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
+  test('Related Members page loads without errors', async ({
+    page,
+    testEnv,
+  }) => {
+    // Regression test for flash bug and single-community filter bug fixed in
+    // related.vue (Discourse #9631).
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/members/related`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
+  test('Related Members community filter triggers state reset without errors', async ({
+    page,
+    testEnv,
+  }) => {
+    // Regression test: changing the community dropdown must trigger the watch(groupid)
+    // callback (memberStore.clear, context reset, show reset, bump increment) so that
+    // stale data from the previous groupid is discarded and a fresh API fetch fires.
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/members/related`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+
+    // Exercise the watch(groupid) callback by changing the community dropdown.
+    const groupSelect = page.locator('#communitieslist')
+    await expect(groupSelect).toBeVisible({ timeout: timeouts.navigation.default })
+
+    // Find a non-zero group option to trigger the watcher (value "0" = "All my communities").
+    const options = await groupSelect.locator('option').all()
+    let changedGroup = false
+    for (const option of options) {
+      const value = await option.getAttribute('value')
+      if (value && value !== '0' && parseInt(value) > 0) {
+        await groupSelect.selectOption(value)
+        changedGroup = true
+        break
+      }
+    }
+
+    if (changedGroup) {
+      // After the group change the watcher fires (clear + re-fetch); no errors should appear.
+      await assertNoErrors(page)
+    }
+
+    expect(errors).toHaveLength(0)
+  })
+})

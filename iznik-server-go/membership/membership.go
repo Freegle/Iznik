@@ -1,0 +1,1579 @@
+package membership
+
+import (
+	"encoding/json"
+	"fmt"
+	stdlog "log"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
+	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+)
+
+// logMembershipAction inserts a mod log entry for membership actions.
+func logMembershipAction(logType string, subtype string, groupid uint64, userid uint64, byuser uint64, text string) {
+	var textPtr *string
+	if text != "" {
+		textPtr = &text
+	}
+	log.Log(log.LogEntry{
+		Type:    logType,
+		Subtype: subtype,
+		Groupid: &groupid,
+		User:    &userid,
+		Byuser:  &byuser,
+		Text:    textPtr,
+	})
+}
+
+// getRoleForGroup returns the caller's role in the given group ("Owner", "Moderator", "Member"),
+// or "" if not an approved member. Admin/Support users are treated as Owner.
+func getRoleForGroup(myid uint64, groupid uint64) string {
+	if auth.IsAdminOrSupport(myid) {
+		return utils.ROLE_OWNER
+	}
+	db := database.DBConn
+	var role string
+	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
+	return role
+}
+
+// isModOfGroup checks if the caller is a Moderator or Owner of the given group,
+// or has Admin/Support system role.
+func isModOfGroup(myid uint64, groupid uint64) bool {
+	db := database.DBConn
+	if db == nil {
+		return false
+	}
+
+	if auth.IsAdminOrSupport(myid) {
+		return true
+	}
+
+	if groupid == 0 {
+		return false
+	}
+
+	var role string
+	result := db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
+	if result.Error != nil {
+		stdlog.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
+		return false
+	}
+	return role == utils.ROLE_MODERATOR || role == utils.ROLE_OWNER
+}
+
+// PostMembershipsRequest is the body for POST /memberships (moderator actions).
+type PostMembershipsRequest struct {
+	Userid    uint64  `json:"userid"`
+	Groupid   uint64  `json:"groupid"`
+	Action    string  `json:"action"`
+	Subject   *string `json:"subject"`
+	Body      *string `json:"body"`
+	Stdmsgid  *uint64 `json:"stdmsgid"`
+	Ban       *bool   `json:"ban"`
+	Happiness *string `json:"happiness"`
+}
+
+// PostMemberships handles POST /memberships - moderator actions on memberships.
+// Actions: Hold, Release, Approve, Leave Approved Member, Reject,
+// Delete Approved Member, Ban, Unban, ReviewHold, ReviewRelease, ReviewIgnore, HappinessReviewed.
+//
+// @Summary Update membership actions
+// @Tags membership
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/memberships [post]
+func PostMemberships(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req PostMembershipsRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Groupid == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	if req.Userid == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "userid is required")
+	}
+
+	if req.Action == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "action is required")
+	}
+
+	// Permission check: caller must be mod/owner of group or admin/support.
+	if !isModOfGroup(myid, req.Groupid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+	}
+
+	db := database.DBConn
+
+	switch req.Action {
+	case "Hold":
+		if result := db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
+			myid, req.Userid, req.Groupid); result.Error != nil {
+			stdlog.Printf("Failed to hold membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
+		}
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_HOLD, req.Groupid, req.Userid, myid, "")
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "Release":
+		db.Exec("UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_RELEASE, req.Groupid, req.Userid, myid, "")
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "Leave Member", "Leave Approved Member":
+		// send modmail to the member without changing membership status.
+		// PHP memberships.php line 291-294: just calls $u->mail().
+		subject := ""
+		if req.Subject != nil {
+			subject = *req.Subject
+		}
+		body := ""
+		if req.Body != nil {
+			body = *req.Body
+		}
+		stdmsgid := uint64(0)
+		if req.Stdmsgid != nil {
+			stdmsgid = *req.Stdmsgid
+		}
+		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
+			"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member")
+		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "Approve":
+		if result := db.Exec("UPDATE memberships SET collection = ?, heldby = NULL WHERE userid = ? AND groupid = ?",
+			utils.COLLECTION_APPROVED, req.Userid, req.Groupid); result.Error != nil {
+			stdlog.Printf("Failed to approve membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
+		}
+
+		// Queue welcome/approval email if stdmsg content provided.
+		subject := ""
+		if req.Subject != nil {
+			subject = *req.Subject
+		}
+		body := ""
+		if req.Body != nil {
+			body = *req.Body
+		}
+		if subject != "" || body != "" {
+			db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
+				"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member")
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "Reject", "Delete Approved Member":
+		if result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection IN (?, ?)",
+			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED); result.Error != nil {
+			stdlog.Printf("Failed to reject membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
+		}
+
+		// Queue rejection notification if stdmsg content provided.
+		subject := ""
+		if req.Subject != nil {
+			subject = *req.Subject
+		}
+		body := ""
+		if req.Body != nil {
+			body = *req.Body
+		}
+		stdmsgid := uint64(0)
+		if req.Stdmsgid != nil {
+			stdmsgid = *req.Stdmsgid
+		}
+		if subject != "" || body != "" {
+			db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
+				"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action)
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "Ban":
+		// V1 parity: removeMembership($ban=true) deletes the memberships row entirely, then
+		// writes to users_banned. There is no memberships.collection='Banned' row in V1.
+		if result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid); result.Error != nil {
+			stdlog.Printf("Failed to delete membership for ban user %d group %d: %v", req.Userid, req.Groupid, result.Error)
+		}
+		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
+			req.Userid, req.Groupid, myid)
+		// V1 parity: removeMembership($ban=true) logs type=Group/subtype=Left/text="via ban"
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, req.Userid, myid, "via ban")
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "Unban":
+		// V1 parity: unban() deletes from users_banned only — there is no memberships row to delete.
+		db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid)
+		// V1 parity: unban() does not log.
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "ReviewHold":
+		// ReviewHold is used in the chat review context - sets heldby on the membership.
+		db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
+			myid, req.Userid, req.Groupid)
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "ReviewRelease":
+		// ReviewRelease clears the heldby on the membership (chat review context).
+		db.Exec("UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid)
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "ReviewIgnore":
+		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
+		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
+			"WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid)
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	case "HappinessReviewed":
+		if req.Happiness == nil {
+			return fiber.NewError(fiber.StatusBadRequest, "happiness is required for HappinessReviewed")
+		}
+		happinessID, err := strconv.ParseUint(*req.Happiness, 10, 64)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "happiness must be a valid ID")
+		}
+		db.Exec("UPDATE messages_outcomes SET reviewed = 1 WHERE id = ?", happinessID)
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	default:
+		return fiber.NewError(fiber.StatusBadRequest, "Unknown action: "+req.Action)
+	}
+}
+
+// GetMembershipsMember is the response struct for individual members in GetMemberships.
+type GetMembershipsMember struct {
+	ID                  uint64                  `json:"id"`
+	Userid              uint64                  `json:"userid"`
+	Groupid             uint64                  `json:"groupid"`
+	Role                string                  `json:"role"`
+	Collection          string                  `json:"collection"`
+	Added               *string                 `json:"added"`
+	Heldby              *uint64                 `json:"heldby"`
+	Fullname            *string                 `json:"fullname"`
+	Firstname           *string                 `json:"firstname"`
+	Lastname            *string                 `json:"lastname"`
+	Displayname         string                  `json:"displayname" gorm:"-"`
+	SettingsRaw         *string                 `json:"-" gorm:"column:settings"`
+	Settings            *map[string]interface{} `json:"settings,omitempty" gorm:"-"`
+	Emailfrequency      *int                    `json:"emailfrequency"`
+	OurPostingStatus    *string                 `json:"ourpostingstatus" gorm:"column:ourPostingStatus"`
+	Eventsallowed       *int                    `json:"eventsallowed"`
+	Volunteeringallowed *int                    `json:"volunteeringallowed"`
+	Bandate             *string                 `json:"bandate"`
+	Bannedby            *uint64                 `json:"bannedby"`
+	Reviewrequestedat   *string                 `json:"reviewrequestedat"`
+	Reviewedat          *string                 `json:"reviewedat"`
+	Reviewreason        *string                 `json:"reviewreason"`
+	Engagement          *string                 `json:"engagement"`
+	Lastmodmail         *string                 `json:"lastmodmail,omitempty"`
+	Bouncing            bool                    `json:"bouncing" gorm:"column:bouncing"`
+}
+
+// GetMemberships handles GET /memberships - list group members (moderator use).
+// Query params: groupid (required for most collections), collection (default "Approved"), limit (default 100), search (optional).
+// Special collection "Happiness" queries messages_outcomes instead of memberships.
+//
+// @Summary Get memberships for modtools
+// @Tags membership
+// @Produce json
+// @Param groupid query integer false "Group ID"
+// @Param collection query string false "Collection"
+// @Param limit query integer false "Max to return"
+// @Param context query integer false "Pagination cursor"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/memberships [get]
+func GetMemberships(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	groupid := uint64(c.QueryInt("groupid", 0))
+	collection := c.Query("collection", "Approved")
+	limit := c.QueryInt("limit", 100)
+
+	if collection == "Happiness" {
+		return getHappinessMembers(c, myid, groupid, limit)
+	}
+
+	if collection == "Spam" {
+		// Member review: members flagged for review across all mod groups.
+		return getSpamMembers(c, myid, groupid, limit)
+	}
+
+	if collection == "Related" {
+		return getRelatedMembers(c, myid, groupid, limit)
+	}
+
+	search := c.Query("search", "")
+	filter := c.QueryInt("filter", 0)
+	contextID := uint64(c.QueryInt("context", 0))
+
+	if groupid == 0 {
+		if search == "" && filter == 0 {
+			// No group, no search, no filter — return empty list.
+			return c.JSON([]GetMembershipsMember{})
+		}
+		// filter or search with no specific group — fan out to all of mod's groups.
+		// Fall through.
+	} else if !isModOfGroup(myid, groupid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+	}
+
+	db := database.DBConn
+
+	// Handle Banned filter separately — V1 stores bans in users_banned only (no memberships row).
+	// V1's getBanned() queries users_banned directly and synthesises 'Banned' as the collection.
+	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
+	if filter == 5 {
+		var members []GetMembershipsMember
+		contextWhere := ""
+		bannedArgs := []interface{}{groupid}
+		if contextID > 0 {
+			contextWhere = " AND b.userid < ?"
+			bannedArgs = append(bannedArgs, contextID)
+		}
+		bannedArgs = append(bannedArgs, limit)
+
+		db.Raw("SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
+			"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
+			"u.fullname, u.firstname, u.lastname, u.engagement, "+
+			"b.userid AS id, NULL AS heldby, NULL AS settings, "+
+			"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
+			"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason "+
+			"FROM users_banned b "+
+			"JOIN users u ON u.id = b.userid "+
+			"WHERE b.groupid = ?"+contextWhere+
+			" ORDER BY b.userid DESC LIMIT ?",
+			bannedArgs...).Scan(&members)
+		if members == nil {
+			members = make([]GetMembershipsMember, 0)
+		}
+		enrichMembers(members)
+
+		var nextContext interface{}
+		if len(members) == limit {
+			nextContext = members[len(members)-1].ID
+		}
+		return c.JSON(fiber.Map{"members": members, "context": nextContext})
+	}
+
+	// Handle "Received mod mails" filter — returns members who have been sent mod mails,
+	// ordered by join date (m.added DESC) to match the default listing order.
+	if filter == 6 {
+		var members []GetMembershipsMember
+		// Join logs instead of users_modmails: users_modmails is pruned at 30 days by the
+		// users:update-modmails cron, so an INNER JOIN on it silently drops members whose
+		// only modmails are older than ~30 days.  The logs table is not pruned and is the
+		// authoritative source; criteria match the modmailsonly filter in logs/logs.go.
+		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
+			"u.fullname, u.firstname, u.lastname, m.settings, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+			"b.date AS bandate, b.byuser AS bannedby, "+
+			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
+			"MAX(l.timestamp) AS lastmodmail "+
+			"FROM memberships m "+
+			"JOIN users u ON u.id = m.userid "+
+			"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid "+
+			"INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
+			"AND ((l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Replied')) "+
+			"OR (l.type = 'User' AND l.subtype IN ('Mailed', 'Rejected', 'Deleted'))) "+
+			"AND l.byuser != l.user "+
+			"WHERE m.groupid = ? AND m.collection = ? "+
+			"GROUP BY m.userid "+
+			"ORDER BY m.added DESC LIMIT ?",
+			groupid, collection, limit).Scan(&members)
+		if members == nil {
+			members = make([]GetMembershipsMember, 0)
+		}
+		enrichMembers(members)
+		return c.JSON(members)
+	}
+
+	var members []GetMembershipsMember
+
+	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
+		"u.fullname, u.firstname, u.lastname, m.settings, " +
+		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
+		"b.date AS bandate, b.byuser AS bannedby, " +
+		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
+	fromClause := "FROM memberships m " +
+		"JOIN users u ON u.id = m.userid " +
+		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
+
+	// Build filter-specific clauses.
+	filterJoin := ""
+	filterWhere := ""
+	switch filter {
+	case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
+		filterWhere = " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
+	case 2: // Moderation team
+		filterWhere = " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
+	case 3: // Bouncing
+		filterWhere = " AND u.bouncing = 1"
+	}
+
+	if search != "" {
+		// Build group filter: specific group or all of mod's groups.
+		groupFilter := "m.groupid = ?"
+		var groupArg interface{} = groupid
+		if groupid == 0 {
+			// Search across all of the mod's active groups.
+			groupFilter = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
+			groupArg = myid
+		}
+
+		// If search is a pure number, match on userid directly (fast indexed lookup).
+		// Otherwise do LIKE search on name/email.
+		searchID, numErr := strconv.ParseUint(search, 10, 64)
+		if numErr == nil && searchID > 0 {
+			db.Raw("SELECT "+selectCols+" "+
+				fromClause+filterJoin+" "+
+				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
+				" AND m.userid = ? "+
+				"ORDER BY m.added DESC LIMIT ?",
+				groupArg, collection, searchID, limit).Scan(&members)
+		} else {
+			searchPattern := "%" + search + "%"
+			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
+			// users, created with fullname=NULL) have their name only in firstname/lastname,
+			// so a fullname-only LIKE silently excludes them from name search even though
+			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
+			db.Raw("SELECT "+selectCols+" "+
+				fromClause+filterJoin+
+				" LEFT JOIN users_emails ue ON ue.userid = m.userid "+
+				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) "+
+				"GROUP BY m.id "+
+				"ORDER BY m.added DESC LIMIT ?",
+				groupArg, collection, searchPattern, searchPattern, searchPattern, searchPattern, limit).Scan(&members)
+		}
+	} else {
+		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
+		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
+		contextWhere := ""
+		var groupCondition string
+		var queryArgs []interface{}
+
+		if groupid == 0 {
+			// All my communities: fan out to every group this mod moderates.
+			groupCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
+			queryArgs = []interface{}{myid, collection}
+		} else {
+			groupCondition = "m.groupid = ?"
+			queryArgs = []interface{}{groupid, collection}
+		}
+
+		if contextID > 0 {
+			contextWhere = " AND m.id < ?"
+			queryArgs = append(queryArgs, contextID)
+		}
+		queryArgs = append(queryArgs, limit)
+
+		result := db.Raw("SELECT "+selectCols+" "+
+			fromClause+filterJoin+" "+
+			"WHERE "+groupCondition+" AND m.collection = ?"+filterWhere+contextWhere+
+			" ORDER BY m.id DESC LIMIT ?",
+			queryArgs...).Scan(&members)
+		if result.Error != nil {
+			stdlog.Printf("Failed to query memberships group %d collection %s: %v", groupid, collection, result.Error)
+		}
+	}
+
+	if members == nil {
+		members = make([]GetMembershipsMember, 0)
+	}
+
+	enrichMembers(members)
+
+	// Return pagination context = last member's ID when a full page was returned (cursor for next page).
+	var nextContext interface{}
+	if len(members) == limit {
+		nextContext = members[len(members)-1].ID
+	}
+
+	// When a filter is active, include the total matching count so the UI can display it.
+	if filter > 0 {
+		var filterCount int64
+
+		countFrom := "FROM memberships m JOIN users u ON u.id = m.userid"
+		var countCondition string
+		var countArgs []interface{}
+		if groupid == 0 {
+			countCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
+			countArgs = []interface{}{myid, collection}
+		} else {
+			countCondition = "m.groupid = ?"
+			countArgs = []interface{}{groupid, collection}
+		}
+		db.Raw("SELECT COUNT(DISTINCT m.userid) "+countFrom+filterJoin+
+			" WHERE "+countCondition+" AND m.collection = ?"+filterWhere,
+			countArgs...).Scan(&filterCount)
+
+		return c.JSON(fiber.Map{
+			"members":     members,
+			"filtercount": filterCount,
+			"context":     nextContext,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"members": members,
+		"context": nextContext,
+	})
+}
+
+// enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.
+func enrichMembers(members []GetMembershipsMember) {
+	for i := range members {
+		m := &members[i]
+
+		// Compute displayname from fullname/firstname/lastname.
+		if m.Fullname != nil && *m.Fullname != "" {
+			m.Displayname = *m.Fullname
+		} else {
+			parts := []string{}
+			if m.Firstname != nil && *m.Firstname != "" {
+				parts = append(parts, *m.Firstname)
+			}
+			if m.Lastname != nil && *m.Lastname != "" {
+				parts = append(parts, *m.Lastname)
+			}
+			m.Displayname = strings.Join(parts, " ")
+		}
+
+		// NULL ourPostingStatus defaults to MODERATED.
+		// DEFAULT stays as DEFAULT — it's an explicit status (Group.php line 967).
+		if m.OurPostingStatus == nil || *m.OurPostingStatus == "" {
+			moderated := utils.POSTING_STATUS_MODERATED
+			m.OurPostingStatus = &moderated
+		}
+
+		// Parse settings JSON.
+		if m.SettingsRaw != nil && *m.SettingsRaw != "" {
+			var settings map[string]interface{}
+			if json.Unmarshal([]byte(*m.SettingsRaw), &settings) == nil {
+				m.Settings = &settings
+			}
+		}
+	}
+}
+
+// getSpamMembers returns members flagged for review (reviewrequestedat IS NOT NULL and
+// the flag is more recent than the last review, or never reviewed).
+// Only returns memberships on groups the viewer moderates.
+// Used by the Member Review page.
+func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error {
+	db := database.DBConn
+
+	// Get all groups this user moderates.
+	var modGroupIDs []uint64
+
+	if groupid > 0 {
+		if !isModOfGroup(myid, groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+		modGroupIDs = []uint64{groupid}
+	} else {
+		modGroupIDs = user.GetActiveModGroupIDs(myid)
+	}
+
+	if len(modGroupIDs) == 0 {
+		return c.JSON(make([]GetMembershipsMember, 0))
+	}
+
+	// Return flagged memberships on groups the mod moderates.
+	var members []GetMembershipsMember
+
+	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
+		"u.fullname, u.firstname, u.lastname, m.settings, " +
+		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
+		"b.date AS bandate, b.byuser AS bannedby, " +
+		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
+	fromClause := "FROM memberships m " +
+		"JOIN users u ON u.id = m.userid " +
+		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
+
+	// Show members where reviewrequestedat is set AND either never reviewed or the flag
+	// is more recent than the last review. This matches the frontend needsReview logic
+	// exactly, preventing "no buttons" where the backend returns a member but the
+	// frontend considers them already reviewed.
+	result := db.Raw("SELECT "+selectCols+" "+
+		fromClause+" "+
+		"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
+		"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
+		"ORDER BY m.userid DESC LIMIT ?",
+		modGroupIDs, limit).Scan(&members)
+	if result.Error != nil {
+		stdlog.Printf("Failed to query spam members for user %d: %v", myid, result.Error)
+	}
+
+	if members == nil {
+		members = make([]GetMembershipsMember, 0)
+	}
+
+	enrichMembers(members)
+
+	return c.JSON(members)
+}
+
+// getRelatedMembers returns pairs of users who appear to be related (same person / same household)
+// based on the users_related table. Returns IDs only — frontend fetches user details from stores.
+// User.php listRelated() filtering logic (deleted, no logins → auto-notified).
+func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error {
+	db := database.DBConn
+
+	var modGroupIDs []uint64
+	if groupid > 0 {
+		if !isModOfGroup(myid, groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+		modGroupIDs = []uint64{groupid}
+	} else {
+		modGroupIDs = user.GetActiveModGroupIDs(myid)
+	}
+
+	if len(modGroupIDs) == 0 {
+		return c.JSON(make([]fiber.Map, 0))
+	}
+
+	// Query related pairs where at least one user is in a modded group.
+	// user1 < user2, notified = 0.
+	type relatedRow struct {
+		ID    uint64 `gorm:"column:id"`
+		User1 uint64 `gorm:"column:user1"`
+		User2 uint64 `gorm:"column:user2"`
+	}
+
+	var rows []relatedRow
+	db.Raw("SELECT DISTINCT id, user1, user2 FROM ("+
+		"SELECT users_related.id, user1, user2 FROM users_related "+
+		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
+		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
+		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
+		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
+		"UNION "+
+		"SELECT users_related.id, user1, user2 FROM users_related "+
+		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
+		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
+		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
+		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
+		") t ORDER BY id DESC LIMIT ?", modGroupIDs, modGroupIDs, limit).Scan(&rows)
+
+	if len(rows) == 0 {
+		return c.JSON(make([]fiber.Map, 0))
+	}
+
+	// filter out pairs where either user has no logins (can't log in).
+	// The SQL JOINs already filter deleted users and non-User systemroles.
+	// Check logins in bulk.
+	uidSet := make(map[uint64]bool)
+	for _, r := range rows {
+		uidSet[r.User1] = true
+		uidSet[r.User2] = true
+	}
+	uidList := make([]uint64, 0, len(uidSet))
+	for uid := range uidSet {
+		uidList = append(uidList, uid)
+	}
+
+	type loginCount struct {
+		Userid uint64 `gorm:"column:userid"`
+		Count  int    `gorm:"column:count"`
+	}
+	var loginCounts []loginCount
+	db.Raw("SELECT userid, COUNT(*) as count FROM users_logins WHERE userid IN ? GROUP BY userid", uidList).Scan(&loginCounts)
+	hasLogins := make(map[uint64]bool)
+	for _, lc := range loginCounts {
+		if lc.Count > 0 {
+			hasLogins[lc.Userid] = true
+		}
+	}
+
+	result := make([]fiber.Map, 0, len(rows))
+	for _, r := range rows {
+		if !hasLogins[r.User1] || !hasLogins[r.User2] {
+			// Auto-mark as notified since these are not actionable.
+			db.Exec("UPDATE users_related SET notified = 1 WHERE id = ?", r.ID)
+			continue
+		}
+
+		result = append(result, fiber.Map{
+			"id":    r.ID,
+			"user1": r.User1,
+			"user2": r.User2,
+		})
+	}
+
+	return c.JSON(result)
+}
+
+// HappinessMember is the response struct for happiness/feedback items.
+type HappinessMember struct {
+	ID        uint64          `json:"id"`
+	Timestamp string          `json:"timestamp"`
+	Outcome   *string         `json:"outcome"`
+	Happiness *string         `json:"happiness"`
+	Comments  *string         `json:"comments"`
+	Reviewed  int             `json:"reviewed"`
+	Fromuser  uint64          `json:"fromuser"`
+	Groupid   uint64          `json:"groupid"`
+	User      HappinessUser   `json:"user"`
+	Message   HappinessMsg    `json:"message"`
+}
+
+// HappinessUser is the user info embedded in happiness results.
+type HappinessUser struct {
+	ID          uint64  `json:"id"`
+	Displayname string  `json:"displayname"`
+	Email       *string `json:"email"`
+}
+
+// HappinessMsg is the message info embedded in happiness results.
+type HappinessMsg struct {
+	ID      uint64  `json:"id"`
+	Subject *string `json:"subject"`
+}
+
+// Rating is the response struct for user ratings in the feedback page.
+type Rating struct {
+	ID               uint64  `json:"id"`
+	Rater            uint64  `json:"rater"`
+	Ratee            uint64  `json:"ratee"`
+	Rating           *string `json:"rating"`
+	Reason           *string `json:"reason"`
+	Text             *string `json:"text"`
+	Visible          bool    `json:"visible"`
+	Timestamp        string  `json:"timestamp"`
+	Reviewrequired   int     `json:"reviewrequired"`
+	Groupid          uint64  `json:"groupid"`
+	Raterdisplayname string  `json:"raterdisplayname"`
+	Rateedisplayname string  `json:"rateedisplayname"`
+}
+
+// ratingRow is the raw DB row for ratings.
+type ratingRow struct {
+	ID               uint64  `gorm:"column:id"`
+	Rater            uint64  `gorm:"column:rater"`
+	Ratee            uint64  `gorm:"column:ratee"`
+	Rating           *string `gorm:"column:rating"`
+	Reason           *string `gorm:"column:reason"`
+	Text             *string `gorm:"column:text"`
+	Visible          bool    `gorm:"column:visible"`
+	Timestamp        string  `gorm:"column:timestamp"`
+	Reviewrequired   int     `gorm:"column:reviewrequired"`
+	Groupid          uint64  `gorm:"column:groupid"`
+	Raterdisplayname string  `gorm:"column:raterdisplayname"`
+	Rateedisplayname string  `gorm:"column:rateedisplayname"`
+}
+
+// HappinessResponse wraps happiness members and ratings.
+type HappinessResponse struct {
+	Members []HappinessMember `json:"members"`
+	Ratings []Rating          `json:"ratings"`
+}
+
+// happinessRow is the raw DB row before assembly.
+type happinessRow struct {
+	ID        uint64  `gorm:"column:id"`
+	Timestamp string  `gorm:"column:timestamp"`
+	Msgid     uint64  `gorm:"column:msgid"`
+	Outcome   *string `gorm:"column:outcome"`
+	Happiness *string `gorm:"column:happiness"`
+	Comments  *string `gorm:"column:comments"`
+	Reviewed  int     `gorm:"column:reviewed"`
+	Fromuser  uint64  `gorm:"column:fromuser"`
+	Groupid   uint64  `gorm:"column:groupid"`
+	Subject   *string `gorm:"column:subject"`
+}
+
+// Auto-generated outcome comments to filter out (not real feedback).
+var happinessFilterComments = []string{
+	"Sorry, this is no longer available.",
+	"Thanks, this has now been taken.",
+	"Thanks, I'm no longer looking for this.",
+	"Sorry, this has now been taken.",
+	"Thanks for the interest, but this has now been taken.",
+	"Thanks, these have now been taken.",
+	"Thanks, this has now been received.",
+	"Withdrawn on user unsubscribe",
+	"Auto-Expired",
+}
+
+// getHappinessMembers handles the Happiness collection - queries messages_outcomes.
+func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error {
+	db := database.DBConn
+
+	// Determine which group IDs to query.
+	var groupIDs []uint64
+	if groupid > 0 {
+		if !isModOfGroup(myid, groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+		groupIDs = []uint64{groupid}
+	} else {
+		// No group specified - get all groups where caller is a mod.
+		groupIDs = user.GetActiveModGroupIDs(myid)
+		if len(groupIDs) == 0 {
+			return c.JSON([]HappinessMember{})
+		}
+	}
+
+	filter := c.Query("filter", "")
+
+	// Build filter clause for happiness level.
+	filterClause := ""
+	switch filter {
+	case "Happy":
+		filterClause = " AND mo.happiness = 'Happy'"
+	case "Unhappy":
+		filterClause = " AND mo.happiness = 'Unhappy'"
+	case "Fine":
+		filterClause = " AND (mo.happiness IS NULL OR mo.happiness = 'Fine')"
+	}
+
+	// Only show recent outcomes (last 31 days).
+	start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+
+	// Build the comments filter to exclude auto-generated messages.
+	commentsFilter := " AND mo.comments IS NOT NULL"
+	for i := range happinessFilterComments {
+		if i == 0 {
+			commentsFilter += " AND mo.comments NOT IN (?"
+		} else {
+			commentsFilter += ", ?"
+		}
+	}
+	commentsFilter += ")"
+
+	// Build group ID placeholders.
+	groupPlaceholders := make([]string, len(groupIDs))
+	groupArgs := make([]interface{}, len(groupIDs))
+	for i, gid := range groupIDs {
+		groupPlaceholders[i] = "?"
+		groupArgs[i] = gid
+	}
+	groupIn := strings.Join(groupPlaceholders, ",")
+
+	// Build query args in order.
+	args := make([]interface{}, 0, len(groupIDs)+len(happinessFilterComments)+2)
+	args = append(args, groupArgs...)
+	args = append(args, start)
+	for _, comment := range happinessFilterComments {
+		args = append(args, comment)
+	}
+	args = append(args, start)
+	args = append(args, limit)
+
+	sql := fmt.Sprintf(
+		"SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
+			"m.fromuser, mg.groupid, m.subject "+
+			"FROM messages_outcomes mo "+
+			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) "+
+			"INNER JOIN messages m ON m.id = mo.msgid "+
+			"WHERE mo.timestamp > ?"+
+			"%s%s"+
+			" AND mg.arrival > ?"+
+			" ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?",
+		groupIn, commentsFilter+filterClause, "")
+
+	var rows []happinessRow
+	db.Raw(sql, args...).Scan(&rows)
+
+	if rows == nil {
+		ratings := getVisibleRatings(db, groupIDs)
+		return c.JSON(HappinessResponse{Members: []HappinessMember{}, Ratings: ratings})
+	}
+
+	// Collect unique user IDs for batch lookup.
+	userIDSet := make(map[uint64]bool)
+	for _, r := range rows {
+		userIDSet[r.Fromuser] = true
+	}
+
+	// Fetch user display names.
+	type userInfo struct {
+		ID       uint64  `gorm:"column:id"`
+		Fullname *string `gorm:"column:fullname"`
+	}
+	userIDs := make([]uint64, 0, len(userIDSet))
+	for uid := range userIDSet {
+		userIDs = append(userIDs, uid)
+	}
+	var users []userInfo
+	if len(userIDs) > 0 {
+		db.Raw("SELECT id, fullname FROM users WHERE id IN ?", userIDs).Scan(&users)
+	}
+	userMap := make(map[uint64]*userInfo)
+	for i := range users {
+		userMap[users[i].ID] = &users[i]
+	}
+
+	// Fetch preferred emails for each user.
+	type emailInfo struct {
+		Userid    uint64 `gorm:"column:userid"`
+		Email     string `gorm:"column:email"`
+		Preferred int    `gorm:"column:preferred"`
+	}
+	var emails []emailInfo
+	if len(userIDs) > 0 {
+		db.Raw("SELECT userid, email, preferred FROM users_emails WHERE userid IN ? ORDER BY preferred DESC",
+			userIDs).Scan(&emails)
+	}
+	emailMap := make(map[uint64]string)
+	for _, e := range emails {
+		if _, ok := emailMap[e.Userid]; !ok || e.Preferred == 1 {
+			emailMap[e.Userid] = e.Email
+		}
+	}
+
+	// Assemble results, deduplicating by msgid.
+	seenMsgids := make(map[uint64]bool)
+	results := make([]HappinessMember, 0, len(rows))
+	for _, r := range rows {
+		if seenMsgids[r.Msgid] {
+			continue
+		}
+		seenMsgids[r.Msgid] = true
+
+		displayname := ""
+		if ui, ok := userMap[r.Fromuser]; ok && ui.Fullname != nil {
+			displayname = *ui.Fullname
+		}
+		var email *string
+		if e, ok := emailMap[r.Fromuser]; ok {
+			email = &e
+		}
+
+		results = append(results, HappinessMember{
+			ID:        r.ID,
+			Timestamp: r.Timestamp,
+			Outcome:   r.Outcome,
+			Happiness: r.Happiness,
+			Comments:  r.Comments,
+			Reviewed:  r.Reviewed,
+			Fromuser:  r.Fromuser,
+			Groupid:   r.Groupid,
+			User: HappinessUser{
+				ID:          r.Fromuser,
+				Displayname: displayname,
+				Email:       email,
+			},
+			Message: HappinessMsg{
+				ID:      r.Msgid,
+				Subject: r.Subject,
+			},
+		})
+	}
+
+	// Fetch visible ratings for the moderator's groups.
+	ratings := getVisibleRatings(db, groupIDs)
+
+	return c.JSON(HappinessResponse{Members: results, Ratings: ratings})
+}
+
+// getVisibleRatings returns ratings visible to the moderator for the given groups.
+// Both rater and ratee must be members of the same group.
+func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
+	if len(groupIDs) == 0 {
+		return []Rating{}
+	}
+
+	since := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+
+	groupPlaceholders := make([]string, len(groupIDs))
+	groupArgs := make([]interface{}, len(groupIDs))
+	for i, gid := range groupIDs {
+		groupPlaceholders[i] = "?"
+		groupArgs[i] = gid
+	}
+	groupIn := strings.Join(groupPlaceholders, ",")
+
+	args := make([]interface{}, 0, len(groupArgs)*2+1)
+	args = append(args, since)
+	args = append(args, groupArgs...)
+	args = append(args, groupArgs...)
+
+	sql := fmt.Sprintf(
+		"SELECT ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
+			"ratings.text, ratings.visible, ratings.timestamp, ratings.reviewrequired, "+
+			"m1.groupid, "+
+			"CASE WHEN u1.fullname IS NOT NULL THEN u1.fullname ELSE CONCAT(u1.firstname, ' ', u1.lastname) END AS raterdisplayname, "+
+			"CASE WHEN u2.fullname IS NOT NULL THEN u2.fullname ELSE CONCAT(u2.firstname, ' ', u2.lastname) END AS rateedisplayname "+
+			"FROM ratings "+
+			"INNER JOIN memberships m1 ON m1.userid = ratings.rater "+
+			"INNER JOIN memberships m2 ON m2.userid = ratings.ratee "+
+			"INNER JOIN users u1 ON ratings.rater = u1.id "+
+			"INNER JOIN users u2 ON ratings.ratee = u2.id "+
+			"WHERE ratings.timestamp >= ? "+
+			"AND m1.groupid IN (%s) "+
+			"AND m2.groupid IN (%s) "+
+			"AND m1.groupid = m2.groupid "+
+			"AND ratings.rating IS NOT NULL "+
+			"GROUP BY ratings.id "+
+			"ORDER BY ratings.timestamp DESC",
+		groupIn, groupIn)
+
+	var rows []ratingRow
+	db.Raw(sql, args...).Scan(&rows)
+
+	if rows == nil {
+		return []Rating{}
+	}
+
+	ratings := make([]Rating, len(rows))
+	for i, r := range rows {
+		ratings[i] = Rating{
+			ID:               r.ID,
+			Rater:            r.Rater,
+			Ratee:            r.Ratee,
+			Rating:           r.Rating,
+			Reason:           r.Reason,
+			Text:             r.Text,
+			Visible:          r.Visible,
+			Timestamp:        r.Timestamp,
+			Reviewrequired:   r.Reviewrequired,
+			Groupid:          r.Groupid,
+			Raterdisplayname: r.Raterdisplayname,
+			Rateedisplayname: r.Rateedisplayname,
+		}
+	}
+
+	return ratings
+}
+
+// PutMembershipsRequest is the body for PUT /memberships (join group).
+type PutMembershipsRequest struct {
+	Userid  uint64 `json:"userid"`
+	Groupid uint64 `json:"groupid"`
+	Manual  *bool  `json:"manual"`
+}
+
+// PutMemberships handles PUT /memberships - user joins a group.
+// Supports three auth modes:
+//   - Partner key: partner query param with tnuserid/email for TN integration
+//   - Mod-add: JWT auth where userid != myid and caller is mod of the group
+//   - Self-join: JWT auth where userid == myid (or omitted)
+//
+// @Summary Subscribe user to group
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param partner query string false "Partner API key"
+// @Param tnuserid query integer false "Trash Nothing user ID (partner auth)"
+// @Param email query string false "User email (partner auth)"
+// @Param body body PutMembershipsRequest true "Request body"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Router /api/memberships [put]
+func PutMemberships(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	// Partner auth path: if partner query param is present, use partner key authentication.
+	partnerKey := c.Query("partner")
+	if partnerKey != "" {
+		return putMembershipsPartner(c, db, partnerKey)
+	}
+
+	// JWT auth path.
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req PutMembershipsRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Groupid == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	userid := req.Userid
+	if userid == 0 {
+		userid = myid
+	}
+
+	// Non-self joins require moderator permissions on the target group.
+	if userid != myid {
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+	}
+
+	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual)
+}
+
+// putMembershipsPartner handles the partner auth path for PUT /memberships.
+func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
+	_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
+	if err != nil {
+		return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+	}
+
+	groupidStr := c.Query("groupid", "0")
+	groupid, _ := strconv.ParseUint(groupidStr, 10, 64)
+	if groupid == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	email := c.Query("email", "")
+	tnuseridStr := c.Query("tnuserid", "0")
+	tnuserid, _ := strconv.ParseUint(tnuseridStr, 10, 64)
+
+	// Validate email domain matches partner domain.
+	if email != "" && domain != "" {
+		parts := strings.SplitN(email, "@", 2)
+		if len(parts) == 2 && !strings.EqualFold(parts[1], domain) {
+			return fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+		}
+	}
+
+	// Check the group exists.
+	var groupExists int64
+	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
+	if groupExists == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Group not found")
+	}
+
+	// Find or create the user.
+	userid := user.FindByTNIdOrEmail(db, tnuserid, email)
+	if userid == 0 {
+		userid, err = user.CreatePartnerUser(db, tnuserid, email)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
+		}
+	}
+
+	// Check if banned.
+	var bannedCount int64
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
+		userid, groupid).Scan(&bannedCount)
+	if bannedCount > 0 {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
+	}
+
+	// Check if already a member.
+	var existingRole string
+	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+		userid, groupid).Scan(&existingRole)
+	if existingRole != "" {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
+	}
+
+	// Insert membership.
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
+		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+
+	// Record in memberships_history with processingrequired=1 so the
+	// Laravel batch (memberships:process) sends the group welcome email,
+	// runs spam checks, and applies review flags. Without this row the
+	// cron has nothing to do and welcomes are silently dropped.
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+		userid, groupid, utils.COLLECTION_APPROVED)
+
+	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
+}
+
+// addMemberToGroup is the shared logic for adding a user to a group (JWT auth paths).
+// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"".
+func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
+	// Check the group exists.
+	var groupExists int64
+	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
+	if groupExists == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Group not found")
+	}
+
+	// Check if already a member.
+	var existingRole string
+	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+		userid, groupid).Scan(&existingRole)
+	if existingRole != "" {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
+	}
+
+	// Check if banned.
+	var bannedCount int64
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
+		userid, groupid).Scan(&bannedCount)
+	if bannedCount > 0 {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
+	}
+
+	// Insert membership as approved member.
+	result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
+		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+
+	if result.RowsAffected > 0 {
+		// Record in memberships_history with processingrequired=1 so the
+		// Laravel batch (memberships:process) sends the group welcome email,
+		// runs spam checks, and applies review flags. Without this row the
+		// cron has nothing to do and welcomes are silently dropped.
+		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+			userid, groupid, utils.COLLECTION_APPROVED)
+
+		// V1 parity (User.php:944-957): log text records how the user joined.
+		// manual=true→"Manual" (clicked Join button), false→"Auto" (auto-joined
+		// to reply/post), nil→"" (method not specified).
+		joinText := ""
+		if manual != nil {
+			if *manual {
+				joinText = "Manual"
+			} else {
+				joinText = "Auto"
+			}
+		}
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, joinText)
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
+}
+
+// DeleteMembershipsRequest is for DELETE /memberships (leave group or ban member).
+type DeleteMembershipsRequest struct {
+	Userid  uint64 `json:"userid"`
+	Groupid uint64 `json:"groupid"`
+	Ban     *bool  `json:"ban"`
+}
+
+// DeleteMemberships handles DELETE /memberships - user leaves a group.
+// Supports partner auth (partner query param) or JWT auth.
+// Frontend $delv2 sends JSON body (BaseAPI.js line 166 JSON-stringifies config.params for non-GET/POST).
+//
+// @Summary Unsubscribe user from group
+// @Tags memberships
+// @Accept json
+// @Produce json
+// @Param partner query string false "Partner API key"
+// @Param tnuserid query integer false "Trash Nothing user ID (partner auth)"
+// @Param email query string false "User email (partner auth)"
+// @Param body body DeleteMembershipsRequest true "Request body"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Router /api/memberships [delete]
+func DeleteMemberships(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	// Partner auth path.
+	partnerKey := c.Query("partner")
+	if partnerKey != "" {
+		return deleteMembershipsPartner(c, db, partnerKey)
+	}
+
+	// JWT auth path.
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req DeleteMembershipsRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Groupid == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	userid := req.Userid
+	if userid == 0 {
+		userid = myid
+	}
+
+	// Handle ban. V1 parity: delete memberships row entirely, insert into users_banned.
+	if req.Ban != nil && *req.Ban {
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+		db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userid, req.Groupid)
+		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
+			userid, req.Groupid, myid)
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "via ban")
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
+
+	// Self-leave is always allowed. Non-self removals require mod/owner of the group.
+	if userid != myid {
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
+		}
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, req.Groupid, userid, myid, "")
+	}
+
+	// Remove the membership.
+	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+		userid, req.Groupid, utils.COLLECTION_APPROVED)
+
+	if result.RowsAffected > 0 {
+		// V1 parity: User::removeMembership() always logs Group/Left when the
+		// DELETE affects rows (User.php:1085-1095). Both self-leave and
+		// mod-removes-other need this — otherwise the moderator audit views
+		// (which query logs for type=Group/subtype=Left) lose every voluntary
+		// leave and every non-ban moderator removal.
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "")
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// deleteMembershipsPartner handles the partner auth path for DELETE /memberships.
+func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
+	_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
+	if err != nil {
+		return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+	}
+
+	groupidStr := c.Query("groupid", "0")
+	groupid, _ := strconv.ParseUint(groupidStr, 10, 64)
+	if groupid == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	email := c.Query("email", "")
+	tnuseridStr := c.Query("tnuserid", "0")
+	tnuserid, _ := strconv.ParseUint(tnuseridStr, 10, 64)
+
+	// Validate email domain matches partner domain.
+	if email != "" && domain != "" {
+		parts := strings.SplitN(email, "@", 2)
+		if len(parts) == 2 && !strings.EqualFold(parts[1], domain) {
+			return fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+		}
+	}
+
+	// Find the user.
+	userid := user.FindByTNIdOrEmail(db, tnuserid, email)
+	if userid == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "User not found")
+	}
+
+	// Remove the membership.
+	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+		userid, groupid, utils.COLLECTION_APPROVED)
+
+	if result.RowsAffected > 0 {
+		// V1 parity: User::removeMembership() always logs Group/Left when the
+		// DELETE affects rows. byuser = the leaving user (no session in the
+		// partner path).
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, groupid, userid, userid, "via partner")
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid})
+}
+
+// PatchMembershipsRequest is for PATCH /memberships (update settings).
+type PatchMembershipsRequest struct {
+	Userid              uint64           `json:"userid"`
+	ID                  uint64           `json:"id"`
+	Groupid             uint64           `json:"groupid"`
+	Role                *string          `json:"role"`
+	Settings            *json.RawMessage `json:"settings"`
+	Configid            *uint64          `json:"configid"`
+	Emailfrequency      *utils.FlexInt   `json:"emailfrequency"`
+	Eventsallowed       *utils.FlexInt   `json:"eventsallowed"`
+	Volunteeringallowed *utils.FlexInt   `json:"volunteeringallowed"`
+	OurPostingStatus    *string          `json:"ourPostingStatus"`
+}
+
+// PatchMemberships handles PATCH /memberships - update membership settings.
+// Users can update their own settings. Moderators can update ourPostingStatus
+// and emailfrequency for members of groups they moderate (stdmsg side effects).
+func PatchMemberships(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req PatchMembershipsRequest
+	if err := c.BodyParser(&req); err != nil {
+		stdlog.Printf("[PatchMemberships] BodyParser error for user %d: %v body=%q", myid, err, string(c.Body()))
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Groupid == 0 {
+		stdlog.Printf("[PatchMemberships] Missing groupid for user %d: parsed=%+v body=%q", myid, req, string(c.Body()))
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	userid := req.Userid
+	if userid == 0 {
+		userid = req.ID
+	}
+	if userid == 0 {
+		userid = myid
+	}
+
+	// Users can update their own settings. Moderators can update settings for
+	// members of groups they moderate (e.g. stdmsg newmodstatus/newdelstatus).
+	if userid != myid {
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Cannot modify another user's settings")
+		}
+	}
+
+	db := database.DBConn
+
+	// Verify the membership exists.
+	var membershipExists int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+		userid, req.Groupid, utils.COLLECTION_APPROVED).Scan(&membershipExists)
+	if membershipExists == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Not a member of this group")
+	}
+
+	// Update whichever settings were provided.
+	if req.Emailfrequency != nil {
+		db.Exec("UPDATE memberships SET emailfrequency = ? WHERE userid = ? AND groupid = ?",
+			int(*req.Emailfrequency), userid, req.Groupid)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
+			fmt.Sprintf("emailfrequency=%d", int(*req.Emailfrequency)))
+	}
+
+	if req.Eventsallowed != nil {
+		db.Exec("UPDATE memberships SET eventsallowed = ? WHERE userid = ? AND groupid = ?",
+			int(*req.Eventsallowed), userid, req.Groupid)
+	}
+
+	if req.Volunteeringallowed != nil {
+		db.Exec("UPDATE memberships SET volunteeringallowed = ? WHERE userid = ? AND groupid = ?",
+			int(*req.Volunteeringallowed), userid, req.Groupid)
+	}
+
+	if req.Settings != nil {
+		// Strip configid from the settings blob — it is a top-level column, not a settings field.
+		// If the caller is a mod and no top-level configid was supplied, promote the embedded value
+		// so the column update below will run. Non-mods have it silently discarded.
+		var settingsMap map[string]json.RawMessage
+		if err := json.Unmarshal(*req.Settings, &settingsMap); err == nil {
+			if raw, ok := settingsMap["configid"]; ok {
+				if req.Configid == nil && isModOfGroup(myid, req.Groupid) {
+					var cid uint64
+					if json.Unmarshal(raw, &cid) == nil && cid > 0 {
+						req.Configid = &cid
+					}
+				}
+				delete(settingsMap, "configid")
+				if cleaned, err := json.Marshal(settingsMap); err == nil {
+					stripped := json.RawMessage(cleaned)
+					req.Settings = &stripped
+				}
+			}
+		}
+		db.Exec("UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
+			string(*req.Settings), userid, req.Groupid)
+	}
+
+	if req.Configid != nil {
+		// Update the mod config used for this membership.
+		// Must be mod/owner of the group to change the config.
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change the config")
+		}
+		// Verify the config exists.
+		var configID uint64
+		db.Raw("SELECT id FROM mod_configs WHERE id = ?", *req.Configid).Scan(&configID)
+		if configID == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "Config not found")
+		}
+		db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
+			*req.Configid, userid, req.Groupid)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_CONFIG_CHANGE, req.Groupid, userid, myid,
+			fmt.Sprintf("configid=%d", *req.Configid))
+	}
+
+	if req.OurPostingStatus != nil {
+		// ourPostingStatus is mod-only — users must not change their own moderation status.
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change posting status")
+		}
+		db.Exec("UPDATE memberships SET ourPostingStatus = ? WHERE userid = ? AND groupid = ?",
+			*req.OurPostingStatus, userid, req.Groupid)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_POSTING_STATUS, req.Groupid, userid, myid,
+			*req.OurPostingStatus)
+	}
+
+	if req.Role != nil {
+		targetRole := *req.Role
+		if targetRole != utils.ROLE_MEMBER && targetRole != utils.ROLE_MODERATOR && targetRole != utils.ROLE_OWNER {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid role: must be Member, Moderator, or Owner")
+		}
+
+		// Must be a mod/owner of the group (or admin/support) to change anyone's role.
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change roles")
+		}
+
+		// Only owners (or admin/support) can promote to Moderator or Owner.
+		// Moderators can only demote to Member.
+		callerRole := getRoleForGroup(myid, req.Groupid)
+		if targetRole == utils.ROLE_MODERATOR || targetRole == utils.ROLE_OWNER {
+			if callerRole != utils.ROLE_OWNER {
+				return fiber.NewError(fiber.StatusForbidden, "Only owners can promote to moderator or owner")
+			}
+		}
+
+		db.Exec("UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ? AND collection = ?",
+			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
+
+		// V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808):
+		// changes to memberships.role must propagate to users.systemrole so the
+		// global Moderator flag stays in sync. The frontend reads users.systemrole
+		// to render the crown next to a user (ModLogUser.vue, byline avatars,
+		// Discourse SSO). Without this, a per-group Moderator shows the crown on
+		// the members page but the plain User icon in the group logs — the
+		// Discourse #9481 post 545 "Trainee not showing as a Mod in the group
+		// logs" report, root cause confirmed against prod (e.g. uid 41231435
+		// DixieKay promoted 2026-05-27, memberships.role='Moderator' but
+		// users.systemrole still 'User').
+		if targetRole == utils.ROLE_MODERATOR || targetRole == utils.ROLE_OWNER {
+			// Promote: only flip 'User' to 'Moderator'. V1 used the same
+			// guard (UPDATE … WHERE systemrole = 'User') so Support / Admin
+			// users are never silently demoted to Moderator.
+			db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
+				utils.SYSTEMROLE_MODERATOR, userid, utils.SYSTEMROLE_USER)
+		} else {
+			// Demote: V1 only reverts systemrole to 'User' if the user no
+			// longer holds Moderator / Owner on ANY other approved group.
+			// Otherwise they're still a mod elsewhere and stay Moderator.
+			var remaining int64
+			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+				Scan(&remaining)
+			if remaining == 0 {
+				db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
+					utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}

@@ -1,0 +1,191 @@
+<?php
+namespace Freegle\Iznik;
+
+if (!defined('UT_DIR')) {
+    define('UT_DIR', dirname(__FILE__) . '/../..');
+}
+
+require_once(UT_DIR . '/../../include/config.php');
+require_once(UT_DIR . '/../../include/db.php');
+
+/**
+ * @backupGlobals disabled
+ * @backupStaticAttributes disabled
+ */
+class authorityAPITest extends IznikAPITestCase
+{
+    public $dbhr, $dbhm;
+
+    private $count = 0;
+
+    protected function setUp() : void
+    {
+        parent::setUp();
+
+        /** @var LoggedPDO $dbhr */
+        /** @var LoggedPDO $dbhm */
+        global $dbhr, $dbhm;
+        $this->dbhr = $dbhr;
+        $this->dbhm = $dbhm;
+
+        $dbhm->preExec("DELETE FROM authorities WHERE name LIKE 'UTAuth%';");
+        $this->deleteLocations("DELETE FROM locations WHERE name LIKE 'Tuvalu%';");
+        $this->deleteLocations("DELETE FROM locations WHERE name LIKE 'TV13%';");
+        $this->deleteLocations("DELETE FROM locations WHERE name LIKE 'TV1 %';");
+
+        # This is a bit of a hack to make sure that the Postgis extension etc are set up.
+        $l = new Location($this->dbhr, $this->dbhm);
+        $l->copyLocationsToPostgresql();
+    }
+
+    protected function tearDown() : void
+    {
+//        $this->dbhm->preExec("DELETE FROM authorities WHERE name LIKE 'UTAuth%';");
+        parent::tearDown();
+    }
+
+    public function testBasic()
+    {
+        # Create a group with an OFFER, WANTED and a search on it.
+        $l = new Location($this->dbhr, $this->dbhm);
+        $areaid = $l->create(NULL, 'Tuvalu Central', 'Polygon', 'POLYGON((179.21 8.53, 179.21 8.54, 179.22 8.54, 179.22 8.53, 179.21 8.53, 179.21 8.53))');
+        $this->assertNotNull($areaid);
+        $pcid = $l->create(NULL, 'TV13', 'Postcode', 'POLYGON((179.2 8.5, 179.3 8.5, 179.3 8.6, 179.2 8.6, 179.2 8.5))');
+        $fullpcid = $l->create(NULL, 'TV13 1HH', 'Postcode', 'POINT(179.2167 8.53333)');
+        $locid = $l->create(NULL, 'Tuvalu High Street', 'Road', 'POINT(179.2167 8.53333)');
+
+        $this->log("Postcode $pcid full $fullpcid Area $areaid Location $locid");
+
+        # Create a group there
+        $this->group = Group::get($this->dbhr, $this->dbhm);
+        $this->groupid = $this->group->create('testgroup', Group::GROUP_FREEGLE);
+        $this->group->setPrivate('lat', 8.5);
+        $this->group->setPrivate('lng', 179.3);
+        $this->group->setPrivate('publish', 1);
+        $this->group->setPrivate('onmap', 1);
+        $this->group->setPrivate('polyofficial', 'POLYGON((179.25 8.5, 179.27 8.5, 179.27 8.6, 179.2 8.6, 179.25 8.5))');
+
+        # Set it to have a default location.
+        $this->group->setPrivate('defaultlocation', $fullpcid);
+
+        $r = new MailRouter($this->dbhr, $this->dbhm);
+
+        list($this->user, $this->uid, $emailid) = $this->createTestUser(NULL, NULL, 'Test User', 'test@test.com', 'testpw');
+        $this->user->addMembership($this->groupid);
+        $this->user->setMembershipAtt($this->groupid, 'ourPostingStatus', Group::POSTING_DEFAULT);
+
+        # Add an OFFER and a WANTED
+        $msg = $this->unique(file_get_contents(IZNIK_BASE . '/test/ut/php/msgs/basic'));
+        $msg = str_ireplace('freegleplayground', 'testgroup', $msg);
+        $msg = str_ireplace('Basic test', 'OFFER: Test (TV13 1HH)', $msg);
+
+       list ($id, $failok) = $r->received(Message::EMAIL, 'from@test.com', 'to@test.com', $msg);
+        $rc = $r->route();
+        $this->assertEquals(MailRouter::APPROVED, $rc);
+        $m = new Message($this->dbhr, $this->dbhm, $id);
+        $m->setPrivate('locationid', $fullpcid);
+
+        $msg = $this->unique(file_get_contents(IZNIK_BASE . '/test/ut/php/msgs/basic'));
+        $msg = str_ireplace('freegleplayground', 'testgroup', $msg);
+        $msg = str_ireplace('Basic test', 'WANTED: Test (TV13 1HH)', $msg);
+
+       list ($id, $failok) = $r->received(Message::EMAIL, 'from@test.com', 'to@test.com', $msg);
+        $rc = $r->route();
+        $this->assertEquals(MailRouter::APPROVED, $rc);
+        $m = new Message($this->dbhr, $this->dbhm, $id);
+        $m->setPrivate('locationid', $fullpcid);
+
+        # Add a search.  Need to be logged in.
+        list($u, $this->uid, $emailid) = $this->createTestUserAndLogin(NULL, NULL, 'Test User', 'test@test.com', 'testpw');
+        $m = new Message($this->dbhr, $this->dbhm);
+        $ctx = NULL;
+        $m->search("Test", $ctx, Search::Limit, NULL, NULL, $fullpcid);
+
+        # Create an authority which covers that group.
+        $a = new Authority($this->dbhr, $this->dbhm);
+        $id = $a->create("UTAuth", 'GLA', 'POLYGON((179.2 8.5, 179.3 8.5, 179.3 8.6, 179.2 8.6, 179.2 8.5))');
+
+        $ret = $this->call('authority', 'GET', [
+            'id' => $id,
+            'stats' => TRUE
+        ]);
+
+        $this->log("Get returned " . var_export($ret, TRUE));
+
+        $this->assertEquals(0, $ret['ret']);
+        $this->assertEquals($id, $ret['authority']['id']);
+        $this->assertEquals('UTAuth', $ret['authority']['name']);
+        $this->assertEquals(1, count($ret['authority']['stats']));
+        $this->assertEquals(1, count($ret['authority']['groups']));
+
+        foreach ($ret['authority']['stats'] as $key => $stat) {
+            $this->assertEquals('TV13 1', $key);
+            $this->assertEquals(1, $stat[Message::TYPE_OFFER]);
+            $this->assertEquals(1, $stat[Message::TYPE_WANTED]);
+            $this->assertEquals(1, $stat[Stats::SEARCHES]);
+        }
+
+        $ret = $this->call('authority', 'GET', [
+            'search' => 'utau'
+        ]);
+
+        $this->log("Search returned " . var_export($ret, TRUE));
+
+        $this->assertEquals(0, $ret['ret']);
+        $this->assertEquals(1, count($ret['authorities']));
+        $this->assertEquals($id, $ret['authorities'][0]['id']);
+
+    }
+
+    public function testStory() {
+        $l = new Location($this->dbhr, $this->dbhm);
+        $areaid = $l->create(NULL, 'Tuvalu Central', 'Polygon', 'POLYGON((179.21 8.53, 179.21 8.54, 179.22 8.54, 179.22 8.53, 179.21 8.53, 179.21 8.53))');
+        $this->assertNotNull($areaid);
+
+        $a = new Authority($this->dbhr, $this->dbhm);
+        $id = $a->create("UTAuth", 'GLA', 'POLYGON((179.2 8.5, 179.3 8.5, 179.3 8.6, 179.2 8.6, 179.2 8.5))');
+
+        # Create a user within that authority.
+        list($u, $uid, $emailid) = $this->createTestUser(NULL, NULL, 'Test User', 'test@test.com', 'testpw');
+        $u->setSetting('mylocation', [
+            'lng' => 179.2167,
+            'lat' => 8.53333,
+            'name' => 'TV13 1HH'
+        ]);
+
+        # Create a story for that user, hence within the authority.
+        $s = new Story($this->dbhr, $this->dbhm);
+        $sid = $s->create($uid, 1, "Test", "Test");
+        $s->setAttributes([
+                              'newsletterreviewed' => 1,
+                              'newsletter' => 1,
+                              'reviewed' => 1,
+                              'public' => 1
+                          ]);
+
+        $this->dbhm->preExec("UPDATE users_stories SET newsletterreviewed = 1, newsletter = 1 WHERE id = ?;", [ $sid ]);
+
+        # Should be able to get it.
+        $ret = $this->call('stories', 'GET', [
+            'authorityid' => $id
+        ]);
+
+        $this->assertEquals(1, count($ret['stories']));
+        $this->assertEquals($sid, $ret['stories'][0]['id']);
+    }
+//
+//    public function testEH()
+//    {
+//        //
+//        $this->dbhr->errorLog = TRUE;
+//        $this->dbhm->errorLog = TRUE;
+//        $a = new Authority($this->dbhr, $this->dbhm);
+//
+//        $ret = $this->call('authority', 'GET', [
+//            'id' => 73214
+//        ]);
+//
+//        $this->log("Get returned " . var_export($ret, TRUE));
+//
+//        //    }
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=Yesterday Backup Restore Monitor
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/FreegleDocker
+ExecStart=/var/www/FreegleDocker/yesterday/scripts/restore-monitor.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

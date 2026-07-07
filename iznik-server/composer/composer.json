@@ -1,0 +1,84 @@
+{
+  "name": "edwh/iznik",
+  "description": "description_text",
+  "minimum-stability": "stable",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "Edward Hibbert",
+      "email": "edward@ehibbert.org.uk"
+    }
+  ],
+  "classmap": [
+    "vendor/googleads/googleads-php-lib/src/Google/Api/Ads/AdWords/Util/v201603"
+  ],
+  "require": {
+    "php-mime-mail-parser/php-mime-mail-parser" : "^2.1",
+    "pda/pheanstalk": "^4.0",
+    "geoip2/geoip2": "^2.3",
+    "html2text/html2text": "^3.0",
+    "minishlink/web-push": "^7.0.0  ",
+    "kreait/firebase-php": "^6.9.3",
+    "google/apiclient": "^2.12",
+    "jenssegers/imagehash": "0.8",
+    "php-webdriver/webdriver": "^1.1",
+    "swiftmailer/swiftmailer": "5.4.12",
+    "oefenweb/damerau-levenshtein": "^2.1",
+    "kartik-v/bootstrap-fileinput": "dev-master",
+    "graphp/graphviz": "^0.2.1",
+    "protonlabs/paypal-merchant-sdk-php": "^3.13.0",
+    "microsoft/azure-storage-blob": "*",
+    "microsoft/azure-storage-table": "*",
+    "microsoft/azure-storage-queue": "*",
+    "microsoft/azure-storage-file": "*",
+    "dusterio/link-preview": "*",
+    "twig/twig": "~1.0",
+    "patrickschur/language-detection": "^5.2.0",
+    "php-coveralls/php-coveralls": "^2.1",
+    "cviebrock/discourse-php": "^0.9.3",
+    "elasticsearch/elasticsearch": "^6.1",
+    "violet/streaming-json-encoder": "^1.1",
+    "janu-software/facebook-php-sdk": "^0.1.8",
+    "griffinledingham/php-apple-signin": "^1.1",
+    "phpoffice/phpspreadsheet": "^1.25.2",
+    "prewk/xml-string-streamer": "^1.2",
+    "sentry/sdk": "^3.1",
+    "cweagans/composer-patches": "^1.7",
+    "stripe/stripe-php": "^16.2",
+    "stajor/perspectiveapi": "^2.0",
+    "johngrogg/ics-parser": "^3.4",
+    "gemini-api-php/client": "^1.7",
+    "thiagoalessio/tesseract_ocr": "^2.13"
+  },
+  "repositories": [
+    {
+      "url": "https://github.com/Yanlong-LI/php-apple-signin.git",
+      "type": "git"
+    },
+    {
+      "url": "https://github.com/dusterio/link-preview.git",
+      "type": "vcs"
+    }
+  ],
+  "require-dev": {
+    "phpunit/phpunit": "^9.5",
+    "brianium/paratest": "^6.11"
+  },
+  "config": {
+    "allow-plugins": {
+      "composer/installers": true,
+      "cweagans/composer-patches": true,
+      "php-http/discovery": true
+    }
+  },
+  "extra": {
+    "patches": {
+      "janu-software/facebook-php-sdk": {
+        "Hack HTTP to HTTPS for haproxy redirect": "patches/redirect_behind_haproxy.diff"
+      },
+      "swiftmailer/swiftmailer": {
+        "Skip corrupt spool files instead of orphaning .sending files": "patches/swiftmailer_filespool_corrupt.diff"
+      }
+    }
+  }
+}

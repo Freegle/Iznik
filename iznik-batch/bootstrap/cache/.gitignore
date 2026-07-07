@@ -1,0 +1,9 @@
+# Environment-specific caches (contain resolved env vars or paths)
+config.php
+routes-v7.php
+events.php
+
+# Keep services.php and packages.php committed!
+# These are deterministic (based on composer.lock) and committing them
+# prevents race conditions when multiple processes bootstrap Laravel simultaneously.
+# See: https://github.com/orchestral/testbench/issues/202

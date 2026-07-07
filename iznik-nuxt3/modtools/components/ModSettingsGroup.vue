@@ -1,0 +1,1554 @@
+<template>
+  <div>
+    <div class="d-flex justify-content-between flex-wrap">
+      <ModGroupSelect v-model="groupid" modonly />
+    </div>
+    <div v-if="group && group.mysettings" class="mt-2 scrollinplace">
+      <NoticeMessage
+        v-if="group.settings?.closed"
+        variant="danger"
+        class="mb-1"
+      >
+        Your community is currently closed. You can change this in
+        <em>Features for Members</em>.
+      </NoticeMessage>
+      <NoticeMessage
+        v-if="group.autofunctionoverride"
+        variant="danger"
+        class="mb-1"
+      >
+        Your community is subject to restrictions. Auto-approve is disabled.
+        <em>All Posts Moderated</em> will have been set to <em>Yes</em> but you
+        can choose to set this back to <em>No</em> in
+        <em>Features for Moderators</em>. If you have questions, ask on
+        <!-- eslint-disable-next-line -->
+        <external-link href="https://discourse.ilovefreegle.org/c/central/9">Central</external-link>.
+      </NoticeMessage>
+      <NoticeMessage
+        v-if="group.overridemoderation !== 'None'"
+        variant="danger"
+        class="mb-1"
+      >
+        Your community is subject to restrictions. All posts will be moderated.
+        Your community setting is unaffected and will take effect when this
+        restriction is lifted. If you have questions, ask on
+        <!-- eslint-disable-next-line -->
+        <external-link href="https://discourse.ilovefreegle.org/c/central/9">Central</external-link>.
+      </NoticeMessage>
+      <NoticeMessage
+        v-if="group.tnkey && group.tnkey.url"
+        variant="info"
+        class="mt-1 mb-1"
+      >
+        You can also find your TrashNothing settings
+        <!-- eslint-disable-next-line -->
+        <ExternalLink :href="group.tnkey.url">here</ExternalLink>.
+      </NoticeMessage>
+
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-addresses
+            block
+            href="#"
+            variant="secondary"
+          >
+            Community Addresses
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-addresses"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>Here's how your members can reach you by email:</p>
+            <p>
+              <!-- eslint-disable-next-line -->
+              <ExternalLink :href="'mailto:' + group.modsemail">{{ group.modsemail }}</ExternalLink>
+            </p>
+            <p>
+              Members can post by email. Please only use this for members who
+              really need it:
+            </p>
+            <p>
+              <!-- eslint-disable-next-line -->
+              <ExternalLink :href="'mailto:' + group.groupemail">{{ group.groupemail }}</ExternalLink>
+            </p>
+            <p v-if="!Object.values(shortlinks).length">
+              Your community has no shortlinks at the moment.
+            </p>
+            <div v-else class="mb-2">
+              <p>Your community has the following shortlinks:</p>
+              <ModSettingShortlink
+                v-for="shortlink in shortlinks"
+                :key="'shortlink-' + shortlink.id"
+                :shortlinkid="shortlink.id"
+              />
+            </div>
+            <p>
+              You can add more shortlinks
+              <!-- eslint-disable-next-line -->
+              <a href="/shortlinks" target="_blank">here</a>.
+            </p>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-your
+            block
+            href="#"
+            variant="secondary"
+          >
+            Your Settings
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-your"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>
+              These settings affect how this community behaves for you. If you
+              change them, it'll only affect you.
+            </p>
+            <b-form-group label="Are you actively moderating this community?">
+              <b-form-text class="mb-2">
+                We notify you about work to do for active communities.
+              </b-form-text>
+              <OurToggle
+                v-model="active"
+                class="mt-2"
+                :height="30"
+                :width="150"
+                :font-size="14"
+                :sync="true"
+                :labels="{ checked: 'Active', unchecked: 'Backup' }"
+                variant="modgreen"
+              />
+            </b-form-group>
+            <b-form-group label="Standard Messages to use for this community:">
+              <b-form-text class="mb-2">
+                The Standard Messages you choose controls which collection of
+                standard message buttons you can use. You can see the settings
+                for them on the separate tab.
+              </b-form-text>
+              <b-form-select
+                v-model="modconfig"
+                :options="modConfigOptions"
+                class="mb-2 fw-bold"
+              />
+            </b-form-group>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-appearance
+            block
+            href="#"
+            variant="secondary"
+          >
+            How It Looks
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-appearance"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>
+              These are various settings about how the community appears to
+              freeglers on the site and in emails.
+            </p>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <b-form-group label="Profile picture">
+              <b-form-text class="mb-2">
+                This is used in emails and on the site. It needs to look good
+                small, like a Facebook profile picture. Avoid text - it's not
+                readable. Aim for a simple image that people will recognise as
+                relating to your location.
+              </b-form-text>
+              <NoticeMessage variant="warning" class="mb-2">
+                Remember not to use copyrighted images. See
+                <ExternalLink
+                  href="https://wiki.ilovefreegle.org/How_to_add_a_picture_to_a_community_home_page"
+                >
+                  here
+                </ExternalLink>
+                for more info.
+              </NoticeMessage>
+              <GroupProfileImage
+                :image="group.profile ? group.profile : '/placeholder.png'"
+                :alt-text="'Profile picture for ' + group.namedisplay"
+              />
+              <b-button
+                v-if="!readonly"
+                variant="secondary"
+                class="mt-2 d-block"
+                @click="uploadProfile"
+              >
+                <v-icon icon="camera" /> Upload photo
+              </b-button>
+              <OurUploader
+                v-if="uploadingProfile"
+                v-model="profileAtts"
+                type="Group"
+                :groupid="groupid"
+              />
+            </b-form-group>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="tagline"
+              label="Tagline"
+              description="This should be short and snappy. Include some local reference that people in your area will feel connected to."
+            />
+            <!--          TODO-ED MT POSTLAUNCH Worry words in group description-->
+            <ModGroupSetting
+              :groupid="groupid"
+              name="welcomemail"
+              label="Welcome email"
+              description="This is emailed out to new members.  Keep it short.  Positive - use 'do' not 'don't'."
+              type="textarea"
+              :rows="10"
+            />
+            <b-form-group label="Description">
+              <b-form-text class="mb-2">
+                This is a longer description which will display on the community
+                page and elsewhere on the site. HTML is OK in here, and if
+                you're really geeky, Bootstrap-5 styling.
+              </b-form-text>
+              <div v-if="!editingDescription">
+                <!-- eslint-disable-next-line -->
+                <div v-html="group.description" class="border border-info rounded p-2 mb-2" />
+                <b-button
+                  v-if="!readonly"
+                  variant="white"
+                  @click="editingDescription = true"
+                >
+                  <v-icon icon="pen" /> Edit
+                </b-button>
+              </div>
+              <div v-else>
+                <client-only>
+                  <QuillEditor
+                    v-model:content="group.description"
+                    :modules="quillModules"
+                    theme="snow"
+                    :toolbar="toolbarOptions"
+                    content-type="html"
+                  />
+                </client-only>
+                <SpinButton
+                  variant="white"
+                  icon-name="save"
+                  label="Save"
+                  class="mt-2"
+                  @handle="saveDescription"
+                />
+              </div>
+            </b-form-group>
+            <b-form-group label="Keywords">
+              <p>
+                You can change the keywords shown in the subject line for posts,
+                and used in other places.
+              </p>
+              <div
+                class="d-flex flex-wrap justify-content-between border rounder border-info p-2"
+              >
+                <ModGroupSetting
+                  :groupid="groupid"
+                  name="settings.keywords.offer"
+                  label="OFFER keyword"
+                  class="me-2"
+                />
+                <ModGroupSetting
+                  :groupid="groupid"
+                  name="settings.keywords.taken"
+                  label="TAKEN keyword"
+                  class="me-2"
+                />
+                <ModGroupSetting
+                  :groupid="groupid"
+                  name="settings.keywords.wanted"
+                  label="WANTED keyword"
+                  class="me-2"
+                />
+                <ModGroupSetting
+                  :groupid="groupid"
+                  name="settings.keywords.received"
+                  label="RECEIVED keyword"
+                  class="me-2"
+                />
+              </div>
+            </b-form-group>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-rules
+            block
+            href="#"
+            variant="secondary"
+          >
+            Rules
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-rules"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>
+              This section records information about rules you might have on
+              your group.
+            </p>
+            <p>
+              When we ask <strong>do you allow any</strong>, you should answer
+              yes if you allow any at all, even if you don't allow all of them.
+              For example, if you allow some requests for animals, but not all,
+              answer <em>Yes</em>. Similarly, if you allow tickets but not
+              coupons, answer <em>Yes</em>. Only answer <em>No</em> if you do
+              not allow any <strong>at all</strong>.
+            </p>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these rules.
+            </p>
+            <div class="d-flex flex-wrap">
+              <strong class="me-1 mt-2">Copy rules from:</strong>
+              <ModGroupSelect v-model="copyfrom" modonly class="mb-2 me-2" />
+              <div>
+                <SpinButton
+                  variant="white"
+                  icon-name="copy"
+                  :label="'Copy to ' + group.nameshort"
+                  :disabled="copyfrom <= 0 || copyfrom === groupid"
+                  @handle="copy"
+                />
+              </div>
+            </div>
+            <div :key="rulesBump">
+              <h4>Rules about the group</h4>
+              <SpinButton
+                variant="white"
+                icon-name="save"
+                label="Save all rule changes"
+                :disabled="readonly"
+                @handle="saverules"
+              />
+              <div v-for="rule in rulelist" :key="rule[0]">
+                <ModGroupRule
+                  v-if="rule[0]"
+                  :setting="rules[rule[0]]"
+                  :name="rule[0]"
+                  :label="rule[2]"
+                  :readonly="readonly"
+                  :type="rule[1]"
+                  :toggle-checked="rule[3]"
+                  :toggle-unchecked="rule[4]"
+                  :new-rule="rule[5] == 'New'"
+                  @change="changedrule(rule, $event)"
+                />
+                <h4 v-else>{{ rule[1] }}</h4>
+              </div>
+              <SpinButton
+                variant="white"
+                icon-name="save"
+                label="Save all rule changes"
+                :disabled="readonly"
+                @handle="saverules"
+              />
+            </div>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-features-members
+            block
+            href="#"
+            variant="secondary"
+          >
+            Features for Members
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-features-members"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>
+              These affect how the community (the code, not the people) behaves
+              for members.
+            </p>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.communityevents"
+              label="Community Events"
+              description="Whether members can post local community events."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.volunteering"
+              label="Volunteer Opportunities"
+              description="Whether members can post requests for volunteers."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.stories"
+              label="Stories"
+              description="Whether members are prompted to tell us their Freegle Story for publicity."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.allowedits.moderated"
+              label="Moderated members can edit?"
+              description="When this setting is Yes (for most communities), moderated members can edit their own posts; edits go live immediately but are retrospectively reviewed from Messages->Edits. When this setting is No, moderated members cannot edit."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.allowedits.group"
+              label="Members on Group Settings can edit?"
+              description="When this setting is Yes (for most groups), members on Group Settings can edit their own posts; edits go live immediately. When this setting is No, members on Group Settings cannot edit."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.relevant"
+              label="Send relevant messages to members?"
+              description="Email specific messages to members based on their searches and posting history.  Members can turn this on/off themselves, so you would only turn this off if you want to override their decision."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.newsfeed"
+              label="Send occasional digests of chitchat to members?"
+              description="We can send an occasional mail to members of recent activity from other members on ChitChat (like the old cafe groups).  This encourages them to take part.  Members can turn this off themselves, so you would only turn this off if you want to override their decision."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.newsletter"
+              label="Send newsletters to members?"
+              description="Email occasional newsletters to members.  Members can turn this on/off themselves, so you would only turn this off if you want to override their decision."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.engagement"
+              label="Member engagement?"
+              description="We take various steps to nudge members to become more active freeglers.  This may result in them receiving occasional emails/notifications.  Members can turn this on/off themselves, so you would only turn this off if you want to override their decision."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.maxagetoshow"
+              label="Expire posts"
+              description="Posts will be considered as expired (i.e. no longer available) after the greater of this number of days and the maximum duration of autoreposts (i.e. max * repost time).  Set to 0 to use the default of 30 days. Max 90 days."
+              class="me-2"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.reposts.chaseups"
+              label="Chaseup"
+              description="Ask what's happening with the item this number of days after the last reply (0 to disable)"
+              class="me-2"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.reposts.max"
+              label="Max auto-reposts"
+              description="Auto-reposting is proven to help more posts get replies. We mail the member before auto-reposting so that they can choose what happens.  0 to disable."
+              class="me-2"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.reposts.offer"
+              label="OFFER repost time"
+              description="Controls when the member can manually repost, and when auto-repost kicks in.  0 = always show manual Repost button."
+              class="me-2"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.reposts.wanted"
+              label="WANTED repost time"
+              description="Controls when the member can manually repost, and when auto-repost kicks in.  0 = always show manual Repost button."
+              class="me-2"
+            />
+            <NoticeMessage variant="warning">
+              The following setting will soon be retired in favour of the "post
+              visibility" setting further down.
+            </NoticeMessage>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.nearbygroups"
+              label="Show posts to nearby freeglers?"
+              description="Freeglers may live just outside your community.  Some posts from your community may be closer than some in the community they live in.  We can add posts from your community which are near their location to their mails so that they don't miss out.  In miles, 0 to disable."
+              type="number"
+              :step="1"
+            />
+            <ModGroupPostVisibility :groupid="groupid" />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.showjoin"
+              label="Show Join button?"
+              description="On the map in Browse, Join buttons will display below the map.  You can control how far from the member's own location (i.e. their postcode) this community will show.  You can use this to discourage people joining from further away, but please remember that many people commute to work, might be moving house, or have friends/family/partners in different locations.  In miles, 0 = always show."
+              type="number"
+              :step="1"
+            />
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-features-mods
+            block
+            href="#"
+            variant="secondary"
+          >
+            Features for Moderators
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-features-mods"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>
+              These affect how the community (the code, not the people) behaves
+              for volunteers; they're less obvious to members.
+            </p>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.moderated"
+              label="All Posts Moderated"
+              description="When this setting is No (for most groups), all new members are Moderated and members can be changed to Group Settings (meaning unmoderated) once they have made a valid post. When this setting is Yes, all posts must be moderated no matter what setting the user has."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.autoadmins"
+              label="Suggest ADMINs?"
+              description="Freegle has a selection of ADMINs which you can adapt to your group, which we can suggest from time to time.  You can edit or delete each suggested ADMIN, so you'd only turn this off if you never wanted to even seen them."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.widerchatreview"
+              label="Quicker Chat Review?"
+              description="Chat messages between members may get sent for review to check they're ok.  They will always show for you if the recipient is a member of your group.  You can choose whether they are also shown to other Freegle mods who have chosen this setting, in which case they can be approved quickly if they are innocent (but can't be rejected).  Otherwise they'll only show for mods on the group.  NB this function is not active yet - see https://discourse.ilovefreegle.org/t/messages-delayed-in-chat-review/4633/82 for details"
+              type="toggle"
+              toggle-checked="All Freegle Mods"
+              toggle-unchecked="Just this group"
+            />
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-microvolunteering
+            block
+            href="#"
+            variant="secondary"
+          >
+            Microvolunteering
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-microvolunteering"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="microvolunteering"
+              label="Allow members to perform small and useful tasks?"
+              description="Is microvolunteering enabled?"
+              type="toggle"
+              toggle-checked="Enabled"
+              toggle-unchecked="Disabled"
+            />
+            <NoticeMessage
+              v-if="!group.microvolunteering"
+              variant="info"
+              class="mb-2"
+            >
+              None of the following options will be active, as microvolunteering
+              is turned off.
+            </NoticeMessage>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="microvolunteeringoptions.approvedmessages"
+              label="Review approved messages"
+              description="Members may be shown approved messages which haven't been reviewed and asked to say if they're OK or not.  Messages which aren't OK will show in Messages->Review for mods to check."
+              type="toggle"
+              toggle-checked="Enabled"
+              toggle-unchecked="Disabled"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="microvolunteeringoptions.wordmatch"
+              label="Match similar items"
+              description="Members may be shown popular items and asked to choose two which are similar.  This data will be used to improve our search."
+              type="toggle"
+              toggle-checked="Enabled"
+              toggle-unchecked="Disabled"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="microvolunteeringoptions.photorotate"
+              label="Photo rotate"
+              description="Members may be shown photos and asked to click to rotate any which are wrong."
+              type="toggle"
+              toggle-checked="Enabled"
+              toggle-unchecked="Disabled"
+            />
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-spam
+            block
+            href="#"
+            variant="secondary"
+          >
+            Spam Detection
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-spam"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p>
+              All groups are now checked for spammers. If any are found, they
+              and their posts will be removed.
+            </p>
+            <p>It's highly recommended that these settings are turned on.</p>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.spammers.messagereview"
+              label="Check for spam messages to group?"
+              description="Check posted messages and put possible spam in Messages->Spam?"
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.spammers.replydistance"
+              label="Reply distance check?"
+              description="When members reply to messages which are this far apart, in miles, then they may be flagged for review.  Default 100, 0 to disable."
+              type="number"
+              :step="5"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.spammers.worrywords"
+              label="Worry words?"
+              description="List of 'worry words' to force posts to Messages->Pending.  Separate by commas."
+              type="input"
+            />
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-dups
+            block
+            href="#"
+            variant="secondary"
+          >
+            Duplicate Detection
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-dups"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.duplicates.check"
+              label="Flag duplicate messages?"
+              description="We can flag messages which look the same in ModTools."
+              type="toggle"
+              toggle-checked="Yes"
+              toggle-unchecked="No"
+            />
+            <div class="d-flex flex-wrap">
+              <ModGroupSetting
+                :groupid="groupid"
+                name="settings.duplicates.offer"
+                label="OFFER duplicate period"
+                class="me-2"
+              />
+              <ModGroupSetting
+                :groupid="groupid"
+                name="settings.duplicates.taken"
+                label="TAKEN duplicate period"
+                class="me-2"
+              />
+              <ModGroupSetting
+                :groupid="groupid"
+                name="settings.duplicates.wanted"
+                label="WANTED duplicate period"
+                class="me-2"
+              />
+              <ModGroupSetting
+                :groupid="groupid"
+                name="settings.duplicates.received"
+                label="RECEIVED duplicate period"
+                class="me-2"
+              />
+            </div>
+            <b-form-text class="mb-2"> All periods are in days. </b-form-text>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-maps
+            block
+            href="#"
+            variant="secondary"
+          >
+            Mapping
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-maps"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <p v-if="readonly" class="text-info">
+              Only owners can change these settings.
+            </p>
+            <b-form-group label="Region">
+              <b-form-text class="mb-2">
+                Each community is an in region of the UK.
+                <span v-if="region">
+                  You can see other communities in this region
+                  <!-- eslint-disable-next-line -->
+                  <nuxt-link :to="'/explore/region/' + group.region">here</nuxt-link>.
+                </span>
+              </b-form-text>
+              <b-form-select
+                v-model="region"
+                :options="regionOptions"
+                class="fw-bold"
+                :disabled="!supportOrAdmin"
+              />
+            </b-form-group>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="cga"
+              label="Core Group Area (CGA)"
+              description="This is the area that the community 'owns'."
+              type="textarea"
+              :rows="3"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="dpa"
+              label="Default Posting Area (DPA)"
+              description="This is the area for which this the community is the default one suggested for freeglers to use."
+              type="textarea"
+              :rows="3"
+            />
+            <b-form-text class="mb-2">
+              You can visualise these areas by cutting and pasting the data into
+              <ExternalLink
+                href="https://arthur-e.github.io/Wicket/sandbox-gmaps3.html"
+                >this tool</ExternalLink
+              >
+              - You can also view all community areas
+              <!-- eslint-disable-next-line -->
+              <nuxt-link to="/map">here</nuxt-link>,
+              or all caretaker communities
+              <!-- eslint-disable-next-line -->
+              <nuxt-link to="/map/caretaker">here</nuxt-link>.
+              See also
+              <ExternalLink
+                href="https://wiki.ilovefreegle.org/Community_Mapping"
+                >Community Mapping</ExternalLink
+              >
+              and
+              <ExternalLink
+                href="https://wiki.ilovefreegle.org/Freegle_Affiliated_Community_Area_Guidelines"
+                >Area Guidelines</ExternalLink
+              >
+              on the wiki.
+            </b-form-text>
+            <b-form-group label="Areas">
+              <b-form-text class="mb-2">
+                Each postcode in a group lies within an area, which is something
+                that a freegler would recognise as a description of a rough
+                location. You can set these areas up here:
+              </b-form-text>
+              <b-button variant="secondary" :to="'/map/' + groupid">
+                <v-icon icon="map-marker-alt" /> View Areas
+              </b-button>
+            </b-form-group>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="settings.map.zoom"
+              label="Default zoom for maps"
+              description="Where we show maps on the site for this community, which Google zoom level should we use?"
+              class="me-2"
+            />
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-social
+            block
+            href="#"
+            variant="secondary"
+          >
+            Social Media
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-social"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <b-card-body>
+            <b-form-text class="mb-2">
+              You can link to a group Facebook page to attract more people to
+              your group.
+            </b-form-text>
+
+            <div v-if="group.facebook && group.facebook.length">
+              <div
+                v-for="facebook in group.facebook"
+                :key="'facebookvalid-' + facebook.id"
+              >
+                <NoticeMessage
+                  v-if="!facebook.valid"
+                  variant="warning"
+                  class="mt-1"
+                >
+                  <p>
+                    This group is linked to Facebook, but there's an error. This
+                    might help:
+                  </p>
+                  <p>{{ facebook.lasterror }}</p>
+                  <p>
+                    Depending on the problem, unlinking and relinking might
+                    help.
+                  </p>
+                </NoticeMessage>
+              </div>
+            </div>
+            <NoticeMessage v-else variant="warning">
+              <p>
+                This group is not linked to Facebook. Please link it to get more
+                publicity.
+              </p>
+              <ExternalLink
+                class="btn btn-white mt-2"
+                :href="
+                  'https://modtools.org/facebook/facebook_request.php?type=Page&groupid=' +
+                  group.id
+                "
+              >
+                Link to Facebook
+              </ExternalLink>
+            </NoticeMessage>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+      <b-card no-body class="mb-2">
+        <b-card-header>
+          <b-button
+            v-b-toggle.accordion-stats
+            block
+            href="#"
+            variant="secondary"
+          >
+            Status
+          </b-button>
+        </b-card-header>
+        <b-collapse
+          id="accordion-stats"
+          accordion="settings-accordion"
+          role="tabpanel"
+        >
+          <p v-if="readonly" class="text-info">
+            Only owners can change these settings.
+          </p>
+          <b-card-body>
+            <p>
+              These are various high-level settings about how the community
+              behaves. Normally you don't change these once a community is live.
+            </p>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="publish"
+              label="Enabled on website?"
+              description="Is this available for people to use?"
+              type="toggle"
+              toggle-checked="Visible"
+              toggle-unchecked="Hidden"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="onhere"
+              label="Hosted on the site?"
+              description="Hosted on www.ilovefreegle.org (normally yes, but some are hosted elsewhere)."
+              type="toggle"
+              toggle-checked="Hosted"
+              toggle-unchecked="Elsewhere"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="onmap"
+              label="Shown on the map?"
+              description="Normally you'd set this yes, except for a few hidden test groups."
+              type="toggle"
+              toggle-checked="Visible"
+              toggle-unchecked="Hidden"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="ontn"
+              label="On TrashNothing?"
+              description="On trashnothing.com too?"
+              type="toggle"
+              toggle-checked="On TN"
+              toggle-unchecked="Not on TN"
+              disabled
+            >
+              <template #note>
+                <b-form-text class="text-warning mt-1">
+                  This only records whether the community is listed on
+                  TrashNothing - changing it here won't list or delist it, so
+                  it's read-only.
+                  <template v-if="group.tnkey && group.tnkey.url">
+                    To change it, use your
+                    <!-- eslint-disable-next-line -->
+                    <ExternalLink :href="group.tnkey.url">TrashNothing group settings</ExternalLink>.
+                  </template>
+                  <template v-else>
+                    Listing is managed in your TrashNothing group settings.
+                  </template>
+                </b-form-text>
+              </template>
+            </ModGroupSetting>
+            <ModGroupSetting
+              :groupid="groupid"
+              name="onlovejunk"
+              label="On LoveJunk?"
+              description="On lovejunk.com too?"
+              type="toggle"
+              toggle-checked="On LoveJunk"
+              toggle-unchecked="Not on LoveJunk"
+            />
+            <ModGroupSetting
+              :groupid="groupid"
+              name="mentored"
+              label="Caretakers?"
+              description="Whether this community is being run by Caretakers."
+              type="toggle"
+              toggle-checked="Caretakers"
+              toggle-unchecked="Local volunteers"
+            />
+            <p v-if="group.affiliationconfirmed">
+              Affiliation last confirmed
+              {{ dateshort(group.affiliationconfirmed) }}
+              <span class="text-muted">
+                by <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
+                  group.affiliationconfirmedby
+                }}
+              </span>
+            </p>
+            <p v-else>Affiliation not confirmed yet.</p>
+          </b-card-body>
+        </b-collapse>
+      </b-card>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted, reactive } from 'vue'
+import { QuillEditor } from '@vueup/vue-quill'
+import '@vueup/vue-quill/dist/vue-quill.snow.css'
+import htmlEditButton from 'quill-html-edit-button'
+
+import { useShortlinkStore } from '~/stores/shortlinks'
+import { useAuthStore } from '~/stores/auth'
+import { useModConfigStore } from '~/stores/modconfig'
+import { useModGroupStore } from '@/stores/modgroup'
+import { useMe } from '~/composables/useMe'
+
+const props = defineProps({
+  initialGroup: {
+    type: Number,
+    required: false,
+    default: null,
+  },
+})
+
+const authStore = useAuthStore()
+const modGroupStore = useModGroupStore()
+const modConfigStore = useModConfigStore()
+const shortlinkStore = useShortlinkStore()
+const { fetchMe, myid, supportOrAdmin } = useMe()
+
+const quillModules = {
+  name: 'htmlEditButton',
+  module: htmlEditButton,
+  options: {}, // https://github.com/benwinding/quill-html-edit-button?tab=readme-ov-file#options
+}
+
+const copyfrom = ref(null)
+const groupid = ref(null)
+const uploadingProfile = ref(false)
+const profileAtts = ref([])
+const editingDescription = ref(false)
+const rules = reactive({})
+const rulesBump = ref(0)
+
+const toolbarOptions = [
+  [{ header: [1, 2, 3, 4, 5, 6, false] }],
+  ['bold', 'italic', 'underline', 'strike'],
+  ['blockquote', 'code-block'],
+  [{ list: 'ordered' }, { list: 'bullet' }, { list: 'check' }],
+  [{ indent: '-1' }, { indent: '+1' }],
+  [{ color: [] }, { background: [] }],
+  ['link', 'image', 'video'],
+  ['clean'],
+]
+
+const rulelist = [
+  ['fullymoderated', 'toggle', 'Do you moderate all posts?', 'Yes', 'No'],
+  [
+    'requirefirstpostoffer',
+    'toggle',
+    "Do you require a member's first post to be an Offer?",
+    'Yes',
+    'No',
+  ],
+  [
+    'limitconcurrentwanteds',
+    'toggle',
+    'Do you limit the number of Wanted posts allowed at one time?',
+    'Yes',
+    'No',
+  ],
+  [
+    'limitgroups',
+    'toggle',
+    'Do you limit the number of groups a member can join?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'restrictcrossposting',
+    'toggle',
+    'Do you restrict cross-posting to other groups?',
+    'Yes',
+    'No',
+  ],
+  [
+    'allowloans',
+    'toggle',
+    'Do you allow any loans or requests to borrow?',
+    'Yes',
+    'No',
+  ],
+  [
+    'suggesteddonations',
+    'toggle',
+    'Do you allow people to ask for a donation to charity when offering items?',
+    'Yes',
+    'No',
+  ],
+  [
+    'declareselling',
+    'toggle',
+    'Do you inform members that they must declare if they intend to sell items on?',
+    'Yes',
+    'No',
+  ],
+  [
+    'restrictpersonalinfo',
+    'toggle',
+    'Do you restrict personal info in posts eg telephone numbers, addresses?',
+    'Yes',
+    'No',
+  ],
+  [
+    'restrictdistance',
+    'toggle',
+    'Do you remove any members purely for being out of your group area?',
+    'Yes',
+    'No',
+  ],
+  [false, 'Rules about specific items'],
+  [
+    'animalswanted',
+    'toggle',
+    'Do you allow any requests for animals on your group?',
+    'Yes',
+    'No',
+  ],
+  [
+    'animalsoffer',
+    'toggle',
+    'Do you allow any offers of animals for rehoming on your group?',
+    'Yes',
+    'No',
+  ],
+  [
+    'weapons',
+    'toggle',
+    'Do you allow any requests or offers of weapons on your group?',
+    'Yes',
+    'No',
+  ],
+  [
+    'firearms',
+    'toggle',
+    'Do you allow any offers or requests for guns if members have a firearms license?',
+    'Yes',
+    'No',
+  ],
+  [
+    'knives',
+    'toggle',
+    'Do you allow any offers or requests for household or craft knives?',
+    'Yes',
+    'No',
+  ],
+  [
+    'knivesrestrict',
+    'toggle',
+    'If so, do you restrict these to over 18s and only if personally collected?',
+    'Yes',
+    'No',
+  ],
+  [
+    'medicationsprescription',
+    'toggle',
+    'Do you allow any offers or requests for prescription medication?',
+    'Yes',
+    'No',
+  ],
+  [
+    'medicationsotc',
+    'toggle',
+    'Do you allow any offers or requests for over-the-counter medication?',
+    'Yes',
+    'No',
+  ],
+  [
+    'medicationsanimals',
+    'toggle',
+    'Do you allow any offers or requests for medication for animals?',
+    'Yes',
+    'No',
+  ],
+  [
+    'contactlenses',
+    'toggle',
+    'Do you allow any offers or requests for Contact Lenses?',
+    'Yes',
+    'No',
+  ],
+  [
+    'contactlensessolutions',
+    'toggle',
+    'Do you allow any offers or requests for Contact Lens Solutions?',
+    'Yes',
+    'No',
+  ],
+  [
+    'tobacco',
+    'toggle',
+    'Do you allow any offers or requests for tobacco?',
+    'Yes',
+    'No',
+  ],
+  [
+    'vaping',
+    'toggle',
+    'Do you allow any offers or requests for Vaping products?',
+    'Yes',
+    'No',
+  ],
+  [
+    'alcohol',
+    'toggle',
+    'Do you allow any offers or requests for Alcohol?',
+    'Yes',
+    'No',
+  ],
+  [
+    'gascylinders',
+    'toggle',
+    'Do you allow any offers or requests for Gas Cylinders?',
+    'Yes',
+    'No',
+  ],
+  [
+    'tickets',
+    'toggle',
+    'Do you allow any offers or requests for vouchers, coupons or tickets?',
+    'Yes',
+    'No',
+  ],
+  [
+    'wastecarrier',
+    'toggle',
+    'Do you ask for a waste carrier license in any requests for scrap metal?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'carboot',
+    'toggle',
+    'Do you allow any requests for items to sell at car boot sales?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'chineselanterns',
+    'toggle',
+    'Do you allow any offers or requests for Chinese Lanterns?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'carseats',
+    'toggle',
+    'Do you allow any offers or requests for Child/Baby Car Seats?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'pondlife',
+    'toggle',
+    'Do you allow any offers or requests for pondlife (eg frog spawn) or pond plants?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'copyright',
+    'toggle',
+    'Do you allow any offers or requests for original items subject to copyright, eg computer software or games, music, films?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [
+    'porn',
+    'toggle',
+    'Do you allow any offers or requests for items that you consider pornographic?',
+    'Yes',
+    'No',
+    'New',
+  ],
+  [false, 'Other rules'],
+  [
+    'other',
+    'textarea',
+    'Please add in information about any rules you have which are not covered by the questions above.',
+    'Yes',
+    'No',
+  ],
+]
+
+const readonly = computed(() => {
+  return group.value.myrole !== 'Owner'
+})
+
+const group = computed(() => {
+  return modGroupStore.get(groupid.value)
+})
+
+const shortlinks = computed(() => {
+  return shortlinkStore.list
+})
+
+const active = computed({
+  get() {
+    return Boolean(group.value.mysettings.active)
+  },
+  set(newval) {
+    saveMembershipSetting('active', newval ? 1 : 0)
+  },
+})
+
+const region = computed({
+  get() {
+    return group.value.region
+  },
+  set(newval) {
+    saveGroupSetting('region', newval)
+  },
+})
+
+const modconfig = computed({
+  get() {
+    return parseInt(group.value.mysettings.configid)
+  },
+  set(newval) {
+    saveMembershipSetting('configid', newval)
+  },
+})
+
+const modConfigs = computed(() => {
+  return modConfigStore.configs
+})
+
+const modConfigOptions = computed(() => {
+  const ret = []
+  modConfigs.value.forEach((c) => {
+    ret.push({
+      value: c.id,
+      text: c.name,
+    })
+  })
+
+  return ret
+})
+
+const regionOptions = [
+  { text: 'East', value: 'East' },
+  { text: 'London', value: 'London' },
+  { text: 'Midlands West', value: 'West Midlands' },
+  { text: 'Midlands East', value: 'East Midlands' },
+  { text: 'North East', value: 'North East' },
+  { text: 'North West', value: 'North West' },
+  { text: 'Northern Ireland', value: 'Northern Ireland' },
+  { text: 'South East', value: 'South East' },
+  { text: 'South West', value: 'South West' },
+  { text: 'Wales', value: 'Wales' },
+  { text: 'Yorkshire and the Humber', value: 'Yorkshire and the Humber' },
+  { text: 'Scotland', value: 'Scotland' },
+]
+
+watch(groupid, () => {
+  fetchGroup()
+})
+
+watch(
+  profileAtts,
+  (newVal) => {
+    uploadingProfile.value = false
+    if (newVal?.length) {
+      // Get the image ID from the uploaded attachment and update the group profile
+      const imageid = newVal[0].id
+      if (imageid) {
+        modGroupStore.updateMT({
+          id: groupid.value,
+          profile: imageid,
+        })
+      }
+      // Clear the array for next upload
+      profileAtts.value = []
+    }
+  },
+  { deep: true }
+)
+
+onMounted(() => {
+  groupid.value = props.initialGroup
+  fetchConfigs()
+})
+
+async function fetchGroup() {
+  if (!groupid.value) return
+  editingDescription.value = false
+
+  await modGroupStore.fetchGroupMT(groupid.value)
+  const groupData = modGroupStore.get(groupid.value)
+  let groupRules = groupData?.rules || {}
+  // console.log('fetchGroup rules',groupRules)
+  groupRules =
+    typeof groupRules === 'string' ? JSON.parse(groupRules) : groupRules
+  const unsetrules = {}
+  for (const rule of rulelist) {
+    if (rule[0]) {
+      unsetrules[rule[0]] = null
+    }
+  }
+  // console.log('unsetrules',unsetrules)
+  // console.log('rules',groupRules)
+  Object.assign(rules, { ...unsetrules, ...groupRules })
+
+  shortlinkStore.fetch(0, groupid.value)
+}
+
+async function fetchConfigs() {
+  await modConfigStore.fetch({})
+}
+
+function changedrule(rule, newval) {
+  if (typeof newval !== 'object') {
+    rules[rule[0]] = newval
+  }
+}
+
+async function saverules(callback) {
+  await modGroupStore.updateMT({
+    id: groupid.value,
+    rules,
+  })
+  fetchGroup()
+  callback()
+}
+
+async function saveMembershipSetting(name, val) {
+  const settings = group.value.mysettings
+  settings[name] = val
+
+  await authStore.setGroup({
+    groupid: groupid.value,
+    userid: myid.value,
+    settings,
+  })
+  fetchMe(true)
+}
+
+function uploadProfile() {
+  uploadingProfile.value = true
+}
+
+function saveGroupSetting(name, val) {
+  // Note that we get a sneaky progress indicator and success from SpinButton even though actually we're doing the
+  // work here triggered by the set on the computed value.
+  const data = {
+    id: groupid.value,
+  }
+
+  data[name] = val
+
+  modGroupStore.updateMT(data)
+}
+
+async function saveDescription(callback) {
+  await modGroupStore.updateMT({
+    id: groupid.value,
+    description: group.value.description,
+  })
+
+  editingDescription.value = false
+  callback()
+}
+
+async function copy(callback) {
+  await modGroupStore.fetchIfNeedBeMT(copyfrom.value)
+
+  const copyfromGroup = modGroupStore.get(copyfrom.value)
+
+  if (copyfromGroup) {
+    let copyfromRules = copyfromGroup.rules
+    copyfromRules =
+      typeof copyfromRules === 'string'
+        ? JSON.parse(copyfromRules)
+        : copyfromRules
+
+    await modGroupStore.updateMT({
+      id: groupid.value,
+      rules: copyfromRules,
+    })
+
+    await modGroupStore.fetchGroupMT(groupid.value) // Reload group
+    fetchGroup()
+
+    rulesBump.value++
+  }
+  callback()
+}
+</script>
+<style scoped lang="scss">
+//@import 'color-vars';
+
+input,
+select {
+  max-width: 300px;
+}
+
+.card {
+  border-width: medium;
+  border-color: $color-success-border;
+}
+</style>

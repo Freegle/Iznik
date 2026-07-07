@@ -1,0 +1,36 @@
+# ModTools Netlify configuration
+# Base directory on Netlify is iznik-nuxt3/modtools — all paths relative to that
+# Parent Nuxt app (iznik-nuxt3/) must be installed first since modtools extends it
+
+[build.environment]
+NODE_VERSION = "22"
+NPM_FLAGS = "--legacy-peer-deps"
+
+[build]
+command = "export NODE_OPTIONS=--max_old_space_size=6000 && cd .. && npm ci --legacy-peer-deps && npx nuxi prepare && cd modtools && npm run build"
+publish = "dist"
+
+# Return 404 for requests from old code. This avoids the function call, which costs.
+[[redirects]]
+from = "/api/*"
+to = "/"
+status = 404
+force = true
+
+[[redirects]]
+from = "/sw.js*"
+to = "/"
+status = 404
+force = true
+
+[[redirects]]
+from = "/gimg*"
+to = "/"
+status = 404
+force = true
+
+[[redirects]]
+from = "/uimg*"
+to = "/"
+status = 404
+force = true

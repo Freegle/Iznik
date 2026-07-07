@@ -1,0 +1,119 @@
+// There are six types of button used on the site - primary, secondary, white, danger, warning and link
+
+button {
+  white-space: nowrap !important;
+}
+
+.btn-group-xs > .btn, .btn-xs {
+  padding  : .25rem .4rem !important;
+  font-size  : .875rem !important;
+  line-height  : .5 !important;
+  border-radius : .2rem !important;
+}
+
+// Override some of the default bootstrap definitions
+.btn {
+  font-weight: 500 !important;
+  transition: all var(--transition-fast, 150ms ease-in-out);
+}
+
+.btn-primary {
+  color: $color-white !important;
+
+  &:hover {
+    border-color: $color-success !important;
+  }
+
+  &:disabled {
+    color: $color-white !important;
+  }
+}
+
+// Secondary: neutral/subordinate action -- visually distinct from primary
+.btn-secondary {
+  color: var(--color-gray-500, $color-gray--normal) !important;
+  border: 1px solid var(--color-gray-300, $color-gray-4) !important;
+  background: transparent !important;
+
+  &:hover,
+  &:focus {
+    color: $color-white !important;
+    border-color: var(--color-gray-500, $color-gray--normal) !important;
+    background: var(--color-gray-500, $color-gray--normal) !important;
+  }
+
+  &:disabled {
+    opacity: 0.5 !important;
+    color: var(--color-gray-500, $color-gray--normal) !important;
+    background: transparent !important;
+  }
+}
+
+// Outline-primary: green outline button (what "secondary" used to be)
+.btn-outline-primary {
+  color: $color-green--darker !important;
+  border: 1px solid $color-green--darker !important;
+  background: transparent !important;
+
+  &:hover,
+  &:focus {
+    color: $color-white !important;
+    border-color: $color-green--darker !important;
+    background: $color-green--darker !important;
+  }
+
+  &:disabled {
+    opacity: 0.5 !important;
+    color: $color-green--darker !important;
+    background: transparent !important;
+  }
+}
+
+// This is the tertiary CTA
+.btn-white {
+  background-color: $color-white !important;
+  border: 1px solid var(--color-gray-400, $color-gray--base) !important;
+  color: var(--color-gray-900, $color-gray--darker) !important;
+  text-shadow: none !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+.btn-white:hover {
+  color: var(--color-gray-900, $color-gray--darker) !important;
+  background-color: var(--color-gray-100, $color-gray--lighter) !important;
+  border-color: var(--color-gray-500, $color-gray--normal) !important;
+}
+
+.btn-default {
+  background-color: $color-white !important;
+  background-image: none !important;
+  border-color: var(--color-gray-400, $color-gray--base) !important;
+  color: $color-black !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+.btn-warning {
+  background-color: $color-warning !important;
+  background-image: none !important;
+  border-color: $color-warning !important;
+  color: $color-white !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+.btn-light {
+  color: $color-gray--normal !important;
+  background-color: inherit !important;
+  font-size: 0.8rem !important;
+  padding: 0 2px 0 2px !important;
+  border: none !important;
+
+  &:hover {
+    color: $color-gray--normal !important;
+  }
+}
+
+.badge {
+  &.text-bg-info {
+    color: white !important;
+  }
+}

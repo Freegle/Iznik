@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Container Logs</title>
+    <style>
+        body { font-family: monospace; background: #000; color: #0f0; padding: 20px; margin: 0; }
+        .container { white-space: pre-wrap; }
+        .header { color: #fff; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2 id="title">Container Logs</h2>
+        <div>Last updated: <span id="timestamp"></span></div>
+    </div>
+    <div class="container">
+        <pre id="logs">Loading logs...</pre>
+    </div>
+    
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const container = urlParams.get('container');
+        
+        if (container) {
+            document.getElementById('title').textContent = `Logs: ${container}`;
+            
+            async function fetchLogs() {
+                try {
+                    const response = await fetch(`/api/logs?container=${container}`);
+                    const logs = await response.text();
+                    document.getElementById('logs').textContent = logs;
+                    document.getElementById('timestamp').textContent = new Date().toLocaleTimeString();
+                } catch (error) {
+                    document.getElementById('logs').textContent = `Error fetching logs: ${error.message}\n\nTo view manually, run:\ndocker logs --tail=50 ${container}`;
+                }
+            }
+            
+            fetchLogs();
+            setInterval(fetchLogs, 2000);
+        } else {
+            document.getElementById('logs').textContent = 'No container specified';
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "yesterday-backup-api",
+  "version": "1.0.0",
+  "description": "Yesterday Backup Management API - List and restore Freegle backups from GCS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": ["backup", "restore", "freegle"],
+  "author": "Freegle",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

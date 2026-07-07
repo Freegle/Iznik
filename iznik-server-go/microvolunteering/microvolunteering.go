@@ -1,0 +1,1133 @@
+package microvolunteering
+
+import (
+	"fmt"
+	"math/rand"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
+	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+)
+
+// AIImageChallenge represents an AI image to review
+type AIImageChallenge struct {
+	ID         uint64 `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	UsageCount uint64 `json:"usage_count"`
+}
+
+// EEELabelChallenge represents a Freegle item to be labelled for EEE
+// (Electrical / Electronic Equipment) classification training.
+type EEELabelChallenge struct {
+	Messageid uint64 `json:"messageid"`
+	Attid     uint64 `json:"attid"`
+	ItemName  string `json:"itemName"`
+	ImageURL  string `json:"imageUrl"`
+}
+
+// Challenge represents a micro-volunteering challenge
+type Challenge struct {
+	Type     string             `json:"type"`
+	Msgid    *uint64            `json:"msgid,omitempty"`
+	Terms    []SearchTerm       `json:"terms,omitempty"`
+	Photos   []Photo            `json:"photos,omitempty"`
+	URL      *string            `json:"url,omitempty"`
+	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
+	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
+}
+
+// SearchTerm represents a search term for matching
+type SearchTerm struct {
+	ID   uint64 `json:"id"`
+	Term string `json:"term"`
+}
+
+// Photo represents a photo for rotation challenge
+type Photo struct {
+	ID   uint64 `json:"id"`
+	Path string `json:"path"`
+}
+
+// Challenge types
+const (
+	ChallengeCheckMessage  = "CheckMessage"
+	ChallengeSearchTerm    = "SearchTerm"
+	ChallengePhotoRotate   = "PhotoRotate"
+	ChallengeSurvey        = "Survey2"
+	ChallengeInvite        = "Invite"
+	ChallengeAIImageReview = "AIImageReview"
+	ChallengeEEELabel      = "EEELabel"
+)
+
+// Trust levels
+const (
+	TrustExcluded = "Excluded"
+	TrustDeclined = "Declined"
+	TrustBasic    = "Basic"
+	TrustModerate = "Moderate"
+	TrustAdvanced = "Advanced"
+)
+
+// Microvolunteering quorum constants
+const (
+	ApprovalQuorum      = 2
+	DissentingQuorum    = 3
+	AIImageReviewQuorum = 5
+	EEELabelQuorum      = 3
+)
+
+// EEE label vocabularies — kept here so the server rejects invalid client
+// submissions and the Vue component / sync command have a single source of
+// truth via a comment.
+//
+//	Condition: reusable | damaged | unsure
+//	Weight:    under_1kg | 1_5kg | 5_20kg | 20_100kg | over_100kg | unsure
+//	Size:      tiny | small | medium | large | unsure
+var (
+	validEEEConditions = map[string]bool{"reusable": true, "damaged": true, "unsure": true}
+	validEEEWeights    = map[string]bool{"under_1kg": true, "1_5kg": true, "5_20kg": true, "20_100kg": true, "over_100kg": true, "unsure": true}
+	validEEESizes      = map[string]bool{"tiny": true, "small": true, "medium": true, "large": true, "unsure": true}
+)
+
+func isValidEEECondition(v string) bool { return validEEEConditions[v] }
+func isValidEEEWeight(v string) bool    { return validEEEWeights[v] }
+func isValidEEESize(v string) bool      { return validEEESizes[v] }
+
+// CoinFlip picks between AI image review and approved message review when both
+// are available. Overridable from tests so both branches can be exercised
+// deterministically; otherwise `rand.Intn(2)` leaves the fallback paths
+// covered only probabilistically, which flips Coveralls' per-job status check.
+var CoinFlip = func() int { return rand.Intn(2) }
+
+// GetChallenge returns a micro-volunteering challenge for the logged-in user
+// @Summary Get micro-volunteering challenge
+// @Description Returns a micro-volunteering challenge for the logged-in user
+// @Tags microvolunteering
+// @Accept json
+// @Produce json
+// @Param groupid query int false "Group ID to get challenges for"
+// @Param types query []string false "Challenge types to include"
+// @Success 200 {object} Challenge "Micro-volunteering challenge"
+// @Failure 401 {object} map[string]string "Not logged in"
+// @Router /microvolunteering [get]
+func GetChallenge(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	// Get user ID from JWT
+	userID, _, _ := user.GetJWTFromRequest(c)
+	if userID == 0 {
+		return c.Status(401).JSON(fiber.Map{
+			"error": "Not logged in",
+		})
+	}
+
+	// when list=true, return moderator listing of microactions.
+	if c.Query("list") == "true" || c.Query("list") == "1" {
+		return listMicroActions(c, db, userID)
+	}
+
+	// Get parameters
+	groupID := c.QueryInt("groupid", 0)
+
+	// Parse types from query — handle both "types=A,B" and repeated "types=A&types=B" and "types[]=A&types[]=B".
+	var challengeTypes []string
+	c.Context().QueryArgs().VisitAll(func(key, value []byte) {
+		k := string(key)
+		if k == "types" || k == "types[]" {
+			for _, t := range strings.Split(string(value), ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					challengeTypes = append(challengeTypes, t)
+				}
+			}
+		}
+	})
+
+	if len(challengeTypes) == 0 {
+		challengeTypes = []string{
+			ChallengeInvite,
+			ChallengeCheckMessage,
+			ChallengeAIImageReview,
+			ChallengeEEELabel,
+			ChallengePhotoRotate,
+		}
+	}
+
+	// Get user's trust level
+	var trustLevel string
+	err := db.Raw(`
+		SELECT COALESCE(trustlevel, ?) FROM users WHERE id = ?
+	`, TrustBasic, userID).Scan(&trustLevel).Error
+
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Failed to fetch user trust level",
+		})
+	}
+
+	// Don't offer challenges to declined/excluded users
+	if trustLevel == TrustDeclined || trustLevel == TrustExcluded {
+		return c.JSON(fiber.Map{})
+	}
+
+	// Get user's group IDs
+	var groupIDs []uint64
+	if groupID > 0 {
+		groupIDs = []uint64{uint64(groupID)}
+	} else {
+		// Get all user's Freegle groups
+		db.Raw(`
+			SELECT groupid FROM memberships
+			INNER JOIN `+"`groups`"+` ON memberships.groupid = `+"`groups`"+`.id
+			WHERE userid = ? AND type = ?
+		`, userID, utils.GROUP_TYPE_FREEGLE).Scan(&groupIDs)
+	}
+
+	// Try Invite challenge first
+	if contains(challengeTypes, ChallengeInvite) {
+		if challenge := getInviteChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Try pending message review for Moderate trust level users
+	if trustLevel == TrustModerate && len(groupIDs) > 0 {
+		if challenge := getPendingMessageChallenge(db, userID, groupIDs); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Try EEELabel first (ahead of AIImageReview/CheckMessage). The EEE
+	// labelling pipeline relies on volunteer labels reaching quorum quickly,
+	// and AIImageReview / CheckMessage have plentiful backlogs that would
+	// otherwise crowd it out entirely.
+	if contains(challengeTypes, ChallengeEEELabel) {
+		if challenge := getEEELabelChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Randomize between approved message review and AI image review (50/50) so that
+	// AI image review actually gets served — otherwise CheckMessage always has work
+	// and AI image review is never reached.
+	wantCheckMessage := contains(challengeTypes, ChallengeCheckMessage) && len(groupIDs) > 0
+	wantAIImage := contains(challengeTypes, ChallengeAIImageReview)
+
+	if wantCheckMessage && wantAIImage {
+		if CoinFlip() == 0 {
+			if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
+				return c.JSON(challenge)
+			}
+			if challenge := getApprovedMessageChallenge(db, userID, groupIDs); challenge != nil {
+				return c.JSON(challenge)
+			}
+		} else {
+			if challenge := getApprovedMessageChallenge(db, userID, groupIDs); challenge != nil {
+				return c.JSON(challenge)
+			}
+			if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
+				return c.JSON(challenge)
+			}
+		}
+	} else if wantCheckMessage {
+		if challenge := getApprovedMessageChallenge(db, userID, groupIDs); challenge != nil {
+			return c.JSON(challenge)
+		}
+	} else if wantAIImage {
+		if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Try photo rotate challenge
+	if contains(challengeTypes, ChallengePhotoRotate) && len(groupIDs) > 0 {
+		if challenge := getPhotoRotateChallenge(db, userID, groupIDs); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Try search term challenge
+	if contains(challengeTypes, ChallengeSearchTerm) {
+		// Check if user is in a group with word matching enabled
+		var enabled int
+		var query string
+		var params []interface{}
+
+		if groupID > 0 {
+			// Filter to specific group if provided
+			query = `
+				SELECT COUNT(*)
+				FROM memberships
+				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
+				WHERE memberships.userid = ?
+				AND memberships.groupid = ?
+				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
+			`
+			params = []interface{}{userID, groupID}
+		} else {
+			// Check all user's groups
+			query = `
+				SELECT COUNT(*)
+				FROM memberships
+				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
+				WHERE memberships.userid = ?
+				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
+			`
+			params = []interface{}{userID}
+		}
+
+		db.Raw(query, params...).Scan(&enabled)
+
+		if enabled > 0 {
+			// Get 10 random popular items
+			type ItemTerm struct {
+				ID   uint64 `json:"id"`
+				Term string `json:"term"`
+			}
+			var terms []ItemTerm
+
+			db.Raw(`
+				SELECT DISTINCT id, name AS term
+				FROM (SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t
+				ORDER BY RAND() LIMIT 10
+			`).Scan(&terms)
+
+			if len(terms) > 0 {
+				var searchTerms []SearchTerm
+				for _, t := range terms {
+					searchTerms = append(searchTerms, SearchTerm{
+						ID:   t.ID,
+						Term: t.Term,
+					})
+				}
+
+				return c.JSON(Challenge{
+					Type:  ChallengeSearchTerm,
+					Terms: searchTerms,
+				})
+			}
+		}
+	}
+
+	// If no challenge found, return empty object
+	return c.JSON(fiber.Map{})
+}
+
+// Helper function to check if slice contains string
+func contains(slice []string, str string) bool {
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
+	}
+	return false
+}
+
+// getInviteChallenge returns an invite challenge if the user hasn't been asked recently
+func getInviteChallenge(db *gorm.DB, userID uint64) *Challenge {
+	// Check if we've asked in the last 31 days
+	var count int
+	db.Raw(`
+		SELECT COUNT(*) FROM microactions
+		WHERE userid = ? AND actiontype = ?
+		AND DATEDIFF(NOW(), timestamp) < 31
+	`, userID, ChallengeInvite).Scan(&count)
+
+	if count == 0 {
+		// Record a placeholder to ensure we don't ask too often
+		db.Exec(`
+			INSERT INTO microactions (actiontype, userid, version, comments, score_negative)
+			VALUES (?, ?, 4, 'Ask to invite', 0)
+		`, ChallengeInvite, userID)
+
+		return &Challenge{
+			Type: ChallengeInvite,
+		}
+	}
+
+	return nil
+}
+
+// getPendingMessageChallenge returns a pending message for moderate trust users to review
+func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Challenge {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+
+	// Convert group IDs to comma-separated string for SQL
+	groupIDStrs := make([]string, len(groupIDs))
+	for i, id := range groupIDs {
+		groupIDStrs[i] = fmt.Sprintf("%d", id)
+	}
+	groupIDsStr := strings.Join(groupIDStrs, ",")
+
+	type MessageResult struct {
+		Msgid uint64 `json:"msgid"`
+	}
+	var msg MessageResult
+
+	err := db.Raw(`
+		SELECT messages_groups.msgid
+		FROM messages_groups
+		INNER JOIN messages ON messages.id = messages_groups.msgid
+		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid
+		LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?
+		WHERE messages_groups.groupid IN (`+groupIDsStr+`)
+			AND DATE(messages.arrival) = CURDATE()
+			AND fromuser != ?
+			AND microvolunteering = 1
+			AND messages.deleted IS NULL
+			AND microactions.id IS NULL
+			AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1)
+			AND collection = ?
+			AND autoreposts = 0
+		ORDER BY messages_groups.arrival ASC LIMIT 1
+	`, userID, userID, utils.COLLECTION_PENDING).Scan(&msg).Error
+
+	if err == nil && msg.Msgid > 0 {
+		return &Challenge{
+			Type:  ChallengeCheckMessage,
+			Msgid: &msg.Msgid,
+		}
+	}
+
+	return nil
+}
+
+// getApprovedMessageChallenge returns an approved message for any user to review
+func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Challenge {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+
+	// Convert group IDs to comma-separated string for SQL
+	groupIDStrs := make([]string, len(groupIDs))
+	for i, id := range groupIDs {
+		groupIDStrs[i] = fmt.Sprintf("%d", id)
+	}
+	groupIDsStr := strings.Join(groupIDStrs, ",")
+
+	type MessageResult struct {
+		Msgid uint64 `json:"msgid"`
+	}
+	var msg MessageResult
+
+	resultApprove := "Approve"
+
+	err := db.Raw(`
+		SELECT messages_spatial.msgid,
+			(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount,
+			(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount
+		FROM messages_spatial
+		INNER JOIN messages_groups ON messages_spatial.msgid = messages_groups.msgid
+		INNER JOIN messages ON messages.id = messages_spatial.msgid
+		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid
+		LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ?
+		LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid
+		WHERE messages_groups.groupid IN (`+groupIDsStr+`)
+			AND DATE(messages.arrival) = CURDATE()
+			AND fromuser != ?
+			AND microvolunteering = 1
+			AND messages_outcomes.id IS NULL
+			AND messages.deleted IS NULL
+			AND microactions.id IS NULL
+			AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1)
+			AND collection = ?
+			AND autoreposts = 0
+		HAVING approvalcount < ? AND reviewcount < ?
+		ORDER BY messages_groups.arrival ASC LIMIT 1
+	`, resultApprove, userID, userID, utils.COLLECTION_APPROVED, ApprovalQuorum, DissentingQuorum).Scan(&msg).Error
+
+	if err == nil && msg.Msgid > 0 {
+		return &Challenge{
+			Type:  ChallengeCheckMessage,
+			Msgid: &msg.Msgid,
+		}
+	}
+
+	return nil
+}
+
+// getPhotoRotateChallenge returns photos that need rotation review
+func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Challenge {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+
+	// Convert group IDs to comma-separated string for SQL
+	groupIDStrs := make([]string, len(groupIDs))
+	for i, id := range groupIDs {
+		groupIDStrs[i] = fmt.Sprintf("%d", id)
+	}
+	groupIDsStr := strings.Join(groupIDStrs, ",")
+
+	type PhotoResult struct {
+		ID uint64 `json:"id"`
+	}
+	var photos []PhotoResult
+
+	today := time.Now().Format("2006-01-02")
+
+	err := db.Raw(`
+		SELECT messages_attachments.id,
+			(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount
+		FROM messages_groups
+		INNER JOIN messages_attachments ON messages_attachments.msgid = messages_groups.msgid
+		LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ?
+		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid AND microvolunteering = 1 AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.photorotate') = 1)
+		WHERE arrival >= ? AND groupid IN (`+groupIDsStr+`) AND microactions.id IS NULL
+		HAVING reviewcount < ?
+		ORDER BY RAND() LIMIT 9
+	`, userID, today, DissentingQuorum).Scan(&photos).Error
+
+	if err == nil && len(photos) > 0 {
+		var photoList []Photo
+
+		// Get image domain from environment
+		imageDomain := os.Getenv("IMAGE_DOMAIN")
+		if imageDomain == "" {
+			imageDomain = "images.ilovefreegle.org"
+		}
+
+		for _, p := range photos {
+			// Construct thumbnail path similar to how message.go does it
+			path := "https://" + imageDomain + "/timg_" + fmt.Sprintf("%d", p.ID) + ".jpg"
+
+			photoList = append(photoList, Photo{
+				ID:   p.ID,
+				Path: path,
+			})
+		}
+
+		return &Challenge{
+			Type:   ChallengePhotoRotate,
+			Photos: photoList,
+		}
+	}
+
+	return nil
+}
+
+// Version is the current microvolunteering protocol version.
+const Version = 4
+
+// getAIImageReviewChallenge returns an AI image for the user to review.
+// Images are served in descending order of usage_count (most-used first),
+// skipping images the user has already reviewed, images that have reached quorum,
+// and images that are not in 'active' status (e.g. already rejected/regenerating).
+func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
+	type AIImageResult struct {
+		ID          uint64 `json:"id"`
+		Name        string `json:"name"`
+		Externaluid string `json:"externaluid"`
+		UsageCount  uint64 `json:"usage_count"`
+	}
+
+	var img AIImageResult
+
+	err := db.Raw(`
+		SELECT ai.id, ai.name, ai.externaluid, ai.usage_count
+		FROM ai_images ai
+		LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?
+		WHERE ai.externaluid IS NOT NULL
+			AND ai.externaluid != ''
+			AND ai.status = 'active'
+			AND ma.id IS NULL
+			AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) < ?
+		ORDER BY ai.usage_count DESC
+		LIMIT 1
+	`, userID, ChallengeAIImageReview, ChallengeAIImageReview, AIImageReviewQuorum).Scan(&img).Error
+
+	if err != nil || img.ID == 0 {
+		return nil
+	}
+
+	return &Challenge{
+		Type: ChallengeAIImageReview,
+		AIImage: &AIImageChallenge{
+			ID:         img.ID,
+			Name:       img.Name,
+			URL:        misc.GetImageDeliveryUrl(img.Externaluid, ""),
+			UsageCount: img.UsageCount,
+		},
+	}
+}
+
+// getEEELabelChallenge returns a Freegle attachment for the user to label
+// for EEE (Electrical / Electronic Equipment) classification. Restricts to
+// attachments the model classifier has already processed (joined via the
+// `eee_classified_attachments` pointer table), so volunteer labels can be
+// scored directly against model output.
+//
+// Previously this picked any recent OFFER with a photo, which produced lots
+// of "wasted" labels on items the classifier never saw (confirmed
+// 2026-05-30: 161 MV-labelled msgids ∩ eee_classifications = 0). Now the
+// candidate set is the intersection of recent OFFER attachments and the
+// classifier's pointer set, so every label can be paired with a model
+// prediction.
+//
+// Performance: drives off `eee_classified_attachments` PRIMARY KEY by
+// joining each pointer to its messages_attachments row. The pointer set
+// is bounded (currently ~5k rows) so the join is cheap, no full scan of
+// messages_attachments. Ordering by classified_at DESC surfaces the most
+// recently classified items first.
+func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
+	type AttachmentResult struct {
+		Attid       uint64 `json:"attid"`
+		Msgid       uint64 `json:"msgid"`
+		Externaluid string `json:"externaluid"`
+		Subject     string `json:"subject"`
+	}
+
+	var att AttachmentResult
+
+	err := db.Raw(`
+		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
+		FROM eee_classified_attachments ec
+		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
+		INNER JOIN messages m ON m.id = ec.messageid
+		WHERE m.deleted IS NULL
+			AND ma_att.externaluid IS NOT NULL
+			AND ma_att.externaluid != ''
+			AND NOT EXISTS (
+				SELECT 1 FROM microactions ma
+				WHERE ma.eee_attachment_id = ma_att.id
+				  AND ma.userid = ?
+				  AND ma.actiontype = ?
+			)
+			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
+		ORDER BY ec.classified_at DESC
+		LIMIT 1
+	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
+
+	if err != nil || att.Attid == 0 {
+		return nil
+	}
+
+	return &Challenge{
+		Type: ChallengeEEELabel,
+		EEELabel: &EEELabelChallenge{
+			Messageid: att.Msgid,
+			Attid:     att.Attid,
+			ItemName:  cleanSubject(att.Subject),
+			ImageURL:  misc.GetImageDeliveryUrl(att.Externaluid, ""),
+		},
+	}
+}
+
+// cleanSubject strips the "OFFER: " prefix and the trailing "(Location PC)"
+// from a Freegle subject line so volunteers see the bare item name.
+func cleanSubject(subject string) string {
+	s := strings.TrimSpace(subject)
+	// Strip leading "OFFER:" / "WANTED:" / etc.
+	lower := strings.ToLower(s)
+	for _, prefix := range []string{"offer:", "offered:", "wanted:", "request:", "requested:", "taken:", "received:"} {
+		if strings.HasPrefix(lower, prefix) {
+			s = strings.TrimSpace(s[len(prefix):])
+			break
+		}
+	}
+	// Strip trailing parenthesised location, e.g. " (Hanwell W7)"
+	if i := strings.LastIndex(s, "("); i > 0 && strings.HasSuffix(strings.TrimSpace(s), ")") {
+		s = strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+// PostResponseRequest represents the body for POST /microvolunteering
+type PostResponseRequest struct {
+	Msgid          uint64  `json:"msgid"`
+	Groupid        uint64  `json:"groupid"`
+	MsgCategory    *string `json:"msgcategory,omitempty"`
+	Response       *string `json:"response,omitempty"`
+	Comments       *string `json:"comments,omitempty"`
+	Searchterm1    uint64  `json:"searchterm1"`
+	Searchterm2    uint64  `json:"searchterm2"`
+	Photoid        uint64  `json:"photoid"`
+	Invite         bool    `json:"invite"`
+	Deg            int     `json:"deg"`
+	AIImageID      uint64  `json:"aiimageid"`
+	ContainsPeople *bool   `json:"containspeople,omitempty"`
+	// EEELabel response fields
+	EEEAttachmentID uint64  `json:"eee_attachment_id,omitempty"`
+	EEECondition    *string `json:"eee_condition,omitempty"`
+	EEEWeight       *string `json:"eee_weight,omitempty"`
+	EEESize         *string `json:"eee_size,omitempty"`
+}
+
+// PostResponse records a user's response to a micro-volunteering challenge
+// @Summary Submit micro-volunteering response
+// @Description Records the user's response to a micro-volunteering challenge
+// @Tags microvolunteering
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} fiber.Map
+// @Failure 400 {object} fiber.Error "Invalid parameters"
+// @Failure 401 {object} fiber.Error "Not logged in"
+// @Router /microvolunteering [post]
+func PostResponse(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req PostResponseRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	db := database.DBConn
+
+	if req.Msgid > 0 && req.Response != nil {
+		// Response to a CheckMessage challenge
+		response := *req.Response
+
+		if response == "Approve" || response == "Reject" {
+			// Mark any notifications regarding this message as read
+			db.Exec(`UPDATE users_notifications SET seen = 1
+				WHERE touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'`,
+				myid, req.Msgid)
+
+			// Record the response - insert or update
+			var msgcategory interface{}
+			if req.MsgCategory != nil {
+				msgcategory = *req.MsgCategory
+			}
+
+			var comments interface{}
+			if req.Comments != nil {
+				comments = *req.Comments
+			}
+
+			db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+				ON DUPLICATE KEY UPDATE result = ?, comments = ?, version = ?, msgcategory = ?`,
+				ChallengeCheckMessage, myid, req.Msgid, response, msgcategory, comments, Version,
+				response, comments, Version, msgcategory)
+
+			// If rejection, check if we have quorum to send for review
+			if response == "Reject" {
+				var rejectCount int64
+				db.Raw(`SELECT COUNT(*) FROM microactions
+					WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
+					AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`,
+					req.Msgid).Scan(&rejectCount)
+
+				if rejectCount >= int64(ApprovalQuorum) {
+					// Quorum reached — pull the post back to Pending on ALL the
+					// groups it is live on (home + rippled-out copies), so every
+					// affected community's moderators review it, not only the group
+					// where this vote happened, then freeze the ripple.
+					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.")
+					FreezeReachIfOriginPending(db, req.Msgid)
+				}
+			}
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.Searchterm1 > 0 && req.Searchterm2 > 0 {
+		// Response to a SearchTerm challenge.
+		// The result column is enum('Approve','Reject') NOT NULL with no default.
+		// Set to 'Approve' since search term responses don't map to approve/reject.
+		db.Exec(`INSERT INTO microactions (actiontype, userid, item1, item2, version, result, score_negative)
+			VALUES (?, ?, ?, ?, ?, 'Approve', 0)
+			ON DUPLICATE KEY UPDATE userid = userid, version = ?`,
+			ChallengeSearchTerm, myid, req.Searchterm1, req.Searchterm2, Version, Version)
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.Photoid > 0 {
+		// Response to a PhotoRotate challenge
+		var response interface{}
+		if req.Response != nil {
+			response = *req.Response
+		}
+
+		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, rotatedimage, result, version, score_negative)
+			VALUES (?, ?, ?, ?, ?, 0)`,
+			ChallengePhotoRotate, myid, req.Photoid, response, Version)
+
+		// Check if we have enough votes to rotate the photo
+		rotated := false
+		if req.Response != nil && *req.Response == "Reject" {
+			var voteCount int64
+			db.Raw("SELECT COUNT(*) FROM microactions WHERE rotatedimage = ? AND result = 'Reject'",
+				req.Photoid).Scan(&voteCount)
+
+			if voteCount >= int64(ApprovalQuorum) {
+				// Enough votes - the batch process handles the actual rotation
+				rotated = true
+			}
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "rotated": rotated})
+
+	} else if req.AIImageID > 0 && req.Response != nil {
+		// Response to an AIImageReview challenge.
+		response := *req.Response
+
+		if response == "Approve" || response == "Reject" || response == "Suppress" {
+			var containsPeople interface{}
+			if req.ContainsPeople != nil {
+				if *req.ContainsPeople {
+					containsPeople = 1
+				} else {
+					containsPeople = 0
+				}
+			}
+
+			db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative)
+				VALUES (?, ?, ?, ?, ?, ?, 0)
+				ON DUPLICATE KEY UPDATE result = ?, containspeople = ?, version = ?`,
+				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
+				response, containsPeople, Version)
+
+			// After recording the vote, check the quorums. 'Suppress' ("this item
+			// should never have an AI image") is terminal, so check it first; 'Reject'
+			// ("this image is bad") leaves the name open to regeneration.
+			checkAIImageSuppressQuorum(db, req.AIImageID)
+			checkAIImageRejectQuorum(db, req.AIImageID)
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.EEEAttachmentID > 0 && req.EEECondition != nil && req.EEEWeight != nil && req.EEESize != nil {
+		// Response to an EEELabel challenge — Condition / Weight / Size labels.
+		// All three are stored on a single microactions row. result is set to
+		// 'Approve' as a placeholder because the column is NOT NULL.
+		if !isValidEEECondition(*req.EEECondition) ||
+			!isValidEEEWeight(*req.EEEWeight) ||
+			!isValidEEESize(*req.EEESize) {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid EEE label values")
+		}
+
+		db.Exec(`INSERT INTO microactions (actiontype, userid, eee_attachment_id, eee_condition, eee_weight, eee_size, result, version, score_negative)
+			VALUES (?, ?, ?, ?, ?, ?, 'Approve', ?, 0)
+			ON DUPLICATE KEY UPDATE eee_condition = ?, eee_weight = ?, eee_size = ?, version = ?`,
+			ChallengeEEELabel, myid, req.EEEAttachmentID, *req.EEECondition, *req.EEEWeight, *req.EEESize, Version,
+			*req.EEECondition, *req.EEEWeight, *req.EEESize, Version)
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.Invite {
+		// Response to an Invite challenge.
+		// The result column is enum('Approve','Reject') NOT NULL. Set to 'Approve' as
+		// the default value since invite responses don't map to approve/reject.
+		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, version, result)
+			VALUES (?, ?, ?, 'Approve')`,
+			ChallengeInvite, myid, Version)
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
+
+	return fiber.NewError(fiber.StatusBadRequest, "Invalid parameters")
+}
+
+// ModFeedbackRequest represents the body for PATCH /microvolunteering
+type ModFeedbackRequest struct {
+	ID            uint64  `json:"id"`
+	Feedback      string  `json:"feedback"`
+	ScorePositive float64 `json:"score_positive"`
+	ScoreNegative float64 `json:"score_negative"`
+}
+
+// ModFeedback allows a moderator to provide feedback on a microaction
+// @Summary Provide moderator feedback on microaction
+// @Description Allows a moderator to set feedback, score_positive, and score_negative on a microaction
+// @Tags microvolunteering
+// @Accept json
+// @Produce json
+// @Param id body int true "Microaction ID"
+// @Param feedback body string true "Moderator feedback text"
+// @Param score_positive body number false "Positive score"
+// @Param score_negative body number false "Negative score"
+// @Security BearerAuth
+// @Success 200 {object} fiber.Map
+// @Failure 400 {object} fiber.Error "Invalid parameters"
+// @Failure 401 {object} fiber.Error "Not logged in"
+// @Failure 403 {object} fiber.Error "Not a moderator"
+// @Router /microvolunteering [patch]
+func ModFeedback(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Only moderators can provide feedback.
+	if !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
+	}
+
+	var req ModFeedbackRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.ID == 0 || req.Feedback == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "id and feedback are required")
+	}
+
+	db := database.DBConn
+
+	// Update the microaction with mod feedback and scores.
+	db.Exec("UPDATE microactions SET modfeedback = ?, score_positive = ?, score_negative = ? WHERE id = ?",
+		req.Feedback, req.ScorePositive, req.ScoreNegative, req.ID)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// SendForReviewAllGroups moves a message back to Pending on ALL the groups it is
+// currently live (Approved) on - its home group AND any rippled-out copies. Used once
+// the aggregate review quorum is reached (from in-app CheckMessage checks or website
+// reports) or on a moderator Back to Pending, so every affected community's moderators
+// see the post. Only Approved rows are touched. Exported so the moderation path reuses it.
+func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string) {
+	if msgid == 0 {
+		return
+	}
+	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND collection = ?",
+		utils.COLLECTION_PENDING, reason, msgid, utils.COLLECTION_APPROVED)
+}
+
+// sendForReviewGroup moves a single group's copy back to Pending - used for a
+// moderator's scoped report (they reported the post on that community only).
+func sendForReviewGroup(db *gorm.DB, msgid uint64, groupid uint64, reason string) {
+	if msgid == 0 || groupid == 0 {
+		return
+	}
+	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND groupid = ? AND collection = ?",
+		utils.COLLECTION_PENDING, reason, msgid, groupid, utils.COLLECTION_APPROVED)
+}
+
+// FreezeReachIfOriginPending freezes a post's ripple once its ORIGIN copy is no longer
+// live-Approved (pulled back for review). Freezing keeps the rippling_reach row but sets
+// status='held' + next_expansion_at=NULL, so: (a) it stops expanding, (b) ExpandService's
+// retraction paths skip it and the Pending rippled copies persist for per-group
+// moderation, and (c) initialiseNew's anti-join can never re-reach + re-notify it if a
+// moderator later re-approves a copy. No-op if the origin is still live, or there is no
+// reach row. Exported for the moderation Back to Pending path.
+func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
+	if msgid == 0 {
+		return
+	}
+	var approvedOrigin int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?",
+		msgid, utils.COLLECTION_APPROVED).Scan(&approvedOrigin)
+	if approvedOrigin > 0 {
+		return
+	}
+	db.Exec("UPDATE rippling_reach SET status = 'held', next_expansion_at = NULL WHERE msgid = ? AND status <> 'held'", msgid)
+}
+
+// reporterIsModOf reports whether the reporter's verdict on the group they reported on
+// is authoritative on its own: Support/Admin, or a Moderator/Owner of that group.
+func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
+	if auth.IsAdminOrSupport(reporterID) {
+		return true
+	}
+	if groupid == 0 {
+		return false
+	}
+	var c int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
+		reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&c)
+	return c > 0
+}
+
+// RecordReportVerdict treats a report of a post (the User2Mod chat message the website
+// report flow sends, targeted at `groupid`) as a microvolunteering "Reject" verdict, so
+// website reports feed the SAME review quorum as in-app CheckMessage checks:
+//   - a MODERATOR of the reported group (or Support/Admin) pulls THAT community's copy to
+//     Pending on its own - scoped, their choice of which communities to report on;
+//   - once ApprovalQuorum distinct Reject verdicts accumulate, the post is pulled to
+//     Pending on ALL its groups (home + rippled-out).
+// Whenever the origin copy ends up Pending the ripple is frozen, so the copies persist for
+// per-group moderation and it never re-ripples/re-notifies on a later re-approval.
+// Best-effort: never blocks the report itself.
+func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid uint64, comments string) {
+	if reporterID == 0 || msgid == 0 {
+		return
+	}
+
+	// A poster reporting their own post must not count toward the quorum.
+	var fromuser uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ?", msgid).Scan(&fromuser)
+	if fromuser == reporterID {
+		return
+	}
+
+	// Record the report as a CheckMessage Reject verdict: ShouldntBeHere + non-null
+	// comments so it counts toward the quorum, exactly like an in-app "something's not
+	// right" check. The (userid, msgid) unique key makes a repeat report one verdict.
+	if comments == "" {
+		comments = "Reported via the website"
+	}
+	db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
+			VALUES (?, ?, ?, 'Reject', 'ShouldntBeHere', ?, ?, 0)
+			ON DUPLICATE KEY UPDATE result = 'Reject', msgcategory = 'ShouldntBeHere', comments = ?, version = ?`,
+		ChallengeCheckMessage, reporterID, msgid, comments, Version, comments, Version)
+
+	const reason = "Members or moderators think there is something wrong with this message."
+
+	// A moderator's report is authoritative for the community they reported on.
+	if reporterIsModOf(db, reporterID, groupid) {
+		sendForReviewGroup(db, msgid, groupid, reason)
+	}
+
+	// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks) pulls
+	// the post to Pending on every community it is on.
+	var rejectCount int64
+	db.Raw(`SELECT COUNT(*) FROM microactions
+			WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
+			AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`, msgid).Scan(&rejectCount)
+	if rejectCount >= int64(ApprovalQuorum) {
+		SendForReviewAllGroups(db, msgid, reason)
+	}
+
+	// If the origin copy is now Pending, freeze the ripple (stops spread + re-reach).
+	FreezeReachIfOriginPending(db, msgid)
+}
+
+// listMicroActions returns microvolunteering activity for moderator review.
+// MicroVolunteering::list() in MicroVolunteering.php.
+func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
+	groupidParam := c.QueryInt("groupid", 0)
+	limitParam := c.QueryInt("limit", 10)
+	start := c.Query("start", "1970-01-01")
+	context := c.QueryInt("context", 0)
+
+	// Determine which groups to query.
+	var groupIDs []uint64
+	if groupidParam > 0 {
+		groupIDs = []uint64{uint64(groupidParam)}
+	} else {
+		groupIDs = user.GetActiveModGroupIDs(myid)
+	}
+
+	if len(groupIDs) == 0 {
+		return c.JSON(fiber.Map{
+			"ret":                0,
+			"status":             "Success",
+			"microvolunteerings": make([]interface{}, 0),
+			"context":            fiber.Map{},
+		})
+	}
+
+	// Build query matching V1: microactions joined with memberships filtered by group.
+	ctxq := ""
+	args := []interface{}{}
+
+	args = append(args, groupIDs, start)
+
+	if context > 0 {
+		ctxq = " AND microactions.id < ?"
+		args = append(args, context)
+	}
+
+	args = append(args, limitParam)
+
+	type MicroAction struct {
+		ID            uint64    `json:"id"`
+		Actiontype    string    `json:"actiontype"`
+		Userid        uint64    `json:"userid"`
+		Msgid         *uint64   `json:"msgid"`
+		Msgcategory   *string   `json:"msgcategory"`
+		Result        string    `json:"result"`
+		Timestamp     time.Time `json:"timestamp"`
+		Comments      *string   `json:"comments"`
+		Item1         *uint64   `json:"item1"`
+		Item2         *uint64   `json:"item2"`
+		Rotatedimage  *uint64   `json:"rotatedimage"`
+		ScorePositive float64   `json:"score_positive"`
+		ScoreNegative float64   `json:"score_negative"`
+		Modfeedback   *string   `json:"modfeedback"`
+	}
+
+	var items []MicroAction
+	db.Raw("SELECT DISTINCT microactions.* FROM microactions "+
+		"INNER JOIN memberships ON memberships.userid = microactions.userid "+
+		"WHERE memberships.groupid IN (?) AND microactions.timestamp >= ?"+ctxq+
+		" ORDER BY microactions.id DESC LIMIT ?", args...).Scan(&items)
+
+	if items == nil {
+		items = []MicroAction{}
+	}
+
+	// Build pagination context.
+	newCtx := fiber.Map{}
+	if len(items) > 0 {
+		newCtx["id"] = items[len(items)-1].ID
+	}
+
+	return c.JSON(fiber.Map{
+		"ret":                0,
+		"status":             "Success",
+		"microvolunteerings": items,
+		"context":            newCtx,
+	})
+}
+
+// RecordAIAttachmentDeletion records a Reject microaction for an AI image when a human
+// (poster or moderator) deletes an AI-generated attachment from a message. This signals
+// that the AI illustration was inappropriate for the item.
+func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
+	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
+		VALUES (?, ?, ?, 'Reject', ?, 0)
+		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
+		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+	checkAIImageRejectQuorum(db, aiImageID)
+}
+
+// ForceRejectAIImage immediately sets an AI image to rejected status, bypassing
+// the normal quorum process. Used when a moderator explicitly signals the image
+// is bad for any post of that item (not just irrelevant to the current post).
+// Records an audit microaction so the rejection is traceable.
+func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
+	db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
+		VALUES (?, ?, ?, 'Reject', ?, 0)
+		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
+		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+}
+
+// checkAIImageRejectQuorum checks whether an AI image has reached the reject quorum
+// (≥ AIImageReviewQuorum votes with a majority being Reject). If so, sets status='rejected'
+// so the image is hidden from end users and surfaced for admin regeneration.
+func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
+	var totalVotes, rejectVotes int64
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
+		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Reject'`,
+		aiImageID, ChallengeAIImageReview).Scan(&rejectVotes)
+
+	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
+		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	}
+}
+
+// checkAIImageSuppressQuorum checks whether an AI image has reached the suppress
+// quorum (≥ AIImageReviewQuorum votes with a majority being Suppress). If so, sets
+// status='suppressed' — a TERMINAL state meaning this item name should never have an
+// AI image: the Pollinations generator skips the name, the image is never shown, and
+// Regenerate refuses. Suppress overrides a prior 'rejected' state.
+func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
+	var totalVotes, suppressVotes int64
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
+		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Suppress'`,
+		aiImageID, ChallengeAIImageReview).Scan(&suppressVotes)
+
+	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
+		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)
+	}
+}

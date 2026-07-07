@@ -1,0 +1,6 @@
+# Traefik dynamic configuration for custom certificates
+# Manual certificates disabled - using Let's Encrypt DNS-01 challenge instead
+# tls:
+#   certificates:
+#     - certFile: /certs/yesterday.ilovefreegle.org.crt
+#       keyFile: /certs/yesterday.ilovefreegle.org.key

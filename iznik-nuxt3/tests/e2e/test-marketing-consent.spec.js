@@ -1,0 +1,214 @@
+const { test, expect } = require('@playwright/test')
+const { logoutIfLoggedIn, signUpViaHomepage } = require('./utils/user')
+const { setupNavigationHelpers } = require('./utils/navigation')
+const { testUsers, timeouts } = require('./config')
+
+/**
+ * Helper function to verify marketing consent in settings.
+ *
+ * @returns {Promise<import('@playwright/test').Locator>} - The locator for the toggle element that can be clicked
+ */
+async function verifyMarketingConsentInSettings(page, expectedChecked) {
+  console.log(
+    `[DEBUG] verifyMarketingConsentInSettings: Expected consent = ${expectedChecked}`
+  )
+
+  // Navigate to settings via hard navigation.
+  await page.goto('/settings')
+  await page.waitForLoadState('domcontentloaded')
+  console.log('[DEBUG] Navigated to /settings')
+
+  // Find the "Freegle updates" option row (marketing consent setting)
+  // Structure is: .option-row > .option-info > span.option-label "Freegle updates"
+  const freegleUpdatesText = page.locator(
+    '.option-label:has-text("Freegle updates")'
+  )
+
+  try {
+    // Wait briefly to see if it's already visible
+    await freegleUpdatesText.waitFor({
+      state: 'visible',
+      timeout: 2000,
+    })
+    console.log('[DEBUG] "Freegle updates" label found immediately')
+  } catch {
+    // If not visible, scroll the element into view
+    console.log('[DEBUG] Scrolling "Freegle updates" setting into view')
+    await freegleUpdatesText.scrollIntoViewIfNeeded()
+
+    // Wait for it to become visible after scrolling
+    await freegleUpdatesText.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    console.log('[DEBUG] "Freegle updates" label found after scrolling')
+  }
+
+  // Find the toggle in the same option-row as "Freegle updates"
+  // Navigate up to option-row and find the toggle-container within it
+  const optionRow = freegleUpdatesText.locator(
+    'xpath=ancestor::div[contains(@class, "option-row")]'
+  )
+
+  const toggleContainer = optionRow.locator('.toggle-container')
+  await toggleContainer.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  console.log('[DEBUG] Toggle container is visible')
+
+  // Check the toggle state by looking for the 'toggle-on' or 'toggle-off' class
+  const innerToggle = toggleContainer.locator('.toggle')
+  const isToggleOn = await innerToggle.evaluate((el) => {
+    return el.classList.contains('toggle-on')
+  })
+
+  console.log(
+    `[DEBUG] Toggle state: isToggleOn = ${isToggleOn}, expected = ${expectedChecked}`
+  )
+
+  // Get toggle classes for debugging
+  const toggleClasses = await innerToggle.evaluate((el) => {
+    return el.className
+  })
+  console.log(`[DEBUG] Toggle classes: "${toggleClasses}"`)
+
+  if (expectedChecked) {
+    expect(isToggleOn).toBe(true)
+  } else {
+    expect(isToggleOn).toBe(false)
+  }
+
+  console.log(`[DEBUG] Marketing consent verification completed successfully`)
+
+  // Return the toggle for other code to click
+  return toggleContainer
+}
+
+// Helper function for signup marketing consent tests
+async function testSignupWithMarketingConsent(
+  page,
+  marketingConsentValue,
+  description
+) {
+  const testUser = testUsers.getRandomUser()
+
+  // Use enhanced signUpViaHomepage with marketing consent parameter
+  const success = await signUpViaHomepage(
+    page,
+    testUser.email,
+    testUser.fullName,
+    testUser.password,
+    marketingConsentValue
+  )
+  expect(success).toBe(true)
+
+  // Verify in settings
+  await verifyMarketingConsentInSettings(page, marketingConsentValue)
+}
+
+// Helper function for login marketing consent tests
+async function testLoginWithMarketingConsent(
+  page,
+  marketingConsentValue,
+  description
+) {
+  console.log(
+    `[DEBUG] testLoginWithMarketingConsent: Starting test with consent = ${marketingConsentValue}`
+  )
+  const testUser = testUsers.getRandomUser()
+  console.log(`[DEBUG] Created test user: ${testUser.email}`)
+
+  // First create user account with specified marketing consent
+  console.log(`[DEBUG] Starting signup phase...`)
+  const signupSuccess = await signUpViaHomepage(
+    page,
+    testUser.email,
+    testUser.fullName,
+    testUser.password,
+    marketingConsentValue
+  )
+  expect(signupSuccess).toBe(true)
+  console.log(`[DEBUG] Signup completed successfully`)
+
+  // Verify in settings
+  console.log(`[DEBUG] Starting settings verification...`)
+  await verifyMarketingConsentInSettings(page, marketingConsentValue)
+  console.log(`[DEBUG] testLoginWithMarketingConsent completed successfully`)
+}
+
+test.describe('Marketing Consent', () => {
+  test.beforeEach(async ({ page }) => {
+    setupNavigationHelpers(page)
+    await logoutIfLoggedIn(page)
+    await page.goto('/')
+  })
+
+  test.afterEach(async ({ page }) => {
+    await logoutIfLoggedIn(page)
+  })
+
+  test('signup with marketing consent enabled should show enabled in settings', async ({
+    page,
+  }) => {
+    await testSignupWithMarketingConsent(page, true, 'enabled')
+  })
+
+  test('signup with marketing consent disabled should show disabled in settings', async ({
+    page,
+  }) => {
+    await testSignupWithMarketingConsent(page, false, 'disabled')
+  })
+
+  test('login with marketing consent enabled should show enabled in settings', async ({
+    page,
+  }) => {
+    await testLoginWithMarketingConsent(page, true, 'enabled')
+  })
+
+  test('login with marketing consent disabled should show disabled in settings', async ({
+    page,
+  }) => {
+    await testLoginWithMarketingConsent(page, false, 'disabled')
+  })
+
+  test('toggling marketing consent in settings should persist after page refresh', async ({
+    page,
+  }) => {
+    const testUser = testUsers.getRandomUser()
+
+    // Create account with default marketing consent (enabled)
+    const success = await signUpViaHomepage(
+      page,
+      testUser.email,
+      testUser.fullName,
+      testUser.password,
+      true // marketingConsent enabled
+    )
+    expect(success).toBe(true)
+
+    // Navigate to settings and get initial toggle
+    let settingsToggle = await verifyMarketingConsentInSettings(page, true)
+
+    // Toggle it off
+    await settingsToggle.click()
+
+    // TODO: replace line below with wait for network response
+    // Wait for the change to be saved
+    await page.waitForTimeout(timeouts.ui.settleTime)
+
+    // Refresh and verify persistence
+    await page.reload()
+    settingsToggle = await verifyMarketingConsentInSettings(page, false)
+
+    // Toggle it back on
+    await settingsToggle.click()
+
+    // TODO: replace line below with wait for network response
+    // Wait and refresh again
+    await page.waitForTimeout(timeouts.ui.settleTime)
+
+    await page.reload()
+    await verifyMarketingConsentInSettings(page, true)
+  })
+})

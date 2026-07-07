@@ -1,0 +1,10 @@
+# Postfix transport map for Freegle domains
+# Format: domain    transport:nexthop
+#
+# All Freegle domains are routed to the "freegle" pipe transport
+# which delivers to Laravel via the mail handler script
+
+groups.ilovefreegle.org     freegle:
+users.ilovefreegle.org      freegle:
+user.trashnothing.com       freegle:
+ilovefreegle.org            freegle:

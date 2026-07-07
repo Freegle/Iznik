@@ -1,0 +1,491 @@
+// Status colors matching original design
+$status-online: #28a745;
+$status-offline: #dc3545;
+$status-loading: #ffc107;
+$status-unknown: #6c757d;
+
+// Freegle brand colors
+$primary: #007bff;
+$secondary: #6c757d;
+$info: #17a2b8;
+$success: $status-online;
+$danger: $status-offline;
+$warning: $status-loading;
+
+// Import Bootstrap
+@import "bootstrap/scss/bootstrap";
+
+// Import Bootstrap Vue Next styles
+@import 'bootstrap-vue-next/dist/bootstrap-vue-next.css';
+
+// Base page styles matching original
+body {
+  font-family: Arial, sans-serif;
+  background: #f5f5f5;
+}
+
+.container-main {
+  max-width: 900px;
+  margin: 0 auto;
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+}
+
+// Header styles
+.status-header {
+  text-align: center;
+  margin-bottom: 20px;
+
+  .logo {
+    height: 60px;
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    color: #333;
+  }
+}
+
+// Single circle status indicator (like original)
+.status-circle {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  margin: 0 auto 10px;
+  border: 3px solid #333;
+  transition: background-color 0.3s ease;
+
+  &.green {
+    background-color: $status-online;
+    box-shadow: 0 0 20px $status-online;
+  }
+
+  &.amber {
+    background-color: $status-loading;
+    box-shadow: 0 0 20px $status-loading;
+  }
+
+  &.red {
+    background-color: $status-offline;
+    box-shadow: 0 0 20px $status-offline;
+  }
+}
+
+// Countdown/refresh text
+.refresh-info {
+  text-align: center;
+  margin: 20px 0;
+}
+
+// Tab navigation matching original
+.status-tabs {
+  display: flex;
+  border-bottom: 2px solid #dee2e6;
+  margin-bottom: 20px;
+  flex-wrap: nowrap;
+  background: transparent;
+  overflow-x: auto;
+
+  .nav-item {
+    margin-bottom: -2px;
+  }
+
+  .nav-link {
+    padding: 10px 12px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-size: 13px;
+    color: #666;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s;
+    border-radius: 0;
+    white-space: nowrap;
+
+    &:hover {
+      color: #333;
+      background: #f8f9fa;
+    }
+
+    &.active {
+      color: #007bff;
+      border-bottom-color: #007bff;
+      font-weight: bold;
+      background: transparent;
+    }
+
+    &.warning {
+      color: #dc3545;
+
+      &.active {
+        border-bottom-color: #dc3545;
+      }
+    }
+  }
+
+  // Responsive: even smaller on mobile
+  @media (max-width: 768px) {
+    .nav-link {
+      padding: 8px 8px;
+      font-size: 12px;
+    }
+  }
+}
+
+// Tab status light (small dot)
+.tab-light {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  border: 1px solid #999;
+
+  &.green {
+    background: $status-online;
+    box-shadow: 0 0 4px $status-online;
+    border-color: $status-online;
+  }
+
+  &.amber {
+    background: $status-loading;
+    box-shadow: 0 0 4px $status-loading;
+    border-color: $status-loading;
+  }
+
+  &.red {
+    background: $status-offline;
+    box-shadow: 0 0 4px $status-offline;
+    border-color: $status-offline;
+  }
+
+  &.grey {
+    background: #6c757d;
+    border-color: #6c757d;
+  }
+}
+
+// Live badge
+.live-badge {
+  background: #dc3545;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  margin-left: 5px;
+}
+
+// WIP badge
+.wip-badge {
+  background: #ffc107;
+  color: #333;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  margin-left: 5px;
+  font-weight: bold;
+}
+
+// Service card matching original design
+.service {
+  margin: 10px 0;
+  padding: 15px;
+  border-radius: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  position: relative;
+
+  &.online {
+    background: #d4edda;
+    border-left: 4px solid $status-online;
+  }
+
+  &.offline {
+    background: #f8d7da;
+    border-left: 4px solid $status-offline;
+  }
+
+  &.loading {
+    background: #fff3cd;
+    border-left: 4px solid $status-loading;
+  }
+
+  &.unknown {
+    background: #e2e3e5;
+    border-left: 4px solid $status-unknown;
+  }
+
+  .service-info {
+    flex: 1;
+
+    .service-title {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    .service-description {
+      color: #666;
+      font-size: 14px;
+    }
+
+    .service-url {
+      font-family: monospace;
+      color: #666;
+      font-size: 13px;
+
+      a {
+        color: #007bff;
+        text-decoration: none;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+    }
+
+    .service-credentials {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .service-container {
+      font-family: monospace;
+      font-size: 11px;
+      color: #999;
+
+      .logs-link {
+        color: #007bff;
+        text-decoration: none;
+        font-size: 11px;
+        margin-left: 5px;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+    }
+
+    .service-status {
+      font-weight: bold;
+      margin-top: 4px;
+    }
+
+    .service-uptime {
+      font-size: 12px;
+      color: #666;
+    }
+  }
+
+  .service-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    min-width: 140px;
+
+    .visit-button {
+      background: #007bff;
+      color: white;
+      padding: 8px 16px;
+      text-decoration: none;
+      border-radius: 4px;
+      font-weight: bold;
+      border: none;
+      cursor: pointer;
+
+      &:hover {
+        background: #0056b3;
+        color: white;
+      }
+    }
+
+    .container-actions {
+      display: flex;
+      gap: 4px;
+    }
+  }
+}
+
+// Action buttons
+.action-button {
+  background: #17a2b8;
+  color: white;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    background: #138496;
+  }
+
+  &.danger {
+    background: #dc3545;
+
+    &:hover {
+      background: #c82333;
+    }
+  }
+
+  &:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+  }
+}
+
+// CPU indicator
+.cpu-indicator {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 70px;
+  height: 20px;
+  background: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 2px;
+  overflow: hidden;
+
+  .cpu-bar {
+    height: 100%;
+    background: $status-online;
+    transition: all 0.3s ease;
+
+    &.medium {
+      background: $status-loading;
+    }
+
+    &.high {
+      background: $status-offline;
+    }
+  }
+
+  .cpu-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 9px;
+    color: #000;
+    font-weight: bold;
+    text-shadow: 0 0 2px rgba(255,255,255,0.8);
+    z-index: 10;
+    white-space: nowrap;
+  }
+}
+
+// Test suite styles
+.test-suite {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  min-height: 100px;
+
+  .test-info {
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .test-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .run-test-btn {
+    background: $status-online;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+    min-width: 150px;
+    border-radius: 4px;
+
+    &:hover {
+      background: darken($status-online, 10%);
+    }
+
+    &:disabled {
+      background: $status-loading;
+      color: #333;
+      cursor: wait;
+    }
+  }
+
+  .filter-input {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    font-size: 12px;
+    width: 140px;
+    border-radius: 3px;
+  }
+
+  &.running {
+    background: #fff3cd !important;
+    border-left-color: $status-loading !important;
+
+    .service-status {
+      color: #856404 !important;
+    }
+  }
+}
+
+// Progress bar for tests
+.test-progress {
+  margin-top: 10px;
+
+  .progress {
+    height: 20px;
+    background: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: bold;
+  }
+}
+
+// Test logs
+.test-logs {
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 10px;
+  border-radius: 4px;
+  margin-top: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+// Section heading
+.section-heading {
+  margin-top: 25px;
+  padding-top: 15px;
+  border-top: 1px solid #e0e0e0;
+}
+
+// Footer
+.status-footer {
+  text-align: center;
+  padding: 20px;
+  color: #666;
+  font-size: 12px;
+  border-top: 1px solid #e0e0e0;
+  margin-top: 20px;
+}

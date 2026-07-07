@@ -1,0 +1,112 @@
+// Grafana Alloy configuration for Freegle log shipping
+// Reads JSON log files and ships them to Grafana Loki
+
+// Discovery for local JSON log files
+local.file_match "freegle_logs" {
+  path_targets = [{
+    __path__ = "/var/log/freegle/*.log",
+  }]
+}
+
+// JSON log file source - reads logs written by PHP, Go, and Laravel
+loki.source.file "freegle_json_logs" {
+  targets    = local.file_match.freegle_logs.targets
+  forward_to = [loki.process.freegle_process.receiver]
+
+  // Tail from end to avoid re-sending old logs on restart
+  tail_from_end = true
+}
+
+// Process logs - extract JSON and add labels
+loki.process "freegle_process" {
+  forward_to = [loki.write.loki_remote.receiver]
+
+  // Parse the JSON structure written by our log handlers
+  stage.json {
+    expressions = {
+      timestamp = "timestamp",
+      labels    = "labels",
+      message   = "message",
+    }
+  }
+
+  // Extract labels from the JSON labels object
+  stage.json {
+    source     = "labels"
+    expressions = {
+      app        = "app",
+      source     = "source",
+      level      = "level",
+      event_type = "event_type",
+      api_version = "api_version",
+      method     = "method",
+      status_code = "status_code",
+      type       = "type",
+      subtype    = "subtype",
+      job_name   = "job_name",
+      email_type = "email_type",
+      groupid    = "groupid",
+      trace_id   = "trace_id",
+      session_id = "session_id",
+    }
+  }
+
+  // Apply labels for Loki indexing
+  stage.labels {
+    values = {
+      app        = "app",
+      source     = "source",
+      level      = "level",
+      event_type = "event_type",
+      api_version = "api_version",
+      method     = "method",
+      status_code = "status_code",
+      type       = "type",
+      subtype    = "subtype",
+      job_name   = "job_name",
+      email_type = "email_type",
+      groupid    = "groupid",
+      trace_id   = "trace_id",
+      session_id = "session_id",
+    }
+  }
+
+  // Use the timestamp from the log entry
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339"
+  }
+
+  // Output the message as the log line (convert back to JSON if object)
+  stage.output {
+    source = "message"
+  }
+}
+
+// Write logs to Loki
+loki.write "loki_remote" {
+  endpoint {
+    url = env("LOKI_URL") + "/loki/api/v1/push"
+
+    // Optional basic auth
+    // basic_auth {
+    //   username = env("LOKI_USER")
+    //   password = env("LOKI_PASSWORD")
+    // }
+  }
+
+  // WAL (Write-Ahead Log) for buffering during network issues
+  wal {
+    enabled = true
+    // Keep logs for up to 4 hours during Loki unavailability
+    max_segment_age = "4h"
+  }
+
+  // Batching configuration
+  external_labels = {
+    host = env("HOSTNAME"),
+  }
+}
+
+// Optional: Expose metrics endpoint
+prometheus.exporter.self "alloy_metrics" {}

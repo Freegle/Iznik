@@ -1,0 +1,348 @@
+#!/usr/bin/env node
+
+/**
+ * Sentry PR Review Helper
+ *
+ * Lists PRs created by the Sentry auto-fix system and allows resuming
+ * Claude Code conversations for addressing review comments.
+ *
+ * Usage:
+ *   ./sentry-pr-review                    # Interactive: select from list of PRs
+ *   ./sentry-pr-review --pr <number>      # Review specific PR number
+ *   ./sentry-pr-review --list             # List all Sentry PRs without interaction
+ *   ./sentry-pr-review --help             # Show help
+ */
+
+const { execSync } = require('child_process');
+const fs = require('fs');
+const readline = require('readline');
+
+// Load environment variables
+require('dotenv').config();
+
+// Configuration
+const basePath = process.env.FREEGLE_BASE_PATH || process.cwd();
+const repos = [
+  { name: 'iznik-server', path: `${basePath}/iznik-server`, type: 'PHP' },
+  { name: 'iznik-server-go', path: `${basePath}/iznik-server-go`, type: 'Go' },
+  { name: 'iznik-nuxt3', path: `${basePath}/iznik-nuxt3`, type: 'Nuxt3' },
+  { name: 'iznik-nuxt3-modtools', path: `${basePath}/iznik-nuxt3-modtools`, type: 'ModTools' }
+];
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+let command = null;
+let prNumber = null;
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+
+  if (arg === '--help' || arg === '-h') {
+    command = 'help';
+  } else if (arg === '--list' || arg === '-l') {
+    command = 'list';
+  } else if (arg === '--pr' || arg === '-p') {
+    command = 'review';
+    prNumber = args[++i];
+  }
+}
+
+/**
+ * Show help message
+ */
+function showHelp() {
+  console.log(`
+Sentry PR Review Helper
+
+Lists PRs created by the Sentry auto-fix system and allows resuming
+Claude Code conversations for addressing review comments.
+
+Usage:
+  ./sentry-pr-review                    Interactive: select from list of PRs
+  ./sentry-pr-review --pr <number>      Review specific PR number
+  ./sentry-pr-review --list             List all Sentry PRs without interaction
+  ./sentry-pr-review --help             Show this help message
+
+Options:
+  --pr, -p <number>     Review specific PR number
+  --list, -l            List all Sentry PRs without starting review
+  --help, -h            Show this help message
+
+Examples:
+  ./sentry-pr-review                    # Interactive mode
+  ./sentry-pr-review --pr 123           # Review PR #123
+  ./sentry-pr-review --list             # Just list PRs
+  `);
+}
+
+/**
+ * Get all Sentry-created PRs across all repositories using git
+ */
+function getAllSentryPRs() {
+  const allPRs = [];
+
+  for (const repo of repos) {
+    if (!fs.existsSync(repo.path)) {
+      console.error(`⚠️  Repository not found: ${repo.path}`);
+      continue;
+    }
+
+    try {
+      // Get remote URL to determine GitHub repo
+      const remoteUrl = execSync(
+        `cd "${repo.path}" && git config --get remote.origin.url`,
+        { encoding: 'utf8', timeout: 10000 }
+      ).trim();
+
+      // Extract owner/repo from URL
+      const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+      if (!match) {
+        console.error(`⚠️  Could not parse GitHub URL for ${repo.name}`);
+        continue;
+      }
+
+      const [, owner, repoName] = match;
+
+      // Fetch all branches to see PR branches
+      execSync(`cd "${repo.path}" && git fetch --all --quiet`, { timeout: 30000 });
+
+      // Get all remote branches that look like Sentry auto-fix branches
+      const branches = execSync(
+        `cd "${repo.path}" && git branch -r | grep -E "origin/sentry-auto-fix-" || true`,
+        { encoding: 'utf8', timeout: 10000 }
+      ).trim().split('\n').filter(b => b);
+
+      // For each branch, try to find associated PR info from git log
+      branches.forEach(branch => {
+        const branchName = branch.trim().replace('origin/', '');
+
+        try {
+          // Get the first commit message which might contain PR info
+          const commitInfo = execSync(
+            `cd "${repo.path}" && git log ${branch.trim()} --oneline -1`,
+            { encoding: 'utf8', timeout: 5000 }
+          ).trim();
+
+          const [hash, ...titleParts] = commitInfo.split(' ');
+          const title = titleParts.join(' ');
+
+          // Extract timestamp from branch name
+          const timestampMatch = branchName.match(/sentry-auto-fix-(\d+)/);
+          const timestamp = timestampMatch ? parseInt(timestampMatch[1]) : Date.now();
+
+          allPRs.push({
+            branch: branchName,
+            hash: hash,
+            title: title,
+            repo: repo.name,
+            repoPath: repo.path,
+            repoType: repo.type,
+            createdAt: new Date(timestamp).toISOString(),
+            url: `https://github.com/${owner}/${repoName}/compare/${branchName}`,
+            state: 'BRANCH' // Indicate this is a branch, not confirmed PR
+          });
+        } catch (error) {
+          // Skip branches that cause errors
+        }
+      });
+
+    } catch (error) {
+      console.error(`Error fetching branches from ${repo.name}:`, error.message);
+    }
+  }
+
+  // Sort by creation date (most recent first)
+  allPRs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  return allPRs;
+}
+
+/**
+ * Display PR list
+ */
+function displayPRList(prs) {
+  if (prs.length === 0) {
+    console.log('No Sentry auto-fix branches found.');
+    return;
+  }
+
+  console.log('\n📋 Sentry Auto-Fix Branches (most recent first):\n');
+
+  prs.forEach((pr, index) => {
+    const stateEmoji = pr.state === 'BRANCH' ? '🔵' : pr.state === 'OPEN' ? '🟢' : pr.state === 'MERGED' ? '🟣' : '⚪';
+    const createdDate = new Date(pr.createdAt).toLocaleDateString();
+    const titlePreview = pr.title.length > 70 ? pr.title.substring(0, 67) + '...' : pr.title;
+
+    console.log(`${index + 1}. ${stateEmoji} ${pr.branch} [${pr.repo}] - ${titlePreview}`);
+    console.log(`   Created: ${createdDate} | ${pr.url}`);
+    console.log();
+  });
+}
+
+/**
+ * Get branch details for review (using git)
+ */
+function getBranchDetails(repoPath, branchName) {
+  try {
+    // Get commit log for the branch
+    const commits = execSync(
+      `cd "${repoPath}" && git log origin/${branchName} --oneline -10`,
+      { encoding: 'utf8', timeout: 10000 }
+    ).trim();
+
+    // Get branch diff summary
+    const diffStat = execSync(
+      `cd "${repoPath}" && git diff origin/master...origin/${branchName} --stat`,
+      { encoding: 'utf8', timeout: 10000 }
+    ).trim();
+
+    return {
+      branch: branchName,
+      commits: commits,
+      diffStat: diffStat
+    };
+  } catch (error) {
+    throw new Error(`Failed to get branch details: ${error.message}`);
+  }
+}
+
+/**
+ * Start Claude Code review for a branch
+ */
+function startClaudeReview(pr) {
+  console.log(`\n🤖 Starting Claude Code review for branch ${pr.branch}...\n`);
+
+  // Get branch details
+  const branchDetails = getBranchDetails(pr.repoPath, pr.branch);
+
+  // Build context for Claude
+  let contextPrompt = `Review and work on Sentry auto-fix branch in ${pr.repo}:
+
+**Branch:** ${pr.branch}
+
+**Title:** ${pr.title}
+
+**GitHub URL:** ${pr.url}
+
+**Recent Commits:**
+${branchDetails.commits}
+
+**Changes Summary:**
+${branchDetails.diffStat}
+
+**Instructions:**
+1. Checkout the branch: git checkout ${pr.branch}
+2. Review the changes that were made
+3. Check if there are any issues or improvements needed
+4. Make any necessary fixes or improvements
+5. Run appropriate tests to validate the changes
+6. Commit and push any updates
+
+Please start by checking out the branch and reviewing the changes.`;
+
+  // Write context to temp file
+  const tempFile = `/tmp/branch-review-${pr.branch}-${Date.now()}.txt`;
+  fs.writeFileSync(tempFile, contextPrompt);
+
+  try {
+    // Start Claude Code with the context
+    console.log(`Repository: ${pr.repoPath}`);
+    console.log(`Branch: ${pr.branch}`);
+    console.log('');
+
+    // Change to repository directory and invoke Claude
+    execSync(`cd "${pr.repoPath}" && claude -p "$(cat ${tempFile})"`, {
+      stdio: 'inherit',
+      cwd: pr.repoPath
+    });
+
+    // Clean up temp file
+    fs.unlinkSync(tempFile);
+
+  } catch (error) {
+    console.error('Error starting Claude Code:', error.message);
+    // Clean up temp file on error
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
+  }
+}
+
+/**
+ * Interactive PR selection
+ */
+async function interactivePRSelection(prs) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    rl.question('\nEnter PR number (1-' + prs.length + ') to review, or Q to quit: ', (answer) => {
+      rl.close();
+
+      if (answer.toLowerCase() === 'q') {
+        console.log('Exiting.');
+        resolve(null);
+        return;
+      }
+
+      const index = parseInt(answer) - 1;
+      if (isNaN(index) || index < 0 || index >= prs.length) {
+        console.error('Invalid selection.');
+        resolve(null);
+        return;
+      }
+
+      resolve(prs[index]);
+    });
+  });
+}
+
+/**
+ * Main function
+ */
+async function main() {
+  if (command === 'help' || (!command && args.length > 0)) {
+    showHelp();
+    return;
+  }
+
+  // Get all Sentry PRs
+  console.log('🔍 Searching for Sentry auto-fix PRs...\n');
+  const prs = getAllSentryPRs();
+
+  if (command === 'list') {
+    displayPRList(prs);
+    return;
+  }
+
+  if (command === 'review' && prNumber) {
+    // Find the specified PR
+    const pr = prs.find(p => p.number.toString() === prNumber.toString());
+
+    if (!pr) {
+      console.error(`PR #${prNumber} not found in Sentry auto-fix PRs.`);
+      console.log('\nAvailable PRs:');
+      displayPRList(prs);
+      process.exit(1);
+    }
+
+    startClaudeReview(pr);
+    return;
+  }
+
+  // Interactive mode
+  displayPRList(prs);
+
+  const selectedPR = await interactivePRSelection(prs);
+
+  if (selectedPR) {
+    startClaudeReview(selectedPR);
+  }
+}
+
+main().catch(error => {
+  console.error('Error:', error);
+  process.exit(1);
+});

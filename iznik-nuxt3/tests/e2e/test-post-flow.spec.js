@@ -1,0 +1,522 @@
+/**
+ * Tests for the post flow - posting OFFER and WANTED items to Freegle
+ */
+
+const { test, expect } = require('./fixtures')
+const { environment, timeouts } = require('./config')
+const { loginViaHomepage, logoutIfLoggedIn } = require('./utils/user')
+
+test.describe('Post flow tests', () => {
+  test('Logged out, new user, basic OFFER post, no attachment', async ({
+    page,
+    testEmail,
+    postMessage,
+    withdrawPost,
+  }) => {
+    // Use the fixture to post a message with unique item name
+    const uniqueItem = `test-offer-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const result = await postMessage({
+      type: 'OFFER',
+      item: uniqueItem,
+      description: `Created by automated test at ${new Date().toISOString()}`,
+
+      email: testEmail,
+    })
+
+    console.log(`Post result: ${JSON.stringify(result)}`)
+
+    // Check that the result has an id
+    expect(result.id).toBeTruthy()
+    expect(result.id).not.toBe(null)
+    console.log(`Post created with ID: ${result.id}`)
+
+    // Navigate to /myposts and verify our post is visible
+    console.log('Navigating to /myposts to verify post visibility')
+    await page.gotoAndVerify('/myposts', {
+      timeout: timeouts.navigation.default,
+    })
+
+    // Wait for message cards and verify our specific item is visible
+    await page.waitForSelector('.message-card, .card-body', {
+      timeout: timeouts.ui.appearance,
+    })
+
+    // Look for our specific unique item in the message cards
+    const itemLocator = page
+      .locator('.message-card, .card-body')
+      .filter({ hasText: uniqueItem })
+    await itemLocator.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    console.log(`Found our test item "${uniqueItem}" on myposts page`)
+
+    // Use the fixture to withdraw the post
+    await withdrawPost({ item: result.item })
+  })
+
+  test('Post message and reply', async ({
+    page,
+    testEmail,
+    getTestEmail,
+    postMessage,
+    withdrawPost,
+    takeScreenshot,
+    replyToMessageWithSignup,
+  }) => {
+    const replyEmail = getTestEmail('reply')
+
+    // Post a message using the logged-out user flow with unique item name
+    const uniqueItem = `test-reply-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const result = await postMessage({
+      type: 'OFFER',
+      item: uniqueItem,
+      description: `Created by automated test at ${new Date().toISOString()}`,
+
+      email: testEmail,
+    })
+
+    console.log(`Post result: ${JSON.stringify(result)}`)
+    expect(result.id).toBeTruthy()
+    console.log(`Post created with ID: ${result.id}`)
+
+    // Clear session data to simulate logout
+    await logoutIfLoggedIn(page)
+
+    // Use the fixture to reply to the message with signup
+    const replySuccess = await replyToMessageWithSignup({
+      messageId: result.id,
+      itemName: result.item,
+      email: replyEmail,
+    })
+    expect(replySuccess).toBeTruthy()
+
+    // Now log back in as the original user and withdraw the post
+    console.log('Logging in as original user to withdraw the post')
+    await logoutIfLoggedIn(page)
+    const loginSuccess = await loginViaHomepage(page, testEmail)
+    if (!loginSuccess) {
+      // Capture screenshot for debugging
+      await page.screenshot({
+        path: `playwright-screenshots/logging-back-in-${Date.now()}.png`,
+        fullPage: true,
+      })
+      throw new Error('Failed to login as original user')
+    }
+    console.log('Successfully logged in as original user')
+
+    // Go to /chats and verify the reply is visible.
+    // The reply message is created with processingsuccessful=0 and a background
+    // worker sets it to 1. Until processed, the chat has lastmsg=0 and the
+    // ChatListEntry is hidden. Poll with page reloads until the entry appears.
+    console.log('Navigating to /chats to check for reply')
+    const chatEntry = page.locator('.chat-entry').first()
+    const maxAttempts = 20
+    let chatFound = false
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await page.gotoAndVerify('/chats')
+
+      try {
+        await chatEntry.waitFor({ state: 'visible', timeout: 15000 })
+        console.log(`Chat entry appeared on attempt ${attempt}`)
+        chatFound = true
+        break
+      } catch (e) {
+        console.log(`Chat entry not visible on attempt ${attempt}, retrying...`)
+      }
+    }
+
+    expect(chatFound).toBeTruthy()
+
+    const chatEntries = page.locator('.chat-entry').filter({ visible: true })
+    const chatCount = await chatEntries.count()
+    expect(chatCount).toEqual(1)
+    console.log(`Found ${chatCount} chat entries in /chats`)
+
+    // Click on the chat entry to open the conversation
+    console.log('Opening chat conversation to reply back')
+    await chatEntries.first().click()
+
+    // Wait for the chat conversation to load
+    await expect(page.locator('#chatmessage')).toBeVisible()
+
+    // Send a reply back to the person who messaged
+    const replyMessage =
+      'Thank you for your interest! When would be a good time to collect?'
+    const replyTextarea = page.locator('#chatmessage')
+    await replyTextarea.fill(replyMessage)
+    console.log('Filled reply message from original user')
+
+    // Click the send button
+    const sendButton = page.getByRole('button', { name: 'Send' })
+    // Start waiting for network response before clicking send - note no await yet
+    const sendMessageResponse = page.waitForResponse(
+      async (response) =>
+        response.url().includes('/api/chat') &&
+        response.status() === 200 &&
+        response.request().method() === 'POST' &&
+        (await response.request().postDataJSON()).message === replyMessage
+    )
+    await sendButton.click() // Then send the message
+    console.log('Sent reply from original user')
+    await sendMessageResponse // Then await the network response indicating message sent
+
+    // Now withdraw the post using the fixture
+    await withdrawPost({ item: result.item })
+    console.log('Original user successfully withdrew the post')
+  })
+
+  test('Logged out, new user, basic WANTED post, no attachment', async ({
+    page,
+    testEmail,
+    postMessage,
+    withdrawPost,
+  }) => {
+    // Use the fixture to post a WANTED message with unique item name
+    const uniqueItem = `test-wanted-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const result = await postMessage({
+      type: 'WANTED',
+      item: uniqueItem,
+      description: `Created by automated test at ${new Date().toISOString()}`,
+
+      email: testEmail,
+    })
+
+    console.log(`WANTED post result: ${JSON.stringify(result)}`)
+
+    // Check that the result has an id
+    expect(result.id).toBeTruthy()
+    expect(result.id).not.toBe(null)
+    console.log(`WANTED post created with ID: ${result.id}`)
+
+    // Navigate to /myposts and verify the post is visible there
+    // (We use /myposts instead of /browse because /browse may have many posts
+    // and the newly created one might not be immediately visible without scrolling)
+    console.log('Navigating to /myposts to verify WANTED post visibility')
+    await page.gotoAndVerify('/myposts', {
+      timeout: timeouts.navigation.default,
+    })
+
+    // Wait for message cards and verify our specific item is visible
+    // Note: My Posts uses .message-card class (with hyphen)
+    await page.waitForSelector('.message-card, .card-body', {
+      timeout: timeouts.ui.appearance,
+    })
+
+    // Look for our specific unique item in the message cards
+    const itemLocator = page
+      .locator('.message-card, .card-body')
+      .filter({ hasText: uniqueItem })
+    await itemLocator.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    console.log(`Found our test WANTED item "${uniqueItem}" on myposts page`)
+
+    // Use the fixture to withdraw the post
+    await withdrawPost({ item: result.item })
+  })
+
+  test('Logged out, new user, WANTED post via mobile find flow', async ({
+    page,
+    testEmail,
+    postMessage,
+    withdrawPost,
+  }) => {
+    // Regression test: the mobile find flow (/find/mobile/photos → details → whereami)
+    // created a sparse messages array [empty, {id:1}] in the compose store.
+    // After Pinia JSON round-trip, prune() compacted it to [{id:1}] at index 0,
+    // but the internal .id field stayed 1. The submit loop then accessed
+    // this.messages[message.id] (= this.messages[1] = undefined) → TypeError →
+    // "Something went wrong" with no server-side trace.
+    const uniqueItem = `test-wanted-mobile-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const result = await postMessage({
+      type: 'WANTED',
+      mobile: true,
+      item: uniqueItem,
+      description: `Created by automated test at ${new Date().toISOString()}`,
+      email: testEmail,
+    })
+
+    console.log(`Mobile WANTED post result: ${JSON.stringify(result)}`)
+    expect(result.id).toBeTruthy()
+    console.log(`Mobile WANTED post created with ID: ${result.id}`)
+
+    await withdrawPost({ item: result.item })
+  })
+
+  test("Email existence check - prevents posting with someone else's email", async ({
+    page,
+    testEmail,
+    testEnv,
+    postMessage,
+    withdrawPost,
+  }) => {
+    // First, create a user by posting with a specific email
+    const uniqueItem = `test-email-check-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const result = await postMessage({
+      type: 'OFFER',
+      item: uniqueItem,
+      description: `Created by automated test at ${new Date().toISOString()}`,
+
+      email: testEmail,
+    })
+
+    console.log(`Created post with email ${testEmail}, ID: ${result.id}`)
+    expect(result.id).toBeTruthy()
+
+    // Log out to simulate a different user trying to use this email
+    await logoutIfLoggedIn(page)
+    console.log(
+      'Logged out, now attempting to post with the same email as a different user'
+    )
+
+    // Navigate to the give page to start a new post
+    await page.gotoAndVerify('/give', {
+      timeout: timeouts.navigation.initial,
+    })
+
+    // Fill in the item name
+    const itemInput = page.locator(
+      '[id^="what"], .type-input, input[placeholder*="give"]'
+    )
+    await itemInput.click()
+    await itemInput.fill('test item for email check')
+
+    // Fill in the description
+    const descInput = page.locator(
+      '[id^="description"], textarea.description, textarea.form-control'
+    )
+    await descInput.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await descInput.fill('Test description for email check')
+
+    // Wait for Next button to be enabled and click it
+    const nextBtn = page.locator('.next-btn:has-text("Next")')
+    await nextBtn.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await page.waitForTimeout(500)
+    await nextBtn.click()
+
+    // Fill in postcode
+    const postcodeInput = page.locator(
+      '.pcinp, input[placeholder="Type postcode"]'
+    )
+    await postcodeInput.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await postcodeInput.fill(testEnv?.postcode || environment.postcode)
+
+    // Wait for location confirmation
+    const confirmationIcon = page.locator(
+      '.validation-tick, .text-success.fa-bh, .fa-check-circle, .v-icon[icon="check-circle"]'
+    )
+    await confirmationIcon.waitFor({
+      state: 'visible',
+      timeout: timeouts.api.default,
+    })
+
+    // Click Next to go to options page
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await page.waitForTimeout(500)
+    await page.locator('.next-btn:has-text("Next")').click()
+
+    // Handle the /give/options page (delivery and deadline options)
+    await page.waitForURL(/\/give\/options/, {
+      timeout: timeouts.navigation.default,
+    })
+    console.log('On options page')
+
+    // Set "Maybe" for delivery
+    const maybeDeliveryButton = page.locator('.toggle-btn:has-text("Maybe")')
+    await maybeDeliveryButton.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await maybeDeliveryButton.click()
+
+    // Click "No deadline"
+    const noDeadlineButton = page.locator('.toggle-btn:has-text("No deadline")')
+    await noDeadlineButton.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await noDeadlineButton.click()
+
+    // Click Next to go to whoami/email page
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await page.waitForTimeout(500)
+    await page.locator('.next-btn:has-text("Next")').click()
+
+    // Fill in the email that already belongs to someone else
+    console.log(`Filling in email ${testEmail} that belongs to existing user`)
+    const emailInput = page
+      .locator('input[name="email"], input.email, input[type="email"]')
+      .first()
+    await emailInput.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await emailInput.click()
+    await emailInput.fill(testEmail)
+
+    // Wait for the "Freegle it!" button to appear (email passes basic validation)
+    console.log('Waiting for Freegle it button to appear')
+    const freegleButton = page.locator('button:has-text("Freegle it!")')
+    await freegleButton.first().waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+
+    // Click the button to trigger email existence check
+    console.log('Clicking Freegle it button to trigger email existence check')
+    await freegleButton.first().click()
+
+    // Wait for the login modal or error message to appear
+    // The redesigned flow may show a login modal for existing accounts
+    console.log('Waiting for email validation response')
+    const errorMessage = page.locator('text=belongs to an existing account')
+    const loginModal = page.locator(
+      '#loginModal, .modal-dialog:has-text("Log in")'
+    )
+
+    const winner = await Promise.race([
+      errorMessage
+        .first()
+        .waitFor({ state: 'visible', timeout: timeouts.api.default })
+        .then(() => 'error')
+        .catch(() => null),
+      loginModal
+        .first()
+        .waitFor({ state: 'visible', timeout: timeouts.api.default })
+        .then(() => 'modal')
+        .catch(() => null),
+    ])
+
+    expect(winner).toBeTruthy()
+    console.log(`Email existence check result: ${winner}`)
+
+    if (winner === 'error') {
+      console.log('Error message displayed for existing account')
+    } else if (winner === 'modal') {
+      console.log('Login modal shown for existing account - user must log in')
+    }
+
+    // Clean up - log back in and withdraw the original post
+    console.log('Logging back in to clean up the test post')
+    const loginSuccess = await loginViaHomepage(page, testEmail)
+    if (!loginSuccess) {
+      throw new Error('Failed to login for cleanup')
+    }
+
+    await withdrawPost({ item: result.item })
+    console.log('Test completed - email existence check verified successfully')
+  })
+})
+
+test.describe('Mobile post flow tests', () => {
+  // Use a mobile viewport for these tests
+  test.use({ viewport: { width: 414, height: 896 } })
+
+  test('Logged-in user can post OFFER through mobile give flow', async ({
+    page,
+    testEnv,
+    withdrawPost,
+  }) => {
+    // Regression test for the sparse-array crash on submit:
+    // photos.vue and details.vue were using synthetic default messages (id=1 but
+    // not in composeStore.messages), which created a sparse array that crashed
+    // after Pinia's JSON round-trip on submit.
+    const uniqueItem = `test-mobile-offer-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const postcode = testEnv?.postcode || environment.postcode
+
+    // Log in first so the mobile flow creates a real (non-synthetic) message
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    console.log(`Logged in as ${testEnv.user.email}`)
+
+    // Step 1: Photos page — skip adding a photo
+    await page.gotoAndVerify('/give/mobile/photos', {
+      timeout: timeouts.navigation.default,
+    })
+    await page.waitForSelector('.photo-uploader, .app-give-photos', {
+      timeout: timeouts.ui.appearance,
+    })
+    const skipLink = page.locator('button').filter({ hasText: /skip/i })
+    await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await skipLink.click()
+    console.log('Skipped photo upload')
+
+    // Step 2: Details page — fill item name and description
+    await page.waitForSelector('#item-name', { timeout: timeouts.ui.appearance })
+    await page.locator('#item-name').fill(uniqueItem)
+    await page.locator('#description').fill('Test description for mobile OFFER post')
+    console.log(`Filled item name: ${uniqueItem}`)
+
+    const nextButton = page.locator('button.w-100').filter({ hasText: 'Next' })
+    await nextButton.click()
+    console.log('Clicked Next on details page')
+
+    // Step 3: Options page — accept defaults (collection only, no deadline)
+    await page.waitForURL('**/give/mobile/options', {
+      timeout: timeouts.navigation.default,
+    })
+    const optionsNext = page.locator('button.w-100').filter({ hasText: 'Next' })
+    await optionsNext.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await optionsNext.click()
+    console.log('Clicked Next on options page')
+
+    // Step 4: Whereami page — enter postcode and submit
+    await page.waitForURL('**/give/mobile/whereami', {
+      timeout: timeouts.navigation.default,
+    })
+    const postcodeInput = page.locator('.pcinp, input[placeholder="Type postcode"]')
+    await postcodeInput.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await postcodeInput.fill(postcode)
+    console.log(`Filled postcode: ${postcode}`)
+
+    // Wait for postcode validation tick
+    const validationTick = page.locator(
+      '.validation-tick, .fa-check-circle, .v-icon[icon="check-circle"]'
+    )
+    await validationTick.waitFor({ state: 'visible', timeout: timeouts.api.default })
+    console.log('Postcode validated')
+
+    // Wait for the Freegle it! button to become active (groups loaded)
+    const freegleButton = page.locator('button.w-100').filter({ hasText: /Freegle it!/i })
+    await freegleButton.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await expect(freegleButton).toBeEnabled()
+    await freegleButton.click()
+    console.log('Clicked Freegle it!')
+
+    // Verify we navigated to /myposts after successful submission
+    await page.waitForURL(/\/myposts/, { timeout: timeouts.navigation.default })
+    console.log('Navigated to /myposts after submission')
+
+    // Verify our post appears on the page
+    const itemLocator = page
+      .locator('.message-card, .card-body')
+      .filter({ hasText: uniqueItem })
+    await itemLocator.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    console.log(`Found mobile OFFER item "${uniqueItem}" on myposts page`)
+
+    // Clean up
+    await withdrawPost({ item: uniqueItem })
+    console.log('Mobile OFFER post withdrawn')
+  })
+})

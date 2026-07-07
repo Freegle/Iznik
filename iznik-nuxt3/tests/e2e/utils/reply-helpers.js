@@ -1,0 +1,495 @@
+/**
+ * Shared helper functions for reply flow tests
+ */
+
+const { timeouts, environment } = require('../config')
+
+/**
+ * Helper: Wait for auth to be stored in localStorage after login
+ * This ensures auth is persisted before navigating to a new page
+ * The auth store persists with structure: { auth: { jwt, persistent }, userlist, loginCount, ... }
+ */
+async function waitForAuthInLocalStorage(page) {
+  console.log('[Auth] Waiting for auth to be stored in localStorage...')
+  await page.waitForFunction(
+    () => {
+      try {
+        const authData = localStorage.getItem('auth')
+        if (!authData) return false
+        const parsed = JSON.parse(authData)
+        // Check the nested auth object for jwt or persistent token
+        const tokens = parsed?.auth
+        return !!(tokens?.jwt || tokens?.persistent)
+      } catch (e) {
+        return false
+      }
+    },
+    null,
+    { timeout: timeouts.ui.appearance }
+  )
+  console.log('[Auth] Auth found in localStorage')
+}
+
+/**
+ * Helper: Wait for auth to be hydrated after page load
+ * This waits for the page to stabilize and gives the Pinia persistence
+ * plugin time to hydrate auth from localStorage.
+ */
+async function waitForAuthHydration(page) {
+  console.log('[Auth] Waiting for page to stabilize and auth to hydrate...')
+  // Wait for DOM to be ready, then check for auth in localStorage
+  // Don't use networkidle - the app has background polling that prevents idle state
+  await page.waitForLoadState('domcontentloaded', {
+    timeout: timeouts.navigation.default,
+  })
+  // Wait for Pinia to hydrate auth from localStorage
+  await page.waitForFunction(
+    () => {
+      try {
+        const authData = localStorage.getItem('auth')
+        if (!authData) return true // No auth expected, that's fine
+        const parsed = JSON.parse(authData)
+        // Check if auth store has been hydrated (has structure)
+        return parsed && typeof parsed === 'object'
+      } catch {
+        return true // Parse error means no valid auth, continue
+      }
+    },
+    null,
+    { timeout: timeouts.ui.appearance }
+  )
+  console.log('[Auth] Page stabilized and auth hydrated')
+}
+
+/**
+ * Helper: Dismiss login modal if it appears
+ * Browse and explore pages show a signup modal for non-logged-in users
+ */
+async function dismissLoginModalIfPresent(page) {
+  // Check if login modal is visible (it appears on browse/explore for non-logged-in users)
+  const loginModal = page.locator(
+    '#loginModal, .modal-content:has-text("Join the Reuse Revolution")'
+  )
+
+  try {
+    await loginModal.waitFor({ state: 'visible', timeout: 3000 })
+    console.log('[Auth] Login modal detected, dismissing...')
+
+    // Click the close button in the modal header
+    const closeButton = page.locator(
+      '.modal-header .btn-close, .modal-header button[aria-label="Close"]'
+    )
+    if (await closeButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await closeButton.click()
+      console.log('[Auth] Clicked modal close button')
+    } else {
+      // Try clicking outside the modal to dismiss it
+      await page.keyboard.press('Escape')
+      console.log('[Auth] Pressed Escape to dismiss modal')
+    }
+
+    // Wait for modal to close
+    await loginModal.waitFor({
+      state: 'hidden',
+      timeout: timeouts.ui.appearance,
+    })
+    console.log('[Auth] Login modal dismissed')
+  } catch (e) {
+    // Modal not visible or already closed - this is fine
+    console.log('[Auth] No login modal to dismiss (or already closed)')
+  }
+}
+
+/**
+ * Helper: Navigate to a message via the browse page and open reply section
+ * @param {Page} page - Playwright page
+ * @param {number} messageId - ID of the message to find
+ * @param {string} groupName - Optional group name to browse (if not specified, uses /browse)
+ */
+async function navigateToMessageViaBrowse(
+  page,
+  messageId,
+  groupName = null,
+  itemText = null
+) {
+  const browsePath = groupName ? `/explore/${groupName}` : '/browse'
+  console.log(
+    `[Browse] Navigating to ${browsePath} to find message ${messageId}`
+  )
+  await page.gotoAndVerify(browsePath, { timeout: timeouts.navigation.default, maxRetries: 1 })
+
+  // Dismiss login modal if it appears (browse page shows signup modal for non-logged-in users)
+  await dismissLoginModalIfPresent(page)
+
+  // Wait for message cards to load
+  await page.waitForSelector('.message-summary-mobile, .messagecard', {
+    timeout: timeouts.ui.appearance,
+  })
+
+  // Try to find the specific message by item text or fall back to first card
+  let messageCard
+  if (itemText) {
+    console.log(`[Browse] Looking for message with text: ${itemText}`)
+    // Look for a card containing the unique item text
+    messageCard = page
+      .locator(
+        `.message-summary-mobile:has-text("${itemText}"), .messagecard:has-text("${itemText}")`
+      )
+      .first()
+
+    // Check if found
+    const count = await messageCard.count()
+    if (count === 0) {
+      console.log(
+        `[Browse] Message with "${itemText}" not found, using first card`
+      )
+      messageCard = page
+        .locator('.message-summary-mobile, .messagecard')
+        .first()
+    }
+  } else {
+    messageCard = page.locator('.message-summary-mobile, .messagecard').first()
+  }
+
+  await messageCard.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await messageCard.click()
+  console.log('[Browse] Clicked on message card')
+
+  // Wait for the message modal or expanded view
+  // Use a more specific selector to avoid matching login modals
+  await page.waitForSelector(
+    '.message-expanded-wrapper, .modal-content:has(.message-header), .modal-content:has(.message-photo)',
+    {
+      timeout: timeouts.ui.appearance,
+    }
+  )
+  console.log('[Browse] Message expanded/modal visible')
+}
+
+/**
+ * Helper: Navigate to a message via the explore page and open reply section
+ * @param {Page} page - Playwright page
+ * @param {string} groupName - Group name to explore
+ * @param {string} itemText - Optional item text to search for (recommended for parallel test isolation)
+ */
+async function navigateToMessageViaExplore(page, groupName, itemText = null) {
+  console.log(`[Explore] Navigating to /explore/${groupName}`)
+  await page.gotoAndVerify(`/explore/${groupName}`, {
+    timeout: timeouts.navigation.default,
+    maxRetries: 1,
+  })
+
+  // Dismiss login modal if it appears (explore page shows signup modal for non-logged-in users)
+  await dismissLoginModalIfPresent(page)
+
+  // Wait for message list to load
+  await page.waitForSelector('.message-summary-mobile, .messagecard', {
+    timeout: timeouts.ui.appearance,
+  })
+
+  // Try to find the specific message by item text or fall back to first card
+  let messageCard
+  if (itemText) {
+    console.log(`[Explore] Looking for message with text: ${itemText}`)
+    // Look for a card containing the unique item text
+    messageCard = page
+      .locator(
+        `.message-summary-mobile:has-text("${itemText}"), .messagecard:has-text("${itemText}")`
+      )
+      .first()
+
+    // Check if found
+    const count = await messageCard.count()
+    if (count === 0) {
+      console.warn(
+        `[Explore] WARNING: Message with "${itemText}" not found, using first card (may cause parallel test collision)`
+      )
+      messageCard = page
+        .locator('.message-summary-mobile, .messagecard')
+        .first()
+    }
+  } else {
+    console.warn(
+      '[Explore] WARNING: No itemText provided, clicking first message (may cause parallel test collision)'
+    )
+    messageCard = page.locator('.message-summary-mobile, .messagecard').first()
+  }
+
+  await messageCard.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await messageCard.click()
+  console.log('[Explore] Clicked on message card')
+
+  // Wait for the message to expand (use specific selector to avoid matching login modal)
+  await page.waitForSelector(
+    '.message-expanded-wrapper, .modal-content:has(.message-header), .modal-content:has(.message-photo)',
+    {
+      timeout: timeouts.ui.appearance,
+    }
+  )
+  console.log('[Explore] Message expanded')
+}
+
+/**
+ * Helper: Fill in the reply form and click Send
+ */
+async function fillReplyForm(
+  page,
+  { email = null, replyText, collectText = null }
+) {
+  // Fill email if provided (not logged in)
+  if (email) {
+    const emailInput = page
+      .locator('.test-email-reply-validator input[type="email"]')
+      .filter({ visible: true })
+    await emailInput.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    await emailInput.fill(email)
+    console.log(`[Reply] Filled email: ${email}`)
+  }
+
+  // Fill reply message
+  const replyTextarea = page
+    .locator('textarea[name="reply"]')
+    .filter({ visible: true })
+  await replyTextarea.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await replyTextarea.fill(replyText)
+  console.log('[Reply] Filled reply message')
+
+  // Fill collection details if provided
+  if (collectText) {
+    const collectTextarea = page
+      .locator('textarea[name="collect"]')
+      .filter({ visible: true })
+    try {
+      await collectTextarea.waitFor({ state: 'visible', timeout: 3000 })
+      await collectTextarea.fill(collectText)
+      console.log('[Reply] Filled collection details')
+    } catch (e) {
+      console.log(
+        '[Reply] Collection textarea not visible (may be WANTED message)'
+      )
+    }
+  }
+}
+
+/**
+ * Helper: Wait for Nuxt/Vue app to be fully hydrated.
+ * SSR renders HTML immediately but event handlers aren't attached until
+ * Vue hydrates. Clicking a button before hydration completes does nothing.
+ * This is a real UX issue — users see a button but it doesn't respond.
+ */
+async function waitForNuxtHydration(page) {
+  await page.waitForFunction(
+    () => {
+      const nuxtRoot = document.querySelector('#__nuxt')
+      return nuxtRoot && nuxtRoot.__vue_app__
+    },
+    null,
+    { timeout: timeouts.ui.appearance }
+  )
+}
+
+/**
+ * Helper: Click the Reply button to expand reply section
+ */
+async function clickReplyButton(page) {
+  // Wait for Vue to hydrate SSR components.
+  // Without this, buttons are visible but have no event handlers attached.
+  // Don't use waitForLoadState('load') — it hangs if the load event already fired.
+  await waitForNuxtHydration(page)
+
+  // Try footer reply button first (mobile/single column), then inline
+  let replyButton = page.locator('.app-footer .reply-button:has-text("Reply")')
+
+  // Use a safer approach - wait for any reply button to exist first
+  const anyReplyButton = page.locator('.reply-button:has-text("Reply")').first()
+  await anyReplyButton.waitFor({
+    state: 'attached',
+    timeout: timeouts.ui.appearance,
+  })
+
+  // Now check which button to use
+  const footerButtonCount = await replyButton.count()
+  const footerButtonVisible =
+    footerButtonCount > 0 &&
+    (await replyButton.isVisible({ timeout: 5000 }).catch(() => false))
+  if (!footerButtonVisible) {
+    replyButton = anyReplyButton
+  }
+
+  await replyButton.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+
+  // Click and retry if the textarea doesn't appear.
+  // Vue SSR hydration can cause the first click to be swallowed if event
+  // handlers aren't fully attached yet despite __vue_app__ being set.
+  const replyTextarea = page.locator('textarea[name="reply"]')
+  const maxRetries = 3
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    await replyButton.click({ force: attempt > 1 })
+    console.log(
+      `[Reply] Clicked Reply button (attempt ${attempt}/${maxRetries})`
+    )
+
+    try {
+      await replyTextarea.waitFor({
+        state: 'visible',
+        timeout: attempt < maxRetries ? 10000 : timeouts.ui.appearance,
+      })
+      console.log('[Reply] Reply section expanded')
+      return
+    } catch (e) {
+      if (attempt === maxRetries) {
+        throw new Error(
+          `Reply textarea did not appear after ${maxRetries} click attempts`
+        )
+      }
+      console.log(
+        `[Reply] Textarea not visible after attempt ${attempt}, retrying...`
+      )
+    }
+  }
+}
+
+/**
+ * Helper: Click Send and wait for result
+ */
+async function clickSendAndWait(
+  page,
+  { expectWelcomeModal = false, stayOnPage = false } = {}
+) {
+  // Ensure Vue has hydrated so @click handlers are attached to SSR-rendered buttons
+  await waitForNuxtHydration(page)
+
+  const sendButton = page
+    .locator('.composer-send-btn')
+    .filter({ visible: true })
+  await sendButton.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await sendButton.click()
+  console.log('[Reply] Clicked Send reply')
+
+  if (expectWelcomeModal) {
+    // Wait for either welcome modal OR navigation to chats (modal might not appear in all flows)
+    const welcomeModal = page.locator('.modal-content').filter({
+      hasText: 'Welcome to Freegle',
+    })
+
+    // Race between welcome modal and navigation to chats
+    try {
+      await welcomeModal.waitFor({
+        state: 'visible',
+        timeout: 10000, // shorter timeout since it might not appear
+      })
+      console.log('[Reply] Welcome modal appeared')
+
+      // Close the modal
+      const closeButton = welcomeModal.locator(
+        '.btn:has-text("Close and Continue")'
+      )
+      await closeButton.click()
+      console.log('[Reply] Closed welcome modal')
+    } catch {
+      console.log('[Reply] Welcome modal did not appear, continuing...')
+    }
+  }
+
+  if (stayOnPage) {
+    // Replying from a list page (browse/explore) sends WITHOUT navigating: once
+    // the reply completes the pane is removed (detached, not merely hidden as it
+    // is while the login/welcome modal is up) and we stay on the list.
+    await page.locator('.reply-overlay').waitFor({
+      state: 'detached',
+      timeout: timeouts.navigation.default,
+    })
+    if (page.url().includes('/chats/')) {
+      throw new Error(
+        `Expected to stay on the list after sending, but navigated to ${page.url()}`
+      )
+    }
+    console.log('[Reply] Stayed on the list after sending (no chat navigation)')
+    return
+  }
+
+  // Wait for navigation to chats (the successful reply destination)
+  await page.waitForURL(/\/chats\//, {
+    timeout: timeouts.navigation.default,
+  })
+  console.log('[Reply] Navigated to chats')
+
+  // Handle any post-login modals that might appear (e.g., Contact details postcode modal)
+  const contactDetailsModal = page.locator('.modal-content').filter({
+    hasText: 'Contact details',
+  })
+  try {
+    await contactDetailsModal.waitFor({
+      state: 'visible',
+      timeout: 3000, // short timeout, may not appear
+    })
+    console.log('[Reply] Contact details modal appeared')
+
+    // Fill postcode if needed
+    const postcodeInput = contactDetailsModal.locator(
+      'input[placeholder*="postcode"], input[type="text"]'
+    )
+    if (await postcodeInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await postcodeInput.fill(environment.postcode)
+      console.log('[Reply] Filled postcode in contact details modal')
+    }
+
+    // Click OK to close
+    const okButton = contactDetailsModal.locator('.btn:has-text("OK")')
+    await okButton.click()
+    console.log('[Reply] Closed contact details modal')
+  } catch {
+    // Modal didn't appear, that's fine
+  }
+}
+
+/**
+ * Helper: Wait for BreakpointFettler to set a specific breakpoint in the Pinia
+ * misc store. Call this after setViewportSize on mobile/tablet tests before
+ * clicking Reply, so expandReply() sees the correct breakpoint rather than null.
+ */
+async function waitForBreakpoint(page, expectedBreakpoint) {
+  await page.waitForFunction(
+    (bp) => {
+      const nuxt = document.querySelector('#__nuxt')
+      if (!nuxt?.__vue_app__) return false
+      const pinia = nuxt.__vue_app__.config?.globalProperties?.$pinia
+      if (!pinia?.state?.value?.misc) return false
+      return pinia.state.value.misc.breakpoint === bp
+    },
+    expectedBreakpoint,
+    { timeout: 10000 }
+  )
+}
+
+module.exports = {
+  waitForAuthInLocalStorage,
+  waitForAuthHydration,
+  waitForNuxtHydration,
+  waitForBreakpoint,
+  dismissLoginModalIfPresent,
+  navigateToMessageViaBrowse,
+  navigateToMessageViaExplore,
+  fillReplyForm,
+  clickReplyButton,
+  clickSendAndWait,
+}

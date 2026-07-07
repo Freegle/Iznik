@@ -1,0 +1,30 @@
+diff --git a/node_modules/@uppy/core/lib/Uppy.js b/node_modules/@uppy/core/lib/Uppy.js
+index 9b0f095..736c929 100644
+--- a/node_modules/@uppy/core/lib/Uppy.js
++++ b/node_modules/@uppy/core/lib/Uppy.js
+@@ -1430,8 +1430,8 @@ export class Uppy {
+                 }
+             });
+             const files = currentUpload.fileIDs.map((fileID) => this.getFile(fileID));
+-            const successful = files.filter((file) => !file.error);
+-            const failed = files.filter((file) => file.error);
++            const successful = files.filter((file) => file != null && !file.error);
++            const failed = files.filter((file) => file != null && file.error);
+             this.addResultData(uploadID, { successful, failed, uploadID });
+             // Update currentUpload value in case it was modified asynchronously.
+             currentUpload = getCurrentUpload();
+diff --git a/node_modules/@uppy/core/src/Uppy.ts b/node_modules/@uppy/core/src/Uppy.ts
+index 85c3e49..6284e24 100644
+--- a/node_modules/@uppy/core/src/Uppy.ts
++++ b/node_modules/@uppy/core/src/Uppy.ts
+@@ -2236,8 +2236,8 @@ export class Uppy<
+       })
+ 
+       const files = currentUpload.fileIDs.map((fileID) => this.getFile(fileID))
+-      const successful = files.filter((file) => !file.error)
+-      const failed = files.filter((file) => file.error)
++      const successful = files.filter((file) => file != null && !file.error)
++      const failed = files.filter((file) => file != null && file.error)
+       this.addResultData(uploadID, { successful, failed, uploadID })
+ 
+       // Update currentUpload value in case it was modified asynchronously.

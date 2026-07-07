@@ -1,0 +1,23 @@
+{
+    "version": 2,
+    "timestamp": "2026-02-01T20:13:22Z",
+    "envelope": {
+        "from": "hello@kerrycurl.com",
+        "to": "bounce-43109617-1769976791@users.ilovefreegle.org"
+    },
+    "raw_email": "RnJvbSBoZWxsb0BrZXJyeWN1cmwuY29tIFN1biBGZWIgMDEgMjA6MTM6MjEgMjAyNgpSZXR1cm4tcGF0aDogPGhlbGxvQGtlcnJ5Y3VybC5jb20+CkVudmVsb3BlLXRvOiBib3VuY2UtNDMxMDk2MTctMTc2OTk3Njc5MUB1c2Vycy5pbG92ZWZyZWVnbGUub3JnClJlY2VpdmVkOiBmcm9tIHNtdHByZWxheTAwMTAuaG9zdGVkZW1haWwuY29tIChbMjE2LjQwLjQ0LjEwXSBoZWxvPXJlbGF5Lmhvc3RlZGVtYWlsLmNvbSkKCWJ5IGJ1bGs0Lmlsb3ZlZnJlZWdsZS5vcmcgd2l0aCBlc210cHMgIChUTFMxLjMpIHRscyBUTFNfRUNESEVfUlNBX1dJVEhfQUVTXzI1Nl9HQ01fU0hBMzg0CgkoRXhpbSA0Ljk1KQoJKGVudmVsb3BlLWZyb20gPGhlbGxvQGtlcnJ5Y3VybC5jb20+KQoJaWQgMXZtZG92LTAwMUEwQy1RWQoJZm9yIGJvdW5jZS00MzEwOTYxNy0xNzY5OTc2NzkxQHVzZXJzLmlsb3ZlZnJlZWdsZS5vcmc7CglTdW4sIDAxIEZlYiAyMDI2IDIwOjEzOjIxICswMDAwClJlY2VpdmVkOiBmcm9tIHNtdHBpbjIwLmhvc3RlZGVtYWlsLmNvbSAoYTEwLnJvdXRlci5mbG9hdC4xOCBbMTAuMjAwLjE4LjFdKQoJYnkgdW5pcmVsYXkwOS5ob3N0ZWRlbWFpbC5jb20gKFBvc3RmaXgpIHdpdGggRVNNVFAgaWQgRTMyQjA4Q0E5QQoJZm9yIDxib3VuY2UtNDMxMDk2MTctMTc2OTk3Njc5MUB1c2Vycy5pbG92ZWZyZWVnbGUub3JnPjsgU3VuLCAgMSBGZWIgMjAyNiAyMDoxMzoyMCArMDAwMCAoVVRDKQpTdWJqZWN0OiAoYXV0b3Jlc3BvbnNlKSBbTm9yd2ljaCBGcmVlZ2xlXSBPRkZFUkVEOiBCbGFjayBsZWF0aGVyIDIgc2VhdGVyIHNvZmEgKENpdHkgQ2VudHJlCk1lc3NhZ2UtSUQ6IDwxNzY5OTc2ODAwLTQ1OTMyMEBhdXRvcmVwbHkuaG9zdGVkZW1haWwuY29tPgpGcm9tOiBoZWxsb0BrZXJyeWN1cmwuY29tClRvOiBib3VuY2UtNDMxMDk2MTctMTc2OTk3Njc5MUB1c2Vycy5pbG92ZWZyZWVnbGUub3JnCkRhdGU6IFN1biwgMSBGZWIgMjAyNiAyMDoxMzoyMCArMDAwMCAoVVRDKQpYLUF1dG9yZXNwb25kZXI6IFdpbGwgbm90IHNlbmQgYW5vdGhlciBhdXRvcmVwbHkgZm9yIDg2NDAwIHNlY29uZHMKQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluOyBjaGFyc2V0PVVURi04OyBmb3JtYXQ9Zmxvd2VkCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IDhiaXQKCkhpCgpUaGFua3MgZm9yIHlvdXIgZW1haWwuIEnigJltIG5vdyBpbiBvdXQgb2Ygb2ZmaWNlIG1vZGUgdW50aWwgV2VkcyBGZWIgNC4gCgpJIG1heSBub3QgYmUgY2hlY2tpbmcgaW4gb24gZW1haWxzIGFuZCBzb2NpYWxzIGR1cmluZyB0aGlzIHBlcmlvZCBidXQgd2lsbCByZXBseSB3aGVuIHBvc3NpYmxlLgoKVGhhbmtzCgpLZXJyeQoKCgo=",
+    "legacy_result": {
+        "routing_outcome": "Dropped",
+        "message_id": "119053248",
+        "user_id": 43109617,
+        "group_id": null,
+        "spam_type": null,
+        "spam_reason": null,
+        "subject": "(autoresponse) [Norwich Freegle] OFFERED: Black leather 2 seater sofa (City Centre",
+        "from_address": "hello@kerrycurl.com",
+        "our_posting_status": null,
+        "membership_role": null,
+        "group_moderated": null,
+        "override_moderation": null
+    }
+}

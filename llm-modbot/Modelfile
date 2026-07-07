@@ -1,0 +1,24 @@
+# Freegle Mod Helper - Ollama Modelfile
+# Qwen2.5-3B-Instruct fine-tuned with QLoRA on Freegle moderation data
+# Experimental - assists moderators, does not replace them
+#
+# Usage:
+#   1. Copy the .gguf file and this Modelfile to the same directory
+#   2. Run: ollama create freegle-mod-helper -f Modelfile
+#   3. Test: ollama run freegle-mod-helper
+
+FROM ./Qwen2.5-3B-Instruct.Q4_K_M.gguf
+
+TEMPLATE """<|im_start|>system
+{{ .System }}<|im_end|>
+<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+{{ .Response }}<|im_end|>"""
+
+SYSTEM """You are a Freegle community moderator assistant. You help moderators by reviewing posts for rule violations, correcting spelling, and flagging inappropriate content. Your suggestions are advisory — the moderator makes the final decision."""
+
+PARAMETER temperature 0.1
+PARAMETER num_ctx 2048
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"

@@ -1,0 +1,126 @@
+<?php
+
+namespace App\Console\Commands\Eee;
+
+use App\Services\EeeClassificationService;
+use App\Services\EeeSqliteService;
+use App\Services\EeeVisionService;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Build the item-type lookup cache by sampling images per type.
+ *
+ * Run this before backfilling historical messages. Classifying the top 200
+ * item types covers ~80% of posts using only ~2,000 API calls.
+ *
+ *   php artisan eee:classify-item-types --limit=200
+ *   php artisan eee:classify-item-types --limit=500 --force
+ *   php artisan eee:classify-item-types --limit=5 --dry-run
+ */
+class EeeClassifyItemTypesCommand extends Command
+{
+    protected $signature = 'eee:classify-item-types
+                            {--limit=200 : Number of top item types to process}
+                            {--items=    : Comma-separated list of specific item type names to classify}
+                            {--driver=   : Override model driver (claude, gemini, openai, together, ollama)}
+                            {--force     : Re-classify already-classified types}
+                            {--dry-run   : Show pending types without making API calls}';
+
+    protected $description = 'Build item-type EEE lookup cache by sampling images (run before backfill)';
+
+    public function __construct(
+        protected EeeClassificationService $classifier,
+        protected EeeVisionService $vision,
+        protected EeeSqliteService $sqlite,
+    ) {
+        parent::__construct();
+    }
+
+    public function handle(): int
+    {
+        $limit      = (int)  $this->option('limit');
+        $force      = (bool) $this->option('force');
+        $dryRun     = (bool) $this->option('dry-run');
+        $itemsOpt   = $this->option('items');
+        $namedItems = $itemsOpt
+            ? array_map('trim', explode(',', $itemsOpt))
+            : null;
+
+        $driver = $this->option('driver');
+        if ($driver) {
+            $this->vision     = $this->vision->withDriver($driver);
+            $this->classifier = $this->classifier->withDriver($driver);
+        }
+
+        if (!$dryRun && !$this->vision->isConfigured()) {
+            $this->error('Vision service not configured. Check EEE_MODEL and API keys.');
+            return Command::FAILURE;
+        }
+
+        $scope = $namedItems
+            ? 'items:' . implode(',', $namedItems)
+            : "item_types_limit_{$limit}";
+
+        $this->info("EEE item-type classification | model: {$this->vision->getModelName()} | " .
+            ($namedItems ? count($namedItems) . ' named items' : "limit: {$limit}"));
+
+        if ($dryRun) {
+            $this->warn('[DRY RUN]');
+            if ($namedItems) {
+                $items = DB::table('items')->whereIn('name', $namedItems)->pluck('popularity', 'name')->toArray();
+            } else {
+                $items = DB::table('items')->orderByDesc('popularity')->limit($limit)->pluck('popularity', 'name')->toArray();
+            }
+            $pending = $force
+                ? array_keys($items)
+                : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion());
+            $this->info(count($pending) . ' item types would be classified:');
+            foreach (array_slice($pending, 0, 20) as $name) {
+                $pop = $items[$name] ?? '?';
+                $this->line("  {$name} (popularity: {$pop})");
+            }
+            if (count($pending) > 20) $this->line('  ... and ' . (count($pending) - 20) . ' more');
+            return Command::SUCCESS;
+        }
+
+        $runId = $this->sqlite->startRun(
+            $this->vision->getModelName(),
+            $this->vision->getPromptVersion(),
+            $scope,
+        );
+
+        $classifyFn = $namedItems
+            ? fn($f, $r) => $this->classifier->classifyNamedItems($namedItems, $f, $r)
+            : fn($f, $r) => $this->classifier->classifyItemTypes($limit, $f, $r);
+
+        $stats = $classifyFn($force, function (string $itemName, ?array $result) {
+            if ($result === null) {
+                $this->line("  <comment>skip</comment>  {$itemName} (no images)");
+            } else {
+                $isEee    = $result['is_eee'];
+                $eeeLabel = match(true) {
+                    $isEee === true  => '<info>EEE</info>       ',
+                    $isEee === false => '<fg=gray>non-EEE</fg=gray>   ',
+                    default          => '<comment>uncertain</comment>  ',
+                };
+                $cost = '$' . number_format($result['cost'], 5);
+                $this->line("  {$eeeLabel}  {$itemName}  {$cost}");
+            }
+        });
+
+        $this->sqlite->finishRun($runId, $stats['processed'], $stats['eee'], $stats['skipped'], $stats['cost']);
+        $this->sqlite->journalItemTypeRun($runId, $this->vision->getPromptVersion());
+
+        $this->newLine();
+        $this->table(['Metric', 'Value'], [
+            ['Item types processed', $stats['processed']],
+            ['EEE item types found', $stats['eee']],
+            ['Skipped (no images)',  $stats['skipped']],
+            ['Estimated cost',       '$' . number_format($stats['cost'], 4)],
+        ]);
+
+        $this->info("Done. Run 'eee:compare-models' or 'eee:backfill' next.");
+        return Command::SUCCESS;
+    }
+}

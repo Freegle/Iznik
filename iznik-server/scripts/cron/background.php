@@ -1,0 +1,192 @@
+<?php
+#
+#  This script handles less critical background tasks.
+#
+namespace Freegle\Iznik;
+
+define('BASE_DIR', dirname(__FILE__) . '/../..');
+require_once(BASE_DIR . '/include/config.php');
+
+require_once(IZNIK_BASE . '/include/db.php');
+global $dbhr, $dbhm;
+
+use Pheanstalk\Pheanstalk;
+
+$opts = getopt('n:');
+$instancename = Utils::presdef('n', $opts, '');
+$fn = basename(__FILE__ . '_' . $instancename);
+$lockh = Utils::lockScript($fn);
+
+$dbhm->setAttribute(\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, TRUE);
+
+function doSQL($sql) {
+    global $dbhr, $dbhm;
+
+    try {
+        # Optimise View messages - if there's already a recent view, skip it.
+        if (preg_match("/INSERT INTO messages_likes \(msgid, userid, type\) VALUES \((\d+), (\d+), 'View'\)/", $sql, $matches)) {
+            $msgid = $matches[1];
+            $userid = $matches[2];
+            $recent = $dbhr->preQuery("SELECT msgid FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View' AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 MINUTE);", [
+                $msgid,
+                $userid
+            ]);
+
+            if (count($recent) > 0) {
+                return;
+            }
+        }
+
+        $rc = $dbhm->exec($sql, FALSE);
+    } catch (\Exception $e) {
+        $msg = $e->getMessage();
+
+        if (strpos($e, 'gone away') || strpos($e, 'Lock wait timeout exceeded')) {
+            # SQL server has gone away.  Exit - cron will restart and we'll get new handles.
+            error_log("SQL gone away - exit");
+            exit(1);
+        }
+
+        error_log("SQL exception " . var_export($e, TRUE));
+    }
+}
+
+try {
+    $exit = FALSE;
+
+    while (!$exit) {
+        $job = NULL;
+
+        try {
+            // Pheanstalk doesn't recovery well after an error, so recreate each time.
+            error_reporting(0);
+            $pheanstalk = Pheanstalk::create(\PHEANSTALK_SERVER);
+            $pheanstalk = $pheanstalk->watchOnly(\PHEANSTALK_TUBE);
+            $job = $pheanstalk->reserve();
+            error_reporting(E_ALL & ~E_WARNING & ~E_DEPRECATED & ~E_NOTICE);
+        } catch (\Exception $e) {
+            error_log("Failed to reserve, sleeping " . $e->getMessage());
+            sleep(1);
+        }
+
+        if ($job) {
+            try {
+                $data = json_decode($job->getData(), TRUE);
+
+                if ($data) {
+                    switch ($data['type']) {
+                        case 'sql': {
+                            doSQL($data['sql']);
+                            break;
+                        }
+
+                        case 'sqlfile': {
+                            $sql = file_get_contents($data['file']);
+                            unlink($data['file']);
+                            doSQL($sql);
+                            break;
+                        }
+
+                        case 'webpush': {
+                            $n = new PushNotifications($dbhr, $dbhm);
+
+                            # Some Android devices stack the notifications rather than replace them, and the app code doesn't
+                            # get invoked so can't help.  We can stop this by sending a "clear" notification first.  We do
+                            # this here rather than queueing two of them because there are multiple instances and we can
+                            # end up with them out of order.
+                            $payload = [
+                                'badge' => 0,
+                                'count' => 0,
+                                'chatcount' => 0,
+                                'notifcount' => 0,
+                                'title' => NULL,
+                                'message' => '',
+                                'chatids' => [],
+                                'content-available' => FALSE,
+                                'image' => $data['payload']['image'],
+                                'modtools' => $data['payload']['modtools'],
+                                'route' => NULL
+                            ];
+
+                            switch ($data['notiftype']) {
+                                case PushNotifications::PUSH_GOOGLE:
+                                {
+                                    $params = [
+                                        'GCM' => \GOOGLE_PUSH_KEY
+                                    ];
+                                    break;
+                                }
+                            }
+
+                            try {
+                                $n->executeSend($data['userid'], $data['notiftype'], $data['params'], $data['endpoint'], $payload);
+                            } catch (\Exception $e) {}
+
+                            # Now the real one.
+                            $n->executeSend($data['userid'], $data['notiftype'], $data['params'], $data['endpoint'], $data['payload']);
+                            break;
+                        }
+
+                        case 'poke': {
+                            $n = new PushNotifications($dbhr, $dbhm);
+                            $n->executePoke($data['groupid'], $data['data'], $data['modtools']);
+                            break;
+                        }
+
+                        case 'freebiealertsadd': {
+                            $f = new FreebieAlerts($dbhr, $dbhm);
+                            $f->add($data['msgid']);
+                            break;
+                        }
+
+                        case 'freebiealertsremove': {
+                            $f = new FreebieAlerts($dbhr, $dbhm);
+                            $f->remove($data['msgid']);
+                            break;
+                        }
+
+                        case 'mark': {
+                            $m = new Message($dbhr, $dbhm, $data['id']);
+                            $m->backgroundMark(
+                                $data['byuser'],
+                                $data['outcome'],
+                                $data['intcomment'],
+                                $data['happiness'],
+                                $data['userid'],
+                                $data['messageForOthers']);
+                            break;
+                        }
+
+                        case 'testmarker': {
+                            // Used by test suite - write marker file to signal that all prior
+                            // queue items have been processed.
+                            touch($data['file']);
+                            break;
+                        }
+
+                        default: {
+                            error_log("Unknown job type {$data['type']} " . var_export($data, TRUE));
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                error_log("Exception " . $e->getMessage());
+                if ($job) {
+                    \Sentry\captureException($e);
+                }
+            }
+
+            # Whatever it is, we need to delete the job to avoid getting stuck.
+            $pheanstalk->delete($job);
+
+            if (file_exists('/tmp/iznik.background.abort')) {
+                $exit = TRUE;
+            }
+        }
+    }
+} catch (\Exception $e) {
+    error_log("Top-level exception " . $e->getMessage() . "\n");
+    \Sentry\captureException($e);
+}
+
+Utils::unlockScript($lockh);

@@ -1,0 +1,35 @@
+# Proxy requests to the permlink scripts to the appropriate full Netlify url.  This works in conjunction with cdnUrl
+# in nuxt.config.ts.
+/netlify/* https://:splat 200!
+
+# .well-known folder needs to be exposed.
+/.well-known/*  /well-known/:splat 200!
+
+# PayPal similarly.  This has been updated on PayPal so should fade away.
+/donateipn.php https://fdapilive.ilovefreegle.org/donateipn.php 200!
+
+/apple-touch-icon.png /icons/apple-touch-icon.png
+/apple-touch-icon-precomposed.png /icons/apple-touch-icon.png
+/favicon.ico /icons/favicon.ico
+
+# Redirect ads.txt to Playwire (302 temporary redirect)
+/ads.txt https://config.playwire.com/dyn_ads/1025311/75051/ads.txt 302!
+
+# Return 404 for requests from old code.  This avoids the function call, which costs.
+/sw.js* / 404!
+/img* / 404!
+/timg* / 404!
+/gimg* / 404!
+/tgimg* / 404!
+/uimg* / 404!
+/tuimg* / 404!
+/.well-known/* / 404!
+
+# Proxy old /api endpoint which is still used by apps which haven't updated.
+/api* https://fdapilive.ilovefreegle.org/api/:splat 200!
+
+# Old endpoints.
+/mygroups* /browse:splat 200!
+/how-it-works /help 301!
+/handbook /help 301!
+/contact /help 301!

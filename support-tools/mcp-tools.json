@@ -1,0 +1,36 @@
+{
+  "tools": [
+    {
+      "name": "loki_query",
+      "description": "Query application logs from Loki. Returns log entries matching your query. Email addresses, user IDs, and IP addresses in results are replaced with consistent tokens (e.g., EMAIL_a8f3c2) for privacy. Use the sessionId from query sanitization to enable token translation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "Session ID from query sanitization. Required for all queries."
+          },
+          "query": {
+            "type": "string",
+            "description": "LogQL query. Examples: {app=\"freegle\"} |= \"error\", {app=\"freegle\"} | json | level=\"error\", {source=\"api\"} | json | status_code=~\"5..\""
+          },
+          "start": {
+            "type": "string",
+            "description": "Start time - relative (1h, 24h, 7d) or ISO 8601. Default: 1h"
+          },
+          "end": {
+            "type": "string",
+            "description": "End time - relative or ISO 8601. Default: now"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum results. Default: 100"
+          }
+        },
+        "required": ["sessionId", "query"]
+      }
+    }
+  ],
+  "version": "1.0.0",
+  "description": "Pseudonymized log analysis tools for Freegle support"
+}

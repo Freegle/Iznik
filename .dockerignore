@@ -1,0 +1,49 @@
+# Git directories - these are huge (1GB+) and not needed for builds
+.git
+**/.git
+
+# Node modules - will be installed fresh in container
+**/node_modules
+
+# Build outputs
+**/.nuxt
+**/.output
+**/dist
+
+# Test artifacts
+**/test-results
+**/playwright-report
+**/monocart-report
+**/coverage
+
+# Logs
+**/*.log
+**/logs
+
+# Environment files
+**/.env
+**/.env.*
+
+# IDE
+**/.idea
+**/.vscode
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Large static assets not needed for base image
+**/public/posters
+
+# Temporary files
+**/tmp
+**/.cache
+
+# Plans and documentation (not needed in containers)
+plans/
+yesterday/
+*.md
+!README.md
+
+# PR walkthrough video tool (dev-only; never built into or run by any container)
+pr-walkthrough/

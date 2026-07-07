@@ -1,0 +1,56 @@
+Received: by bulk2.ilovefreegle.org (Postfix)
+	id 0FCBC402670D; Sun, 20 Nov 2016 13:49:46 +0000 (UTC)
+Date: Sun, 20 Nov 2016 13:49:46 +0000 (UTC)
+From: MAILER-DAEMON@ilovefreegle.org (Mail Delivery System)
+Subject: Undelivered Mail Returned to Sender
+To: bounce-3743448-1479334364@users.ilovefreegle.org
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="6D9B644D9B75.1479649786/bulk2.ilovefreegle.org"
+Message-Id: <20161120134946.0FCBC402670D@bulk2.ilovefreegle.org>
+
+This is a MIME-encapsulated message.
+
+--6D9B644D9B75.1479649786/bulk2.ilovefreegle.org
+Content-Description: Notification
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host bulk2.ilovefreegle.org.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients.
+
+                   The mail system
+
+<bounced@example.com>: host mx.example.com[192.0.2.1] said: 550
+    Requested action not taken: mailbox unavailable (in reply to RCPT TO
+    command)
+
+--6D9B644D9B75.1479649786/bulk2.ilovefreegle.org
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; bulk2.ilovefreegle.org
+X-Postfix-Queue-ID: 6D9B644D9B75
+X-Postfix-Sender: rfc822; bounce-3743448-1479334364@users.ilovefreegle.org
+Arrival-Date: Wed, 16 Nov 2016 22:13:36 +0000 (UTC)
+
+Final-Recipient: rfc822; bounced@example.com
+Original-Recipient: rfc822;bounced@example.com
+Action: failed
+Status: 5.0.0
+Remote-MTA: dns; mx.example.com
+Diagnostic-Code: smtp; 550 Requested action not taken: mailbox unavailable
+
+--6D9B644D9B75.1479649786/bulk2.ilovefreegle.org
+Content-Description: Undelivered Message
+Content-Type: message/rfc822
+
+From: test@test.com
+To: bounced@example.com
+Subject: Test message that bounced
+
+Original message content here.
+
+--6D9B644D9B75.1479649786/bulk2.ilovefreegle.org--

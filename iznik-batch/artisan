@@ -1,0 +1,84 @@
+#!/usr/bin/env php
+<?php
+
+use Illuminate\Foundation\Application;
+use Symfony\Component\Console\Input\ArgvInput;
+
+define('LARAVEL_START', microtime(true));
+
+// Register the Composer autoloader...
+require __DIR__.'/vendor/autoload.php';
+
+/**
+ * Get a value from environment variable or .env file.
+ * Used for early Sentry initialization before Laravel boots.
+ */
+function getEnvValue(string $key, ?string $default = null): ?string
+{
+    // First check actual environment variable.
+    $value = getenv($key);
+    if ($value !== false && $value !== '') {
+        return $value;
+    }
+
+    // Fall back to parsing .env file.
+    static $envCache = null;
+    if ($envCache === null) {
+        $envCache = [];
+        $envFile = __DIR__ . '/.env';
+        if (file_exists($envFile)) {
+            $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                $line = trim($line);
+                // Skip comments.
+                if ($line === '' || str_starts_with($line, '#')) {
+                    continue;
+                }
+                // Parse KEY=value.
+                if (preg_match('/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/', $line, $matches)) {
+                    $envCache[$matches[1]] = trim($matches[2], '"\'');
+                }
+            }
+        }
+    }
+
+    return $envCache[$key] ?? $default;
+}
+
+// Initialize Sentry early for bootstrap error capture.
+// This catches errors that happen before Laravel's exception handler loads,
+// such as corrupted services.php or cache files.
+if (class_exists(\Sentry\SentrySdk::class)) {
+    $dsn = getEnvValue('SENTRY_LARAVEL_DSN');
+    if ($dsn) {
+        \Sentry\init([
+            'dsn' => $dsn,
+            'environment' => getEnvValue('APP_ENV', 'production'),
+            'release' => getEnvValue('SENTRY_RELEASE'),
+        ]);
+    }
+}
+
+try {
+    // Bootstrap Laravel and handle the command...
+    /** @var Application $app */
+    $app = require_once __DIR__.'/bootstrap/app.php';
+
+    $status = $app->handleCommand(new ArgvInput);
+
+    exit($status);
+} catch (\Throwable $e) {
+    // Capture bootstrap failures to Sentry.
+    if (class_exists(\Sentry\SentrySdk::class)) {
+        try {
+            \Sentry\captureException($e);
+            // Flush to ensure async sending completes before we exit.
+            \Sentry\SentrySdk::getCurrentHub()->getClient()?->flush(2);
+        } catch (\Throwable $sentryError) {
+            // Don't let Sentry errors mask the original error.
+            error_log('Sentry capture failed: ' . $sentryError->getMessage());
+        }
+    }
+    // Re-throw so error still appears in logs/stderr.
+    throw $e;
+}

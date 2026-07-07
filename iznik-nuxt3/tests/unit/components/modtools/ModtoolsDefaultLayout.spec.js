@@ -1,0 +1,327 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, h, Suspense, computed, nextTick } from 'vue'
+
+// Import layout after mocks
+import DefaultLayout from '~/modtools/layouts/default.vue'
+
+// Stub Nuxt auto-imported globals not available in vitest
+vi.stubGlobal('useHead', vi.fn())
+vi.stubGlobal('useRuntimeConfig', vi.fn().mockReturnValue({ public: {} }))
+
+// Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
+const { mockAuthStore, mockCheckWork, mockResetCheckWork } = vi.hoisted(() => {
+  const { reactive } = require('vue')
+  const mockAuthStore = reactive({
+    user: null,
+    auth: { jwt: null, persistent: null },
+    loginStateKnown: false,
+    forceLogin: false,
+    discourse: null,
+    work: null,
+    fetchUser: () => Promise.resolve(null),
+    logout: () => Promise.resolve(undefined),
+  })
+  return {
+    mockAuthStore,
+    mockCheckWork: vi.fn(),
+    mockResetCheckWork: vi.fn(),
+  }
+})
+
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/stores/chat', () => ({
+  useChatStore: () => ({
+    fetchLatestChatsMT: vi.fn(),
+  }),
+}))
+
+vi.mock('@/stores/chat', () => ({
+  useChatStore: () => ({
+    fetchLatestChatsMT: vi.fn(),
+  }),
+}))
+
+vi.mock('~/stores/misc', () => ({
+  useMiscStore: () => ({
+    apiCount: 0,
+    workTimer: null,
+    setTime: vi.fn(),
+    set: vi.fn(),
+  }),
+}))
+
+vi.mock('@/stores/modgroup', () => ({
+  useModGroupStore: () => ({
+    getModGroups: vi.fn().mockResolvedValue([]),
+  }),
+}))
+
+vi.mock('@/stores/modconfig', () => ({
+  useModConfigStore: () => ({
+    fetch: vi.fn().mockResolvedValue({}),
+  }),
+}))
+
+vi.mock('@/stores/mobile', () => ({
+  useMobileStore: () => ({
+    isApp: false,
+    setBadgeCount: vi.fn(),
+    init: vi.fn(),
+  }),
+}))
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({
+    supportOrAdmin: computed(() => false),
+  }),
+}))
+
+vi.mock('~/composables/useModMe', () => ({
+  useModMe: () => ({
+    hasPermissionNewsletter: computed(() => false),
+    hasPermissionSpamAdmin: computed(() => false),
+    hasPermissionGiftAid: computed(() => false),
+    checkWork: mockCheckWork,
+    resetCheckWork: mockResetCheckWork,
+  }),
+}))
+
+vi.mock('~/composables/useMTBuildHead', () => ({
+  buildHead: vi.fn().mockReturnValue({}),
+}))
+
+// useRoute is auto-imported by Nuxt (no import statement in component).
+// Provide it as a global so it's available during setup.
+vi.stubGlobal('useRoute', () => ({ fullPath: '/', path: '/', query: {} }))
+
+vi.mock('#imports', async () => {
+  const actual = await vi.importActual('#imports')
+  return {
+    ...actual,
+    useRouter: () => ({
+      push: vi.fn(),
+      go: vi.fn(),
+      currentRoute: { value: { path: '/' } },
+    }),
+  }
+})
+
+/**
+ * Mounts the DefaultLayout inside Suspense (required for async setup).
+ */
+function mountLayout(stubs = {}) {
+  const Wrapper = defineComponent({
+    render() {
+      return h(Suspense, null, {
+        default: () =>
+          h(DefaultLayout, null, { default: () => h('div', 'page content') }),
+        fallback: () => h('div', 'loading'),
+      })
+    },
+  })
+
+  return mount(Wrapper, {
+    global: {
+      stubs: {
+        ModStatus: { template: '<span />' },
+        ChatMenu: { template: '<span />' },
+        GoogleOneTap: { template: '<span />' },
+        LoginModal: {
+          template: '<span />',
+          setup() {
+            return { show: vi.fn(), showLogin: vi.fn(), showModal: false }
+          },
+        },
+        ModMenuItemLeft: { template: '<div />' },
+        ModMissingRules: { template: '<div />' },
+        ModMissingProfile: { template: '<div />' },
+        SomethingWentWrong: { template: '<div />' },
+        ExternalLink: { template: '<a><slot /></a>' },
+        'b-navbar': { template: '<nav><slot /></nav>' },
+        'b-navbar-brand': { template: '<div><slot /></div>' },
+        'b-navbar-nav': { template: '<div><slot /></div>' },
+        'b-nav-item': { template: '<div><slot /></div>' },
+        'b-img': { template: '<img />' },
+        'b-badge': { template: '<span><slot /></span>' },
+        'b-button': { template: '<button><slot /></button>' },
+        'v-icon': { template: '<span />' },
+        ...stubs,
+      },
+    },
+  })
+}
+
+describe('modtools default layout — leftmenu CLS prevention', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCheckWork.mockReset()
+    mockResetCheckWork.mockReset()
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+    mockAuthStore.fetchUser = vi.fn().mockResolvedValue(null)
+    mockAuthStore.logout = vi.fn().mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+  })
+
+  it('renders leftmenu with invisible+inert when showMenu=true and user is not logged in', async () => {
+    // User is not logged in (no JWT, no persistent session — e.g. Google One Tap scenario)
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+
+    const wrapper = mountLayout()
+    await flushPromises()
+    await nextTick()
+
+    // leftmenu must exist in DOM to reserve flex space and prevent CLS
+    // when user logs in via Google One Tap (~10 seconds later)
+    const leftmenu = wrapper.find('.leftmenu')
+    expect(leftmenu.exists()).toBe(true)
+
+    // invisible: visually hidden but still occupies layout space
+    expect(leftmenu.classes()).toContain('invisible')
+    // inert: removes from tab order and accessibility tree
+    expect(leftmenu.attributes('inert')).not.toBeUndefined()
+  })
+
+  it('renders leftmenu without invisible/inert when user is logged in', async () => {
+    mockAuthStore.user = { id: 1, displayname: 'Test User' }
+    mockAuthStore.loginStateKnown = true
+
+    const wrapper = mountLayout()
+    await flushPromises()
+    await nextTick()
+
+    const leftmenu = wrapper.find('.leftmenu')
+    expect(leftmenu.exists()).toBe(true)
+    expect(leftmenu.classes()).not.toContain('invisible')
+    expect(leftmenu.attributes('inert')).toBeUndefined()
+  })
+
+  it('removes invisible+inert when loggedIn transitions from false to true after mount', async () => {
+    // Start not logged in
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+
+    const wrapper = mountLayout()
+    await flushPromises()
+    await nextTick()
+
+    // Confirm invisible on initial render
+    expect(wrapper.find('.leftmenu').classes()).toContain('invisible')
+
+    // Simulate Google One Tap completing: user becomes available reactively
+    mockAuthStore.user = { id: 42, displayname: 'Jane' }
+    await nextTick()
+
+    // invisible and inert should be gone — no layout shift when content is revealed
+    const leftmenu = wrapper.find('.leftmenu')
+    expect(leftmenu.classes()).not.toContain('invisible')
+    expect(leftmenu.attributes('inert')).toBeUndefined()
+  })
+})
+
+describe('modtools default layout — pending badge includes spam', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCheckWork.mockReset()
+    mockResetCheckWork.mockReset()
+    mockAuthStore.user = { id: 1, displayname: 'Test Mod' }
+    mockAuthStore.loginStateKnown = true
+    mockAuthStore.work = { pending: 0, spam: 1, total: 1 }
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+    mockAuthStore.work = null
+  })
+
+  it('Pending menu badge includes spam so work.total matches visible badge sum (Discourse #9654)', async () => {
+    // spam messages appear in the Pending review list (PR #638),
+    // so the Pending nav badge must count ['pending', 'spam'] — not just ['pending'].
+    // Otherwise a mod with 1 spam message sees total=1 in the hamburger but 0 in the
+    // Pending item, giving a spurious "+1 persisting all day" (Discourse #9654).
+    const capturedItems = []
+    const CapturingModMenuItemLeft = {
+      template: '<div />',
+      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant', 'directcount'],
+      setup(props) {
+        capturedItems.push({
+          link: props.link,
+          name: props.name,
+          count: props.count ? [...props.count] : null,
+        })
+      },
+    }
+
+    const wrapper = mountLayout({ ModMenuItemLeft: CapturingModMenuItemLeft })
+    await flushPromises()
+    await nextTick()
+
+    const pendingItem = capturedItems.find((item) => item.link === '/messages/pending')
+    expect(pendingItem, 'Pending menu item must be rendered').toBeDefined()
+
+    // Fails on buggy code (count=['pending'], spam not present).
+    // Passes after fix (count=['pending','spam']).
+    expect(pendingItem.count).toContain('spam')
+  })
+})
+
+describe('modtools default layout — re-login group refresh', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCheckWork.mockReset()
+    mockResetCheckWork.mockReset()
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+    mockAuthStore.fetchUser = vi.fn().mockResolvedValue(null)
+    mockAuthStore.logout = vi.fn().mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+  })
+
+  it('calls checkWork(true) after logout→re-login to repopulate groups immediately', async () => {
+    // Mount with user not logged in
+    mountLayout()
+    await flushPromises()
+    await nextTick()
+
+    // Simulate first login (hadLoggedOut=false → watcher takes no action)
+    mockAuthStore.user = { id: 1, displayname: 'Test User' }
+    await nextTick()
+    await flushPromises()
+
+    // Simulate logout (sets hadLoggedOut=true in the watcher)
+    mockAuthStore.user = null
+    await nextTick()
+    await flushPromises()
+
+    // Reset to measure only calls triggered by re-login
+    mockCheckWork.mockClear()
+
+    // Simulate re-login: the loggedIn watcher detects the false→true transition
+    // and calls resetCheckWork() + checkWork(true) to immediately repopulate groups
+    mockAuthStore.user = { id: 1, displayname: 'Test User' }
+    await flushPromises()
+    await nextTick()
+
+    // Without the fix (no loggedIn watcher), checkWork is never called here —
+    // groups stay empty for up to 30s until the polling timer fires.
+    expect(mockCheckWork).toHaveBeenCalledWith(true)
+  })
+})

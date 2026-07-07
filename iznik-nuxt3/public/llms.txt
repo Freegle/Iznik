@@ -1,0 +1,40 @@
+# Freegle
+
+> Freegle is the UK's largest free reuse community. People give away and receive unwanted items completely free of charge — no money, no swapping, no strings. Freegle is a registered charity (1129544) operating hundreds of local groups across the UK.
+
+Freegle helps people find new homes for things they no longer need: furniture, clothes, electronics, books, garden items, toys, and much more. Posts are either OFFERs (giving something away) or WANTEDs (looking for something). Everything is free.
+
+## Finding Local Groups
+
+All Freegle groups, with their coordinates and member counts:
+
+- [All groups](https://api.ilovefreegle.org/api/group): `GET /api/group` — returns every group with id, namedisplay, lat, lng, membercount, description, founded. Filter client-side by distance from a user's location.
+- [Group detail](https://api.ilovefreegle.org/api/group/{id}): `GET /api/group/{id}` — full details for one group including tagline and settings.
+
+## Searching for Items
+
+- [Keyword search](https://api.ilovefreegle.org/api/message/search/bicycle): `GET /api/message/search/{term}` — search across all groups. Optional: `messagetype=OFFER` or `WANTED`; `groupids=123,456` to restrict to specific groups.
+- [Recent messages for a group](https://api.ilovefreegle.org/api/messages?collection=Approved&limit=20): `GET /api/messages?groupid={id}&collection=Approved&limit=20` — latest approved posts for a group. Paginate with `context` cursor.
+- [Messages in a map bounding box](https://api.ilovefreegle.org/api/message/inbounds?swlat=51.4&swlng=-2.7&nelat=51.6&nelng=-2.4): `GET /api/message/inbounds?swlat={f}&swlng={f}&nelat={f}&nelng={f}` — all active posts within a geographic rectangle (decimal degrees).
+- [Group message feed](https://api.ilovefreegle.org/api/group/{id}/message): `GET /api/group/{id}/message` — posts for a specific group.
+
+## Community and Events
+
+- [Community events](https://api.ilovefreegle.org/api/communityevent): `GET /api/communityevent` — repair cafes, swap shops, and other local events posted by group members.
+- [Volunteering opportunities](https://api.ilovefreegle.org/api/volunteering): `GET /api/volunteering` — volunteer roles posted by Freegle groups.
+- [Success stories](https://api.ilovefreegle.org/api/story): `GET /api/story` — member stories about items saved from landfill.
+- [Recent activity](https://api.ilovefreegle.org/api/activity): `GET /api/activity` — latest activity across all groups.
+
+## API Documentation
+
+- [Interactive API docs](https://api.ilovefreegle.org/swagger/): Full Swagger UI with 130+ endpoints, request/response schemas, and live examples.
+- [OpenAPI 2.0 specification](https://api.ilovefreegle.org/swagger/swagger.json): Machine-readable spec for tool/function-calling integration.
+
+All read endpoints listed above are public and require no authentication. Write operations (posting, joining groups, chatting) require a JWT bearer token obtained via user login.
+
+## About Freegle
+
+- Website: https://www.ilovefreegle.org
+- Help and FAQ: https://www.ilovefreegle.org/help
+- API contact: geeks@ilovefreegle.org
+- Licence: GPL v2

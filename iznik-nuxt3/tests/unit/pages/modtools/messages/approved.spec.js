@@ -1,0 +1,617 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { ref, computed } from 'vue'
+import ApprovedPage from '~/modtools/pages/messages/approved/[[id]]/[[term]].vue'
+
+// Mock refs that will be shared between tests
+const mockBusy = ref(false)
+const mockContext = ref(null)
+const mockGroup = ref(null)
+const mockGroupid = ref(0)
+const mockLimit = ref(10)
+const mockWorkType = ref(null)
+const mockShow = ref(0)
+const mockCollection = ref(null)
+const mockMessageTerm = ref(null)
+const mockMemberTerm = ref(null)
+const mockDistance = ref(10)
+const mockSummarykey = ref(false)
+const mockSummary = computed(() => false)
+const mockMessages = ref([])
+const mockVisibleMessages = ref([])
+const mockWork = computed(() => 0)
+const mockNextAfterRemoved = ref(null)
+const mockListingIds = ref(new Set())
+const mockListingIdOrder = ref([])
+
+vi.mock('~/composables/useModMessages', () => ({
+  setupModMessages: () => ({
+    busy: mockBusy,
+    context: mockContext,
+    group: mockGroup,
+    groupid: mockGroupid,
+    limit: mockLimit,
+    workType: mockWorkType,
+    show: mockShow,
+    collection: mockCollection,
+    messageTerm: mockMessageTerm,
+    memberTerm: mockMemberTerm,
+    distance: mockDistance,
+    summarykey: mockSummarykey,
+    summary: mockSummary,
+    messages: mockMessages,
+    visibleMessages: mockVisibleMessages,
+    work: mockWork,
+    nextAfterRemoved: mockNextAfterRemoved,
+    listingIds: mockListingIds,
+    listingIdOrder: mockListingIdOrder,
+  }),
+}))
+
+// Mock stores
+const mockMessageStore = {
+  list: {},
+  context: null,
+  fetchMessagesMT: vi.fn().mockResolvedValue([]),
+  searchMT: vi.fn().mockResolvedValue([]),
+  clearContext: vi.fn(),
+  clear: vi.fn(),
+}
+
+vi.mock('@/stores/message', () => ({
+  useMessageStore: () => mockMessageStore,
+}))
+
+// Mock useMe composable
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({
+    me: ref({ id: 1, displayname: 'Test User' }),
+  }),
+}))
+
+// Mock route params
+const mockRouteParams = ref({ id: undefined, term: undefined })
+
+const mockRouterPush = vi.fn()
+
+vi.hoisted(() => {
+  vi.resetModules()
+})
+
+vi.mock('#imports', async () => {
+  const actual = await vi.importActual('#imports')
+  return {
+    ...actual,
+    useRoute: () => ({
+      params: mockRouteParams.value,
+      query: {},
+    }),
+    useRouter: () => ({
+      push: mockRouterPush,
+    }),
+  }
+})
+
+// Make useRoute/useRouter available globally (Nuxt auto-imports these)
+globalThis.__testUseRoute = () => ({
+  params: mockRouteParams.value,
+  query: {},
+})
+globalThis.__testUseRouter = () => ({
+  push: mockRouterPush,
+  replace: mockRouterPush,
+  currentRoute: { value: { path: '/' } },
+})
+
+describe('messages/approved/[[id]]/[[term]].vue page', () => {
+  function mountComponent() {
+    return mount(ApprovedPage, {
+      global: {
+        plugins: [createPinia()],
+        components: {
+          'b-form-checkbox': {
+            template: '<label><input type="checkbox" /><slot /></label>',
+            props: ['modelValue', 'switch', 'size'],
+          },
+        },
+        stubs: {
+          'client-only': {
+            template: '<div><slot /></div>',
+          },
+          ScrollToTop: {
+            template: '<div class="scroll-to-top" />',
+            props: ['prepend'],
+          },
+          ModGroupSelect: {
+            template: '<div class="mod-group-select" />',
+            props: ['modelValue', 'all', 'modonly', 'remember', 'urlOverride'],
+          },
+          ModFindMessagesFromMember: {
+            template: '<div class="mod-find-messages-from-member" />',
+            emits: ['searched'],
+          },
+          ModFindMessage: {
+            template: '<div class="mod-find-message" />',
+            props: ['groupid', 'messageTerm'],
+            emits: ['searched', 'changed'],
+          },
+          ModtoolsViewControl: {
+            template: '<div class="modtools-view-control" />',
+            props: ['misckey'],
+          },
+          NoticeMessage: {
+            template: '<div class="notice-message"><slot /></div>',
+            props: ['variant'],
+          },
+          ModMessages: {
+            template: '<div class="mod-messages" />',
+            props: ['group'],
+          },
+          'b-img': {
+            template: '<img />',
+            props: ['src', 'alt', 'lazy'],
+          },
+          'b-form-checkbox': {
+            template: '<label><input type="checkbox" /><slot /></label>',
+            props: ['modelValue', 'switch', 'size'],
+          },
+          BFormCheckbox: {
+            template: '<label><input type="checkbox" /><slot /></label>',
+            props: ['modelValue', 'switch', 'size'],
+          },
+          'infinite-loading': {
+            template:
+              '<div class="infinite-loading"><slot name="spinner" /></div>',
+            props: [
+              'direction',
+              'forceUseInfiniteWrapper',
+              'distance',
+              'identifier',
+            ],
+            emits: ['infinite'],
+          },
+        },
+      },
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    // Reset mock ref values
+    mockBusy.value = false
+    mockContext.value = null
+    mockGroup.value = null
+    mockGroupid.value = 0
+    mockShow.value = 0
+    mockCollection.value = null
+    mockWorkType.value = null
+    mockMessages.value = []
+    mockVisibleMessages.value = []
+    mockLimit.value = 10
+    mockDistance.value = 10
+    mockMessageTerm.value = null
+    mockMemberTerm.value = null
+    mockMessageStore.list = {}
+    mockMessageStore.context = null
+    mockListingIds.value = new Set()
+    mockListingIdOrder.value = []
+    mockRouteParams.value = { id: undefined, term: undefined }
+    mockRouterPush.mockClear()
+  })
+
+  describe('rendering', () => {
+    it('shows empty message when no messages and not busy', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      // The component gates "Nothing found" behind a `loaded` ref that
+      // becomes true only after loadMore() completes.  Before that it
+      // shows "Please wait...".
+      wrapper.vm.loaded = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Nothing found')
+    })
+
+    it('renders ModMessages component', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.mod-messages').exists()).toBe(true)
+    })
+
+    it('shows ModFindMessage when groupid is set', async () => {
+      // Set the route param so mounted() sets groupid
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      // The component sets groupid from route.params.id in mounted()
+      expect(wrapper.find('.mod-find-message').exists()).toBe(true)
+    })
+
+    it('shows message about selecting community when no groupid', async () => {
+      mockGroupid.value = 0
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Select a community to search messages')
+    })
+
+    it('no longer renders a semantic search toggle (vector is always on)', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('Semantic search')
+      expect(wrapper.vm.vectorSearchEnabled).toBeUndefined()
+    })
+  })
+
+  describe('setup', () => {
+    it('sets summarykey to modtoolsMessagesApprovedSummary', () => {
+      mountComponent()
+      expect(mockSummarykey.value).toBe('modtoolsMessagesApprovedSummary')
+    })
+
+    it('sets collection to Approved', () => {
+      mountComponent()
+      expect(mockCollection.value).toBe('Approved')
+    })
+  })
+
+  describe('computed properties', () => {
+    it('id returns parsed route param when present', () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      expect(wrapper.vm.id).toBe(123)
+    })
+
+    it('id returns 0 when no route param', () => {
+      mockRouteParams.value = { id: undefined, term: undefined }
+      const wrapper = mountComponent()
+      expect(wrapper.vm.id).toBe(0)
+    })
+
+    it('groupName returns group namedisplay when group exists', async () => {
+      mockGroup.value = { namedisplay: 'Test Group' }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.groupName).toBe('Test Group')
+    })
+
+    it('groupName returns null when no group', () => {
+      mockGroup.value = null
+      const wrapper = mountComponent()
+      expect(wrapper.vm.groupName).toBe(null)
+    })
+  })
+
+  describe('watchers', () => {
+    it('navigates to /messages/approved/ when chosengroupid changes to 0', async () => {
+      // Start with a non-zero id so the watcher sees a change
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+      // Now change to 0 - should trigger navigation
+      wrapper.vm.chosengroupid = 0
+      await wrapper.vm.$nextTick()
+      await flushPromises()
+      expect(mockRouterPush).toHaveBeenCalledWith('/messages/approved/')
+    })
+
+    it('navigates to /messages/approved/{id} when chosengroupid changes to a value', async () => {
+      mockRouteParams.value = { id: '1', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+      wrapper.vm.chosengroupid = 456
+      await wrapper.vm.$nextTick()
+      await flushPromises()
+      expect(mockRouterPush).toHaveBeenCalledWith('/messages/approved/456')
+    })
+  })
+
+  describe('mounted lifecycle', () => {
+    it('sets groupid and chosengroupid from route param', async () => {
+      mockRouteParams.value = { id: '789', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(mockGroupid.value).toBe(789)
+      expect(wrapper.vm.chosengroupid).toBe(789)
+    })
+
+    it('sets messageTerm from route param', async () => {
+      mockRouteParams.value = { id: '789', term: 'test-search' }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(mockMessageTerm.value).toBe('test-search')
+    })
+
+    it('clears messages and bumps when messageTerm is set', async () => {
+      mockRouteParams.value = { id: '789', term: 'test-search' }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(mockMessageStore.clear).toHaveBeenCalled()
+      expect(wrapper.vm.bump).toBeGreaterThan(0)
+    })
+
+    it('sets urlOverride when id is explicitly set in route', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.urlOverride).toBe(true)
+    })
+  })
+
+  describe('methods', () => {
+    it('changedMessageTerm updates messageTerm with trimmed value', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.changedMessageTerm('  test term  ')
+      expect(mockMessageTerm.value).toBe('test term')
+    })
+
+    it('searchedMessage navigates with term', async () => {
+      // Set route param so mounted() sets groupid
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      await wrapper.vm.searchedMessage('search term')
+      expect(mockRouterPush).toHaveBeenCalledWith(
+        '/messages/approved/123/search term'
+      )
+    })
+
+    it('searchedMessage navigates without term when empty', async () => {
+      // Set route param so mounted() sets groupid
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      await wrapper.vm.searchedMessage('')
+      expect(mockRouterPush).toHaveBeenCalledWith('/messages/approved/123')
+    })
+
+    it('searchedMessage navigates to base when no groupid and empty term', async () => {
+      mockGroupid.value = 0
+      const wrapper = mountComponent()
+      await wrapper.vm.searchedMessage('')
+      expect(mockRouterPush).toHaveBeenCalledWith('/messages/approved/')
+    })
+
+    it('searchedMember clears messages and bumps', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.searchedMember('test@test.com')
+      expect(mockShow.value).toBe(0)
+      expect(mockMessageTerm.value).toBe(null)
+      expect(mockMemberTerm.value).toBe('test@test.com')
+      expect(mockMessageStore.clear).toHaveBeenCalled()
+      expect(wrapper.vm.bump).toBeGreaterThan(0)
+    })
+
+    it('searchedMessage resets listing state so a prior member lookup does not leak into the search', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      // Simulate a previous "messages from member" lookup having populated the
+      // listing with that member's old approved posts (which are not in any
+      // search index).  They live in listingIds and the store.
+      mockMemberTerm.value = 'theyou@example.com'
+      mockListingIds.value = new Set([25710703, 54673557])
+      mockListingIdOrder.value = [25710703, 54673557]
+      mockMessageStore.clear.mockClear()
+      // Now run a message search.  The member's posts must not survive into it.
+      await wrapper.vm.searchedMessage('sofa')
+      expect(mockListingIds.value.size).toBe(0)
+      expect(mockListingIdOrder.value).toEqual([])
+      expect(mockMemberTerm.value).toBe(null)
+      expect(mockMessageStore.clear).toHaveBeenCalled()
+      expect(wrapper.vm.bump).toBeGreaterThan(0)
+    })
+
+    describe('loadMore', () => {
+      it('calls loaded (not complete) when no user', async () => {
+        const wrapper = mountComponent()
+        wrapper.vm.me = null
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockState.loaded).toHaveBeenCalled()
+        expect(mockState.complete).not.toHaveBeenCalled()
+      })
+
+      it('increments show when more messages to display', async () => {
+        mockMessages.value = [{ id: 1 }, { id: 2 }]
+        mockShow.value = 0
+        const wrapper = mountComponent()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockShow.value).toBe(1)
+        expect(mockState.loaded).toHaveBeenCalled()
+      })
+
+      it('fetches more messages when show equals messages length', async () => {
+        mockMessages.value = [{ id: 1 }]
+        mockShow.value = 1
+        mockMessageStore.list = { 1: { id: 1 } }
+        const wrapper = mountComponent()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalled()
+      })
+
+      it('always uses vector search for a message-term search and populates listingIds', async () => {
+        // The semantic toggle has been retired: any message-term search now goes
+        // straight through searchMT (vector). No enable step required.
+        mockRouteParams.value = { id: '123', term: 'test search' }
+        mockMessages.value = []
+        mockShow.value = 0
+        mockListingIds.value = new Set()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockMessageStore.searchMT.mockClear()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.searchMT).toHaveBeenCalledWith(
+          expect.objectContaining({
+            term: 'test search',
+            groupid: 123,
+          })
+        )
+        expect(mockState.complete).toHaveBeenCalled()
+        expect(mockListingIds.value.has(101)).toBe(true)
+        expect(mockListingIds.value.has(102)).toBe(true)
+        expect(mockListingIdOrder.value).toEqual([101, 102])
+      })
+
+      it('clears the loading state after a vector search so "Please wait..." disappears', async () => {
+        // Regression (#9: semantic search completes but banner stays): the
+        // vector branch of loadMore() returned early, before the
+        // `busy=false; loaded=true` at the end, so `loaded` never became true
+        // and the "Please wait..." NoticeMessage stayed up forever.
+        mockRouteParams.value = { id: '123', term: 'furniture' }
+        mockMessages.value = []
+        mockShow.value = 0
+        mockListingIds.value = new Set()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        expect(wrapper.vm.loaded).toBe(false)
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(wrapper.vm.loaded).toBe(true)
+        expect(mockBusy.value).toBe(false)
+      })
+
+      it('does not use the keyword searchall path for a message-term search (keyword retired)', async () => {
+        mockRouteParams.value = { id: '123', term: 'test search' }
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.searchMT.mockResolvedValue([])
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockMessageStore.fetchMessagesMT.mockClear()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        // Message-term search now always goes through searchMT (vector); the old
+        // subaction:'searchall' keyword fetch must never be called for it.
+        expect(mockMessageStore.searchMT).toHaveBeenCalled()
+        expect(mockMessageStore.fetchMessagesMT).not.toHaveBeenCalled()
+      })
+
+      it('uses memberTerm params when searching by member', async () => {
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        // Set member term after mount (searchedMember sets this)
+        mockMemberTerm.value = 'test@test.com'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalledWith(
+          expect.objectContaining({
+            subaction: 'searchmemb',
+            search: 'test@test.com',
+          })
+        )
+      })
+
+      it('scopes member search to the selected group (avoids all-groups hang)', async () => {
+        // Regression (Discourse 9518/366): omitting groupid made the backend run a
+        // leading-wildcard fullname LIKE across all the mod's groups (20-45s, stuck
+        // spinner). When a group is selected the search must be scoped to it.
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockGroupid.value = 21467
+        mockMemberTerm.value = 'Smith'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalledWith(
+          expect.objectContaining({
+            subaction: 'searchmemb',
+            search: 'Smith',
+            groupid: 21467,
+          })
+        )
+      })
+
+      it('clears the spinner when the fetch fails (no eternal whirling circle)', async () => {
+        // Regression (Discourse 9518/366): a slow/failed member-name search left
+        // busy/loaded stuck, so the spinner and "Please wait..." never cleared.
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockMemberTerm.value = 'Smith'
+        mockMessageTerm.value = null
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.fetchMessagesMT.mockClear()
+        mockMessageStore.fetchMessagesMT.mockRejectedValueOnce(
+          new Error('timeout')
+        )
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockState.complete).toHaveBeenCalled()
+        expect(mockBusy.value).toBe(false)
+        expect(wrapper.vm.loaded).toBe(true)
+      })
+
+      it('discards a stale fetch whose search was superseded (no wrong post)', async () => {
+        // Regression (Discourse 9518/366): a slow response (e.g. a 90s all-groups
+        // member search) landing after the user starts a new search must NOT
+        // re-populate listingIds — otherwise an unrelated post is painted over the
+        // current search result. bump is the search generation; if it changed
+        // while the fetch was in flight, the response is stale and dropped.
+        mockMessageTerm.value = '119776391'
+        mockMessages.value = []
+        mockShow.value = 0
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        mockListingIds.value = new Set()
+        mockMessageStore.fetchMessagesMT.mockClear()
+        // Simulate a newer search bumping the generation while this fetch is in flight,
+        // then the stale response resolving with an unrelated id (the typewriter).
+        mockMessageStore.fetchMessagesMT.mockImplementationOnce(() => {
+          wrapper.vm.bump = wrapper.vm.bump + 1
+          return Promise.resolve([120490457])
+        })
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockListingIds.value.has(120490457)).toBe(false)
+        expect(mockBusy.value).toBe(false)
+      })
+
+      it('completes when no more messages returned', async () => {
+        mockMessages.value = []
+        mockShow.value = 0
+        mockMessageStore.list = {}
+        const wrapper = mountComponent()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockState.complete).toHaveBeenCalled()
+      })
+    })
+  })
+
+  describe('data properties', () => {
+    it('initializes chosengroupid to 0', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.chosengroupid).toBe(0)
+    })
+
+    it('initializes bump to 0', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.bump).toBe(0)
+    })
+
+    it('initializes urlOverride to false', () => {
+      mockRouteParams.value = { id: undefined, term: undefined }
+      const wrapper = mountComponent()
+      expect(wrapper.vm.urlOverride).toBe(false)
+    })
+  })
+})

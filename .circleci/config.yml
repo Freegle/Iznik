@@ -1,0 +1,318 @@
+version: 2.1
+
+setup: true
+
+parameters:
+  run_manual_promote:
+    type: boolean
+    default: false
+    description: "Set to true to manually trigger promotion/submission workflow"
+  build_testflight:
+    type: boolean
+    default: false
+    description: "Set to true to build iOS and upload to TestFlight from current branch"
+  use_katapult:
+    type: boolean
+    default: false
+    description: "Set to true to run tests on a Katapult cloud runner"
+  build_modtools_production:
+    type: boolean
+    default: false
+    description: "Set to true to manually build and publish ModTools to Play Store / TestFlight"
+
+orbs:
+  continuation: circleci/continuation@2
+
+jobs:
+  check-runner:
+    docker:
+      - image: cimg/base:current
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Cancel older redundant pipelines
+          command: |
+            # Dynamic config (setup: true) breaks CircleCI's built-in auto-cancel.
+            # Continuation pipelines get new IDs, so CircleCI doesn't recognise them
+            # as redundant. We cancel older running pipelines for the same branch manually.
+            #
+            # This step runs early (before VM provisioning) to quickly kill setup jobs
+            # for older builds. A second cancel runs just before continuation/continue
+            # to catch continuation pipelines from builds that finished setup concurrently.
+            if [ -z "$CIRCLE_TOKEN" ]; then
+              echo "CIRCLE_TOKEN not set — skipping"
+              exit 0
+            fi
+
+            # Don't cancel older pipelines when THIS is a manual API trigger.
+            # Manual workflows (modtools, testflight, promote) must co-exist with
+            # automatic deploy-apps builds — they serve different purposes and
+            # cancelling deploy-apps would kill production build-android/build-ios jobs.
+            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+              echo "Manual workflow trigger — skipping pipeline cancellation"
+              exit 0
+            fi
+
+            # A plans-only / yesterday-only commit's OWN build gets halted (skipped)
+            # by the orb's "Check if only plans or yesterday files changed" step. Such
+            # a build must NOT cancel older pipelines: an older pipeline may be the real
+            # build that is actually testing the code these plans sit on top of.
+            # Cancelling it would leave the branch falsely green — the plans-only build
+            # reports success without ever running the tests (this is exactly what
+            # happened when a plans/ commit landed seconds after a merge whose build was
+            # still running). So if this commit is plans-only, skip cancellation and let
+            # the real build finish. Detection mirrors the orb's skip step exactly.
+            if [ "$CIRCLE_BRANCH" = "master" ] || [ "$CIRCLE_BRANCH" = "production" ]; then
+              SKIP_CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true)
+            else
+              SKIP_CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
+            fi
+            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/)')" ]; then
+              echo "This commit changes only plans/ or yesterday/ — its build will be skipped, so it must not cancel older (real) builds. Skipping cancellation."
+              exit 0
+            fi
+
+            BRANCH="<< pipeline.git.branch >>"
+            THIS_PIPELINE="<< pipeline.id >>"
+            THIS_NUMBER="<< pipeline.number >>"
+            PROJECT_SLUG="gh/Freegle/Iznik"
+
+            echo "Current pipeline: #${THIS_NUMBER} (${THIS_PIPELINE}) on ${BRANCH}"
+
+            # Get recent pipelines for this branch (both setup and continuation pipelines)
+            PIPELINES=$(curl -sf \
+              -H "Circle-Token: ${CIRCLE_TOKEN}" \
+              "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline?branch=${BRANCH}" 2>/dev/null) || true
+
+            if [ -z "$PIPELINES" ]; then
+              echo "Failed to fetch pipelines — skipping"
+              exit 0
+            fi
+
+            # Cancel all running/on_hold workflows from older pipelines.
+            # Skip API-triggered pipelines (manual runs like build_modtools_production).
+            # No state filter — we want to catch both setup and continuation pipelines.
+            echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
+              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api") | .id' | while read -r PIPELINE_ID; do
+              echo "Checking workflows for pipeline ${PIPELINE_ID}..."
+
+              WORKFLOWS=$(curl -sf \
+                -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue
+
+              echo "$WORKFLOWS" | jq -r '.items[] | select(.status == "running" or .status == "on_hold") | .id' | while read -r WF_ID; do
+                echo "Cancelling workflow ${WF_ID} from older pipeline"
+                curl -sf -X POST \
+                  -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                  "https://circleci.com/api/v2/workflow/${WF_ID}/cancel" 2>/dev/null || true
+              done
+            done
+
+            echo "Done checking for redundant pipelines"
+      - run:
+          name: Check self-hosted runner availability
+          no_output_timeout: 30m
+          command: |
+            # For manual-only workflows, skip runner check — they use cloud executors (Android/macOS).
+            # Do NOT re-pass trigger parameters (run_manual_promote, build_testflight,
+            # build_modtools_production) in the continuation JSON. CircleCI automatically
+            # forwards trigger parameters to the continuation pipeline when the same parameter
+            # name is defined in both configs. Re-passing them causes "Conflicting pipeline
+            # parameters". Only use_self_hosted needs to be set explicitly here.
+            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+              echo "Manual workflow trigger — skipping self-hosted runner check"
+              echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
+              cat /tmp/pipeline-params.json
+              exit 0
+            fi
+
+            # Katapult is the default runner for all CI builds.
+            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
+            KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
+            KATAPULT_API="https://api.katapult.io/core/v1"
+            MAX_VMS=10
+
+            # Count VMs already provisioned (by name prefix) to enforce the cap.
+            # We count VMs, not online runners — busy runners appear offline to the
+            # runner API while executing a job, so online-runner counts would cause
+            # every setup stage to over-provision.
+            EXISTING_VMS=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+              "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
+              jq '[.virtual_machines[] | select(.name | startswith("circleci-runner-"))] | length' 2>/dev/null || echo "0")
+            echo "Runner VMs: $EXISTING_VMS / $MAX_VMS"
+
+            if [ "$EXISTING_VMS" -lt "$MAX_VMS" ]; then
+              # Retry up to 3 times: if configure fails, delete the bad VM and provision a fresh one.
+              # On all retries exhausted, job still routes to katapult and queues until a runner is free.
+              PROVISION_OK=false
+              for attempt in 1 2 3; do
+                [ "$attempt" -gt 1 ] && echo "=== Provision attempt $attempt/3 ==="
+                # Pipeline number suffix guarantees uniqueness even when multiple
+                # setup stages run date +%s in the same second.
+                VM_NAME="circleci-runner-$(date +%s)-<< pipeline.number >>"
+                echo "Provisioning VM: $VM_NAME"
+                if ! curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
+                  -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
+                  > /dev/null; then
+                  echo "VM provisioning API call failed on attempt $attempt"
+                  sleep 10
+                  continue
+                fi
+                echo "Build triggered for $VM_NAME"
+
+                # Poll VM list until named VM appears, then poll state until 'started' (up to 15 min)
+                VM_ID="" VM_STATE="" VM_IP="" VM_PASS=""
+                for i in $(seq 1 90); do
+                  sleep 10
+                  if [ -z "$VM_ID" ]; then
+                    VM_ID=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                      "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
+                      jq -r --arg n "$VM_NAME" '.virtual_machines[] | select(.name == $n) | .id' 2>/dev/null || echo "")
+                    [ -n "$VM_ID" ] && echo "  VM appeared in list: $VM_ID"
+                  fi
+                  if [ -n "$VM_ID" ]; then
+                    DETAIL=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                      "${KATAPULT_API}/virtual_machines/${VM_ID}" 2>/dev/null || echo "{}")
+                    VM_STATE=$(echo "$DETAIL" | jq -r '.virtual_machine.state // ""' 2>/dev/null || echo "")
+                    VM_IP=$(echo "$DETAIL" | jq -r '.virtual_machine.ip_addresses[] | select(.address | contains(":") | not) | .address' 2>/dev/null | head -1 || echo "")
+                    if [ -z "$VM_PASS" ]; then
+                      VM_PASS=$(echo "$DETAIL" | jq -r '.virtual_machine.initial_root_password // ""' 2>/dev/null || echo "")
+                    fi
+                  fi
+                  echo "  [${i}/90] $VM_NAME state=${VM_STATE:-building} ip=${VM_IP:-pending}"
+                  [ "$VM_STATE" = "started" ] && break
+                done
+
+                if [ "$VM_STATE" != "started" ] || [ -z "$VM_IP" ]; then
+                  echo "Attempt $attempt: VM $VM_NAME did not reach started state"
+                  [ -n "$VM_ID" ] && curl -sf -X DELETE -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                    "${KATAPULT_API}/virtual_machines/$VM_ID" 2>/dev/null || true
+                  sleep 5
+                  continue
+                fi
+
+                if bash scripts/configure-katapult-vm.sh "$VM_IP" "$VM_PASS" "$VM_NAME" "$VM_ID" "$KATAPULT_TOKEN"; then
+                  PROVISION_OK=true
+                  break
+                else
+                  echo "Attempt $attempt: configure failed — deleting VM $VM_NAME ($VM_ID)"
+                  curl -sf -X DELETE -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                    "${KATAPULT_API}/virtual_machines/$VM_ID" 2>/dev/null || true
+                  sleep 5
+                fi
+              done
+
+              if [ "$PROVISION_OK" != "true" ]; then
+                echo "WARNING: All provision attempts failed — job will queue on existing runner pool"
+              fi
+            else
+              echo "At VM cap ($MAX_VMS) — routing job to existing runner pool"
+            fi
+
+            # Always route to Katapult resource class. If no runner is free the job
+            # queues until one finishes — no fallback to the local runner.
+            echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
+            cat /tmp/pipeline-params.json
+      - run:
+          name: Mark CI as running on PR
+          when: always
+          command: |
+            if [ -z "$CIRCLE_PULL_REQUEST" ] || [ -z "$GITHUB_TOKEN" ]; then
+              echo "Not a PR build or GITHUB_TOKEN not set — skipping label"
+              exit 0
+            fi
+            PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')
+            if [ -z "$PR_NUMBER" ]; then exit 0; fi
+            REPO="Freegle/Iznik"
+            # Remove old CI result labels (URL-encoded: "CI: Passed" = CI%3A%20Passed)
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Failed" 2>/dev/null || true
+            # Add CI: Running
+            curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"labels":["CI: Running"]}' \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
+            echo "Labelled PR #$PR_NUMBER as CI: Running"
+      - run:
+          name: Cancel older redundant pipelines (pre-continuation)
+          when: always
+          command: |
+            # Second pass: by now VM provisioning (~10 min) is done. Any build that was
+            # started concurrently with us will have had time to trigger its continuation
+            # pipeline. Cancel those continuation pipelines so only this (newest) build
+            # proceeds to run tests.
+            if [ -z "$CIRCLE_TOKEN" ]; then
+              echo "CIRCLE_TOKEN not set — skipping"
+              exit 0
+            fi
+
+            # Don't cancel older pipelines when THIS is a manual API trigger (same
+            # guard as the first cancel step — manual workflows must not disrupt
+            # already-running automatic deploy-apps builds).
+            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+              echo "Manual workflow trigger — skipping pipeline cancellation"
+              exit 0
+            fi
+
+            # Same plans-only guard as the first cancel pass: a build that will be
+            # skipped (plans/ or yesterday/ only) must not cancel an older real build
+            # that is testing the underlying code, or the branch goes falsely green.
+            if [ "$CIRCLE_BRANCH" = "master" ] || [ "$CIRCLE_BRANCH" = "production" ]; then
+              SKIP_CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true)
+            else
+              SKIP_CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
+            fi
+            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/)')" ]; then
+              echo "This commit changes only plans/ or yesterday/ — skipping cancellation so the older real build survives."
+              exit 0
+            fi
+
+            BRANCH="<< pipeline.git.branch >>"
+            THIS_NUMBER="<< pipeline.number >>"
+            PROJECT_SLUG="gh/Freegle/Iznik"
+
+            echo "Pre-continuation cancel pass for pipeline #${THIS_NUMBER} on ${BRANCH}"
+
+            PIPELINES=$(curl -sf \
+              -H "Circle-Token: ${CIRCLE_TOKEN}" \
+              "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline?branch=${BRANCH}" 2>/dev/null) || true
+
+            if [ -z "$PIPELINES" ]; then
+              echo "Failed to fetch pipelines — skipping"
+              exit 0
+            fi
+
+            echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
+              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api") | .id' | while read -r PIPELINE_ID; do
+              WORKFLOWS=$(curl -sf \
+                -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue
+
+              echo "$WORKFLOWS" | jq -r '.items[] | select(.status == "running" or .status == "on_hold") | .id' | while read -r WF_ID; do
+                echo "Cancelling workflow ${WF_ID} from older pipeline ${PIPELINE_ID}"
+                curl -sf -X POST \
+                  -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                  "https://circleci.com/api/v2/workflow/${WF_ID}/cancel" 2>/dev/null || true
+              done
+            done
+
+            echo "Done with pre-continuation cancel pass"
+      - continuation/continue:
+          configuration_path: .circleci/continue-config.yml
+          parameters: /tmp/pipeline-params.json
+
+workflows:
+  setup:
+    jobs:
+      - check-runner

@@ -1,0 +1,196 @@
+# Yesterday Services - API, Index Page, and 2FA Gateway with HTTPS
+# Standalone compose file for Yesterday backup management UI
+# Usage: docker compose -f yesterday/docker-compose.yesterday-services.yml up -d
+
+services:
+  # Traefik reverse proxy with Let's Encrypt on alternate ports
+  yesterday-traefik:
+    image: traefik:v2.10
+    container_name: yesterday-traefik
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+      - "8444:443"    # Yesterday UI
+      - "8445:8445"   # Freegle Dev
+      - "8446:8446"   # ModTools Dev
+      - "8447:8447"   # PHPMyAdmin
+      - "8448:8448"   # Mailhog
+      - "8181:8181"   # Iznik API v1
+      - "8193:8193"   # Iznik API v2
+    command:
+      - "--api.dashboard=true"
+      - "--ping=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.constraints=Label(`traefik.yesterday`,`true`)"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.freegle.address=:8445"
+      - "--entrypoints.freegle.transport.respondingtimeouts.readtimeout=300s"
+      - "--entrypoints.freegle.transport.respondingtimeouts.writetimeout=300s"
+      - "--entrypoints.freegle.transport.respondingtimeouts.idletimeout=300s"
+      - "--entrypoints.modtools.address=:8446"
+      - "--entrypoints.modtools.transport.respondingtimeouts.readtimeout=300s"
+      - "--entrypoints.modtools.transport.respondingtimeouts.writetimeout=300s"
+      - "--entrypoints.modtools.transport.respondingtimeouts.idletimeout=300s"
+      - "--entrypoints.phpmyadmin.address=:8447"
+      - "--entrypoints.mailhog.address=:8448"
+      - "--entrypoints.apiv1.address=:8181"
+      - "--entrypoints.apiv2.address=:8193"
+      - "--serversTransport.forwardingTimeouts.dialTimeout=300s"
+      - "--serversTransport.forwardingTimeouts.responseHeaderTimeout=300s"
+      - "--serversTransport.forwardingTimeouts.idleConnTimeout=300s"
+      - "--certificatesresolvers.letsencrypt.acme.email=geeks@ilovefreegle.org"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=gcloud"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.delaybeforecheck=30"
+      - "--log.level=DEBUG"
+      - "--accesslog=true"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/traefik/secrets/gcloud-dns-key.json:/secrets/gcloud-dns-key.json:ro
+      - ./data/letsencrypt:/letsencrypt
+      - ./data/traefik-logs:/var/log/traefik
+    environment:
+      - GCE_PROJECT=freegle-1139
+      - GCE_SERVICE_ACCOUNT_FILE=/secrets/gcloud-dns-key.json
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  # 2FA Authentication Gateway (front door)
+  yesterday-2fa:
+    build:
+      context: ./2fa-gateway
+      dockerfile: Dockerfile
+    container_name: yesterday-2fa
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8084:8084"
+    volumes:
+      - ./data/2fa:/data
+    environment:
+      - PORT=8084
+      - YESTERDAY_ADMIN_KEY=${YESTERDAY_ADMIN_KEY}
+      - USERS_FILE=/data/2fa-users.json
+      - WHITELIST_FILE=/data/ip-whitelist.json
+      - PERMANENT_WHITELIST_IPS=${PERMANENT_WHITELIST_IPS:-}
+    networks:
+      - default
+      - freegledocker_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.yesterday=true"
+      - "traefik.docker.network=yesterday_default"
+      # Yesterday UI (port 8444)
+      - "traefik.http.routers.yesterday.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.yesterday.entrypoints=websecure"
+      - "traefik.http.routers.yesterday.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.yesterday.service=yesterday-svc"
+      # Freegle Dev (port 8445)
+      - "traefik.http.routers.freegle.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.freegle.entrypoints=freegle"
+      - "traefik.http.routers.freegle.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.freegle.service=yesterday-svc"
+      - "traefik.http.routers.freegle.middlewares=add-port-8445"
+      # ModTools Dev (port 8446)
+      - "traefik.http.routers.modtools.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.modtools.entrypoints=modtools"
+      - "traefik.http.routers.modtools.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.modtools.service=yesterday-svc"
+      - "traefik.http.routers.modtools.middlewares=add-port-8446"
+      # PHPMyAdmin (port 8447)
+      - "traefik.http.routers.phpmyadmin.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.phpmyadmin.entrypoints=phpmyadmin"
+      - "traefik.http.routers.phpmyadmin.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.phpmyadmin.service=yesterday-svc"
+      - "traefik.http.routers.phpmyadmin.middlewares=add-port-8447"
+      # Mailhog (port 8448)
+      - "traefik.http.routers.mailhog-route.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.mailhog-route.entrypoints=mailhog"
+      - "traefik.http.routers.mailhog-route.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mailhog-route.service=yesterday-svc"
+      - "traefik.http.routers.mailhog-route.middlewares=add-port-8448"
+      # Iznik API v1 (port 8181)
+      - "traefik.http.routers.yesterday-apiv1.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.yesterday-apiv1.entrypoints=apiv1"
+      - "traefik.http.routers.yesterday-apiv1.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.yesterday-apiv1.service=yesterday-svc"
+      - "traefik.http.routers.yesterday-apiv1.middlewares=add-port-8181"
+      # Iznik API v2 (port 8193)
+      - "traefik.http.routers.yesterday-apiv2.rule=Host(`${YESTERDAY_HOSTNAME}`)"
+      - "traefik.http.routers.yesterday-apiv2.entrypoints=apiv2"
+      - "traefik.http.routers.yesterday-apiv2.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.yesterday-apiv2.service=yesterday-svc"
+      - "traefik.http.routers.yesterday-apiv2.middlewares=add-port-8193"
+      # Service definition
+      - "traefik.http.services.yesterday-svc.loadbalancer.server.port=8084"
+      # Middlewares to add custom headers with port info
+      - "traefik.http.middlewares.add-port-8445.headers.customrequestheaders.X-Forwarded-Port=8445"
+      - "traefik.http.middlewares.add-port-8446.headers.customrequestheaders.X-Forwarded-Port=8446"
+      - "traefik.http.middlewares.add-port-8447.headers.customrequestheaders.X-Forwarded-Port=8447"
+      - "traefik.http.middlewares.add-port-8448.headers.customrequestheaders.X-Forwarded-Port=8448"
+      - "traefik.http.middlewares.add-port-8181.headers.customrequestheaders.X-Forwarded-Port=8181"
+      - "traefik.http.middlewares.add-port-8193.headers.customrequestheaders.X-Forwarded-Port=8193"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8084/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - yesterday-traefik
+      - yesterday-api
+      - yesterday-index
+
+  # Yesterday Backup Management API
+  yesterday-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: yesterday-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8082"
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
+    volumes:
+      - ./api:/app
+      - ./data:/data
+      - ./scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/www/FreegleDocker:/var/www/FreegleDocker
+    environment:
+      - NODE_ENV=production
+      - PORT=8082
+      - BACKUP_BUCKET=gs://freegle_backup_uk
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Yesterday Index Page (nginx serving static files)
+  yesterday-index:
+    image: nginx:alpine
+    container_name: yesterday-index
+    restart: unless-stopped
+    expose:
+      - "80"
+    volumes:
+      - ./index:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  freegledocker_default:
+    external: true
+

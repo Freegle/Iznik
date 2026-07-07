@@ -1,0 +1,23 @@
+<template>
+  <span>
+    <span v-if="message.replycount" class="small text-success me-1">
+      <v-icon icon="user" class="d-inline" />&nbsp;<span class="d-inline"
+        >{{ message.replycount }}&nbsp;freegler<span
+          v-if="message.replycount != 1"
+          >s</span
+        >&nbsp;replied&nbsp;</span
+      >
+    </span>
+    <span v-else class="small text-muted me-1">
+      <v-icon icon="user" class="d-inline" />&nbsp;No&nbsp;replies&nbsp;yet
+    </span>
+  </span>
+</template>
+<script setup>
+defineProps({
+  message: {
+    type: Object,
+    required: true,
+  },
+})
+</script>

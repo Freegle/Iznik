@@ -1,0 +1,271 @@
+<template>
+  <client-only>
+    <div v-if="!unloading" class="d-flex justify-content-around">
+      <NoticeMessage
+        v-if="appOutOfDate"
+        variant="danger"
+        class="posit text-center"
+        show
+      >
+        <p class="font-weight-bold mb-2">
+          {{
+            appOutOfDateMessage ||
+            'Freegle is out of date - please update to the latest version.'
+          }}
+        </p>
+        <div v-if="mobileStore.isApp">
+          <p class="mb-0">
+            Please update the Freegle app from your app store to get the latest
+            version, or
+            <a
+              href="https://www.ilovefreegle.org"
+              target="_blank"
+              rel="noopener"
+              >use the website</a
+            >.
+          </p>
+        </div>
+        <div v-else class="d-flex justify-content-around">
+          <b-button variant="primary" @click="reload"> Reload now </b-button>
+        </div>
+      </NoticeMessage>
+      <NoticeMessage
+        v-else-if="showError"
+        variant="danger"
+        class="posit text-center"
+        show
+      >
+        <div v-if="offline">
+          <p>
+            It looks like you're offline. Please reload when your network is
+            back.
+          </p>
+          <b-button
+            variant="primary"
+            class="mt-2"
+            @click="window.location.reload()"
+          >
+            Reload
+          </b-button>
+        </div>
+        <div v-else>
+          <p>Sorry, something went wrong.</p>
+          <p>
+            That might be a bug, or perhaps your network connection broke.
+            Please try again - if you continue to have problems then please take
+            a screenshot and contact <SupportLink />
+          </p>
+
+          <div v-if="errorDetails" class="mt-3">
+            <p class="mb-2">
+              <strong>Error:</strong> {{ errorDetails.message }}
+            </p>
+
+            <div v-if="errorDetails.stack">
+              <b-button
+                v-if="!showStackTrace"
+                variant="outline-secondary"
+                size="sm"
+                @click="showStackTrace = true"
+              >
+                Show technical details
+              </b-button>
+
+              <div v-if="showStackTrace" class="mt-2">
+                <p class="mb-1"><strong>Stack trace:</strong></p>
+                <pre class="error-stack">{{ errorDetails.stack }}</pre>
+                <b-button
+                  variant="outline-secondary"
+                  size="sm"
+                  class="mt-2"
+                  @click="showStackTrace = false"
+                >
+                  Hide technical details
+                </b-button>
+              </div>
+            </div>
+
+            <p v-if="errorDetails.timestamp" class="text-muted small mt-2">
+              Time: {{ formatTimestamp(errorDetails.timestamp) }}
+            </p>
+          </div>
+        </div>
+      </NoticeMessage>
+      <NoticeMessage
+        v-else-if="needToReloadHard"
+        variant="danger"
+        class="posit text-center"
+        show
+      >
+        <p>
+          This version of Freegle is more than a week out of date. It will
+          refresh to get the latest fixes in {{ hardCountdown }}s.
+        </p>
+        <div class="d-flex justify-content-around">
+          <b-button variant="primary" @click="reload"> Reload now </b-button>
+        </div>
+      </NoticeMessage>
+      <NoticeMessage
+        v-else-if="showReload && !snoozeReload"
+        variant="info"
+        class="posit text-center"
+        show
+      >
+        <p>
+          The website has been updated with fixes and improvements. Please
+          reload this page to pick up the latest version.
+        </p>
+        <div class="d-flex justify-content-around">
+          <b-button variant="white" @click="snooze">Not just now </b-button>
+          <b-button variant="primary" @click="reload"> Reload now </b-button>
+        </div>
+      </NoticeMessage>
+    </div>
+  </client-only>
+</template>
+<script setup>
+import { storeToRefs } from 'pinia'
+import NoticeMessage from './NoticeMessage'
+import { ref, watch, onBeforeUnmount } from '#imports'
+import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
+import SupportLink from '~/components/SupportLink'
+import { HARD_RELOAD_COUNTDOWN_SECS, TYPING_TIME_INVERVAL } from '~/constants'
+
+const showError = ref(false)
+const showReload = ref(false)
+const snoozeReload = ref(false)
+const snoozeTimer = ref(null)
+const hardCountdown = ref(HARD_RELOAD_COUNTDOWN_SECS)
+const hardReloadTimer = ref(null)
+
+const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
+const {
+  somethingWentWrong,
+  needToReload,
+  needToReloadHard,
+  offline,
+  unloading,
+  errorDetails,
+  lastTyping,
+  appOutOfDate,
+  appOutOfDateMessage,
+} = storeToRefs(miscStore)
+
+const showStackTrace = ref(false)
+
+watch(somethingWentWrong, (newVal) => {
+  if (newVal) {
+    showError.value = true
+    showStackTrace.value = false // Reset stack trace visibility
+    setTimeout(() => {
+      showError.value = false
+      miscStore.clearError() // Clear error details when hiding
+    }, 10000)
+  }
+})
+
+watch(needToReload, (newVal) => {
+  if (newVal) {
+    showReload.value = true
+  }
+})
+
+// When the build is a week-plus stale we force a reload after a short, visible
+// countdown. immediate:true so it also fires if the flag is already set on mount.
+watch(
+  needToReloadHard,
+  (newVal) => {
+    if (newVal) {
+      hardCountdown.value = HARD_RELOAD_COUNTDOWN_SECS
+      scheduleHardTick()
+    }
+  },
+  { immediate: true }
+)
+
+function reload() {
+  window.location.reload()
+}
+
+// Reload unless the user is mid-message — we never want to throw away something
+// they're typing. Returns true if it reloaded, false if it deferred.
+function maybeReload() {
+  if (
+    lastTyping.value &&
+    Date.now() - lastTyping.value < TYPING_TIME_INVERVAL
+  ) {
+    return false
+  }
+  reload()
+  return true
+}
+
+function scheduleHardTick() {
+  if (hardReloadTimer.value) {
+    clearTimeout(hardReloadTimer.value)
+  }
+  hardReloadTimer.value = setTimeout(() => {
+    if (hardCountdown.value <= 1) {
+      // Countdown done: reload unless they're still typing, in which case wait
+      // another cycle rather than destroy their in-progress message.
+      if (!maybeReload()) {
+        hardCountdown.value = HARD_RELOAD_COUNTDOWN_SECS
+        scheduleHardTick()
+      }
+    } else {
+      hardCountdown.value -= 1
+      scheduleHardTick()
+    }
+  }, 1000)
+}
+
+function snooze() {
+  snoozeReload.value = true
+
+  snoozeTimer.value = setTimeout(() => {
+    snoozeReload.value = false
+  }, 120000)
+}
+
+function formatTimestamp(timestamp) {
+  try {
+    return new Date(timestamp).toLocaleString()
+  } catch (e) {
+    return timestamp
+  }
+}
+
+onBeforeUnmount(() => {
+  if (snoozeTimer.value) {
+    clearTimeout(snoozeTimer.value)
+  }
+  if (hardReloadTimer.value) {
+    clearTimeout(hardReloadTimer.value)
+  }
+})
+</script>
+<style scoped lang="scss">
+@import 'assets/css/_color-vars.scss';
+
+.posit {
+  position: fixed;
+  bottom: 0;
+  width: 100%;
+  z-index: 10000;
+}
+
+.error-stack {
+  background-color: $color-gray--lighter;
+  border: 1px solid $color-gray-3;
+  border-radius: var(--radius-sm, 0.375rem);
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  color: $color-red;
+}
+</style>

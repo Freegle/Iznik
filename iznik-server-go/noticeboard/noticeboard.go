@@ -1,0 +1,391 @@
+package noticeboard
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
+	"github.com/gofiber/fiber/v2"
+)
+
+// NoticeboardItem is a flat V2 response. Client fetches user details separately via /user/:id.
+type NoticeboardItem struct {
+	ID            uint64     `json:"id"`
+	Name          *string    `json:"name"`
+	Lat           float64    `json:"lat"`
+	Lng           float64    `json:"lng"`
+	Added         *time.Time `json:"added"`
+	Addedby       *uint64    `json:"addedby"`
+	Description   *string    `json:"description"`
+	Active        bool       `json:"active"`
+	Lastcheckedat *time.Time `json:"lastcheckedat"`
+	Photo         *PhotoInfo `json:"photo,omitempty"`
+	Checks        []CheckItem `json:"checks"`
+}
+
+type PhotoInfo struct {
+	ID        uint64 `json:"id"`
+	Path      string `json:"path"`
+	Paththumb string `json:"paththumb"`
+}
+
+type CheckItem struct {
+	ID        uint64     `json:"id"`
+	Userid    *uint64    `json:"userid"`
+	Askedat   *time.Time `json:"askedat"`
+	Checkedat *time.Time `json:"checkedat"`
+	Inactive  bool       `json:"inactive"`
+	Refreshed bool       `json:"refreshed"`
+	Declined  bool       `json:"declined"`
+	Comments  *string    `json:"comments"`
+}
+
+type NoticeboardListItem struct {
+	ID   uint64  `json:"id"`
+	Name *string `json:"name"`
+	Lat  float64 `json:"lat"`
+	Lng  float64 `json:"lng"`
+}
+
+// GetNoticeboard handles GET /noticeboard and GET /noticeboard/:id
+func GetNoticeboard(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+
+	if idStr != "" {
+		return getSingle(c, idStr)
+	}
+
+	return getList(c)
+}
+
+func getSingle(c *fiber.Ctx, idStr string) error {
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid id")
+	}
+
+	db := database.DBConn
+
+	var wg sync.WaitGroup
+	var nb NoticeboardItem
+	var checks []CheckItem
+	var photoID uint64
+
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		db.Raw("SELECT id, name, lat, lng, added, addedby, description, active, lastcheckedat FROM noticeboards WHERE id = ?", id).Scan(&nb)
+	}()
+
+	go func() {
+		defer wg.Done()
+		db.Raw("SELECT id, userid, askedat, checkedat, inactive, refreshed, declined, comments FROM noticeboards_checks WHERE noticeboardid = ? ORDER BY id DESC", id).Scan(&checks)
+	}()
+
+	go func() {
+		defer wg.Done()
+		db.Raw("SELECT id FROM noticeboards_images WHERE noticeboardid = ? LIMIT 1", id).Scan(&photoID)
+	}()
+
+	wg.Wait()
+
+	if nb.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
+	}
+
+	if checks == nil {
+		checks = make([]CheckItem, 0)
+	}
+	nb.Checks = checks
+
+	if photoID > 0 {
+		imageDomain := os.Getenv("IMAGE_DOMAIN")
+		if imageDomain == "" {
+			imageDomain = "images.ilovefreegle.org"
+		}
+		nb.Photo = &PhotoInfo{
+			ID:        photoID,
+			Path:      "https://" + imageDomain + "/bimg_" + strconv.FormatUint(photoID, 10) + ".jpg",
+			Paththumb: "https://" + imageDomain + "/tbimg_" + strconv.FormatUint(photoID, 10) + ".jpg",
+		}
+	}
+
+	return c.JSON(nb)
+}
+
+func getList(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	authorityID, _ := strconv.ParseUint(c.Query("authorityid"), 10, 64)
+
+	var noticeboards []NoticeboardListItem
+
+	if authorityID > 0 {
+		db.Raw("SELECT noticeboards.id, noticeboards.name, noticeboards.lat, noticeboards.lng FROM noticeboards "+
+			"INNER JOIN authorities ON authorities.id = ? "+
+			"WHERE authorities.name IS NOT NULL AND active = 1 AND ST_CONTAINS(authorities.polygon, ST_SRID(POINT(noticeboards.lng, noticeboards.lat), ?))",
+			authorityID, utils.SRID).Scan(&noticeboards)
+	} else {
+		db.Raw("SELECT id, name, lat, lng FROM noticeboards WHERE name IS NOT NULL AND active = 1").Scan(&noticeboards)
+	}
+
+	if noticeboards == nil {
+		noticeboards = make([]NoticeboardListItem, 0)
+	}
+
+	return c.JSON(fiber.Map{"noticeboards": noticeboards})
+}
+
+type PostNoticeboardRequest struct {
+	Lat         *float64 `json:"lat"`
+	Lng         *float64 `json:"lng"`
+	Name        *string  `json:"name"`
+	Description *string  `json:"description"`
+	Active      *bool    `json:"active"`
+	Action      string   `json:"action"`
+	ID          uint64   `json:"id"`
+	Comments    *string  `json:"comments"`
+}
+
+type PatchNoticeboardRequest struct {
+	ID            uint64   `json:"id"`
+	Name          *string  `json:"name"`
+	Lat           *float64 `json:"lat"`
+	Lng           *float64 `json:"lng"`
+	Description   *string  `json:"description"`
+	Active        *bool    `json:"active"`
+	Lastcheckedat *string  `json:"lastcheckedat"`
+	Photoid       *uint64  `json:"photoid"`
+}
+
+func PostNoticeboard(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+
+	var req PostNoticeboardRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	db := database.DBConn
+
+	if req.Action != "" {
+		// Action on existing noticeboard
+		if req.ID == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "id is required for action")
+		}
+
+		switch req.Action {
+		case "Refreshed":
+			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, refreshed, inactive) VALUES (?, ?, NOW(), 1, 0)", req.ID, myid)
+			db.Exec("UPDATE noticeboards SET lastcheckedat = NOW(), active = 1 WHERE id = ?", req.ID)
+		case "Declined":
+			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, declined, inactive) VALUES (?, ?, NOW(), 1, 0)", req.ID, myid)
+		case "Inactive":
+			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, inactive) VALUES (?, ?, NOW(), 1)", req.ID, myid)
+			db.Exec("UPDATE noticeboards SET lastcheckedat = NOW(), active = 0 WHERE id = ?", req.ID)
+		case "Comments":
+			comments := ""
+			if req.Comments != nil {
+				comments = *req.Comments
+			}
+			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, comments, inactive) VALUES (?, ?, NOW(), ?, 0)", req.ID, myid, comments)
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
+
+	// Create new noticeboard
+	if req.Lat == nil || req.Lng == nil {
+		return fiber.NewError(fiber.StatusBadRequest, "lat and lng are required")
+	}
+
+	active := true
+	if req.Active != nil {
+		active = *req.Active
+	}
+
+	name := ""
+	if req.Name != nil {
+		name = *req.Name
+	}
+
+	description := ""
+	if req.Description != nil {
+		description = *req.Description
+	}
+
+	srid := utils.SRID
+	pointSQL := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", *req.Lng, *req.Lat, srid)
+
+	// Use NULL for addedby when user is not logged in (myid=0) to satisfy FK constraint.
+	var addedby interface{}
+	if myid > 0 {
+		addedby = myid
+	}
+
+	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
+	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
+	// parallel load (GORM's connection pool may assign a different connection).
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	}
+	sqlResult, err := sqlDB.Exec(
+		"INSERT INTO noticeboards (`name`, `lat`, `lng`, `position`, `added`, `addedby`, `description`, `active`, `lastcheckedat`) "+
+			"VALUES (?, ?, ?, "+pointSQL+", NOW(), ?, ?, ?, NOW())",
+		name, *req.Lat, *req.Lng, addedby, description, active)
+
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
+	}
+
+	var id uint64
+	lastID, err := sqlResult.LastInsertId()
+	if err == nil && lastID > 0 {
+		id = uint64(lastID)
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": id})
+}
+
+func PatchNoticeboard(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req PatchNoticeboardRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	db := database.DBConn
+
+	// Check noticeboard exists and get current name and creator for auth check.
+	var currentName string
+	var addedby uint64
+	var count int64
+	db.Raw("SELECT COUNT(*), COALESCE(name, ''), COALESCE(addedby, 0) FROM noticeboards WHERE id = ?", req.ID).Row().Scan(&count, &currentName, &addedby)
+	if count == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
+	}
+
+	// Must be the creator or a moderator.
+	if myid != addedby && !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	// Update settable attributes
+	if req.Name != nil {
+		db.Exec("UPDATE noticeboards SET name = ? WHERE id = ?", *req.Name, req.ID)
+	}
+	if req.Lat != nil {
+		db.Exec("UPDATE noticeboards SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+	}
+	if req.Lng != nil {
+		db.Exec("UPDATE noticeboards SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+	}
+	if req.Description != nil {
+		db.Exec("UPDATE noticeboards SET description = ? WHERE id = ?", *req.Description, req.ID)
+	}
+	if req.Active != nil {
+		db.Exec("UPDATE noticeboards SET active = ? WHERE id = ?", *req.Active, req.ID)
+	}
+	if req.Lastcheckedat != nil {
+		db.Exec("UPDATE noticeboards SET lastcheckedat = ? WHERE id = ?", *req.Lastcheckedat, req.ID)
+	}
+
+	// Link photo if provided
+	if req.Photoid != nil {
+		db.Exec("UPDATE noticeboards_images SET noticeboardid = ? WHERE id = ?", req.ID, *req.Photoid)
+	}
+
+	// Create newsfeed entry on first name assignment (when name was empty and is now being set)
+	if req.Name != nil && currentName == "" && *req.Name != "" {
+		isActive := true
+		if req.Active != nil {
+			isActive = *req.Active
+		}
+
+		if isActive {
+			// Get the noticeboard data for the newsfeed entry
+			var addedby uint64
+			var lat, lng float64
+			db.Raw("SELECT COALESCE(addedby, 0), COALESCE(lat, 0), COALESCE(lng, 0) FROM noticeboards WHERE id = ?", req.ID).Row().Scan(&addedby, &lat, &lng)
+
+			if addedby > 0 {
+				// Create newsfeed entry with type 'Noticeboard'.
+				db.Exec(
+					fmt.Sprintf("INSERT INTO newsfeed (type, userid, message, added, position) VALUES ('Noticeboard', ?, ?, NOW(), ST_GeomFromText('POINT(%f %f)', %d))",
+						lng, lat, utils.SRID),
+					addedby, fmt.Sprintf(`{"id":%d,"name":"%s"}`, req.ID, *req.Name))
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": req.ID})
+}
+
+// =============================================================================
+// Merged from noticeboard/noticeboard_write.go
+// =============================================================================
+
+// DeleteNoticeboard deletes a noticeboard. Requires moderator or admin role.
+// @Summary Delete noticeboard
+// @Description Deletes a noticeboard by ID. Requires mod/admin.
+// @Tags noticeboard
+// @Produce json
+// @Param id path integer true "Noticeboard ID"
+// @Security BearerAuth
+// @Success 200 {object} fiber.Map "Success"
+// @Failure 400 {object} fiber.Error "Invalid ID"
+// @Failure 401 {object} fiber.Error "Not logged in"
+// @Failure 403 {object} fiber.Error "Not authorized"
+// @Failure 404 {object} fiber.Error "Noticeboard not found"
+// @Router /noticeboard/{id} [delete]
+func DeleteNoticeboard(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid id")
+	}
+
+	db := database.DBConn
+
+	// Check the user has mod/admin role
+	if !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not authorized")
+	}
+
+	// Check noticeboard exists
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM noticeboards WHERE id = ?", id).Scan(&count)
+	if count == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
+	}
+
+	// Delete the noticeboard
+	result := db.Exec("DELETE FROM noticeboards WHERE id = ?", id)
+	if result.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete noticeboard")
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}

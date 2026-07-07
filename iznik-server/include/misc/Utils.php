@@ -1,0 +1,711 @@
+<?php
+
+namespace Freegle\Iznik;
+
+require_once(IZNIK_BASE . '/lib/GreatCircle.php');
+
+class Utils {
+    # Use matching based on https://gist.github.com/gruber/249502, but changed:
+    # - to only look for http/https, otherwise here:http isn't caught
+    const URL_PATTERN = '#(?i)\b(((?:(?:http|https):(?:/{1,3}|[a-z0-9%])|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'".,<>?«»“”‘’]))|(\.com\/))#m';
+    const POSTCODE_PATTERN = '/([Gg][Ii][Rr] 0[Aa]{2})|((([A-Za-z][0-9]{1,2})|(([A-Za-z][A-Ha-hJ-Yj-y][0-9]{1,2})|(([A-Za-z][0-9][A-Za-z])|([A-Za-z][A-Ha-hJ-Yj-y][0-9][A-Za-z]?))))\s?[0-9][A-Za-z]{2})/mi';
+
+    # ...but this matches some bad character patterns.
+    const URL_BAD = [ '%', '{', ';', '#', ':' ];
+
+    const BLUR_NONE = NULL;
+    const BLUR_USER = 400;
+    const BLUR_1K = 1000;
+
+    const PHEANSTALK_TTR = 600;
+
+    public static function tmpdir() {
+        $tempfile = tempnam(sys_get_temp_dir(),'');
+        if (file_exists($tempfile)) { unlink($tempfile); }
+        mkdir($tempfile);
+        $ret = NULL;
+        if (is_dir($tempfile)) { $ret = $tempfile; }
+        return $ret;
+    }
+
+    public static function checkFiles($path, $upper, $lower, $delay = 60, $max = 10000) {
+        $queuesize = trim(shell_exec("ls -1 $path | wc -l 2>&1"));
+
+        if ($queuesize > $upper) {
+            $count = 0;
+
+            while ($queuesize > $lower && $count < $max) {
+                sleep($delay);
+                $queuesize = trim(shell_exec("ls -1 $path | wc -l 2>&1"));
+                error_log("...sleeping, $path has $queuesize");
+                $count++;
+            }
+        }
+
+        return $queuesize;
+    }
+
+    public static function filterResult(&$array, $skip = NULL) {
+        # We want to ensure that we have the correct data types - for example PDO returns floats as strings.
+        foreach($array as $key => $val){
+            #error_log("$key type ". gettype($val) . " null? " . is_null($val) . " is_numeric ");
+
+            if ($skip && (array_search($key, $skip) !== FALSE)) {
+                # Asked to do nothing
+            } else if (is_int($val)) {
+                # We don't want to filter out ints, even if they are 0 i.e. null.
+            } else if (is_null($val)) {
+                unset($array[$key]);
+            } else if (is_array($val)) {
+                #error_log("Recurse $key");
+                Utils::filterResult($val);
+                $array[$key] = $val;
+            } else if (is_bool($val)) {
+                # Nothing to do - it's fine.
+            } else if ((array_key_exists($key, $array)) && (gettype($val) == 'string') && (strlen($val) == 0)) {
+                # There is no value here worth returning.
+                unset($val);
+            } else if (is_numeric($val)) {
+                #error_log("Numeric");
+                if (strpos($val, '.') === FALSE) {
+                    # This is an integer value.  We want to return it as an int rather than a string,
+                    # not least for boolean values which would otherwise require a parseInt on the client.
+                    $array[$key] = intval($val);
+                } else {
+                    $v = floatval($val);
+                    if (!is_infinite($v)) {
+                        $array[$key] = $v;
+                    }
+                }
+            }
+        }
+    }
+
+    public static function safeDate($date) {
+        return date("Y-m-d H:i:s", strtotime($date));
+    }
+
+    public static function calculate_median($arr) {
+        sort($arr);
+        $count = count($arr); //total numbers in array
+        $middleval = floor(($count-1)/2); // find the middle value, or the lowest middle value
+        if($count % 2) { // odd number, middle is the median
+            $median = $arr[$middleval];
+        } else { // even number, calculate avg of 2 medians
+            $low = $arr[$middleval];
+            $high = $arr[$middleval+1];
+            $median = (($low+$high)/2);
+        }
+        return $median;
+    }
+
+    public static function code_to_country( $code ){
+
+        $code = strtoupper($code);
+
+        $countryList = array(
+            'AF' => 'Afghanistan',
+            'AX' => 'Aland Islands',
+            'AL' => 'Albania',
+            'DZ' => 'Algeria',
+            'AS' => 'American Samoa',
+            'AD' => 'Andorra',
+            'AO' => 'Angola',
+            'AI' => 'Anguilla',
+            'AQ' => 'Antarctica',
+            'AG' => 'Antigua and Barbuda',
+            'AR' => 'Argentina',
+            'AM' => 'Armenia',
+            'AW' => 'Aruba',
+            'AU' => 'Australia',
+            'AT' => 'Austria',
+            'AZ' => 'Azerbaijan',
+            'BS' => 'Bahamas the',
+            'BH' => 'Bahrain',
+            'BD' => 'Bangladesh',
+            'BB' => 'Barbados',
+            'BY' => 'Belarus',
+            'BE' => 'Belgium',
+            'BZ' => 'Belize',
+            'BJ' => 'Benin',
+            'BM' => 'Bermuda',
+            'BT' => 'Bhutan',
+            'BO' => 'Bolivia',
+            'BA' => 'Bosnia and Herzegovina',
+            'BW' => 'Botswana',
+            'BV' => 'Bouvet Island (Bouvetoya)',
+            'BR' => 'Brazil',
+            'IO' => 'British Indian Ocean Territory (Chagos Archipelago)',
+            'VG' => 'British Virgin Islands',
+            'BN' => 'Brunei Darussalam',
+            'BG' => 'Bulgaria',
+            'BF' => 'Burkina Faso',
+            'BI' => 'Burundi',
+            'KH' => 'Cambodia',
+            'CM' => 'Cameroon',
+            'CA' => 'Canada',
+            'CV' => 'Cape Verde',
+            'KY' => 'Cayman Islands',
+            'CF' => 'Central African Republic',
+            'TD' => 'Chad',
+            'CL' => 'Chile',
+            'CN' => 'China',
+            'CX' => 'Christmas Island',
+            'CC' => 'Cocos (Keeling) Islands',
+            'CO' => 'Colombia',
+            'KM' => 'Comoros the',
+            'CD' => 'Congo',
+            'CG' => 'Congo the',
+            'CK' => 'Cook Islands',
+            'CR' => 'Costa Rica',
+            'CI' => 'Cote d\'Ivoire',
+            'HR' => 'Croatia',
+            'CU' => 'Cuba',
+            'CY' => 'Cyprus',
+            'CZ' => 'Czech Republic',
+            'DK' => 'Denmark',
+            'DJ' => 'Djibouti',
+            'DM' => 'Dominica',
+            'DO' => 'Dominican Republic',
+            'EC' => 'Ecuador',
+            'EG' => 'Egypt',
+            'SV' => 'El Salvador',
+            'GQ' => 'Equatorial Guinea',
+            'ER' => 'Eritrea',
+            'EE' => 'Estonia',
+            'ET' => 'Ethiopia',
+            'FO' => 'Faroe Islands',
+            'FK' => 'Falkland Islands (Malvinas)',
+            'FJ' => 'Fiji the Fiji Islands',
+            'FI' => 'Finland',
+            'FR' => 'France, French Republic',
+            'GF' => 'French Guiana',
+            'PF' => 'French Polynesia',
+            'TF' => 'French Southern Territories',
+            'GA' => 'Gabon',
+            'GM' => 'Gambia the',
+            'GE' => 'Georgia',
+            'DE' => 'Germany',
+            'GH' => 'Ghana',
+            'GI' => 'Gibraltar',
+            'GR' => 'Greece',
+            'GL' => 'Greenland',
+            'GD' => 'Grenada',
+            'GP' => 'Guadeloupe',
+            'GU' => 'Guam',
+            'GT' => 'Guatemala',
+            'GG' => 'Guernsey',
+            'GN' => 'Guinea',
+            'GW' => 'Guinea-Bissau',
+            'GY' => 'Guyana',
+            'HT' => 'Haiti',
+            'HM' => 'Heard Island and McDonald Islands',
+            'VA' => 'Holy See (Vatican City State)',
+            'HN' => 'Honduras',
+            'HK' => 'Hong Kong',
+            'HU' => 'Hungary',
+            'IS' => 'Iceland',
+            'IN' => 'India',
+            'ID' => 'Indonesia',
+            'IR' => 'Iran',
+            'IQ' => 'Iraq',
+            'IE' => 'Ireland',
+            'IM' => 'Isle of Man',
+            'IL' => 'Israel',
+            'IT' => 'Italy',
+            'JM' => 'Jamaica',
+            'JP' => 'Japan',
+            'JE' => 'Jersey',
+            'JO' => 'Jordan',
+            'KZ' => 'Kazakhstan',
+            'KE' => 'Kenya',
+            'KI' => 'Kiribati',
+            'KP' => 'Korea',
+            'KR' => 'Korea',
+            'KW' => 'Kuwait',
+            'KG' => 'Kyrgyz Republic',
+            'LA' => 'Lao',
+            'LV' => 'Latvia',
+            'LB' => 'Lebanon',
+            'LS' => 'Lesotho',
+            'LR' => 'Liberia',
+            'LY' => 'Libyan Arab Jamahiriya',
+            'LI' => 'Liechtenstein',
+            'LT' => 'Lithuania',
+            'LU' => 'Luxembourg',
+            'MO' => 'Macao',
+            'MK' => 'Macedonia',
+            'MG' => 'Madagascar',
+            'MW' => 'Malawi',
+            'MY' => 'Malaysia',
+            'MV' => 'Maldives',
+            'ML' => 'Mali',
+            'MT' => 'Malta',
+            'MH' => 'Marshall Islands',
+            'MQ' => 'Martinique',
+            'MR' => 'Mauritania',
+            'MU' => 'Mauritius',
+            'YT' => 'Mayotte',
+            'MX' => 'Mexico',
+            'FM' => 'Micronesia',
+            'MD' => 'Moldova',
+            'MC' => 'Monaco',
+            'MN' => 'Mongolia',
+            'ME' => 'Montenegro',
+            'MS' => 'Montserrat',
+            'MA' => 'Morocco',
+            'MZ' => 'Mozambique',
+            'MM' => 'Myanmar',
+            'NA' => 'Namibia',
+            'NR' => 'Nauru',
+            'NP' => 'Nepal',
+            'AN' => 'Netherlands Antilles',
+            'NL' => 'Netherlands the',
+            'NC' => 'New Caledonia',
+            'NZ' => 'New Zealand',
+            'NI' => 'Nicaragua',
+            'NE' => 'Niger',
+            'NG' => 'Nigeria',
+            'NU' => 'Niue',
+            'NF' => 'Norfolk Island',
+            'MP' => 'Northern Mariana Islands',
+            'NO' => 'Norway',
+            'OM' => 'Oman',
+            'PK' => 'Pakistan',
+            'PW' => 'Palau',
+            'PS' => 'Palestinian Territory',
+            'PA' => 'Panama',
+            'PG' => 'Papua New Guinea',
+            'PY' => 'Paraguay',
+            'PE' => 'Peru',
+            'PH' => 'Philippines',
+            'PN' => 'Pitcairn Islands',
+            'PL' => 'Poland',
+            'PT' => 'Portugal, Portuguese Republic',
+            'PR' => 'Puerto Rico',
+            'QA' => 'Qatar',
+            'RE' => 'Reunion',
+            'RO' => 'Romania',
+            'RU' => 'Russian Federation',
+            'RW' => 'Rwanda',
+            'BL' => 'Saint Barthelemy',
+            'SH' => 'Saint Helena',
+            'KN' => 'Saint Kitts and Nevis',
+            'LC' => 'Saint Lucia',
+            'MF' => 'Saint Martin',
+            'PM' => 'Saint Pierre and Miquelon',
+            'VC' => 'Saint Vincent and the Grenadines',
+            'WS' => 'Samoa',
+            'SM' => 'San Marino',
+            'ST' => 'Sao Tome and Principe',
+            'SA' => 'Saudi Arabia',
+            'SN' => 'Senegal',
+            'RS' => 'Serbia',
+            'SC' => 'Seychelles',
+            'SL' => 'Sierra Leone',
+            'SG' => 'Singapore',
+            'SK' => 'Slovakia (Slovak Republic)',
+            'SI' => 'Slovenia',
+            'SB' => 'Solomon Islands',
+            'SO' => 'Somalia, Somali Republic',
+            'ZA' => 'South Africa',
+            'GS' => 'South Georgia and the South Sandwich Islands',
+            'ES' => 'Spain',
+            'LK' => 'Sri Lanka',
+            'SD' => 'Sudan',
+            'SR' => 'Suriname',
+            'SJ' => 'Svalbard & Jan Mayen Islands',
+            'SZ' => 'Swaziland',
+            'SE' => 'Sweden',
+            'CH' => 'Switzerland, Swiss Confederation',
+            'SY' => 'Syrian Arab Republic',
+            'TW' => 'Taiwan',
+            'TJ' => 'Tajikistan',
+            'TZ' => 'Tanzania',
+            'TH' => 'Thailand',
+            'TL' => 'Timor-Leste',
+            'TG' => 'Togo',
+            'TK' => 'Tokelau',
+            'TO' => 'Tonga',
+            'TT' => 'Trinidad and Tobago',
+            'TN' => 'Tunisia',
+            'TR' => 'Turkey',
+            'TM' => 'Turkmenistan',
+            'TC' => 'Turks and Caicos Islands',
+            'TV' => 'Tuvalu',
+            'UG' => 'Uganda',
+            'UA' => 'Ukraine',
+            'AE' => 'United Arab Emirates',
+            'GB' => 'United Kingdom',
+            'US' => 'United States of America',
+            'UM' => 'United States Minor Outlying Islands',
+            'VI' => 'United States Virgin Islands',
+            'UY' => 'Uruguay, Eastern Republic of',
+            'UZ' => 'Uzbekistan',
+            'VU' => 'Vanuatu',
+            'VE' => 'Venezuela',
+            'VN' => 'Vietnam',
+            'WF' => 'Wallis and Futuna',
+            'EH' => 'Western Sahara',
+            'YE' => 'Yemen',
+            'ZM' => 'Zambia',
+            'ZW' => 'Zimbabwe'
+        );
+
+        if( !array_key_exists($code, $countryList)) return $code;
+        else return $countryList[$code];
+    }
+
+    public static function getProtocol() {
+        return(Utils::pres('HTTPS', $_SERVER) ? 'https://' : 'http://');
+    }
+
+    // equiv to rand, mt_rand
+    // returns int in *closed* interval [$min,$max]
+    public static function devurandom_rand($min = 1, $max = 0x7FFFFFFF) {
+        return mt_rand($min, $max);
+    }
+
+    public static function pres($key, $arr) {
+        return($arr && is_array($arr) && array_key_exists($key, $arr) && $arr[$key] ? $arr[$key] : FALSE);
+    }
+
+    public static function presdef($key, $arr, $def) {
+        if ($arr && array_key_exists($key, $arr) && $arr[$key]) {
+            return($arr[$key]);
+        } else {
+            return($def);
+        }
+    }
+
+    public static function presint($key, $arr, $def) {
+        if ($arr && array_key_exists($key, $arr)) {
+            return(intval($arr[$key]));
+        } else {
+            return($def);
+        }
+    }
+
+    public static function presfloat($key, $arr, $def) {
+        if ($arr && array_key_exists($key, $arr)) {
+            return(floatval($arr[$key]));
+        } else {
+            return($def);
+        }
+    }
+
+    public static function presbool($key, $arr, $def) {
+        return array_key_exists($key, $arr) ? filter_var($arr[$key], FILTER_VALIDATE_BOOLEAN) : $def;
+    }
+
+    public static function ISODate($date)
+    {
+        if ($date) {
+            $date = new \DateTime($date);
+            $date = $date->format(\DateTime::ISO8601);
+            $date = str_replace('+0000', 'Z', $date);
+        }
+
+        return ($date);
+    }
+
+    public static function randstr($length = 10) {
+        $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $randomString = '';
+        for ($i = 0; $i < $length; $i++) {
+            $randomString .= $characters[rand(0, strlen($characters) - 1)];
+        }
+        return $randomString;
+    }
+
+    public static function lockScript($fn) {
+        // Include TEST_TOKEN in lock filename to allow parallel test workers
+        $testToken = getenv('TEST_TOKEN');
+        $tokenSuffix = ($testToken !== FALSE && $testToken !== '') ? "_$testToken" : '';
+        $lock = "/tmp/iznik_lock_$fn$tokenSuffix.lock";
+        $lockh = fopen($lock, 'wa');
+
+        try {
+            $block = 0;
+
+            if (!flock($lockh, LOCK_EX | LOCK_NB, $block)) {
+                error_log("Script locked");
+                exit(0);
+            }
+        } catch (\Exception $e) {
+            error_log("Top-level exception " . $e->getMessage() . "\n");
+            exit(0);
+        }
+
+        return($lockh);
+    }
+
+    public static function unlockScript($lockh) {
+        flock($lockh, LOCK_UN);
+        fclose($lockh);
+    }
+
+    public static function randomFloat($min = 0, $max = 1) {
+        return $min + mt_rand() / mt_getrandmax() * ($max - $min);
+    }
+
+    public static function canonWord($word)
+    {
+        $word = strtolower($word);
+        $word = preg_replace('/[^\da-z]/i', '', $word);
+
+        $arr = str_split($word);
+
+        if (strlen($word) > 3)
+        {
+            sort($arr);
+        }
+
+        $ret = implode($arr);
+
+        return($ret);
+    }
+
+    public static function canonSentence($sentence)
+    {
+        $words = preg_split('/\s+/', $sentence);
+        $canonWords = array();
+
+        for ($i = 0; $i < count($words); $i++)
+        {
+            array_push($canonWords, Utils::canonWord($words[$i]));
+        }
+
+        $canonWords = array_values(array_unique($canonWords));
+
+        return($canonWords);
+    }
+
+    public static function wordsInCommon($sentence1, $sentence2)
+    {
+        $words1 = Utils::canonSentence($sentence1);
+        $words2 = Utils::canonSentence($sentence2);
+
+        // We have two arrays of words.
+        $ret = 0;
+        $count1 = count($words1);
+        $count2 = count($words2);
+
+        for ($i = 0; $i < $count1; $i++)
+        {
+            for ($j = 0; $j < $count2; $j++)
+            {
+                if ($words1[$i] ==  $words2[$j])
+                {
+                    $ret++;
+                }
+            }
+        }
+
+        # Calculate percent vs the longest.
+        $limit = max($count1, $count2);
+        $ret = ($limit == 1) ? 0 : (100 * $ret / $limit);
+
+        return($ret);
+    }
+
+    public static function array_key_first(array $arr) {
+        # Not available in PHP until 7.3.
+        foreach($arr as $key => $unused) {
+            return $key;
+        }
+        return NULL;
+    }
+
+    public static function blur($lat, $lng, $blur) {
+        if ($blur) {
+            # Blur by the requested amount.  The direction we blur in depends on the original lat/lng, and so is
+            # deterministic.  We want it to be deterministic otherwise things will jump around the map in a weird way.
+            # Creating a secure deterministic random number generator is tricky.
+            $dir = ($lat * 1000 + $lng * 1000) % 360;
+            $pos = \GreatCircle::getPositionByDistance($blur, $dir, $lat, $lng);
+
+            $lat = $pos['lat'];
+            $lng = $pos['lng'];
+        }
+
+        // Rounding prevents us using up bandwidth with spurious precision lat/lngs.  Helpful when returning
+        // thousands of posts.
+        $lat = round($lat, 4);
+        $lng = round($lng, 4);
+
+        return [ $lat, $lng ];
+    }
+
+    public static function getBoxPoly($swlat, $swlng, $nelat, $nelng) {
+        return "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
+    }
+
+    public static function levensteinSubstringContains($needle, $haystack, $maximalDistance = 2, $caseInsensitive = TRUE)  {
+        $lengthNeedle = strlen($needle);
+        $lengthHaystack = strlen($haystack);
+
+        if ($caseInsensitive) {
+            $needle = strtolower($needle);
+            $haystack = strtolower($haystack);
+        }
+
+        if ($lengthNeedle > $lengthHaystack) {
+            return FALSE;
+        }
+
+        if (FALSE !== strpos($haystack, $needle)) {
+
+            return TRUE;
+        }
+
+        $i = 0;
+        while (($i + $lengthNeedle) <= $lengthHaystack) {
+            $comparePart = substr($haystack, $i, $lengthNeedle);
+
+            $levenshteinDistance = levenshtein($needle, $comparePart);
+            if ($levenshteinDistance <= $maximalDistance) {
+
+                return TRUE;
+            }
+            $i++;
+        }
+
+        return FALSE;
+    }
+
+    /**
+     * Check if we should abort execution due to the abort file
+     * @param int $exitCode Exit code to use if aborting (default 0)
+     */
+    public static function checkAbortFile($exitCode = 0) {
+        // Don't abort during PHPUnit tests - the abort file is used to stop background scripts,
+        // but PHPUnit should complete all tests
+        if (getenv('UT')) {
+            return;
+        }
+
+        // Check if abort file exists for background scripts
+        if (file_exists('/tmp/iznik.mail.abort')) {
+            error_log("checkAbortFile: Abort file found, exiting. PID=" . getmypid() . ", script=" . ($_SERVER['PHP_SELF'] ?? 'unknown'));
+            exit($exitCode);
+        }
+    }
+
+    /**
+     * Execute curl request with retry logic for rate limiting
+     * @param resource $ch cURL handle initialized with curl_init()
+     * @param int $maxRetries Maximum number of retry attempts (default 5)
+     * @param int $retryDelay Delay in seconds between retries (default 1)
+     * @return string|false The response from curl_exec, or FALSE on failure
+     * @throws \Exception If max retries exceeded or non-rate-limit error occurs
+     */
+    public static function curlWithRetry($ch, $maxRetries = 60, $retryDelay = 1) {
+        $attempt = 0;
+
+        while ($attempt < $maxRetries) {
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+            // Check if request was successful (2xx or 3xx status codes)
+            if ($httpCode >= 200 && $httpCode < 400) {
+                return $result;
+            }
+
+            // Check for rate limiting (429 or error message containing "too many")
+            $isRateLimited = FALSE;
+            if ($httpCode == 429) {
+                $isRateLimited = TRUE;
+            } else if ($result) {
+                $decoded = json_decode($result);
+                if ($decoded && property_exists($decoded, 'errors')) {
+                    foreach ($decoded->errors as $error) {
+                        if (stripos($error, 'too many') !== FALSE) {
+                            $isRateLimited = TRUE;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ($isRateLimited) {
+                $attempt++;
+                if ($attempt < $maxRetries) {
+                    error_log("Rate limited (HTTP $httpCode), retrying in $retryDelay seconds (attempt $attempt/$maxRetries)");
+                    sleep($retryDelay);
+                    continue;
+                } else {
+                    throw new \Exception("Max retries ($maxRetries) exceeded due to rate limiting");
+                }
+            } else {
+                // Non-rate-limit error, don't retry
+                return $result;
+            }
+        }
+
+        return FALSE;
+    }
+
+    /**
+     * Decode emoji escape sequences from \u{CODE}\u format to actual emojis.
+     * This format is used by the frontend twemoji library to store emojis in the database.
+     *
+     * @param string $str The string containing emoji escape sequences
+     * @return string The string with actual emoji characters
+     */
+    public static function decodeEmojis($str) {
+        if (!$str) {
+            return $str;
+        }
+
+        return preg_replace_callback(
+            '/\\\\u(.*?)\\\\u/',
+            function($matches) {
+                $codePoints = explode('-', $matches[1]);
+                $emoji = '';
+                foreach ($codePoints as $codePoint) {
+                    // Use mb_chr instead of mb_convert_encoding as it properly handles
+                    // code points outside the Basic Multilingual Plane (>0xFFFF).
+                    $intCodePoint = hexdec($codePoint);
+                    if ($intCodePoint > 0) {
+                        $emoji .= mb_chr($intCodePoint, 'UTF-8');
+                    }
+                }
+                return $emoji;
+            },
+            $str
+        );
+    }
+
+    /**
+     * Get the real client IP address, checking proxy headers first.
+     *
+     * When behind a load balancer or reverse proxy (HAProxy, Traefik, nginx),
+     * the REMOTE_ADDR will be the proxy's IP. The real client IP is passed
+     * in headers like X-Forwarded-For or X-Real-IP.
+     *
+     * @return string The client IP address
+     */
+    public static function getClientIp() {
+        // X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+        // The first IP is the original client.
+        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+            $clientIp = trim($ips[0]);
+            if (filter_var($clientIp, FILTER_VALIDATE_IP)) {
+                return $clientIp;
+            }
+        }
+
+        // X-Real-IP is typically set by nginx to the real client IP.
+        if (!empty($_SERVER['HTTP_X_REAL_IP'])) {
+            $clientIp = trim($_SERVER['HTTP_X_REAL_IP']);
+            if (filter_var($clientIp, FILTER_VALIDATE_IP)) {
+                return $clientIp;
+            }
+        }
+
+        // Fall back to REMOTE_ADDR.
+        return Utils::presdef('REMOTE_ADDR', $_SERVER, '');
+    }
+}

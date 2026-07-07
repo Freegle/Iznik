@@ -1,0 +1,63 @@
+#!/bin/bash
+# Freegle Mail Handler - bridges Postfix to Laravel via HTTP
+#
+# Called by Postfix pipe transport with: ${sender} ${recipient}
+# Email content is piped via stdin
+#
+# Exit codes:
+#   0  - Success (message processed or dropped intentionally)
+#   75 - Temporary failure (Postfix will retry)
+#   Other - Permanent failure (message bounced)
+
+SENDER="$1"
+RECIPIENT="$2"
+
+# Endpoint URL is supplied by docker-compose via the BATCH_URL env var.
+# The default uses the docker-compose service alias, which compose
+# guarantees on the shared network regardless of container_name.
+BATCH_URL="${BATCH_URL:-http://batch-prod:8080/api/mail/incoming}"
+
+# Read email from stdin
+EMAIL_CONTENT=$(cat)
+
+# Log for debugging
+logger -t freegle-mail "Processing mail from ${SENDER} to ${RECIPIENT} via ${BATCH_URL}"
+
+# Call Laravel via HTTP endpoint on the batch container
+# The batch container runs PHP's built-in server on port 8080
+RESPONSE=$(echo "$EMAIL_CONTENT" | curl -s -w "\n%{http_code}" \
+    --max-time 60 \
+    -X POST \
+    -H "Content-Type: message/rfc822" \
+    -H "X-Envelope-From: ${SENDER}" \
+    -H "X-Envelope-To: ${RECIPIENT}" \
+    --data-binary @- \
+    "${BATCH_URL}" 2>&1)
+
+# Extract HTTP status code (last line)
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+# Map HTTP codes to Postfix exit codes
+case "$HTTP_CODE" in
+    200|201|202|204)
+        # Success
+        logger -t freegle-mail "Success: mail processed"
+        exit 0
+        ;;
+    503|502|504)
+        # Service unavailable - temporary failure, retry later
+        logger -t freegle-mail "Temporary failure (HTTP $HTTP_CODE): $BODY"
+        exit 75
+        ;;
+    000)
+        # Connection failed - temporary failure
+        logger -t freegle-mail "Connection failed to batch container"
+        exit 75
+        ;;
+    *)
+        # Other errors - log and accept (don't bounce spam/invalid mail)
+        logger -t freegle-mail "Error (HTTP $HTTP_CODE): $BODY - accepting anyway"
+        exit 0
+        ;;
+esac

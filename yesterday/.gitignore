@@ -1,0 +1,2 @@
+# Ignore certificate directory (certs stored in /etc/traefik/certs)
+data/certs/

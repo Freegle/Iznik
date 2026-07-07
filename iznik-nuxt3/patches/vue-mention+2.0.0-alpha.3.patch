@@ -1,0 +1,20 @@
+diff --git a/node_modules/vue-mention/dist/vue-mention.es.js b/node_modules/vue-mention/dist/vue-mention.es.js
+index 08383cd..5cd6ef1 100644
+--- a/node_modules/vue-mention/dist/vue-mention.es.js
++++ b/node_modules/vue-mention/dist/vue-mention.es.js
+@@ -213,6 +213,7 @@ const _sfc_main = defineComponent({
+     let input;
+     const el = ref(null);
+     function getInput() {
++      if (!el.value) return null;
+       var _a, _b;
+       return (_b = (_a = el.value.querySelector("input")) != null ? _a : el.value.querySelector("textarea")) != null ? _b : el.value.querySelector('[contenteditable="true"]');
+     }
+@@ -221,6 +222,7 @@ const _sfc_main = defineComponent({
+       attach();
+     });
+     onUpdated(() => {
++      if (!el.value) return;
+       const newInput = getInput();
+       if (newInput !== input) {
+         detach();

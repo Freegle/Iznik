@@ -1,0 +1,25 @@
+[2026-01-06 16:13:57] [INFO] Checking prerequisites...
+[2026-01-06 16:13:57] [SUCCESS] Prerequisites check passed.
+[2026-01-06 16:13:57] [INFO] Checking integrations and API keys...
+[2026-01-06 16:13:57] [SUCCESS] CircleCI token is valid.
+[2026-01-06 16:13:59] [SUCCESS] Git authentication working.
+[2026-01-06 16:13:59] [SUCCESS] Status container is accessible.
+[2026-01-06 16:13:59] [INFO] Chrome DevTools MCP: Ensure browser is connected for UI validation.
+[2026-01-06 16:13:59] [SUCCESS] All integrations check passed.
+[2026-01-06 16:13:59] [INFO] Checking Docker container health...
+[2026-01-06 16:13:59] [INFO] Checking required containers...
+[2026-01-06 16:13:59] [SUCCESS] freegle-dev-local: Freegle Dev (Local) site responding (HTTP 200)
+[2026-01-06 16:13:59] [SUCCESS] apiv1: API config endpoint responding (curl /api/config)
+[2026-01-06 16:13:59] [SUCCESS] apiv2: API online endpoint responding (curl /api/online)
+[2026-01-06 16:13:59] [SUCCESS] percona: MySQL database query test passed (SELECT 1)
+[2026-01-06 16:13:59] [SUCCESS] playwright: Playwright test container ready for test execution
+[2026-01-06 16:13:59] [SUCCESS] batch: Laravel batch processor ready (php artisan)
+[2026-01-06 16:13:59] [INFO] Checking optional containers...
+[2026-01-06 16:13:59] [INFO] modtools-dev-local: Not running (optional)
+[2026-01-06 16:13:59] [SUCCESS] phpmyadmin: Database management interface responding (HTTP)
+[2026-01-06 16:13:59] [SUCCESS] mailpit: Email testing interface responding (HTTP)
+[2026-01-06 16:13:59] [INFO] loki: Not running (optional)
+[2026-01-06 16:13:59] [INFO] grafana: Not running (optional)
+[2026-01-06 16:13:59] [INFO] tusd: Not running (optional)
+[2026-01-06 16:13:59] [INFO] delivery: Not running (optional)
+[2026-01-06 16:13:59] [SUCCESS] Container health check passed.

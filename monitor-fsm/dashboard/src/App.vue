@@ -1,0 +1,218 @@
+<template>
+  <div id="app">
+    <!-- Top bar -->
+    <nav class="navbar navbar-dark" style="background-color: #20c997;">
+      <div class="container-fluid">
+        <span class="navbar-brand mb-0 h4">Triage Dashboard</span>
+      </div>
+    </nav>
+
+    <!-- Main layout -->
+    <div class="container-fluid" style="padding: 1rem;">
+      <div class="row g-3">
+        <!-- Left column: Bugs (primary work items) -->
+        <div class="col-lg-7">
+          <BugPanel
+            :bugs="bugsData.state.bugs"
+            :loading="bugsData.state.loading"
+            @refresh="bugsData.refresh()"
+          />
+        </div>
+
+        <!-- Right column: PRs -->
+        <div class="col-lg-5">
+          <PrPanel
+            :prs="prsData.state.prs"
+            :loading="prsData.state.loading"
+            :lastRefreshed="prsData.state.lastRefreshed"
+            :exhaustedPRNumbers="prsData.state.exhaustedPRNumbers"
+            :focusPRNumber="prsData.state.focusPRNumber"
+            :runnerStatus="ciRunner.state.status"
+            @refresh="prsData.refresh()"
+          />
+        </div>
+
+        <!-- Reply Queue column removed: deployed-fix replies are the fixed
+             verbatim text and no longer need a per-draft review column here. -->
+      </div>
+
+      <!-- Feature Requests (collapsible, only shown when non-empty) -->
+      <div v-if="featureRequestsData.state.requests.length > 0" class="mt-3">
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Feature Requests</span>
+            <span class="badge bg-info text-dark ms-2">{{ featureRequestsData.state.requests.length }}</span>
+          </summary>
+          <div class="card-body p-0">
+            <FeatureRequestPanel
+              :requests="featureRequestsData.state.requests"
+              :loading="featureRequestsData.state.loading"
+              @refresh="featureRequestsData.refresh()"
+            />
+          </div>
+        </details>
+      </div>
+
+      <!-- Recently Fixed (collapsible) -->
+      <div v-if="recentlyFixed.length > 0" class="mt-4">
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Recently Fixed</span>
+            <span class="badge bg-success ms-2">{{ recentlyFixed.length }}</span>
+          </summary>
+          <div style="overflow-x: auto;">
+            <table class="table table-sm mb-0" style="table-layout: fixed; width: 100%;">
+              <colgroup>
+                <col style="width: 13%;">
+                <col style="width: 10%;">
+                <col>
+                <col style="width: 6%;">
+                <col style="width: 9%;">
+                <col style="width: 7%;">
+              </colgroup>
+              <thead class="table-light">
+                <tr>
+                  <th>Area</th>
+                  <th>Reporter</th>
+                  <th>Summary</th>
+                  <th>PR</th>
+                  <th>Deploy</th>
+                  <th>Fixed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="bug in recentlyFixed" :key="`${bug.topic}-${bug.post}`">
+                  <td class="text-muted small" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>
+                  <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <a :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`" target="_blank" rel="noopener" class="text-decoration-none">
+                      {{ bug.reporter || 'Unknown' }}
+                    </a>
+                  </td>
+                  <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <span :title="bug.excerpt || bug.topic_title || ''">{{ bug.excerpt || bug.topic_title || '—' }}</span>
+                  </td>
+                  <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <a v-if="bug.pr_number" :href="`https://github.com/Freegle/Iznik/pull/${bug.pr_number}`" target="_blank" rel="noopener" class="text-decoration-none">#{{ bug.pr_number }}</a>
+                    <span v-else class="text-muted">—</span>
+                  </td>
+                  <td style="white-space: nowrap;">
+                    <span v-if="bug.deploy_state === 'deployed'" class="badge bg-success">Live</span>
+                    <span v-else-if="bug.deploy_state === 'pending_deploy'" class="badge bg-warning text-dark">Deploying</span>
+                    <span v-else-if="bug.pr_number" class="badge bg-secondary">Pending</span>
+                    <span v-else class="text-muted">—</span>
+                  </td>
+                  <td class="text-muted small" style="white-space: nowrap;">{{ formatFixedAge(bug.fixed_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+
+      <!-- Iteration history (collapsible) -->
+      <div class="mt-4">
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Iteration History</span>
+            <span class="badge bg-secondary ms-2">{{ itersData.state.iterations.length }}</span>
+          </summary>
+          <div class="card-body" style="padding: 0; overflow-x: auto;">
+            <IterTable
+              :iterations="itersData.state.iterations"
+              :loading="itersData.state.loading"
+            />
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useBugs, useCIRunner, useFeatureRequests, useIterations, usePrsLive } from './composables/useApi'
+import PrPanel from './components/PrPanel.vue'
+import BugPanel from './components/BugPanel.vue'
+import FeatureRequestPanel from './components/FeatureRequestPanel.vue'
+import IterTable from './components/IterTable.vue'
+
+const bugsData = useBugs()
+const featureRequestsData = useFeatureRequests()
+const itersData = useIterations()
+const prsData = usePrsLive()
+const ciRunner = useCIRunner()
+
+const recentlyFixed = computed(() => {
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  return bugsData.state.bugs
+    .filter(bug => bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo)
+    // Most recently fixed first.
+    .sort((a, b) => new Date(b.fixed_at).getTime() - new Date(a.fixed_at).getTime())
+})
+
+function formatFixedAge(date: string | null): string {
+  if (!date) return ''
+  const now = new Date()
+  const d = new Date(date)
+  const hours = Math.floor((now.getTime() - d.getTime()) / 3600000)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+
+</script>
+
+<style scoped>
+#app {
+  min-height: 100vh;
+  background-color: #f8f9fa;
+}
+
+nav {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1rem;
+}
+
+details > summary {
+  outline: none;
+  /* Hide the browser's native disclosure triangle so only our custom ▶/▼
+     (the ::before below) shows — otherwise two chevrons appear side by side. */
+  list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary::marker {
+  content: '';
+}
+
+details > summary::before {
+  content: '▶ ';
+  display: inline-block;
+  margin-right: 0.5rem;
+  transition: transform 0.2s;
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.card {
+  border: 1px solid #dee2e6;
+  border-radius: 0.25rem;
+}
+
+.card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  padding: 1rem;
+  font-weight: 500;
+}
+
+.card-header:hover {
+  background-color: #e9ecef;
+}
+</style>

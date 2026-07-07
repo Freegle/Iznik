@@ -1,0 +1,73 @@
+<template>
+  <div class="clickme" @click="goto">
+    <div class="media clickme">
+      <div class="media-left">
+        <div class="media-object">
+          <v-icon icon="question-circle" scale="1.5" />
+        </div>
+      </div>
+      <div class="media-body">
+        <div class="notification-title">You have {{ count }}</div>
+        <div class="fw-bold introduction">
+          What happened? Use <em>My Posts</em> to let us know.
+        </div>
+        <ul class="small ps-3">
+          <li>Mark <em>OFFERs</em> as <em>TAKEN</em>.</li>
+          <li>Click <em>Withdraw</em> if no longer active.</li>
+          <li>Click <em>Repost</em> to keep trying.</li>
+        </ul>
+        <div class="notification-meta">
+          <abbr class="small">{{ notificationago }}</abbr>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+<script setup>
+import { computed } from 'vue'
+import pluralize from 'pluralize'
+import { useRouter } from '#imports'
+import { setupNotification } from '~/composables/useNotification'
+
+const props = defineProps({
+  id: {
+    type: Number,
+    required: true,
+  },
+})
+
+const router = useRouter()
+
+// Setup notification
+const { notification, notificationStore, notificationago } =
+  await setupNotification(props.id)
+
+const count = computed(() => {
+  return pluralize('recent open post', notification.value?.text, true)
+})
+
+function goto() {
+  if (!notification.value?.seen) {
+    notificationStore.seen(props.id)
+  }
+
+  router.push('/myposts')
+}
+</script>
+
+<style scoped>
+.media-object {
+  width: 33px;
+  height: 28px;
+  padding-top: 5px;
+}
+
+.notification-title {
+  max-width: 280px;
+}
+
+.introduction {
+  max-width: 200px;
+  overflow-wrap: break-word;
+}
+</style>

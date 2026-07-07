@@ -1,0 +1,1975 @@
+services:
+  # Base image - must be built first, all other containers depend on it
+  base:
+    image: freegle-base:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    command: ["true"]  # Exits immediately, just used for building
+    profiles:
+      - build  # Only runs when explicitly requested or as dependency
+
+  reverse-proxy:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-traefik
+    profiles:
+      - dev
+    networks:
+      default:
+        aliases:
+          - apiv1.localhost
+          - apiv2.localhost
+          - apiv2-live.localhost
+          - freegle-dev-local.localhost
+          - freegle-dev-live.localhost
+          - freegle-prod-local.localhost
+          - modtools-dev-local.localhost
+          - modtools-dev-live.localhost
+          - modtools-prod-local.localhost
+          - status.localhost
+          - ai-support-helper.localhost
+          - delivery.localhost
+          - tusd.localhost
+    image: traefik:latest
+    command:
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.constraints=Label(`com.docker.compose.project`,`${COMPOSE_PROJECT_NAME:-freegle}`)"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.encodedcharacters.allowencodedslash=true"
+      - "--entrypoints.api.address=:8192"
+      - "--entrypoints.api.http.encodedcharacters.allowencodedslash=true"
+      - "--entrypoints.traefik.address=:8080"
+      - "--accesslog=true"
+      - "--accesslog.fields.defaultmode=keep"
+      - "--accesslog.fields.headers.defaultmode=keep"
+      - "--log.level=DEBUG"
+      - "--entrypoints.web.forwardedHeaders.insecure=true"
+      # Increase transport settings for parallel requests
+      - "--serversTransport.maxIdleConnsPerHost=200"
+    ports:
+      - "${PORT_TRAEFIK_HTTP:-80}:80"
+      - "${PORT_TRAEFIK_API:-8192}:8192"
+      - "${PORT_TRAEFIK_DASHBOARD:-8080}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/dashboard/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  percona:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-percona
+    profiles:
+      - database
+    networks:
+      - default
+    image: percona:8.0.43-34
+    restart: always
+    volumes:
+      - freegle_db:/var/lib/mysql
+      - ./conf/percona-my.cnf:/etc/my.cnf:ro
+    environment:
+      MYSQL_ROOT_PASSWORD: iznik
+      MYSQL_DATABASE: iznik
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -P 3306 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 60s
+
+  postgres:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-postgres
+    profiles:
+      - database
+    networks:
+      - default
+    image: postgis/postgis:13-3.1
+    restart: "no"
+    environment:
+      POSTGRES_DB: iznik
+      POSTGRES_PASSWORD: iznik
+      POSTGRES_USER: root
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -U root -d iznik -c 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  phpmyadmin:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin
+    profiles:
+      - dev
+    networks:
+      - default
+    image: phpmyadmin
+    ports:
+      - "0.0.0.0:${PORT_PHPMYADMIN:-8086}:80"
+    depends_on:
+      percona:
+        condition: service_started
+        required: false
+      reverse-proxy:
+        condition: service_started
+    restart: "no"
+    environment:
+      - PMA_HOST=percona
+      - PMA_USER=root
+      - PMA_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
+      - "traefik.http.routers.phpmyadmin.entrypoints=web"
+      - "traefik.http.services.phpmyadmin.loadbalancer.server.port=80"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mailpit
+    profiles:
+      - dev
+    networks:
+      - default
+    ports:
+      - "0.0.0.0:${PORT_MAILPIT_WEB:-8025}:8025"
+      - "0.0.0.0:${PORT_MAILPIT_SMTP:-1025}:1025"
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+      beanstalkd:
+        condition: service_healthy
+        required: false
+      spamassassin-app:
+        condition: service_started
+      rspamd:
+        condition: service_healthy
+      reverse-proxy:
+        condition: service_healthy
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=true
+      - MP_ENABLE_SPAMASSASSIN=spamassassin-app:783
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8025/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailpit.rule=Host(`mailpit.localhost`)"
+      - "traefik.http.routers.mailpit.entrypoints=web"
+      - "traefik.http.services.mailpit.loadbalancer.server.port=8025"
+
+  beanstalkd:
+    image: schickling/beanstalkd
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd
+    profiles:
+      - frontend
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 11300 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  spamassassin-app:
+    image: instantlinux/spamassassin
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin
+    profiles:
+      - backend
+      - dev
+    networks:
+      - default
+    ports:
+      - ${PORT_SPAMASSASSIN:-783}:783
+    volumes:
+      - ./logs/spamassassin:/var/log
+      - ./conf:/etc/mail/spamassassin
+      - ./data:/data
+      - spamassassin_home:/var/lib/spamassassin
+    environment:
+      - CONTAINER_NAME=spamassassin-app
+    restart: "no"
+
+  rspamd:
+    image: rspamd/rspamd:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-rspamd
+    profiles:
+      - backend
+      - dev
+    networks:
+      - default
+    ports:
+      - "${PORT_RSPAMD:-11334}:11334"
+    volumes:
+      - ./conf/rspamd/local.d:/etc/rspamd/local.d:ro
+      - rspamd_data:/var/lib/rspamd
+    depends_on:
+      redis:
+        condition: service_healthy
+        required: false
+    environment:
+      - REDIS_SERVERS=redis:6379
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "rspamadm control stat > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rspamd.rule=Host(`rspamd.localhost`)"
+      - "traefik.http.routers.rspamd.entrypoints=web"
+      - "traefik.http.services.rspamd.loadbalancer.server.port=11334"
+
+  redis:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-redis
+    profiles:
+      - backend
+      - frontend
+    networks:
+      - default
+    image: redis:6.2-alpine
+    restart: "no"
+    command: redis-server --save 20 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # MJML email template compilation server (used by batch for worker pool back pressure)
+  # API: POST raw MJML text to / with Content-Type: text/plain, returns compiled HTML
+  mjml:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mjml
+    profiles:
+      - backend
+    networks:
+      - default
+    image: adrianrudnik/mjml-server:latest
+    restart: "no"
+    healthcheck:
+      # Server has no dedicated health endpoint; use TCP check on port 80
+      test: ["CMD-SHELL", "nc -z localhost 80 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  delivery:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-delivery
+    profiles:
+      - frontend
+    networks:
+      - default
+    image: ghcr.io/weserv/images:5.x
+    restart: "no"
+    shm_size: 1gb
+    depends_on:
+      tusd:
+        condition: service_started
+      freegle-prod-local:
+        condition: service_started
+        required: false
+      modtools-prod-local:
+        condition: service_started
+        required: false
+    extra_hosts:
+      - "tusd.localhost:host-gateway"
+      - "freegle-dev-local.localhost:host-gateway"
+      - "freegle-prod-local.localhost:host-gateway"
+    volumes:
+      - ./delivery-nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./delivery-imagesweserv.conf:/etc/nginx/imagesweserv.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.delivery.rule=Host(`delivery.localhost`)"
+      - "traefik.http.routers.delivery.entrypoints=web"
+      - "traefik.http.routers.delivery.middlewares=retry-delivery"
+      - "traefik.http.services.delivery.loadbalancer.server.port=80"
+      # Retry middleware for connection resilience
+      - "traefik.http.middlewares.retry-delivery.retry.attempts=3"
+      - "traefik.http.middlewares.retry-delivery.retry.initialinterval=100ms"
+
+  tusd:
+    image: tusproject/tusd:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tusd
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - tusd.localhost
+    ports:
+      - "${PORT_TUSD:-1080}:8080"
+    command: -hooks-http=http://apiv1:80/api/image -hooks-enabled-events=pre-create,post-finish -base-path=/tus/ -cors-allow-headers=baggage,sentry-trace
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/tus/ 2>&1 | grep -E '(200|405)' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tusd.rule=Host(`tusd.localhost`)"
+      - "traefik.http.routers.tusd.entrypoints=web"
+      - "traefik.http.routers.tusd.middlewares=tusd-cors-headers"
+      - "traefik.http.services.tusd.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.tusd-cors-headers.headers.customresponseheaders.Access-Control-Allow-Headers=Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Upload-Defer-Length, Upload-Concat, Upload-Complete, Upload-Draft-Interop-Version, x-token, baggage, sentry-trace"
+
+  # Old status container - replaced by status-nuxt (2026-01-18)
+  # Keeping commented out for reference during transition
+  # status:
+  #   build:
+  #     context: ./status
+  #     network: host
+  #   container_name: ${COMPOSE_PROJECT_NAME:-freegle}-status
+  #   networks:
+  #     - default
+  #   ports:
+  #     - "8081:80"
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.status.rule=Host(`status.localhost`)"
+  #     - "traefik.http.routers.status.entrypoints=web"
+  #     - "traefik.http.services.status.loadbalancer.server.port=80"
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #     - ./status/index.html:/app/index.html:ro
+  #     - ./status/logs.html:/app/logs.html:ro
+  #     - ./status/server.js:/app/server.js:ro
+  #     - ./ssl/certs:/app/ssl:ro
+  #     - .:/project:ro
+  #     - ./status/data:/app/data:rw
+  #     - rebuild-requests:/rebuild-requests
+  #   environment:
+  #     - DOCKER_HOST=unix:///var/run/docker.sock
+
+  status:
+    build:
+      context: ./status-nuxt
+      network: host
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-status
+    profiles:
+      - dev
+    networks:
+      - default
+    ports:
+      - "${PORT_STATUS:-8081}:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.status.rule=Host(`status.localhost`)"
+      - "traefik.http.routers.status.entrypoints=web"
+      - "traefik.http.services.status.loadbalancer.server.port=3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./ssl/certs:/app/ssl:ro
+      - .:/project:ro
+      - ./.env:/app/dotenv:rw
+      - rebuild-requests:/rebuild-requests
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
+
+  ai-support-helper:
+    build:
+      context: ./claude-agent-sdk
+      network: host
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-ai-support-helper
+    profiles:
+      - backend
+      - dev
+    networks:
+      - default
+    ports:
+      - "${PORT_AI_SUPPORT:-8083}:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ai-support-helper.rule=Host(`ai-support-helper.localhost`)"
+      - "traefik.http.routers.ai-support-helper.entrypoints=web"
+      - "traefik.http.services.ai-support-helper.loadbalancer.server.port=3000"
+    environment:
+      # Anthropic API key for Claude API calls
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Go API base URL used to verify the caller is an authenticated moderator
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  embedding-sidecar:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-embedding-sidecar
+    profiles:
+      - backend
+    networks:
+      - default
+    build:
+      context: ./docker/embedding-sidecar
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3200/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - PORT=3200
+      - HF_CACHE_DIR=/app/model-cache
+    volumes:
+      - embedding_model_cache:/app/model-cache
+
+  host-scripts:
+    image: alpine:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts
+    profiles:
+      - dev
+    environment:
+      - CI=${CI:-false}
+      # Make file-sync.sh and the rebuild monitor worktree-aware: without this the
+      # container has no COMPOSE_PROJECT_NAME, so both fall back to "freegle" and a
+      # worktree's host-scripts syncs/rebuilds into the MAIN instance's containers.
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace
+      - rebuild-requests:/rebuild-requests
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - |
+        apk add --no-cache docker-cli docker-compose jq bash inotify-tools
+        echo 'Starting rebuild monitor and file sync...'
+        (
+          echo 'Starting rebuild monitor...'
+          while true; do
+            for request_file in /rebuild-requests/rebuild-*.json; do
+              [ ! -f "$$request_file" ] && continue
+              echo "Processing rebuild request: $$request_file"
+              container=$$(jq -r '.container' "$$request_file" 2>/dev/null)
+              # Get the compose service name from the container's label.
+              # This is reliable regardless of naming conventions.
+              svc=$$(docker inspect "$$container" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || echo "$$container")
+              if [ "$$svc" != "" ] && [ "$$container" != "null" ]; then
+                echo "Rebuilding service: $$svc ($$container)"
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" stop "$$svc" 2>/dev/null || true
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" rm -f "$$svc" 2>/dev/null || true
+                if docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" build "$$svc" &&
+                   docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" up --no-deps -d "$$svc"; then
+                  echo "Rebuild completed successfully for $$service"
+                else
+                  echo "Rebuild failed for $$service"
+                fi
+              fi
+              rm -f "$$request_file"
+            done
+            sleep 2
+          done
+        ) &
+        echo 'Starting file sync in background...'
+        bash ./file-sync.sh &
+        SYNC_PID=$$!
+
+        # Keep container running
+        while true; do
+          if ! kill -0 $$SYNC_PID 2>/dev/null; then
+            echo "File sync stopped, restarting..."
+            bash ./file-sync.sh &
+            SYNC_PID=$$!
+          fi
+          sleep 10
+        done
+    restart: unless-stopped
+
+  # Freegle images.
+  apiv1:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv1
+    profiles:
+      - frontend
+    networks:
+      - default
+    build:
+      context: ./iznik-server
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      batch:
+        condition: service_healthy
+        required: false
+      beanstalkd:
+        condition: service_started
+      mailpit:
+        condition: service_started
+        required: false
+      redis:
+        condition: service_started
+      spamassassin-app:
+        condition: service_started
+        required: false
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - SKIP_DB_INIT=${SKIP_DB_INIT:-false}
+      - PHEANSTALK_SERVER=beanstalkd
+      - REDIS_CONNECT=redis
+      - IMAGE_DOMAIN=apiv1
+      - SPAMD_HOST=spamassassin-app
+      - SPAMD_PORT=783
+      - SMTP_HOST=mailpit
+      - TUS_UPLOADER=http://tusd:8080/tus
+      - SMTP_PORT=1025
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_PUSH_KEY=${GOOGLE_PUSH_KEY:-}
+      - GOOGLE_VISION_KEY=${GOOGLE_VISION_KEY:-}
+      - GOOGLE_PERSPECTIVE_KEY=${GOOGLE_PERSPECTIVE_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - GOOGLE_PROJECT=${GOOGLE_PROJECT:-}
+      - GOOGLE_APP_NAME=${GOOGLE_APP_NAME:-}
+      - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - MAXMIND_ACCOUNT=${MAXMIND_ACCOUNT:-}
+      - MAXMIND_KEY=${MAXMIND_KEY:-}
+      - LOKI_ENABLED=true
+      - LOKI_URL=http://loki:3100
+    volumes:
+      - geoip_data:/var/lib/GeoIP
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/api/config || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apiv1.rule=Host(`apiv1.localhost`)"
+      - "traefik.http.routers.apiv1.entrypoints=web"
+      - "traefik.http.routers.apiv1.middlewares=apiv1-cors,retry-api1"
+      - "traefik.http.services.apiv1-localhost-freegledocker.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.limit.buffering.maxRequestBodyBytes=8000000"
+      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Allow-Origin=*"
+      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Allow-Methods=GET,POST,PUT,PATCH,DELETE,OPTIONS"
+      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Allow-Headers=*"
+      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Max-Age=86400"
+      # Retry middleware for connection resilience
+      - "traefik.http.middlewares.retry-api1.retry.attempts=3"
+      - "traefik.http.middlewares.retry-api1.retry.initialinterval=100ms"
+    secrets:
+      - LOVE_JUNK_API
+      - LOVE_JUNK_SECRET
+      - PARTNER_KEY
+      - PARTNER_NAME
+      - IMAGE_DOMAIN
+    ports:
+      - "${PORT_APIV1_SSH:-1023}:22"
+      - "${PORT_APIV1_HTTP:-83}:80"
+      - "${PORT_APIV1_HTTP2:-8181}:80"
+
+  # Separate container for PHPUnit tests - uses isolated database to run in parallel with Playwright
+  apiv1-phpunit:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit
+    profiles:
+      - dev
+    networks:
+      - default
+    build:
+      context: ./iznik-server
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      batch:
+        condition: service_healthy
+      beanstalkd:
+        condition: service_started
+        required: false
+      redis:
+        condition: service_started
+        required: false
+      tusd:
+        condition: service_started
+        required: false
+      delivery:
+        condition: service_started
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - SKIP_DB_INIT=${SKIP_DB_INIT:-false}
+      - PHEANSTALK_SERVER=beanstalkd
+      - PHEANSTALK_TUBE=phpunit
+      - REDIS_CONNECT=redis
+      - SQLDB=iznik_phpunit_test
+      - IMAGE_DOMAIN=apiv1-phpunit
+      - SPAMD_HOST=spamassassin-app
+      - SPAMD_PORT=783
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - LOKI_ENABLED=false
+      - TUS_UPLOADER=http://tusd:8080/tus
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+    volumes:
+      - geoip_data:/var/lib/GeoIP
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/api/config && mysql -u root -piznik -h percona -e 'SELECT 1 FROM iznik_phpunit_test.users_notifications LIMIT 1' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 120s
+    secrets:
+      - LOVE_JUNK_API
+      - LOVE_JUNK_SECRET
+      - PARTNER_KEY
+      - PARTNER_NAME
+      - IMAGE_DOMAIN
+
+  apiv2:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv2
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - apiv2.localhost
+    build:
+      context: ./iznik-server-go
+      network: host
+      args:
+        IZNIK_SERVER_GO_BRANCH: ${IZNIK_SERVER_GO_BRANCH:-master}
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      batch:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+      beanstalkd:
+        condition: service_healthy
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+      embedding-sidecar:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TUS_UPLOADER=http://tusd:8080/tus
+      # In dev, uploaded photos live in the local tusd, not the production
+      # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
+      # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
+      # so the resizer 404s on locally-uploaded files. Point it at local tusd's
+      # file-serving path (reachable from the delivery container) so dev images
+      # render — matching how V1 derives its base from TUS_UPLOADER.
+      - UPLOADS=http://tusd:8080/tus/
+      - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      - LOKI_ENABLED=true
+      - LOKI_URL=http://loki:3100
+      - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
+      # Allowed domains for email tracking redirects
+      - USER_SITE=www.ilovefreegle.org
+      - IMAGE_DOMAIN=images.ilovefreegle.org
+      - GROUP_DOMAIN=groups.ilovefreegle.org
+      - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
+      - TNKEY=${TNKEY:-}
+      - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - DONATION_TARGET=${DONATION_TARGET:-}
+      - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
+      - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
+      # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
+      # Model cache volume is shared with embedding-sidecar so no re-download needed.
+      - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
+      - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      - SPATIAL_SERVER_URL=http://spatial:8196
+    volumes:
+      - apiv2_logs:/var/log/freegle
+      - embedding_model_cache:/app/model-cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8192/apiv2/online || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    ports:
+      - "${PORT_APIV2:-8193}:8192"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apiv2.rule=Host(`apiv2.localhost`)"
+      - "traefik.http.routers.apiv2.entrypoints=web"
+      - "traefik.http.routers.apiv2.middlewares=apiv2-cors,retry-api"
+      - "traefik.http.services.apiv2.loadbalancer.server.port=8192"
+      - "traefik.http.middlewares.apiv2-cors.headers.customresponseheaders.Access-Control-Allow-Origin=*"
+      - "traefik.http.middlewares.apiv2-cors.headers.customresponseheaders.Access-Control-Allow-Methods=GET,POST,PUT,PATCH,DELETE,OPTIONS"
+      - "traefik.http.middlewares.apiv2-cors.headers.customresponseheaders.Access-Control-Allow-Headers=*"
+      - "traefik.http.middlewares.apiv2-cors.headers.customresponseheaders.Access-Control-Max-Age=86400"
+      # Retry middleware for connection resilience
+      - "traefik.http.middlewares.retry-api.retry.attempts=3"
+      - "traefik.http.middlewares.retry-api.retry.initialinterval=100ms"
+
+  spatial-knn:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - spatial-knn.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - SPATIAL_INDEX_DIR=/data
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+    volumes:
+      - spatial_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  spatial:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - spatial.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      spatial-knn:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8196
+      - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      # Override (e.g. in CI) to boot on the small committed Bristol extract so
+      # the container stays up for routing-go tests without the 2.5GB UK graph.
+      - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
+      - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.spatial.rule=Host(`spatial.localhost`)"
+      - "traefik.http.routers.spatial.entrypoints=web"
+      - "traefik.http.services.spatial.loadbalancer.server.port=8196"
+
+  # V2 API with LIVE production database via tunnel
+  # Start with: docker compose --profile prod-live up -d apiv2-live
+  # Requires: SSH tunnel to production DB on local port 1234
+  # WARNING: This connects to the REAL production database!
+  apiv2-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv2-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - apiv2-live.localhost
+    build:
+      context: ./iznik-server-go
+      network: host
+      args:
+        IZNIK_SERVER_GO_BRANCH: ${IZNIK_SERVER_GO_BRANCH:-master}
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+        required: false
+      beanstalkd:
+        condition: service_healthy
+        required: false
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=db-live
+      # Optional read replica for the DB read/write split. Empty = single-host
+      # (all reads use MYSQL_HOST); set LIVE_DB_READ_HOST to route reads to a
+      # replica. Writes always go to MYSQL_HOST.
+      - MYSQL_HOST_READ=${LIVE_DB_READ_HOST:-}
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+      - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+      - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      - LOKI_ENABLED=true
+      - LOKI_URL=http://loki:3100
+      - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
+      - USER_SITE=www.ilovefreegle.org
+      - IMAGE_DOMAIN=images.ilovefreegle.org
+      - GROUP_DOMAIN=groups.ilovefreegle.org
+      - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
+      - TNKEY=${TNKEY:-}
+      - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - DONATION_TARGET=${DONATION_TARGET:-}
+      - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
+      - SPATIAL_SERVER_URL=${SPATIAL_SERVER_URL:-http://spatial:8196}
+    volumes:
+      - apiv2_logs:/var/log/freegle
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8192/apiv2/online || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    ports:
+      - "${PORT_APIV2_LIVE:-8194}:8192"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apiv2-live.rule=Host(`apiv2-live.localhost`)"
+      - "traefik.http.routers.apiv2-live.entrypoints=web"
+      - "traefik.http.routers.apiv2-live.middlewares=apiv2-live-cors,apiv2-live-retry"
+      - "traefik.http.middlewares.apiv2-live-cors.headers.customresponseheaders.Access-Control-Allow-Origin=*"
+      - "traefik.http.middlewares.apiv2-live-cors.headers.customresponseheaders.Access-Control-Allow-Methods=GET,POST,PUT,PATCH,DELETE,OPTIONS"
+      - "traefik.http.middlewares.apiv2-live-cors.headers.customresponseheaders.Access-Control-Allow-Headers=*"
+      - "traefik.http.middlewares.apiv2-live-cors.headers.customresponseheaders.Access-Control-Max-Age=86400"
+      - "traefik.http.middlewares.apiv2-live-retry.retry.attempts=3"
+      - "traefik.http.middlewares.apiv2-live-retry.retry.initialinterval=100ms"
+      - "traefik.http.services.apiv2-live.loadbalancer.server.port=8192"
+
+  # KNN spatial index server with LIVE production database via tunnel.
+  # Provides user approx-locations and other spatial indices from production data.
+  # Start with: docker compose --profile prod-live up -d spatial-knn-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-knn-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-knn-live.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+      - SPATIAL_INDEX_DIR=/data
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+    volumes:
+      - spatial_knn_live_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  # Spatial server with LIVE production database via tunnel
+  # Start with: docker compose --profile prod-live up -d spatial-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-live.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+      spatial-knn-live:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8196
+      - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn-live:8194
+      - OSM_PBF_PATH=/data/uk-latest.osm.pbf
+      - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.spatial-live.rule=Host(`spatial-live.localhost`)"
+      - "traefik.http.routers.spatial-live.entrypoints=web"
+      - "traefik.http.services.spatial-live.loadbalancer.server.port=8196"
+
+  # Development build with local APIs - standard dev workflow
+  freegle-dev-local:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-dev-local
+    profiles:
+      - dev
+    networks:
+      default:
+        aliases:
+          - freegle-dev-local.localhost
+    ports:
+      - "0.0.0.0:${PORT_FREEGLE_DEV_LOCAL:-3002}:3002"
+    extra_hosts:
+      - "apiv1.localhost:host-gateway"
+      - "apiv2.localhost:host-gateway"
+    build:
+      context: ./iznik-nuxt3
+      network: host
+      args:
+        IZNIK_NUXT3_BRANCH: ${IZNIK_NUXT3_BRANCH:-master}
+    tmpfs:
+      - /tmp
+    depends_on:
+      phpmyadmin:
+        condition: service_started
+      mailpit:
+        condition: service_started
+      apiv1:
+        condition: service_healthy
+        required: false
+      apiv2:
+        condition: service_started
+        required: false
+    restart: "no"
+    environment:
+      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
+      - USER_SITE=http://freegle-dev-local.localhost:${PORT_FREEGLE_DEV_LOCAL:-3002}
+      - IMAGE_BASE_URL=http://tusd:8080/tus
+      - TUSD_URL=http://tusd:8080
+      - NITRO_PRESET=node-server
+      - NUXT_NITRO_PRERENDER_ROUTES=false
+      - NUXT_DEV_MODE=true
+      - NUXT_SSR_LOG=false
+      - NODE_ENV=development
+      - NUXT_BUILD_MODE=development
+      - TEST_BASE_URL=http://127.0.0.1:3002
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.freegle-dev-local.rule=Host(`freegle-dev-local.localhost`)"
+      - "traefik.http.routers.freegle-dev-local.entrypoints=web"
+      - "traefik.http.routers.freegle-dev-local.service=freegle-dev-local"
+      - "traefik.http.services.freegle-dev-local.loadbalancer.server.port=3002"
+      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
+      - "traefik.http.routers.freegle-dev-api.rule=Host(`freegle-dev-local.localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.freegle-dev-api.entrypoints=web"
+      - "traefik.http.routers.freegle-dev-api.service=apiv1-localhost-freegledocker"
+      - "traefik.http.routers.freegle-dev-api.middlewares=apiv1-cors"
+
+  # Development build with LIVE/PRODUCTION APIs - for mobile dev and testing with real data
+  # WARNING: Actions in this container affect REAL Freegle data!
+  # Not started by default - use status page button to start with confirmation
+  freegle-dev-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-dev-live
+    depends_on:
+      host-scripts:
+        condition: service_started
+        required: false
+      status:
+        condition: service_started
+        required: false
+      reverse-proxy:
+        condition: service_started
+        required: false
+    profiles:
+      - dev-live
+    networks:
+      default:
+        aliases:
+          - freegle-dev-live.localhost
+    ports:
+      - "0.0.0.0:${PORT_FREEGLE_DEV_LIVE:-3005}:3002"
+    extra_hosts:
+      - "apiv2-live.localhost:host-gateway"
+    build:
+      context: ./iznik-nuxt3
+      network: host
+      args:
+        IZNIK_NUXT3_BRANCH: ${IZNIK_NUXT3_BRANCH:-master}
+    tmpfs:
+      - /tmp
+    restart: "no"
+    environment:
+      # LIVE/Production APIs - REAL DATA!
+      - IZNIK_API_V1=https://fdapilive.ilovefreegle.org/api
+      - IZNIK_API_V2=${LIVE_FREEGLE_API_V2:-https://api.ilovefreegle.org/apiv2}
+      # Use production delivery and USER_SITE - local delivery won't work
+      # from mobile devices since they can't resolve localhost hostnames
+      - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+      - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+      - USER_SITE=https://www.ilovefreegle.org
+      - NITRO_PRESET=node-server
+      - NUXT_NITRO_PRERENDER_ROUTES=false
+      - NUXT_DEV_MODE=true
+      - NUXT_SSR_LOG=false
+      - NODE_ENV=development
+      - NUXT_BUILD_MODE=development
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.freegle-dev-live.rule=Host(`freegle-dev-live.localhost`)"
+      - "traefik.http.routers.freegle-dev-live.entrypoints=web"
+      - "traefik.http.services.freegle-dev-live.loadbalancer.server.port=3002"
+
+  # Production build with local APIs - for testing production builds locally
+  freegle-prod-local:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-prod-local
+    profiles:
+      - dev
+    networks:
+      default:
+        aliases:
+          - freegle-prod-local.localhost
+    ports:
+      - "0.0.0.0:${PORT_FREEGLE_PROD_LOCAL:-3012}:3003"
+    extra_hosts:
+      - "apiv1.localhost:host-gateway"
+      - "apiv2.localhost:host-gateway"
+      - "apiv2-live.localhost:host-gateway"
+    build:
+      context: ./iznik-nuxt3
+      dockerfile: Dockerfile.prod
+      network: host
+      args:
+        IZNIK_NUXT3_BRANCH: ${IZNIK_NUXT3_BRANCH:-master}
+    tmpfs:
+      - /tmp
+    depends_on:
+      phpmyadmin:
+        condition: service_started
+      mailpit:
+        condition: service_started
+      apiv1:
+        condition: service_healthy
+        required: false
+      apiv2:
+        condition: service_started
+        required: false
+    restart: "no"
+    healthcheck:
+      # Health check for production container - verifies nginx is responding
+      # Long start_period because npm run build runs inside container on first start
+      test: ["CMD-SHELL", "curl -f http://localhost:3003/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 900s  # 15 minutes for npm run build
+    environment:
+      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - IZNIK_API_V2=${PROD_FREEGLE_API_V2:-http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api}
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
+      - USER_SITE=http://freegle-prod-local.localhost:${PORT_FREEGLE_PROD_LOCAL:-3012}
+      - IMAGE_BASE_URL=http://tusd:8080/tus
+      - TUSD_URL=http://tusd:8080
+      - NITRO_PRESET=node-server
+      - NUXT_NITRO_PRERENDER_ROUTES=false
+      - NUXT_DEV_MODE=false
+      - NUXT_SSR_LOG=false
+      - NODE_ENV=production
+      - NUXT_BUILD_MODE=production
+      - TEST_BASE_URL=http://127.0.0.1:3003
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.freegle-prod-local.rule=Host(`freegle-prod-local.localhost`)"
+      - "traefik.http.routers.freegle-prod-local.entrypoints=web"
+      - "traefik.http.routers.freegle-prod-local.middlewares=retry-prod"
+      - "traefik.http.routers.freegle-prod-local.service=freegle-prod-local"
+      - "traefik.http.services.freegle-prod-local.loadbalancer.server.port=3003"
+      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
+      - "traefik.http.routers.freegle-prod-api.rule=Host(`freegle-prod-local.localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.freegle-prod-api.entrypoints=web"
+      - "traefik.http.routers.freegle-prod-api.service=apiv1-localhost-freegledocker"
+      - "traefik.http.routers.freegle-prod-api.middlewares=apiv1-cors"
+      # Retry middleware for connection resilience under parallel load
+      - "traefik.http.middlewares.retry-prod.retry.attempts=3"
+      - "traefik.http.middlewares.retry-prod.retry.initialinterval=100ms"
+
+  # Development build with local APIs - ModTools
+  modtools-dev-local:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-modtools-dev-local
+    profiles:
+      - dev
+    networks:
+      default:
+        aliases:
+          - modtools-dev-local.localhost
+    ports:
+      - "0.0.0.0:${PORT_MODTOOLS_DEV_LOCAL:-3003}:3000"
+    extra_hosts:
+      - "apiv1.localhost:host-gateway"
+      - "apiv2.localhost:host-gateway"
+    build:
+      context: .
+      dockerfile: ./iznik-nuxt3/modtools/Dockerfile
+      network: host
+      args:
+        IZNIK_NUXT3_MODTOOLS_BRANCH: ${IZNIK_NUXT3_MODTOOLS_BRANCH:-master}
+    tmpfs:
+      - /tmp
+    depends_on:
+      phpmyadmin:
+        condition: service_started
+      mailpit:
+        condition: service_started
+      apiv1:
+        condition: service_healthy
+        required: false
+      apiv2:
+        condition: service_started
+        required: false
+    restart: "no"
+    environment:
+      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
+      - IMAGE_BASE_URL=http://tusd:8080/tus
+      - TUSD_URL=http://tusd:8080
+      - USER_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
+      - OSM_TILE=https://tiles.ilovefreegle.org/tile/{z}/{x}/{y}.png
+      - NITRO_PRESET=node-server
+      - NUXT_DEV_MODE=true
+      - NUXT_SSR_LOG=false
+      - NODE_ENV=development
+      - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://spatial.localhost:${PORT_TRAEFIK_HTTP:-80}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.modtools-dev-local.rule=Host(`modtools-dev-local.localhost`)"
+      - "traefik.http.routers.modtools-dev-local.entrypoints=web"
+      - "traefik.http.routers.modtools-dev-local.service=modtools-dev-local"
+      - "traefik.http.services.modtools-dev-local.loadbalancer.server.port=3000"
+      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
+      - "traefik.http.routers.modtools-dev-api.rule=Host(`modtools-dev-local.localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.modtools-dev-api.entrypoints=web"
+      - "traefik.http.routers.modtools-dev-api.service=apiv1-localhost-freegledocker"
+      - "traefik.http.routers.modtools-dev-api.middlewares=apiv1-cors"
+
+  # Development mode with LIVE/Production APIs - ModTools
+  # WARNING: This connects to REAL production data!
+  modtools-dev-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-modtools-dev-live
+    depends_on:
+      host-scripts:
+        condition: service_started
+        required: false
+      status:
+        condition: service_started
+        required: false
+      reverse-proxy:
+        condition: service_started
+        required: false
+    profiles:
+      - dev-live
+    networks:
+      default:
+        aliases:
+          - modtools-dev-live.localhost
+    ports:
+      - "0.0.0.0:${PORT_MODTOOLS_DEV_LIVE:-3006}:3000"
+    extra_hosts:
+      - "apiv2-live.localhost:host-gateway"
+      - "spatial-live.localhost:host-gateway"
+    build:
+      context: .
+      dockerfile: ./iznik-nuxt3/modtools/Dockerfile
+      network: host
+      args:
+        IZNIK_NUXT3_MODTOOLS_BRANCH: ${IZNIK_NUXT3_MODTOOLS_BRANCH:-master}
+    tmpfs:
+      - /tmp
+    restart: "no"
+    environment:
+      # LIVE/Production APIs - REAL DATA!
+      - IZNIK_API_V1=https://fdapilive.ilovefreegle.org/api
+      - IZNIK_API_V2=${LIVE_MT_API_V2:-https://api.ilovefreegle.org/apiv2}
+      # Use production delivery and USER_SITE - local delivery won't work
+      # from mobile devices since they can't resolve localhost hostnames
+      - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+      - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+      - USER_SITE=https://modtools.ilovefreegle.org
+      - OSM_TILE=https://tiles.ilovefreegle.org/tile/{z}/{x}/{y}.png
+      - NITRO_PRESET=node-server
+      - NUXT_DEV_MODE=true
+      - NUXT_SSR_LOG=false
+      - NODE_ENV=development
+      - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://spatial-live.localhost:${PORT_TRAEFIK_HTTP:-80}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.modtools-dev-live.rule=Host(`modtools-dev-live.localhost`)"
+      - "traefik.http.routers.modtools-dev-live.entrypoints=web"
+      - "traefik.http.services.modtools-dev-live.loadbalancer.server.port=3000"
+
+  # Production build with local APIs - ModTools
+  modtools-prod-local:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local
+    profiles:
+      - dev
+    networks:
+      default:
+        aliases:
+          - modtools-prod-local.localhost
+    ports:
+      - "0.0.0.0:${PORT_MODTOOLS_PROD_LOCAL:-3013}:3001"
+    extra_hosts:
+      - "apiv1.localhost:host-gateway"
+      - "apiv2.localhost:host-gateway"
+      - "apiv2-live.localhost:host-gateway"
+    build:
+      context: ./iznik-nuxt3
+      dockerfile: modtools/Dockerfile.prod
+      network: host
+      args:
+        IZNIK_NUXT3_MODTOOLS_BRANCH: ${IZNIK_NUXT3_MODTOOLS_BRANCH:-master}
+    tmpfs:
+      - /tmp
+    depends_on:
+      phpmyadmin:
+        condition: service_started
+      mailpit:
+        condition: service_started
+      apiv1:
+        condition: service_healthy
+        required: false
+      apiv2:
+        condition: service_started
+        required: false
+    restart: "no"
+    healthcheck:
+      # Health check for ModTools production container - verifies nginx is responding
+      # Long start_period because npm run build runs inside container on first start
+      test: ["CMD-SHELL", "curl -f http://localhost:3001/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 900s  # 15 minutes for npm run build
+    environment:
+      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - IZNIK_API_V2=${PROD_MT_API_V2:-http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api}
+      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
+      - IMAGE_BASE_URL=http://tusd:8080/tus
+      - TUSD_URL=http://tusd:8080
+      - USER_SITE=http://modtools-prod-local.localhost:${PORT_MODTOOLS_PROD_LOCAL:-3013}
+      - OSM_TILE=https://tiles.ilovefreegle.org/tile/{z}/{x}/{y}.png
+      - NITRO_PRESET=node-server
+      - NUXT_DEV_MODE=false
+      - NUXT_SSR_LOG=false
+      - NODE_ENV=production
+      - NUXT_BUILD_MODE=production
+      - TEST_BASE_URL=http://127.0.0.1:3001
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.modtools-prod-local.rule=Host(`modtools-prod-local.localhost`)"
+      - "traefik.http.routers.modtools-prod-local.entrypoints=web"
+      - "traefik.http.routers.modtools-prod-local.service=modtools-prod-local"
+      - "traefik.http.services.modtools-prod-local.loadbalancer.server.port=3001"
+      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
+      - "traefik.http.routers.modtools-prod-api.rule=Host(`modtools-prod-local.localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.modtools-prod-api.entrypoints=web"
+      - "traefik.http.routers.modtools-prod-api.service=apiv1-localhost-freegledocker"
+      - "traefik.http.routers.modtools-prod-api.middlewares=apiv1-cors"
+
+  playwright:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-playwright
+    profiles:
+      - dev
+    network_mode: "host"
+    shm_size: 2gb  # Chrome needs more shared memory for parallel browser instances
+    build:
+      context: ./iznik-nuxt3
+      dockerfile: Dockerfile.playwright
+      network: host
+    working_dir: /app
+    extra_hosts:
+      - "freegle-dev-local.localhost:127.0.0.1"
+      - "freegle-prod-local.localhost:127.0.0.1"
+      - "freegle-dev-live.localhost:127.0.0.1"
+      - "modtools-dev-local.localhost:127.0.0.1"
+      - "modtools-prod-local.localhost:127.0.0.1"
+      - "apiv1.localhost:127.0.0.1"
+      - "apiv2.localhost:127.0.0.1"
+      - "delivery.localhost:127.0.0.1"
+    volumes:
+      - ./iznik-nuxt3/tests:/host-tests:ro
+      - ./iznik-nuxt3:/app/src:ro
+      - ./iznik-nuxt3:/host-playwright-config:ro
+    environment:
+      - TEST_BASE_URL=http://freegle-prod-local.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TEST_MODTOOLS_BASE_URL=http://modtools-prod-local.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - TEST_API_V2_BASE_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      - NODE_ENV=test
+      - NODE_OPTIONS=--max-old-space-size=8192
+      - CI=false
+      - PW_WORKERS=${PW_WORKERS:-11}
+      - ENABLE_MONOCART_REPORTER=true
+      - COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN:-}
+      - STATUS_API_URL=http://localhost:${PORT_STATUS:-8081}
+      - SELF_HOSTED_RUNNER=${SELF_HOSTED_RUNNER:-}
+    depends_on:
+      freegle-prod-local:
+        condition: service_started
+      modtools-prod-local:
+        condition: service_started
+      apiv1:
+        condition: service_healthy
+        required: false
+      apiv2:
+        condition: service_started
+        required: false
+      reverse-proxy:
+        condition: service_healthy
+      percona:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+      beanstalkd:
+        condition: service_healthy
+        required: false
+
+  # Loki - Log aggregation
+  loki:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-loki
+    profiles:
+      - backend
+    image: grafana/loki:3.0.0
+    networks:
+      - default
+    ports:
+      - "${PORT_LOKI:-3100}:3100"
+    volumes:
+      - loki-data:/loki
+      - ./conf/loki-config.yaml:/etc/loki/local-config.yaml:ro
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.loki.rule=Host(`loki.localhost`)"
+      - "traefik.http.routers.loki.entrypoints=web"
+      - "traefik.http.services.loki.loadbalancer.server.port=3100"
+
+  # Alloy - Log shipper to Loki
+  # Reads JSON log files from containers and ships to Loki
+  # For local dev: ships Go API logs from the apiv2_logs volume
+  # For production: batch-prod writes to host /var/log/freegle, ship separately
+  alloy:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-alloy
+    profiles:
+      - monitoring
+    image: grafana/alloy:v1.4.2
+    networks:
+      - default
+    volumes:
+      - ./conf/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - apiv2_logs:/var/log/freegle:ro
+    environment:
+      - LOKI_URL=http://loki:3100
+    command: ["run", "/etc/alloy/config.alloy"]
+    depends_on:
+      loki:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+
+  # Loki backup - runs on-demand: docker compose run --rm loki-backup
+  # Gracefully skips backup if GCS credentials not available (dev environments)
+  # Uses host gcloud credentials (~/.config/gcloud) or service account key file
+  loki-backup:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-loki-backup
+    profiles:
+      - backup
+    build:
+      context: ./scripts/backup
+      dockerfile: Dockerfile
+    depends_on:
+      loki:
+        condition: service_healthy
+        required: false
+    volumes:
+      - loki-data:/loki:ro
+      # Mount host gcloud config for credentials (user account or ADC)
+      - ${GCLOUD_CONFIG_PATH:-~/.config/gcloud}:/root/.config/gcloud:ro
+    environment:
+      - GCS_BUCKET=${LOKI_BACKUP_BUCKET:-gs://freegle_backup_uk/loki}
+      - RETENTION_DAYS=${LOKI_BACKUP_RETENTION_DAYS:-30}
+    networks:
+      - default
+
+  # Batch jobs processor (Laravel)
+  batch:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-batch
+    profiles:
+      - dev
+    networks:
+      - default
+    build:
+      context: ./iznik-batch
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
+      - ./iznik-server:/var/www/iznik:ro
+      - apiv2_logs:/var/log/freegle
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+      mailpit:
+        condition: service_started
+      mjml:
+        condition: service_healthy
+        required: false
+      embedding-sidecar:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - APP_NAME=Freegle Batch Jobs
+      - APP_KEY=base64:JXsa9TVxy8PQIrAgimIh0+4v8U7rSYhd3/+an8WYYQc=
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - RUN_MIGRATIONS=true
+      - APP_URL=http://localhost
+      - LOG_CHANNEL=stderr
+      - DB_CONNECTION=mysql
+      - DB_HOST=percona
+      - DB_PORT=3306
+      - DB_DATABASE=iznik
+      - DB_USERNAME=root
+      - DB_PASSWORD=iznik
+      - PGSQL_HOST=postgres
+      - PGSQL_PORT=5432
+      - PGSQL_DATABASE=iznik
+      - PGSQL_USERNAME=root
+      - PGSQL_PASSWORD=iznik
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_STORE=redis
+      - QUEUE_CONNECTION=redis
+      - SESSION_DRIVER=redis
+      - MAIL_MAILER=smtp
+      - MAIL_HOST=mailpit
+      - MAIL_PORT=1025
+      - MAIL_ENCRYPTION=null
+      - MAIL_EHLO_DOMAIN=freegle-batch
+      - FREEGLE_USER_SITE=http://freegle-dev-local.localhost:${PORT_FREEGLE_DEV_LOCAL:-3002}
+      - FREEGLE_MOD_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
+      - FREEGLE_API_BASE_URL=http://localhost:${PORT_APIV2:-8193}
+      - FREEGLE_DELIVERY_URL=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
+      - AMP_API_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/amp
+      - LOKI_ENABLED=true
+      - LOKI_URL=http://loki:3100
+      - MJML_URL=http://mjml/
+      - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
+      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
+      # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
+      # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
+      - CI=${CI:-false}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/laravel-ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 360s
+
+  # Production batch jobs processor - connects to production database and mail
+  # Start with: docker compose --profile production up -d
+  # Requires secrets in .env.background (see .env.background.example for template)
+  batch-prod:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-batch-prod
+    profiles:
+      - production
+    # Give the scheduler + daemons (schedule:work, mail:spool:process, ripple, digest
+    # shards) time to reach a safe stopping point on SIGTERM before Docker SIGKILLs them.
+    # The default is only 10s, too short for an in-flight email send / digest sweep to
+    # finish cleanly; a graceful shutdown was measured at ~9s, so 60s is generous headroom.
+    # This makes a plain `docker restart` / `docker compose restart` graceful without a
+    # manual -t flag (applied to the container's StopTimeout on next recreate).
+    stop_grace_period: 60s
+    networks:
+      - default
+    build:
+      context: ./iznik-batch
+      dockerfile: docker/Dockerfile
+    # IMPORTANT: .env.background MUST exist on the live backend server with all secrets.
+    # required: false only so docker compose config works in dev (where batch-prod isn't used).
+    env_file:
+      - path: .env.background
+        required: false
+    volumes:
+      - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
+      - ./iznik-server:/var/www/iznik:ro
+      - /var/log/freegle:/var/log/freegle
+      # Bind source uses FIREBASE_HOST_PATH (HOST path). Distinct from
+      # FIREBASE_CREDENTIALS_PATH (CONTAINER path read by Laravel — always
+      # /etc/firebase.json, so we DON'T set it; sharing one var leaked the
+      # host path into the container's env via env_file and Laravel then
+      # tried to open it inside the container — memory
+      # project_push_dropped_devnull_firebase.
+      - ${FIREBASE_HOST_PATH:-/dev/null}:/etc/firebase.json:ro
+    extra_hosts:
+      - "db-host:${DB_HOST_IP:-127.0.0.1}"
+      # Read replica for the DB read/write split. Falls back to the write host
+      # (DB_HOST_IP) when DB_HOST_READ_IP is not set, giving single-host behaviour.
+      - "db-host-read:${DB_HOST_READ_IP:-${DB_HOST_IP:-127.0.0.1}}"
+      - "mail-host:${MAIL_HOST_IP:-127.0.0.1}"
+    depends_on:
+      loki:
+        condition: service_healthy
+      mjml:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # The scheduler fires spatial-dependent jobs (digest reach-gate, ripple, spatial
+      # index) the moment it starts, so it MUST wait for the spatial servers to finish
+      # their multi-minute graph/index rebuild — otherwise those jobs hang on a not-ready
+      # spatial, spin, hold their flocks and produce nothing (observed on the 2026-07-03
+      # reboot). Both have /health healthchecks that only pass once loaded.
+      spatial:
+        condition: service_healthy
+      spatial-knn:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      # Laravel Application
+      - APP_NAME=iznik-batch
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_URL=http://localhost
+      # APP_KEY comes from env_file
+      - LOG_CHANNEL=stack
+      - LOG_LEVEL=debug
+      # Database (production)
+      - DB_CONNECTION=mysql
+      - DB_HOST=db-host
+      # Reads go to the replica alias; it resolves to the write host unless
+      # DB_HOST_READ_IP is set in .env.background (see extra_hosts above).
+      - DB_HOST_READ=db-host-read
+      - DB_PORT=3306
+      - DB_DATABASE=iznik
+      - DB_USERNAME=root
+      # DB_PASSWORD comes from env_file
+      - DB_CHARSET=utf8mb4
+      - DB_COLLATION=utf8mb4_unicode_ci
+      # Cache & Queue (database, not Redis - matches bulk3 config)
+      - CACHE_STORE=database
+      - QUEUE_CONNECTION=database
+      - SESSION_DRIVER=database
+      # Redis (for BoundedPool worker pool semaphores only)
+      - REDIS_HOST=redis
+      # Mail (via smarthost)
+      - MAIL_MAILER=smtp
+      - MAIL_HOST=mail-host
+      - MAIL_PORT=25
+      - MAIL_USERNAME=
+      - MAIL_PASSWORD=
+      - MAIL_ENCRYPTION=null
+      - MAIL_EHLO_DOMAIN=freegle-batch
+      - MAIL_FROM_ADDRESS=noreply@ilovefreegle.org
+      - MAIL_FROM_NAME=Freegle
+      # Freegle Site URLs
+      - FREEGLE_USER_SITE=https://www.ilovefreegle.org
+      - FREEGLE_MOD_SITE=https://modtools.org
+      - FREEGLE_API_BASE_URL=https://api.ilovefreegle.org
+      - FREEGLE_API_V2_URL=https://api.ilovefreegle.org/apiv2
+      # Freegle Branding
+      - FREEGLE_SITE_NAME=Freegle
+      - FREEGLE_LOGO_URL=https://www.ilovefreegle.org/icon.png
+      - FREEGLE_WALLPAPER_URL=https://www.ilovefreegle.org/wallpaper.png
+      # Freegle Mail Configuration
+      - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
+      - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest
+      # Freegle Images
+      - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
+      - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org
+      - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+      - FREEGLE_WELCOME_IMAGE1=https://www.ilovefreegle.org/images/welcome1.jpg
+      - FREEGLE_WELCOME_IMAGE2=https://www.ilovefreegle.org/images/welcome2.jpg
+      - FREEGLE_WELCOME_IMAGE3=https://www.ilovefreegle.org/images/welcome3.jpg
+      - FREEGLE_EMAIL_ASSETS_URL=https://www.ilovefreegle.org/emailimages
+      - FREEGLE_RULE_FREE_IMAGE=https://www.ilovefreegle.org/emailimages/rule-free.png
+      - FREEGLE_RULE_NICE_IMAGE=https://www.ilovefreegle.org/emailimages/rule-nice.png
+      - FREEGLE_RULE_SAFE_IMAGE=https://www.ilovefreegle.org/emailimages/rule-safe.png
+      # Loki Logging (local container)
+      - LOKI_ENABLED=true
+      - LOKI_URL=http://loki:3100
+      - LOKI_JSON_FILE=true
+      - LOKI_JSON_PATH=/var/log/freegle
+      # MJML (local container)
+      - MJML_URL=http://mjml/
+      # Avatar generation (Go API)
+      - FREEGLE_AVATAR_SERVER_URL=https://api.ilovefreegle.org/avatar
+      # AMP Email
+      - AMP_EMAIL_ENABLED=true
+      # AMP_SECRET comes from env_file
+      - AMP_API_URL=https://api.ilovefreegle.org/amp
+      - AMP_READ_TOKEN_EXPIRY=168
+      - AMP_WRITE_TOKEN_EXPIRY=168
+      # PostgreSQL / PostGIS (for postcode remapping KNN queries)
+      - PGSQL_HOST=${PGSQL_HOST:-postgres}
+      - PGSQL_PORT=${PGSQL_PORT:-5432}
+      - PGSQL_DATABASE=iznik
+      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
+      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
+      # Geospatial
+      - FREEGLE_SRID=3857
+      # SENTRY_LARAVEL_DSN comes from env_file
+      - SENTRY_SEND_DEFAULT_PII=true
+      - SENTRY_TRACES_SAMPLE_RATE=1.0
+      # Migrations disabled for production
+      - RUN_MIGRATIONS=false
+      # Rspamd HTTP API for the dormant outgoing-mail RspamdService.
+      # SPAM_CHECK_ENABLED=false keeps the SpamCheckListener inactive — the
+      # active spam path is the Postfix milter (see conf/postfix/main.cf).
+      - RSPAMD_HOST=rspamd
+      - RSPAMD_PORT=11334
+      - SPAM_CHECK_ENABLED=false
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/laravel-ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
+
+  # =========================================
+  # Incoming Mail Processing (Postfix)
+  # =========================================
+  # Receives incoming mail and routes to Laravel for processing.
+  # IMPORTANT: This container does NOT receive mail until MX records are updated.
+  # Safe to run - mail only arrives when DNS points to this server.
+
+  postfix:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-postfix
+    profiles:
+      - mail
+    build:
+      context: ./conf/postfix
+      dockerfile: Dockerfile
+    networks:
+      - default
+    ports:
+      - "${PORT_POSTFIX_SMTP:-25}:25"
+    depends_on:
+      batch-prod:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+    volumes:
+      # Persist the mail spool across container rebuilds so a deploy that
+      # touches this image doesn't wipe the deferred queue.
+      - postfix_spool:/var/spool/postfix
+    environment:
+      # Endpoint the freegle-mail-handler script POSTs incoming mail to.
+      # Uses the docker-compose service alias rather than container_name so
+      # COMPOSE_PROJECT_NAME changes can't break the bridge.
+      BATCH_URL: http://batch-prod:8080/api/mail/incoming
+    healthcheck:
+      # Postfix must be running AND the batch bridge must be reachable —
+      # a silently broken bridge would otherwise defer mail for hours.
+      test:
+        - CMD-SHELL
+        - postfix status && curl -fsS --max-time 5 -o /dev/null http://batch-prod:8080/up
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =========================================
+  # MCP Support Tools (Privacy-Preserving Log Analysis)
+  # =========================================
+
+  # Container 0: Query Sanitizer - Frontend-facing, extracts and tokenizes PII
+  mcp-query-sanitizer:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-sanitizer
+    profiles:
+      - dev
+    build:
+      context: ./support-tools/query-sanitizer
+      network: host
+    networks:
+      - default
+    ports:
+      - "${PORT_MCP_SANITIZER:-8084}:8080"
+    environment:
+      - PORT=8080
+      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
+    depends_on:
+      mcp-pseudonymizer:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp-sanitizer.rule=Host(`mcp-sanitizer.localhost`)"
+      - "traefik.http.routers.mcp-sanitizer.entrypoints=web"
+      - "traefik.http.services.mcp-sanitizer.loadbalancer.server.port=8080"
+
+  # Container 2: MCP Interface - Stateless proxy, NO key, forwards to pseudonymizer
+  mcp-interface:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-interface
+    profiles:
+      - dev
+    build:
+      context: ./support-tools/mcp-interface
+      network: host
+    networks:
+      - default
+    environment:
+      - PORT=8080
+      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
+    depends_on:
+      mcp-pseudonymizer:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Container 3: Pseudonymizer - Has the key, queries Loki, pseudonymizes results
+  mcp-pseudonymizer:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-pseudonymizer
+    profiles:
+      - dev
+    build:
+      context: ./support-tools/pseudonymizer
+      network: host
+    networks:
+      - default
+    volumes:
+      - mcp-pseudonymizer-data:/data
+      - mcp-audit-logs:/var/log/mcp-audit
+    environment:
+      - PORT=8080
+      - LOKI_URL=http://loki:3100
+      - DATA_DIR=/data
+      - AUDIT_LOG_DIR=/var/log/mcp-audit
+      # Database access for pseudonymized SQL queries
+      - DB_HOST=percona
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=iznik
+      - DB_NAME=iznik
+    depends_on:
+      loki:
+        condition: service_healthy
+        required: false
+      percona:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  rebuild-requests:
+    driver: local
+  freegle_db: {}
+  phpmyadmin-sessions:
+    driver: local
+  geoip_data:
+    driver: local
+  rspamd_data:
+    driver: local
+  spamassassin_home:
+    driver: local
+  postfix_spool:
+    driver: local
+  loki-data:
+    name: ${LOKI_VOLUME:-loki-data}
+  spatial_data:
+    driver: local
+  spatial_knn_live_data:
+    driver: local
+  routing_data:
+    driver: local
+  apiv2_logs:
+    driver: local
+  mcp-pseudonymizer-data:
+    driver: local
+  embedding_model_cache:
+    driver: local
+  mcp-audit-logs:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+
+secrets:
+  LOVE_JUNK_API:
+    file: ./secrets/lovejunk-api.txt
+  LOVE_JUNK_SECRET:
+    file: ./secrets/lovejunk-secret.txt
+  PARTNER_KEY:
+    file: ./secrets/partner-key.txt
+  PARTNER_NAME:
+    file: ./secrets/partner-name.txt
+  IMAGE_DOMAIN:
+    file: ./secrets/image-domain.txt

@@ -1,0 +1,1256 @@
+<template>
+  <div class="log-analysis-container">
+    <!-- Privacy Notice Modal -->
+    <b-modal
+      v-model="showPrivacyModal"
+      title="Privacy Notice"
+      ok-only
+      ok-title="I Understand"
+      centered
+    >
+      <p>
+        This tool uses AI to help investigate user issues by analyzing logs.
+      </p>
+      <p><strong>Privacy protection measures:</strong></p>
+      <ul>
+        <li>
+          <strong>All PII is pseudonymized</strong> before reaching the AI
+          service.
+        </li>
+        <li>
+          <strong>Email addresses, IPs, phone numbers</strong> are replaced with
+          random tokens (e.g., user_abc123@gmail.com).
+        </li>
+        <li>
+          <strong>You see real values</strong> - tokens are replaced back to
+          real values in your browser only.
+        </li>
+        <li>
+          <strong>Claude/Anthropic never sees</strong> the real email, IP, or
+          other PII - only meaningless tokens.
+        </li>
+      </ul>
+      <p class="small text-muted mt-2">
+        This system complies with ICO guidance on pseudonymization - the tokens
+        are meaningless without the key, which never leaves Freegle's servers.
+      </p>
+    </b-modal>
+
+    <!-- PII Warning Modal -->
+    <b-modal
+      v-model="showPiiWarning"
+      title="Personal Data Detected"
+      centered
+      @ok="confirmPiiQuery"
+      @cancel="cancelPiiQuery"
+    >
+      <p>The following personal data was detected in your query:</p>
+      <ul>
+        <li v-for="(pii, idx) in detectedPii" :key="idx">
+          <strong>{{ pii.type }}:</strong> {{ pii.value }}
+          <span v-if="pii.source === 'selected_user'" class="text-muted">
+            (selected user)
+          </span>
+        </li>
+      </ul>
+      <p>
+        This data will be <strong>pseudonymized</strong> before processing. The
+        AI service will only see random tokens, not the actual values.
+      </p>
+      <p>Do you want to proceed?</p>
+    </b-modal>
+
+    <!-- Privacy Review Modal (shown when privacyReviewMode is enabled) -->
+    <b-modal
+      v-model="showPrivacyReview"
+      title="Privacy Review"
+      size="lg"
+      centered
+      ok-title="Approve & Send to AI"
+      cancel-title="Cancel"
+      @ok="approvePrivacyReview"
+      @cancel="cancelPrivacyReview"
+    >
+      <p class="text-info">
+        <strong>Privacy Review Mode:</strong> Please verify that all personal
+        data has been properly pseudonymized before sending to the AI.
+      </p>
+
+      <div class="privacy-review-section mb-3">
+        <h6>Your Original Query:</h6>
+        <div class="privacy-review-box original">
+          {{ pendingPrivacyReview?.originalQuery }}
+        </div>
+      </div>
+
+      <div class="privacy-review-section mb-3">
+        <h6>Pseudonymized Query (what the AI will see):</h6>
+        <div class="privacy-review-box pseudonymized">
+          {{ pendingPrivacyReview?.pseudonymizedQuery }}
+        </div>
+      </div>
+
+      <div
+        v-if="
+          pendingPrivacyReview?.mapping &&
+          Object.keys(pendingPrivacyReview.mapping).length > 0
+        "
+        class="privacy-review-section mb-3"
+      >
+        <h6>Pseudonymized Values:</h6>
+        <table class="table table-sm table-bordered">
+          <thead>
+            <tr>
+              <th>Real Value (kept private)</th>
+              <th>Pseudonymized (sent to AI)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(value, token) in pendingPrivacyReview.mapping"
+              :key="token"
+            >
+              <td>{{ value }}</td>
+              <td>
+                <code class="text-danger">{{ token }}</code>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-warning">
+        <strong>Check:</strong> Does the pseudonymized query contain any real
+        email addresses, names, phone numbers, or other personal data? If so,
+        click Cancel and report the issue.
+      </div>
+    </b-modal>
+
+    <!-- MCP queries run server-side via Agent SDK — no client approval needed -->
+
+    <!-- Header -->
+    <div class="log-analysis-header">
+      <div class="d-flex align-items-center justify-content-between">
+        <div>
+          <strong>AI Support Helper</strong>
+          <span v-if="!sanitizerAvailable" class="text-danger ms-2">
+            (Service unavailable)
+          </span>
+          <span v-if="totalCost > 0" class="session-cost ms-2">
+            Session: ${{ totalCost.toFixed(4) }}
+          </span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <b-form-checkbox
+            v-model="privacyReviewMode"
+            switch
+            size="sm"
+            class="me-3"
+          >
+            <small>Privacy Review</small>
+          </b-form-checkbox>
+          <b-form-checkbox
+            v-model="showAnonymisedData"
+            switch
+            size="sm"
+            class="me-3"
+          >
+            <small>{{
+              showAnonymisedData ? 'Show PII' : 'Show Anonymised'
+            }}</small>
+          </b-form-checkbox>
+          <b-form-checkbox v-model="debugMode" switch size="sm" class="me-3">
+            <small>Debug</small>
+          </b-form-checkbox>
+          <b-button
+            variant="link"
+            size="sm"
+            class="p-0"
+            @click="showPrivacyModal = true"
+          >
+            <span class="text-info">&#9432;</span> Privacy
+          </b-button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 1: User Selection -->
+    <div
+      v-if="!selectedUser && !skippedUserSelection"
+      class="log-analysis-step p-3"
+    >
+      <h6>Step 1: Select a user to investigate</h6>
+      <p class="text-muted small mb-2">
+        Focus on a specific user for better results, or skip for general
+        queries.
+      </p>
+      <b-input-group class="mb-2">
+        <b-form-input
+          v-model="userSearch"
+          placeholder="Search by email, name, or user ID"
+          :disabled="searchingUser"
+          autocapitalize="none"
+          autocomplete="off"
+          @keyup.enter.exact="searchUsers"
+        />
+        <b-button
+          variant="primary"
+          :disabled="searchingUser"
+          @click="searchUsers"
+        >
+          <v-icon v-if="searchingUser" icon="sync" class="fa-spin" />
+          <v-icon v-else icon="search" /> Search
+        </b-button>
+        <b-button
+          variant="secondary"
+          :disabled="searchingUser"
+          @click="skipUserSelection"
+        >
+          Skip
+        </b-button>
+      </b-input-group>
+
+      <div v-if="searchResults.length > 0" class="user-results mt-2">
+        <div
+          v-for="user in searchResults"
+          :key="user.id"
+          class="user-result-item p-2"
+          @click="selectUser(user)"
+        >
+          <div class="d-flex align-items-center">
+            <div class="flex-grow-1">
+              <strong>{{ user.displayname || 'No name' }}</strong>
+              <span class="text-muted ms-2">{{ user.email }}</span>
+              <br />
+              <small class="text-muted">
+                ID: {{ user.id }}
+                <span v-if="user.lastaccess">
+                  | Last active: {{ formatDate(user.lastaccess) }}
+                </span>
+              </small>
+            </div>
+            <v-icon icon="chevron-right" />
+          </div>
+        </div>
+      </div>
+
+      <NoticeMessage v-if="noResults" class="mt-2">
+        No users found matching "{{ userSearch }}".
+      </NoticeMessage>
+    </div>
+
+    <!-- User selected or skipped: show either initial query or chat -->
+    <template v-else>
+      <!-- User banner (always visible when user selected) -->
+      <div class="selected-user-banner p-2 bg-light d-flex align-items-center">
+        <div v-if="selectedUser" class="flex-grow-1">
+          <strong>{{ selectedUser.displayname || 'User' }}</strong>
+          <span class="text-muted ms-2">{{ selectedUser.email }}</span>
+          <small class="text-muted ms-2">(ID: {{ selectedUser.id }})</small>
+          <span v-if="selectedUser.lastaccess" class="text-muted ms-2">
+            | Last active: {{ formatDate(selectedUser.lastaccess) }}
+          </span>
+        </div>
+        <div v-else class="flex-grow-1">
+          <strong class="text-secondary">General Query</strong>
+          <span class="text-muted ms-2">(no specific user selected)</span>
+        </div>
+        <b-button variant="outline-primary" size="sm" @click="newChat">
+          New Chat
+        </b-button>
+      </div>
+
+      <!-- Initial query (before conversation starts) -->
+      <div v-if="messages.length === 0" class="log-analysis-step p-3">
+        <h6>What would you like to investigate?</h6>
+        <b-form @submit.prevent="submitQuery">
+          <b-form-textarea
+            v-model="query"
+            rows="3"
+            max-rows="6"
+            placeholder="e.g., 'Why are they getting errors?' or 'Show their recent login activity'"
+            :disabled="isProcessing"
+            @keydown.enter.exact.prevent="submitQuery"
+          />
+          <div class="d-flex justify-content-between align-items-center mt-2">
+            <small v-if="query" class="text-muted">
+              Press Enter to submit, Shift+Enter for new line
+            </small>
+            <b-button
+              type="submit"
+              variant="primary"
+              :disabled="!query.trim() || isProcessing"
+            >
+              <b-spinner v-if="isProcessing" small />
+              <span v-else>Analyze</span>
+            </b-button>
+          </div>
+        </b-form>
+      </div>
+
+      <!-- Chat interface (after conversation starts) -->
+      <template v-else>
+        <!-- Debug Panel -->
+        <div v-if="debugMode && debugLog.length > 0" class="debug-panel p-3">
+          <h6 class="d-flex align-items-center justify-content-between">
+            <span>Debug: Data Flow</span>
+            <b-button variant="link" size="sm" @click="debugLog = []"
+              >Clear</b-button
+            >
+          </h6>
+          <div class="debug-entries">
+            <div
+              v-for="(entry, idx) in debugLog"
+              :key="idx"
+              class="debug-entry mb-2 p-2"
+              :class="'debug-' + entry.type"
+            >
+              <div class="debug-header d-flex justify-content-between">
+                <strong>{{ entry.label }}</strong>
+                <small class="text-muted">{{ entry.timestamp }}</small>
+              </div>
+              <div v-if="entry.tokenMapping" class="token-mapping mt-1">
+                <small class="text-muted">Tokens created:</small>
+                <div
+                  v-for="(value, token) in entry.tokenMapping"
+                  :key="token"
+                  class="token-item"
+                >
+                  <code class="token">{{ token }}</code>
+                  <span class="mx-1">&rarr;</span>
+                  <span class="real-value">{{ value }}</span>
+                </div>
+              </div>
+              <pre v-if="entry.data" class="debug-data mt-1 mb-0">{{
+                formatDebugData(entry.data)
+              }}</pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat messages -->
+        <div ref="messagesContainer" class="log-analysis-messages p-3">
+          <div
+            v-for="(msg, idx) in messages"
+            :key="idx"
+            class="message-item mb-3"
+            :class="{
+              'message-user': msg.role === 'user',
+              'message-assistant': msg.role === 'assistant',
+            }"
+          >
+            <div class="message-header small text-muted mb-1">
+              {{ msg.role === 'user' ? 'You' : 'AI Assistant' }}
+            </div>
+            <div class="message-content" v-html="formatMessageContent(msg)" />
+            <div
+              v-if="msg.role === 'assistant' && msg.costUsd"
+              class="message-cost"
+            >
+              Cost: ${{ msg.costUsd.toFixed(4) }}
+            </div>
+          </div>
+
+          <!-- Processing indicator -->
+          <div v-if="isProcessing" class="message-item message-assistant mb-3">
+            <div class="message-header small text-muted mb-1">AI Assistant</div>
+            <div class="message-content">
+              <div class="d-flex align-items-center">
+                <b-spinner small class="me-2" />
+                <span>{{ processingStatus }}</span>
+              </div>
+              <b-button
+                variant="outline-danger"
+                size="sm"
+                class="mt-2"
+                @click="cancelQuery"
+              >
+                Cancel
+              </b-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Follow-up input -->
+        <div class="chat-input-area p-3">
+          <b-form class="d-flex gap-2" @submit.prevent="submitQuery">
+            <b-form-input
+              v-model="query"
+              placeholder="Ask a follow-up question..."
+              :disabled="isProcessing"
+              class="flex-grow-1"
+              @keydown.enter.exact.prevent="submitQuery"
+            />
+            <b-button
+              type="submit"
+              variant="primary"
+              :disabled="!query.trim() || isProcessing"
+            >
+              <b-spinner v-if="isProcessing" small />
+              <span v-else>Send</span>
+            </b-button>
+          </b-form>
+        </div>
+      </template>
+    </template>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { marked } from 'marked'
+import { useUserStore } from '~/stores/user'
+import { useAuthStore } from '~/stores/auth'
+
+// Query sanitizer service - frontend talks to this for PII handling
+const SANITIZER_URL = 'http://mcp-sanitizer.localhost'
+
+// AI support helper for Claude integration (same as existing AI assistant)
+const AI_SUPPORT_URL = 'http://ai-support-helper.localhost'
+
+// UI state
+const showPrivacyModal = ref(false)
+const showPiiWarning = ref(false)
+const showPrivacyReview = ref(false)
+const sanitizerAvailable = ref(true)
+const showAnonymisedData = ref(false)
+const debugMode = ref(false)
+const privacyReviewMode = ref(true) // Default on for privacy verification
+const pendingPrivacyReview = ref(null)
+
+// User search
+const userSearch = ref('')
+const searchingUser = ref(false)
+const searchResults = ref([])
+const noResults = ref(false)
+const selectedUser = ref(null)
+const skippedUserSelection = ref(false)
+
+// Query input
+const query = ref('')
+const detectedPii = ref([])
+const pendingQuery = ref(null)
+
+// Processing
+const isProcessing = ref(false)
+const processingStatus = ref('Analyzing...')
+const currentSessionId = ref(null)
+const claudeSessionId = ref(null) // For Claude Code conversation continuity
+const localMapping = ref({})
+
+// Conversation with raw data for debug
+const messages = ref([])
+const debugLog = ref([])
+
+// Template refs
+const messagesContainer = ref(null)
+
+const totalCost = computed(() => {
+  return messages.value
+    .filter((m) => m.role === 'assistant' && m.costUsd)
+    .reduce((sum, m) => sum + m.costUsd, 0)
+})
+
+onMounted(async () => {
+  await checkSanitizerAvailability()
+})
+
+async function checkSanitizerAvailability() {
+  try {
+    const response = await fetch(`${SANITIZER_URL}/health`)
+    sanitizerAvailable.value = response.ok
+  } catch {
+    sanitizerAvailable.value = false
+  }
+}
+
+async function searchUsers() {
+  if (!userSearch.value.trim()) return
+
+  searchingUser.value = true
+  searchResults.value = []
+  noResults.value = false
+
+  try {
+    const userStore = useUserStore()
+    userStore.clear()
+
+    await userStore.searchUsers(userSearch.value.trim())
+
+    // Get results and sort by last access
+    searchResults.value = Object.values(userStore.list)
+      .sort((a, b) => {
+        return (
+          new Date(b.lastaccess).getTime() - new Date(a.lastaccess).getTime()
+        )
+      })
+      .slice(0, 10) // Limit to 10 results
+
+    // Auto-select if only one result
+    if (searchResults.value.length === 1) {
+      selectUser(searchResults.value[0])
+      return
+    }
+
+    noResults.value = searchResults.value.length === 0
+  } catch (error) {
+    console.error('User search error:', error)
+    noResults.value = true
+  } finally {
+    searchingUser.value = false
+  }
+}
+
+function selectUser(user) {
+  selectedUser.value = user
+  searchResults.value = []
+  userSearch.value = ''
+  // Focus the query input after Vue updates the DOM
+  nextTick(() => {
+    const textarea = document.querySelector('.log-analysis-container textarea')
+    if (textarea) {
+      textarea.focus()
+    }
+  })
+}
+
+function newChat() {
+  // Start a fresh conversation - clears user and all state
+  selectedUser.value = null
+  skippedUserSelection.value = false
+  messages.value = []
+  query.value = ''
+  currentSessionId.value = null
+  claudeSessionId.value = null
+  localMapping.value = {}
+  debugLog.value = []
+  searchResults.value = []
+  userSearch.value = ''
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    const container = messagesContainer.value
+    if (container) {
+      container.scrollTop = container.scrollHeight
+    }
+  })
+}
+
+function skipUserSelection() {
+  skippedUserSelection.value = true
+  searchResults.value = []
+  userSearch.value = ''
+  // Focus the query input after Vue updates the DOM
+  nextTick(() => {
+    const textarea = document.querySelector('.log-analysis-container textarea')
+    if (textarea) {
+      textarea.focus()
+    }
+  })
+}
+
+function addDebugEntry(type, label, data, tokenMapping = null) {
+  if (debugMode.value) {
+    debugLog.value.push({
+      type,
+      label,
+      data,
+      tokenMapping,
+      timestamp: new Date().toLocaleTimeString(),
+    })
+  }
+}
+
+async function submitQuery() {
+  if (!query.value.trim() || isProcessing.value) return
+  if (!selectedUser.value && !skippedUserSelection.value) return
+
+  // First, scan for PII
+  try {
+    const scanPayload = {
+      query: query.value,
+      knownPii: selectedUser.value
+        ? {
+            email: selectedUser.value.email,
+            displayname: selectedUser.value.displayname,
+            userid: selectedUser.value.id,
+          }
+        : {},
+    }
+
+    addDebugEntry('request', 'PII Scan Request', scanPayload)
+
+    const response = await fetch(`${SANITIZER_URL}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scanPayload),
+    })
+
+    if (response.ok) {
+      const scanResult = await response.json()
+      addDebugEntry('response', 'PII Scan Response', scanResult)
+
+      if (scanResult.containsEmailTrail) {
+        alert(
+          'Your query appears to contain copy-pasted email content. Please describe the issue in your own words to protect user privacy.'
+        )
+        return
+      }
+
+      if (scanResult.detectedPii && scanResult.detectedPii.length > 0) {
+        detectedPii.value = scanResult.detectedPii
+        pendingQuery.value = query.value
+        showPiiWarning.value = true
+        return
+      }
+    }
+  } catch (error) {
+    console.error('PII scan error:', error)
+    addDebugEntry('error', 'PII Scan Error', {
+      message: error.message,
+    })
+  }
+
+  await executeQuery(query.value)
+}
+
+function confirmPiiQuery() {
+  if (pendingQuery.value) {
+    executeQuery(pendingQuery.value)
+    pendingQuery.value = null
+  }
+  showPiiWarning.value = false
+}
+
+function cancelPiiQuery() {
+  pendingQuery.value = null
+  showPiiWarning.value = false
+}
+
+async function approvePrivacyReview() {
+  if (pendingPrivacyReview.value) {
+    const { originalQuery, pseudonymizedQuery } = pendingPrivacyReview.value
+    pendingPrivacyReview.value = null
+    showPrivacyReview.value = false
+    await proceedWithQuery(originalQuery, pseudonymizedQuery)
+  }
+}
+
+function cancelPrivacyReview() {
+  pendingPrivacyReview.value = null
+  showPrivacyReview.value = false
+  query.value = ''
+}
+
+async function executeQuery(queryText) {
+  isProcessing.value = true
+  processingStatus.value = 'Sanitizing query...'
+
+  try {
+    // Step 1: Sanitize the query
+    const sanitizePayload = {
+      query: queryText,
+      knownPii: selectedUser.value
+        ? {
+            email: selectedUser.value.email,
+            displayname: selectedUser.value.displayname,
+            userid: selectedUser.value.id,
+            postcode: selectedUser.value.postcode,
+            location: selectedUser.value.location,
+          }
+        : {},
+      userId: selectedUser.value?.id || 0,
+    }
+
+    addDebugEntry('request', 'Sanitize Request', sanitizePayload)
+
+    const sanitizeResponse = await fetch(`${SANITIZER_URL}/sanitize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sanitizePayload),
+    })
+
+    if (!sanitizeResponse.ok) {
+      const error = await sanitizeResponse.json()
+      throw new Error(error.message || 'Failed to sanitize query')
+    }
+
+    const sanitizeResult = await sanitizeResponse.json()
+    const {
+      pseudonymizedQuery,
+      sessionId,
+      localMapping: newMapping,
+    } = sanitizeResult
+
+    addDebugEntry(
+      'response',
+      'Sanitize Response',
+      { pseudonymizedQuery, sessionId },
+      newMapping
+    )
+
+    currentSessionId.value = sessionId
+    localMapping.value = { ...localMapping.value, ...newMapping }
+
+    // If privacy review mode is enabled, show review modal and wait for approval
+    if (privacyReviewMode.value) {
+      pendingPrivacyReview.value = {
+        originalQuery: queryText,
+        pseudonymizedQuery,
+        mapping: newMapping,
+        sessionId,
+      }
+      isProcessing.value = false
+      showPrivacyReview.value = true
+      return
+    }
+
+    // Otherwise proceed directly
+    await proceedWithQuery(queryText, pseudonymizedQuery)
+  } catch (error) {
+    console.error('Query error:', error)
+    addDebugEntry('error', 'Query Error', { message: error.message })
+    messages.value.push({
+      role: 'assistant',
+      content: `Error: ${error.message}`,
+      rawContent: `Error: ${error.message}`,
+    })
+    scrollToBottom()
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+async function proceedWithQuery(queryText, pseudonymizedQuery) {
+  isProcessing.value = true
+
+  try {
+    // Add user message to conversation (store both raw and display versions)
+    messages.value.push({
+      role: 'user',
+      content: queryText,
+      rawContent: queryText,
+    })
+    scrollToBottom()
+
+    processingStatus.value = 'Analyzing...'
+
+    // Send pseudonymized query to Claude Code for log analysis
+    const logResult = await queryLogsForUser(pseudonymizedQuery)
+
+    addDebugEntry('response', 'Log Analysis Response (raw)', {
+      analysis:
+        logResult.analysis.substring(0, 500) +
+        (logResult.analysis.length > 500 ? '...' : ''),
+      costUsd: logResult.costUsd,
+    })
+
+    // Step 3: Store both raw and de-tokenized versions with cost
+    const deTokenizedResponse = deTokenize(logResult.analysis)
+
+    messages.value.push({
+      role: 'assistant',
+      content: deTokenizedResponse,
+      rawContent: logResult.analysis,
+      mapping: { ...localMapping.value },
+      costUsd: logResult.costUsd,
+      usage: logResult.usage,
+    })
+    scrollToBottom()
+
+    query.value = ''
+  } catch (error) {
+    console.error('Query error:', error)
+    addDebugEntry('error', 'Query Error', { message: error.message })
+    messages.value.push({
+      role: 'assistant',
+      content: `Error: ${error.message}`,
+      rawContent: `Error: ${error.message}`,
+    })
+    scrollToBottom()
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+async function queryLogsForUser(userQuery) {
+  try {
+    // If a user is selected, ensure their USER token is in the query so Claude
+    // knows who to investigate — even if the mod just wrote "What have they done?"
+    let enrichedQuery = userQuery
+    if (selectedUser.value?.id && localMapping.value) {
+      // Find the USER token for the selected user's ID
+      const userToken = Object.entries(localMapping.value).find(
+        ([token, val]) =>
+          token.startsWith('USER_') && val === selectedUser.value.id.toString()
+      )
+      if (userToken && !userQuery.includes(userToken[0])) {
+        enrichedQuery = `[Investigating user ${userToken[0]}] ${userQuery}`
+      }
+    }
+
+    const requestBody = {
+      query: enrichedQuery,
+      userId: selectedUser.value?.id || 0,
+      sanitizerSessionId: currentSessionId.value,
+    }
+
+    // Include Claude session ID for conversation continuity
+    if (claudeSessionId.value) {
+      requestBody.claudeSessionId = claudeSessionId.value
+    }
+
+    addDebugEntry('request', 'Claude Code Request', requestBody)
+
+    // Forward the moderator's JWT so the helper can verify they are an
+    // authenticated mod/support before running any log analysis.
+    const authStore = useAuthStore()
+    const jwt = authStore.auth?.jwt
+
+    // Use SSE for streaming progress updates
+    const response = await fetch(`${AI_SUPPORT_URL}/api/log-analysis`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+      },
+      body: JSON.stringify(requestBody),
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return {
+          analysis:
+            '**Log Analysis Service**\n\nThe AI-powered log analysis service is not yet available.',
+          costUsd: 0,
+        }
+      }
+      const errorData = await response.json().catch(() => ({}))
+      if (response.status === 410 || errorData.error === 'SESSION_EXPIRED') {
+        claudeSessionId.value = null
+        return {
+          analysis:
+            '**Session Expired**\n\nPlease ask your question again to start a new session.',
+          costUsd: null,
+        }
+      }
+      throw new Error(errorData.message || 'Failed to query logs')
+    }
+
+    // Read SSE stream for progress updates
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let resultData = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const event = JSON.parse(line.slice(6))
+            if (event.type === 'result') {
+              resultData = event
+            } else if (event.type === 'error') {
+              throw new Error(event.message)
+            } else if (event.type === 'tool') {
+              processingStatus.value = event.message
+            } else if (event.type === 'status') {
+              processingStatus.value = event.message
+            }
+          } catch (e) {
+            if (e.message !== 'Unexpected end of JSON input') {
+              throw e
+            }
+          }
+        }
+      }
+    }
+
+    if (!resultData) {
+      return {
+        analysis: 'No response received from analysis service.',
+        costUsd: 0,
+      }
+    }
+
+    // Save Claude session ID for conversation continuity
+    if (resultData.claudeSessionId) {
+      claudeSessionId.value = resultData.claudeSessionId
+      addDebugEntry('response', 'Claude Code Response', {
+        claudeSessionId: resultData.claudeSessionId,
+        isNewSession: resultData.isNewSession,
+        analysisLength: resultData.analysis?.length || 0,
+        costUsd: resultData.costUsd,
+        usage: resultData.usage,
+      })
+    }
+
+    return {
+      analysis: resultData.analysis || 'No analysis available.',
+      costUsd: resultData.costUsd,
+      usage: resultData.usage,
+    }
+  } catch (error) {
+    if (error.message.includes('fetch')) {
+      const userInfo = selectedUser.value
+        ? `\n\nUser ID for manual search: **${selectedUser.value.id}**`
+        : ''
+      return {
+        analysis: `**Log Analysis Service**\n\nThe AI log analysis service is not currently running.${userInfo}`,
+        costUsd: null,
+      }
+    }
+    return {
+      analysis: `Unable to query logs: ${error.message}`,
+      costUsd: null,
+    }
+  }
+}
+
+function deTokenize(text) {
+  if (!text || !localMapping.value) return text
+
+  let result = text
+  for (const [token, realValue] of Object.entries(localMapping.value)) {
+    result = result.split(token).join(realValue)
+  }
+  return result
+}
+
+function formatMessageContent(msg) {
+  if (!msg.content) return ''
+
+  // Simple approach: render markdown, then show raw content.
+  // The privacy guarantee comes from the pseudonymizer (Claude never sees real PII),
+  // not from frontend rendering tricks. The "Show Anonymised" toggle controls whether
+  // we display the de-tokenized content or the raw pseudonymized content.
+  const content = showAnonymisedData.value
+    ? msg.rawContent || msg.content
+    : msg.content
+
+  const html = marked(content)
+
+  return html
+}
+
+function formatDebugData(data) {
+  if (typeof data === 'string') return data
+  return JSON.stringify(data, null, 2)
+}
+
+function cancelQuery() {
+  isProcessing.value = false
+  processingStatus.value = ''
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+}
+
+// MCP Query Approval Methods
+</script>
+
+<style scoped lang="scss">
+.log-analysis-container {
+  border: 1px solid #dee2e6;
+  background: #f8f9fa;
+}
+
+.log-analysis-header {
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.session-cost {
+  font-size: 0.8rem;
+  color: #757575;
+  font-weight: normal;
+}
+
+.log-analysis-step {
+  background: #ffffff;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.user-results {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.user-result-item {
+  border: 1px solid #dee2e6;
+  cursor: pointer;
+  transition: background-color 0.15s;
+
+  &:hover {
+    background-color: #e9ecef;
+  }
+}
+
+.selected-user-banner {
+  border-bottom: 1px solid #dee2e6;
+}
+
+.log-analysis-messages {
+  background: #f5f5f5;
+  min-height: 200px;
+  max-height: 500px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.message-item {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  max-width: 85%;
+  background: #ffffff;
+}
+
+.message-user {
+  margin-left: auto;
+  border: 2px solid #28a745;
+  border-bottom-right-radius: 0.125rem;
+}
+
+.message-user .message-header {
+  color: #28a745;
+}
+
+.message-assistant {
+  margin-right: auto;
+  border: 2px solid #007bff;
+  border-bottom-left-radius: 0.125rem;
+}
+
+.message-assistant .message-header {
+  color: #007bff;
+}
+
+.message-cost {
+  margin-top: 0.5rem;
+  font-size: 0.7rem;
+  color: #9e9e9e;
+  text-align: right;
+}
+
+.chat-input-area {
+  background: #ffffff;
+  border-top: 1px solid #dee2e6;
+}
+
+.message-content {
+  :deep(p) {
+    margin-bottom: 0.5rem;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  :deep(ul),
+  :deep(ol) {
+    margin-bottom: 0.5rem;
+  }
+
+  :deep(code) {
+    background: #e9ecef;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.85em;
+  }
+
+  /* PII highlighting - always red to show what was anonymised */
+  :deep(.pii-highlight) {
+    background-color: #ffebee;
+    color: #c62828;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    border-bottom: 2px solid #ef5350;
+  }
+}
+
+/* Debug panel styles */
+.debug-panel {
+  background: #263238;
+  color: #eceff1;
+  border-bottom: 1px solid #dee2e6;
+  max-height: 300px;
+  overflow-y: auto;
+
+  h6 {
+    color: #80cbc4;
+    margin-bottom: 0.5rem;
+  }
+}
+
+.debug-entries {
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.debug-entry {
+  border-radius: 4px;
+
+  &.debug-request {
+    background: #1b5e20;
+    border-left: 3px solid #4caf50;
+  }
+
+  &.debug-response {
+    background: #0d47a1;
+    border-left: 3px solid #2196f3;
+  }
+
+  &.debug-error {
+    background: #b71c1c;
+    border-left: 3px solid #f44336;
+  }
+}
+
+.debug-header {
+  font-size: 0.9em;
+}
+
+.debug-data {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.5rem;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 150px;
+  overflow-y: auto;
+  color: #b0bec5;
+}
+
+.token-mapping {
+  .token-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+
+    .token {
+      background: #ffcdd2;
+      color: #c62828;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+    }
+
+    .real-value {
+      color: #ffcc80;
+    }
+  }
+}
+
+.gap-2 {
+  gap: 0.5rem;
+}
+
+/* Privacy Review Modal styles */
+.privacy-review-box {
+  padding: 1rem;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  &.original {
+    background: #fff3e0;
+    border: 1px solid #ffcc80;
+  }
+
+  &.pseudonymized {
+    background: #e8f5e9;
+    border: 1px solid #81c784;
+  }
+}
+
+.privacy-review-section h6 {
+  margin-bottom: 0.5rem;
+  color: #616161;
+}
+
+/* MCP Results Preview styles */
+.mcp-results-preview {
+  max-height: 400px;
+  overflow-y: auto;
+  background: #263238;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.result-stream {
+  border-bottom: 1px solid #37474f;
+  padding-bottom: 0.5rem;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.stream-labels {
+  color: #80cbc4;
+  margin-bottom: 0.25rem;
+}
+
+.log-entry {
+  color: #eceff1;
+  padding: 0.1rem 0;
+  display: flex;
+  gap: 0.5rem;
+
+  .timestamp {
+    color: #78909c;
+    flex-shrink: 0;
+  }
+
+  .log-line {
+    word-break: break-word;
+  }
+}
+
+.gap-3 {
+  gap: 1rem;
+}
+
+/* DB Results Preview styles */
+.db-results-preview {
+  max-height: 400px;
+  overflow: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+
+  .table {
+    margin-bottom: 0;
+    font-size: 0.85em;
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #f8f9fa;
+      z-index: 1;
+    }
+
+    td {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}
+</style>

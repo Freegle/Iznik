@@ -1,0 +1,23 @@
+{
+    "version": 2,
+    "timestamp": "2026-02-01T15:30:51Z",
+    "envelope": {
+        "from": "hello@kerrycurl.com",
+        "to": "bounce-43109617-1769959840@users.ilovefreegle.org"
+    },
+    "raw_email": "RnJvbSBoZWxsb0BrZXJyeWN1cmwuY29tIFN1biBGZWIgMDEgMTU6MzA6NTEgMjAyNgpSZXR1cm4tcGF0aDogPGhlbGxvQGtlcnJ5Y3VybC5jb20+CkVudmVsb3BlLXRvOiBib3VuY2UtNDMxMDk2MTctMTc2OTk1OTg0MEB1c2Vycy5pbG92ZWZyZWVnbGUub3JnClJlY2VpdmVkOiBmcm9tIHNtdHByZWxheTAwMTMuaG9zdGVkZW1haWwuY29tIChbMjE2LjQwLjQ0LjEzXSBoZWxvPXJlbGF5Lmhvc3RlZGVtYWlsLmNvbSkKCWJ5IGJ1bGs0Lmlsb3ZlZnJlZWdsZS5vcmcgd2l0aCBlc210cHMgIChUTFMxLjMpIHRscyBUTFNfRUNESEVfUlNBX1dJVEhfQUVTXzI1Nl9HQ01fU0hBMzg0CgkoRXhpbSA0Ljk1KQoJKGVudmVsb3BlLWZyb20gPGhlbGxvQGtlcnJ5Y3VybC5jb20+KQoJaWQgMXZtWlBXLTAwMHdMei1VdAoJZm9yIGJvdW5jZS00MzEwOTYxNy0xNzY5OTU5ODQwQHVzZXJzLmlsb3ZlZnJlZWdsZS5vcmc7CglTdW4sIDAxIEZlYiAyMDI2IDE1OjMwOjUxICswMDAwClJlY2VpdmVkOiBmcm9tIHNtdHBpbjA5Lmhvc3RlZGVtYWlsLmNvbSAoYTEwLnJvdXRlci5mbG9hdC4xOCBbMTAuMjAwLjE4LjFdKQoJYnkgdW5pcmVsYXkwNC5ob3N0ZWRlbWFpbC5jb20gKFBvc3RmaXgpIHdpdGggRVNNVFAgaWQgRUNCNEUxQTA4QTgKCWZvciA8Ym91bmNlLTQzMTA5NjE3LTE3Njk5NTk4NDBAdXNlcnMuaWxvdmVmcmVlZ2xlLm9yZz47IFN1biwgIDEgRmViIDIwMjYgMTU6MzA6NDkgKzAwMDAgKFVUQykKU3ViamVjdDogKGF1dG9yZXNwb25zZSkgW05vcndpY2ggRnJlZWdsZV0gT0ZGRVJFRDogU21hbGwgY2FycGV0IG1hdHMgcnVubmVycyAoRWF0b24gTlI0KSAKTWVzc2FnZS1JRDogPDE3Njk5NTk4NDktNTk4NzQ1QGF1dG9yZXBseS5ob3N0ZWRlbWFpbC5jb20+CkZyb206IGhlbGxvQGtlcnJ5Y3VybC5jb20KVG86IGJvdW5jZS00MzEwOTYxNy0xNzY5OTU5ODQwQHVzZXJzLmlsb3ZlZnJlZWdsZS5vcmcKRGF0ZTogU3VuLCAxIEZlYiAyMDI2IDE1OjMwOjQ5ICswMDAwIChVVEMpClgtQXV0b3Jlc3BvbmRlcjogV2lsbCBub3Qgc2VuZCBhbm90aGVyIGF1dG9yZXBseSBmb3IgODY0MDAgc2Vjb25kcwpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9VVRGLTg7IGZvcm1hdD1mbG93ZWQKQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogOGJpdAoKSGkKClRoYW5rcyBmb3IgeW91ciBlbWFpbC4gSeKAmW0gbm93IGluIG91dCBvZiBvZmZpY2UgbW9kZSB1bnRpbCBXZWRzIEZlYiA0LiAKCkkgbWF5IG5vdCBiZSBjaGVja2luZyBpbiBvbiBlbWFpbHMgYW5kIHNvY2lhbHMgZHVyaW5nIHRoaXMgcGVyaW9kIGJ1dCB3aWxsIHJlcGx5IHdoZW4gcG9zc2libGUuCgpUaGFua3MKCktlcnJ5CgoKCg==",
+    "legacy_result": {
+        "routing_outcome": "Dropped",
+        "message_id": "119047173",
+        "user_id": 43109617,
+        "group_id": null,
+        "spam_type": null,
+        "spam_reason": null,
+        "subject": "(autoresponse) [Norwich Freegle] OFFERED: Small carpet mats runners (Eaton NR4) ",
+        "from_address": "hello@kerrycurl.com",
+        "our_posting_status": null,
+        "membership_role": null,
+        "group_moderated": null,
+        "override_moderation": null
+    }
+}

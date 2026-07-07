@@ -1,0 +1,126 @@
+<?php
+namespace Freegle\Iznik;
+
+if (!defined('UT_DIR')) {
+    define('UT_DIR', dirname(__FILE__) . '/../..');
+}
+
+require_once(UT_DIR . '/../../include/config.php');
+require_once(UT_DIR . '/../../include/db.php');
+
+/**
+ * @backupGlobals disabled
+ * @backupStaticAttributes disabled
+ */
+class WorryWordsTest extends IznikTestCase
+{
+    private $dbhr, $dbhm;
+
+    protected function setUp() : void
+    {
+        parent::setUp();
+
+        global $dbhr, $dbhm;
+        $this->dbhr = $dbhr;
+        $this->dbhm = $dbhm;
+
+        $dbhm->preExec("DELETE FROM worrywords WHERE keyword LIKE 'UTtest%';");
+    }
+
+    public function testBasic()
+    {
+        $this->dbhm->preExec("INSERT INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'UTtest1',
+            WorryWords::TYPE_REPORTABLE
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: fine (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: UTtest1 (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+
+        $this->waitBackground();
+        $logs = $this->dbhr->preQuery("SELECT * FROM logs WHERE msgid = ?", [$mid]);
+        $log = $this->findLog(Log::TYPE_MESSAGE, Log::SUBTYPE_WORRYWORDS, $logs);
+        error_log("Found log " . var_export($log, TRUE));
+
+//        $m = new Message($this->dbhr, $this->dbhm);
+//        $mid = $m->createDraft();
+//        $m = new Message($this->dbhr, $this->dbhm, $mid);
+//        $m->setPrivate('subject', 'OFFER: fine (Somewhere)');
+//        $m->setPrivate('textbody', "Some text uttest2\r\nMore text");
+//        $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+//
+//        $this->waitBackground();
+//        $logs = $this->dbhr->preQuery("SELECT * FROM logs WHERE msgid = ?", [$mid]);
+//        $log = $this->findLog(Log::TYPE_MESSAGE, Log::SUBTYPE_WORRYWORDS, $logs);
+//        error_log("Found log " . var_export($log, TRUE));
+    }
+
+    public function testAllowed()
+    {
+        $this->dbhm->preExec("INSERT IGNORE INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'Pound',
+            WorryWords::TYPE_REVIEW
+        ]);
+
+        $this->dbhm->preExec("INSERT IGNORE INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'Pound Hill',
+            WorryWords::TYPE_ALLOWED
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: Pound (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+        $m->setPrivate('subject', 'OFFER: Pound Hill (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+    }
+
+    public function testSpace()
+    {
+        $this->dbhm->preExec("INSERT INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'UTtest1 UTtest2',
+            WorryWords::TYPE_REVIEW
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: UTtest1 UTtest2 (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+    }
+
+//
+//    public function testEH()
+//    {
+//        $w = new WorryWords($this->dbhr, $this->dbhm);
+//        $m = new Message($this->dbhr, $this->dbhm, 62381003);
+//        error_log(
+//            var_export($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()), TRUE)
+//        );
+//    }
+}

@@ -1,0 +1,1644 @@
+// @ts-nocheck
+/**
+ * User related utility functions for Playwright tests
+ */
+
+const path = require('path')
+const { expect } = require('@playwright/test')
+const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
+const { SCREENSHOTS_DIR } = require('../config')
+const { waitForModal } = require('./ui')
+
+/**
+ * Waits for auth to be persisted to localStorage after login.
+ * This ensures the auth token is available before navigating away.
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @returns {Promise<void>}
+ */
+async function waitForAuthPersistence(page) {
+  console.log('Waiting for auth to be persisted to localStorage...')
+  await Promise.race([
+    page.waitForFunction(
+      () => {
+        try {
+          const authData = localStorage.getItem('auth')
+          if (!authData) return false
+          const parsed = JSON.parse(authData)
+          // Check the nested auth object for jwt or persistent token
+          const tokens = parsed?.auth
+          return !!(tokens?.jwt || tokens?.persistent)
+        } catch (e) {
+          return false
+        }
+      },
+      null,
+      { timeout: timeouts.ui.appearance }
+    ),
+    new Promise((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error('waitForAuthPersistence timed out (renderer unresponsive)')
+          ),
+        timeouts.ui.appearance + 5000
+      )
+    ),
+  ]).catch((e) => {
+    console.warn('waitForAuthPersistence timed out:', e.message)
+  })
+  console.log('Auth persisted to localStorage')
+}
+
+/**
+ * Clears browser cookies and storage without navigating.
+ * @param {import('@playwright/test').Page} page - Current Playwright page object
+ * @returns {Promise<void>}
+ */
+async function clearSessionData(page) {
+  // If the page/context was already closed (e.g. the test is in an error-recovery
+  // path after a prior navigation destroyed the page), there's nothing left to
+  // clear — swallow the "Target page, context or browser has been closed" error
+  // instead of re-raising it from logger.js's proxy wrapper.
+  if (page.isClosed && page.isClosed()) {
+    return
+  }
+
+  try {
+    // Race against a 5-second timeout: if the renderer is unresponsive (common
+    // under CI load after a complex prior test), the evaluate will hang forever
+    // because Node can't cancel a pending Promise. We treat storage clearing as
+    // best-effort — cookies are what matter for auth state.
+    await Promise.race([
+      page.evaluate(() => {
+        try {
+          localStorage.clear()
+        } catch {}
+        try {
+          sessionStorage.clear()
+        } catch {}
+      }),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ])
+  } catch (e) {
+    if (
+      !/closed|Target .* closed|Execution context was destroyed/i.test(
+        e.message
+      )
+    ) {
+      throw e
+    }
+  }
+
+  try {
+    const context = page.context()
+    await context.clearCookies()
+  } catch (e) {
+    if (!/closed|Target .* closed/i.test(e.message)) {
+      throw e
+    }
+  }
+}
+
+/**
+ * Logs out by clicking the actual logout button in the UI.
+ * Falls back to clearing cookies/storage if no logout button is found
+ * (e.g. user is not logged in).
+ * @param {import('@playwright/test').Page} page - Current Playwright page object
+ * @param {boolean} [navigateToHome=true] - Whether to navigate to homepage after logout
+ * @returns {Promise<import('@playwright/test').Page>} - Returns the same page object
+ */
+async function logoutIfLoggedIn(page, navigateToHome = true) {
+  const entryUrl = page.isClosed && page.isClosed() ? 'CLOSED' : page.url()
+  console.log(`[logoutIfLoggedIn] Start — URL=${entryUrl}`)
+
+  try {
+    // Wait for any in-flight redirect to settle before clicking the logout button.
+    // After signUpViaHomepage, the page may be at /browse which immediately redirects
+    // to /explore for new users (no group membership). If we click the logout button
+    // while /browse→/explore is still committing, the logout redirect (→/) competes with
+    // the in-flight /explore commit, causing two simultaneous hard navigations that freeze
+    // the V8 renderer for 35+ seconds before freeze-detection closes the page.
+    // Waiting for domcontentloaded ensures we are on a stable page before clicking.
+    // This only applies to /browse and /explore (internal pages, no external scripts
+    // that could block), not the home page where waitForLoadState was reverted in
+    // 697eabc2b because Google One Tap etc. can hang that event indefinitely.
+    if (!page.isClosed()) {
+      await page
+        .waitForLoadState('domcontentloaded', { timeout: 5000 })
+        .catch(() => {})
+    }
+
+    // /browse auto-redirects new users (no group membership) to /explore via JS
+    // AFTER DOMContentLoaded fires. waitForLoadState above resolves immediately
+    // because /browse's DOMContentLoaded has already fired by the time
+    // logoutIfLoggedIn is called, leaving the JS-initiated /browse→/explore
+    // redirect still in flight. Clicking logout while that navigation is
+    // committing causes two simultaneous hard navigations that freeze the V8
+    // renderer for 35+ seconds before freeze-detection closes the page.
+    if (!page.isClosed()) {
+      const currentPath = (() => {
+        try {
+          return new URL(page.url()).pathname
+        } catch {
+          return ''
+        }
+      })()
+      if (currentPath === '/browse') {
+        console.log(
+          '[logoutIfLoggedIn] At /browse — waiting for /browse→/explore redirect to complete'
+        )
+        await page
+          .waitForURL(/\/(explore|myposts)/, { timeout: 3000 })
+          .catch(() => {})
+        await page
+          .waitForLoadState('domcontentloaded', { timeout: 3000 })
+          .catch(() => {})
+      }
+    }
+
+    // Clear any lingering modal backdrop from a prior modal (e.g. the login
+    // modal that closes via route redirect after signUpViaHomepage). The
+    // backdrop node in <div id="teleports"> otherwise intercepts pointer
+    // events and blocks the #menu-option-logout click.
+    if (!page.isClosed()) {
+      await page
+        .evaluate(() => {
+          document
+            .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+            .forEach((el) => {
+              el.classList.remove('show')
+              el.style.display = 'none'
+            })
+          document
+            .querySelectorAll('.modal-backdrop')
+            .forEach((el) => el.remove())
+          document.body.classList.remove('modal-open')
+          document.body.style.removeProperty('overflow')
+          document.body.style.removeProperty('padding-right')
+        })
+        .catch(() => {})
+    }
+
+    // Check if the logout button is visible (desktop or mobile)
+    const desktopLogout = page.locator('#menu-option-logout')
+    const mobileLogout = page.locator('text=Logout').filter({ visible: true })
+
+    // Briefly wait for a logout button to become visible. Right after
+    // signUpViaHomepage / loginViaHomepage the navbar may still be hydrating,
+    // and the synchronous isVisible() check below would miss it — causing a
+    // fall-through into the expensive gotoAndVerify('/') path that can hang
+    // for 200+ seconds under parallel CI load and burn the test budget
+    // (symptom: test-reply-flow-existing-user.spec.js 3.1 timing out at 20m
+    // after "No logout button visible").
+    await Promise.race([
+      desktopLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+      mobileLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+    ])
+
+    const isDesktopVisible = await desktopLogout
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+    const isMobileVisible = await mobileLogout
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+
+    // Allow 401 errors from in-flight API requests that complete after logout
+    // (addAllowedErrorPattern only exists on fixture-enhanced pages)
+    if (typeof page.addAllowedErrorPattern === 'function') {
+      page.addAllowedErrorPattern(
+        /Failed to load resource: the server responded with a status of 401/
+      )
+    }
+
+    if (isDesktopVisible) {
+      console.log('Clicking desktop logout button')
+      try {
+        // Use a bounded timeout so a non-actionable element (e.g. animating
+        // navbar under CI CPU load) doesn't burn the full action timeout.
+        await desktopLogout.click({ timeout: timeouts.ui.interaction })
+      } catch {
+        // Element is visible but failed actionability — JS click bypasses
+        // stability checks while still dispatching the click event.
+        console.log('Standard click timed out, falling back to JS click')
+        await desktopLogout.evaluate((el) => el.click())
+      }
+    } else if (isMobileVisible) {
+      console.log('Clicking mobile logout button')
+      await mobileLogout.click()
+    } else {
+      console.log('No logout button visible')
+    }
+
+    // Always clear session data BEFORE navigating. If the logout button click
+    // didn't work (hydration race), the old cookies would be sent with the
+    // navigation request, causing the server to render an authenticated page
+    // whose in-flight API responses re-establish the session via Set-Cookie.
+    await clearSessionData(page)
+
+    if (navigateToHome) {
+      // Navigate to '/' to reset page state for the next test step.
+      // We use a direct page.goto() rather than gotoAndVerify() because:
+      //   1. We only need the page to be in a clean location, not verified content.
+      //   2. Under CI load the API sometimes fails, rendering "Something went wrong".
+      //      gotoAndVerify() treats that as a fatal error and then tries to take
+      //      screenshots (no timeout), which can hang for hundreds of seconds and
+      //      burn the entire 10-minute test budget.
+      //   3. Any page-content errors here are irrelevant to the test being set up;
+      //      the test will navigate to its actual target URL straight afterwards.
+      //
+      // Skip the explicit navigation if the logout redirect already landed us at '/'.
+      // Calling page.goto('/') while the page is already loading '/' (from the logout
+      // redirect) triggers a double-navigation race: the logout-redirect navigation and
+      // the explicit goto compete, Chromium ends up processing both simultaneously, and
+      // the V8 renderer can hang for 35+ seconds before freeze-detection fires. This
+      // race is most visible when /browse auto-redirects new users to /explore (no group
+      // membership), because logoutIfLoggedIn then runs from /explore — the logout
+      // redirect to '/' is still in flight when goto('/') is called.
+      const currentPathIsHome =
+        !page.isClosed() &&
+        (() => {
+          try {
+            return new URL(page.url()).pathname === '/'
+          } catch {
+            return false
+          }
+        })()
+
+      if (currentPathIsHome) {
+        console.log(
+          '[logoutIfLoggedIn] Logout redirect already at home page, skipping explicit navigation'
+        )
+        // The logout redirect changed the URL to '/' but Nuxt's post-navigation
+        // JavaScript (store updates, API calls) is still running. If the caller
+        // immediately navigates to another URL (e.g. /give via postMessage), the two
+        // concurrent navigations race and the V8 renderer can hang for 35+ seconds.
+        // Waiting for the sign-in button confirms Nuxt has fully hydrated the
+        // logged-out state, at which point it is safe for the caller to navigate.
+        // Unlike waitForLoadState('domcontentloaded'), this does not block on
+        // external scripts — it only depends on Vue/Nuxt hydration completing.
+        await page
+          .locator('.test-signinbutton')
+          .first()
+          .waitFor({ state: 'visible', timeout: 15000 })
+          .catch(() => {})
+      } else {
+        console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
+        try {
+          await page.goto('/', {
+            timeout: timeouts.navigation.initial,
+            waitUntil: 'domcontentloaded',
+          })
+          console.log(
+            `[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`
+          )
+        } catch (navErr) {
+          // If the page itself was closed (e.g. by freeze-detection heartbeat), propagate
+          // as fatal so the test fails immediately rather than continuing with a dead page.
+          if (
+            page.isClosed() ||
+            navErr.message.includes(
+              'Target page, context or browser has been closed'
+            )
+          ) {
+            throw navErr
+          }
+          console.warn(
+            `[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(
+              0,
+              200
+            )}`
+          )
+        }
+      }
+    }
+
+    // Clear again to catch any cookies set by the unauthenticated page load
+    await clearSessionData(page)
+
+    // Don't reset allowed error patterns here — the 401 response from in-flight
+    // requests may arrive asynchronously after this point. Each test gets a fresh
+    // browser context so patterns don't leak between tests.
+
+    return page
+  } catch (error) {
+    console.error(
+      `[logoutIfLoggedIn] TRY BLOCK FAILED: ${error.message.substring(0, 300)}`
+    )
+    // Fall back to clearing cookies/storage
+    await clearSessionData(page)
+    if (navigateToHome) {
+      console.log('[logoutIfLoggedIn] Navigating to homepage (catch block)')
+      try {
+        await page.goto('/', {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+        })
+        console.log(
+          `[logoutIfLoggedIn] Navigated to homepage (catch block) url=${page.url()}`
+        )
+      } catch (navErr) {
+        console.warn(
+          `[logoutIfLoggedIn] Homepage navigation failed in catch block (non-fatal): ${navErr.message.substring(
+            0,
+            200
+          )}`
+        )
+      }
+    }
+    return page
+  }
+}
+
+/**
+ * Waits for an enabled sign-in button on the page.
+ * With SSR, buttons may be rendered disabled and only become enabled after Vue hydration.
+ * This function polls until a visible, enabled button is found or timeout.
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @returns {Promise<import('@playwright/test').Locator|null>} - Returns the enabled button locator or null
+ */
+async function waitForEnabledSignInButton(page) {
+  const buttons = page.locator('.test-signinbutton')
+  // Wait for at least one element to be visible
+  await page
+    .locator('.test-signinbutton:visible')
+    .first()
+    .waitFor({ timeout: timeouts.ui.appearance })
+  const count = await buttons.count()
+  console.log(`Found ${count} .test-signinbutton elements`)
+
+  if (count === 0) {
+    console.error('Could not find .test-signinbutton on homepage')
+    return null
+  }
+
+  // With SSR, buttons may be rendered disabled and only become enabled after
+  // Vue hydration. Poll until we find an enabled button or timeout.
+  const hydrationTimeout = timeouts.ui.appearance
+  const pollInterval = 200
+  const startTime = Date.now()
+  let signInButton = null
+
+  while (Date.now() - startTime < hydrationTimeout) {
+    // Look for the first visible and enabled button
+    for (let i = 0; i < count; i++) {
+      const btn = buttons.nth(i)
+
+      // Check if this button is visible
+      const isVisible = await btn.isVisible({ timeout: 500 }).catch(() => false)
+
+      if (isVisible) {
+        // Check if it's enabled by checking various disabled states
+        const isDisabled = await btn
+          .evaluate((el) => {
+            // For button elements, check the disabled property
+            if (el.disabled) return true
+
+            // For any element, check disabled attribute values
+            const disabledAttr = el.getAttribute('disabled')
+            if (disabledAttr === 'true' || disabledAttr === '') return true
+
+            // Check for disabled classes
+            if (el.classList.contains('disabled')) return true
+
+            return false
+          })
+          .catch(() => false)
+
+        if (!isDisabled) {
+          console.log(`Found visible, enabled button at index ${i}`)
+          signInButton = btn
+          break
+        }
+      }
+    }
+
+    if (signInButton) {
+      break
+    }
+
+    // Wait before retrying - button may still be disabled during hydration
+    console.log(
+      'Sign-in button disabled (likely awaiting hydration), retrying...'
+    )
+    await page.waitForTimeout(pollInterval)
+  }
+
+  if (!signInButton) {
+    console.error(
+      'Could not find visible, enabled .test-signinbutton on homepage after waiting for hydration'
+    )
+    return null
+  }
+
+  // Wait for the button to be ready
+  await signInButton.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+
+  return signInButton
+}
+
+/**
+ * Signs up a new user through the login modal on the homepage
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @param {string} email - Email address to use for sign up
+ * @param {string} [displayName] - Optional display name (generates one if not provided)
+ * @param {string} [password=DEFAULT_TEST_PASSWORD] - Optional password (uses default if not provided)
+ * @param {boolean} [marketingConsent=null] - Optional marketing consent value (null means don't change default)
+ * @param {Object} [options={}] - Additional options
+ * @param {boolean} [options.skipLogout=false] - Skip logout if caller already handled it
+ * @returns {Promise<boolean>} - Returns true if sign up was successful
+ */
+async function signUpViaHomepage(
+  page,
+  email,
+  displayName,
+  password = DEFAULT_TEST_PASSWORD,
+  marketingConsent = null,
+  options = {}
+) {
+  const { skipLogout = false } = options
+  console.log(`Starting signup process for email: ${email}`)
+
+  // Clear session data if not skipped (fast, no navigation)
+  if (!skipLogout) {
+    await clearSessionData(page)
+    console.log('Cleared session data before signup')
+  }
+
+  // Always navigate to homepage — even if already there.  After clearSessionData,
+  // the in-memory Pinia store still has stale state (e.g. loggedInEver=true).
+  // A fresh page load re-hydrates from the now-empty localStorage so the login
+  // modal opens in signup mode rather than login mode.
+  //
+  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
+  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
+  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
+  // 10m test budget. The sign-in button is in SSR-rendered HTML and
+  // waitForEnabledSignInButton polls for hydration separately, so we don't
+  // need `load`. Same reasoning as logoutIfLoggedIn above.
+  // Use maxRetries: 1 to prevent up to 3 retries × 202s timeout = ~10m per call.
+  await page.gotoAndVerify('/', {
+    timeout: timeouts.navigation.initial,
+    waitUntil: 'domcontentloaded',
+    maxRetries: 1,
+  })
+
+  // Wait for page to be fully loaded with JavaScript
+  // Don't use networkidle - the app has background polling that prevents idle state
+  await page.waitForLoadState('domcontentloaded', {
+    timeout: timeouts.navigation.default,
+  })
+
+  // Find and click the sign-in button on the homepage to open the login modal
+  console.log('Opening login modal')
+
+  const signInButton = await waitForEnabledSignInButton(page)
+  if (!signInButton) {
+    return false
+  }
+
+  console.log(`Found valid sign-in button, clicking...`)
+  await signInButton.click()
+
+  // Wait for login modal to appear
+  console.log('Waiting for login modal')
+  await page
+    .locator('#loginModal, .modal-dialog:has-text("Join the Reuse Revolution")')
+    .first()
+    .waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+
+  // Ensure we're in signup mode, not signin mode
+  console.log('Checking if in signup mode')
+
+  // Look for either "New freegler? Register" or similar text
+  const possibleRegisterLinks = [
+    'text=New freegler? Register',
+    'button:has-text("Create an account")',
+    'span:has-text("Create an account on Freegle")',
+    'button:has-text("Register")',
+    'button:has-text("Sign up")',
+    'text=New to Freegle? Register',
+    "text=Don't have an account? Register",
+    'text=New freegle? Register',
+  ]
+
+  // Try each possible register link
+  for (const selector of possibleRegisterLinks) {
+    const registerLink = page.locator(selector)
+
+    // Check if this link is visible
+    if (
+      await registerLink
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      // We're in login mode, click to switch to register mode
+      console.log(
+        `Found register link "${selector}", switching to register mode`
+      )
+      await registerLink.click()
+
+      // Wait for the fullname input to appear which indicates we're in register mode
+      const fullnameInput = page.locator('#fullname, input[name="fullname"]')
+      await fullnameInput.waitFor({
+        state: 'visible',
+        timeout: timeouts.ui.appearance,
+      })
+
+      break // Exit the loop once we've found and clicked a link
+    }
+  }
+
+  // Check if we're in register mode by looking for the name input.
+  // Wait for it — the modal may still be animating or the signUp computed
+  // may not have resolved yet (especially on first visit where it defaults to signup).
+  const fullnameInput = page.locator('#fullname, input[name="fullname"]')
+  try {
+    await fullnameInput.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+  } catch {
+    console.log('Could not find or switch to register mode')
+    return false
+  }
+
+  // Fill in the registration form
+  console.log('Filling in registration form')
+
+  // Generate display name if not provided
+  const fullName = displayName || `Test User ${Date.now()}`
+
+  // Fill email FIRST — the EmailValidator component does an async domain check
+  // that can trigger a Vue re-render, which may clear other fields. By filling
+  // email first, any re-render happens before we fill the name.
+  const emailInput = page
+    .locator('input[type="email"], input[name="email"]')
+    .first()
+  await emailInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await emailInput.fill(email)
+
+  // Fill in the password field
+  const passwordInput = page
+    .locator('input[type="password"], input[name="password"]')
+    .first()
+  await passwordInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await passwordInput.fill(password)
+
+  // Fill in the name field LAST so it isn't cleared by EmailValidator re-renders
+  await fullnameInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await fullnameInput.fill(fullName)
+
+  // Handle marketing consent if specified
+  if (marketingConsent !== null) {
+    console.log(`Setting marketing consent to: ${marketingConsent}`)
+    const marketingCheckbox = page.locator('#marketingConsent')
+
+    // Wait for the checkbox to be visible
+    await marketingCheckbox.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+
+    if (marketingConsent === true) {
+      // Ensure it's checked (should be by default)
+      const isChecked = await marketingCheckbox
+        .isChecked({ timeout: 5000 })
+        .catch(() => false)
+      if (!isChecked) {
+        await marketingCheckbox.check()
+      }
+    } else if (marketingConsent === false) {
+      // Uncheck it
+      const isChecked = await marketingCheckbox
+        .isChecked({ timeout: 5000 })
+        .catch(() => true)
+      if (isChecked) {
+        await marketingCheckbox.uncheck()
+      }
+    }
+  }
+
+  // Find and click the Register button in the modal
+  console.log('Clicking register button')
+  const registerButton = page.locator(
+    'button:has-text("Join Freegle!"), .btn:has-text("Join Freegle!"), button:has-text("Register on Freegle"), .btn:has-text("Register on Freegle")'
+  )
+  await registerButton.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await registerButton.click()
+
+  // Wait for successful registration
+  console.log('Waiting for confirmation after registration')
+
+  let registrationSuccessful = false
+
+  try {
+    // Wait for redirect to explore, myposts, or browse page after successful registration
+    await page.waitForURL(/\/(explore|myposts|browse)/, {
+      timeout: timeouts.navigation.default,
+    })
+
+    const currentUrl = page.url()
+    if (currentUrl.includes('/explore')) {
+      console.log('Redirected to explore page - registration successful')
+    } else if (currentUrl.includes('/myposts')) {
+      console.log('Redirected to myposts page - registration successful')
+    } else if (currentUrl.includes('/browse')) {
+      console.log('Redirected to browse page - registration successful')
+    }
+
+    registrationSuccessful = true
+  } catch (error) {
+    // If we're not redirected to explore, look for other success indicators
+    const successIndicators = [
+      'text=thank you for registering',
+      'text=registration successful',
+      'text=verify your email',
+      'text=confirmation email',
+      'text=successfully registered',
+      'text=welcome to freegle',
+      'text=no community for your area',
+    ]
+
+    for (const indicator of successIndicators) {
+      try {
+        await page
+          .waitForSelector(indicator, {
+            timeout: timeouts.ui.appearance,
+            state: 'visible',
+          })
+          .then(() => {
+            registrationSuccessful = true
+            console.log(`Registration success detected with: "${indicator}"`)
+          })
+          .catch(() => {
+            // This particular indicator wasn't found, continue to next
+          })
+
+        if (registrationSuccessful) break
+      } catch (error) {
+        // Continue to the next indicator
+      }
+    }
+  }
+
+  // Wait for auth persistence AFTER determining success — outside the
+  // try/catch so a persistence timeout doesn't trigger the slow indicator loop.
+  // Auth MUST be persisted to localStorage for the session to survive hard
+  // navigation (gotoAndVerify). Without it, SSR renders unauthenticated pages.
+  if (registrationSuccessful) {
+    await waitForAuthPersistence(page)
+  }
+
+  return registrationSuccessful
+}
+
+/**
+ * Logs in a user via the login modal on the homepage
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @param {string} email - Email address to use for login
+ * @param {string} [password=DEFAULT_TEST_PASSWORD] - Password to use for login
+ * @param {boolean} [expectedMarketingConsent=null] - Optional expected marketing consent value to verify (null means don't verify)
+ * @returns {Promise<boolean>} - Returns true if login was successful
+ */
+async function loginViaHomepage(
+  page,
+  email,
+  password = DEFAULT_TEST_PASSWORD,
+  expectedMarketingConsent = null
+) {
+  console.log(`Starting login process for email: ${email}`)
+
+  // Clear session data before login (fast, no navigation)
+  await clearSessionData(page)
+  console.log('Cleared session data before login')
+
+  // Navigate to homepage if we're not already there.
+  // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
+  // fire `load` in CI — see signUpViaHomepage for the full rationale.
+  const currentUrl = page.url()
+  if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
+    await page.gotoAndVerify('/', {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+      maxRetries: 1,
+    })
+  }
+
+  // Find and click the sign-in button on the homepage to open the login modal
+  console.log('Opening login modal')
+
+  const signInButton = await waitForEnabledSignInButton(page)
+  if (!signInButton) {
+    return false
+  }
+
+  console.log(`Found valid sign-in button, clicking...`)
+  await signInButton.click()
+
+  // Wait for login modal to appear
+  console.log('Waiting for login modal')
+  await page.locator('#loginModal').first().waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+
+  // Ensure we're in signin mode, not signup mode
+  console.log('Checking if in signin mode')
+
+  // Define our locators
+  const loginLink = page
+    .locator('.test-already-a-freegler')
+    .filter({ visible: true })
+    .first()
+  const emailField = page
+    .locator('input[type="email"], input[name="email"]')
+    .first()
+  const passwordField = page
+    .locator('input[type="password"], input[name="password"]')
+    .first()
+  const fullnameField = page.locator('#fullname, input[name="fullname"]')
+
+  // Wait for modal to be ready by waiting for either the login link or form fields to appear
+  console.log('Waiting for modal to be ready...')
+  try {
+    await page.waitForFunction(
+      () => {
+        const loginLinkEl = document.querySelector('.test-already-a-freegler')
+        const emailEl = document.querySelector(
+          'input[type="email"], input[name="email"]'
+        )
+        const passwordEl = document.querySelector(
+          'input[type="password"], input[name="password"]'
+        )
+
+        // Check if login link is visible OR if form fields are present (regardless of fullname)
+        const loginLinkVisible =
+          loginLinkEl && getComputedStyle(loginLinkEl).display !== 'none'
+        const formFieldsPresent = emailEl && passwordEl
+
+        return loginLinkVisible || formFieldsPresent
+      },
+      null,
+      { timeout: timeouts.ui.appearance }
+    )
+  } catch (error) {
+    console.log('Failed to find modal elements, continuing anyway...')
+  }
+
+  // Check which mode we're in - be more thorough
+  console.log('Checking modal mode...')
+
+  // First check current field visibility
+  const emailVisible = await emailField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const passwordVisible = await passwordField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const fullnameVisible = await fullnameField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  console.log(
+    `Current field visibility - email: ${emailVisible}, password: ${passwordVisible}, fullname: ${fullnameVisible}`
+  )
+
+  const loginLinkVisible = await loginLink
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  console.log(`Login link visible: ${loginLinkVisible}`)
+
+  // If we have all three fields, we're in signup mode - try to work with it
+  if (emailVisible && passwordVisible && fullnameVisible) {
+    console.log(
+      'Detected signup mode - attempting to use existing user credentials'
+    )
+
+    // Try to switch to login mode first
+    if (loginLinkVisible) {
+      console.log('Found visible login link, clicking to switch to login mode')
+      await loginLink.click()
+
+      // Wait for fullname field to disappear (indicates mode switch)
+      try {
+        await fullnameField.waitFor({ state: 'hidden', timeout: 3000 })
+        console.log('Successfully switched to login mode!')
+      } catch {
+        console.log('Mode switch failed, continuing with signup mode approach')
+      }
+    } else {
+      console.log(
+        'No visible login link found, will use signup mode with existing user approach'
+      )
+
+      // Since modal switching doesn't work, we'll fill the form as a "signup"
+      // but use existing user credentials. The backend should recognize the
+      // existing user and log them in instead of creating a new account.
+      console.log('Using signup form with existing user credentials to log in')
+    }
+  } else if (emailVisible && passwordVisible && !fullnameVisible) {
+    console.log('Already in login mode')
+  } else {
+    console.log(
+      `Unexpected modal state - email: ${emailVisible}, password: ${passwordVisible}, fullname: ${fullnameVisible}`
+    )
+  }
+
+  // Final verification - check if we're in login mode
+  const finalEmailVisible = await emailField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const finalPasswordVisible = await passwordField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const finalFullnameVisible = await fullnameField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+
+  // Accept either login mode OR signup mode (we can work with both)
+  const inLoginMode =
+    finalEmailVisible && finalPasswordVisible && !finalFullnameVisible
+  const inSignupMode =
+    finalEmailVisible && finalPasswordVisible && finalFullnameVisible
+
+  if (!inLoginMode && !inSignupMode) {
+    console.log(
+      'Neither login nor signup mode detected',
+      finalEmailVisible,
+      finalPasswordVisible,
+      finalFullnameVisible
+    )
+    // Capture a screenshot for debugging
+    try {
+      console.log('Skipping failed-login screenshot to avoid hang')
+    } catch (screenshotError) {
+      console.log(`Screenshot failed: ${screenshotError.message}`)
+    }
+
+    return false
+  }
+
+  if (inSignupMode) {
+    console.log(
+      'Continuing with signup mode - will use existing user credentials'
+    )
+  } else {
+    console.log('In login mode - proceeding normally')
+  }
+
+  // Fill in the login form
+  console.log('Filling in login form')
+
+  // DEBUG: Form field debug before filling
+  console.log('=== FORM FIELDS BEFORE FILLING DEBUG ===')
+  try {
+    const emailValue = await Promise.race([
+      emailField.inputValue(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
+      ),
+    ]).catch(() => 'NO_VALUE')
+    const emailVisible = await emailField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+    const emailEnabled = await emailField.isEnabled().catch(() => false)
+    console.log(
+      `Email field - value: "${emailValue}", visible: ${emailVisible}, enabled: ${emailEnabled}`
+    )
+
+    const passwordValue = await Promise.race([
+      passwordField.inputValue(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
+      ),
+    ]).catch(() => 'NO_VALUE')
+    const passwordVisible = await passwordField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+    const passwordEnabled = await passwordField.isEnabled().catch(() => false)
+    console.log(
+      `Password field - value: "${passwordValue}", visible: ${passwordVisible}, enabled: ${passwordEnabled}`
+    )
+
+    if (finalFullnameVisible && fullnameField) {
+      try {
+        console.log('About to get fullname field value in debug section...')
+        const fullnameValue = await Promise.race([
+          fullnameField.inputValue(),
+          new Promise((_resolve, reject) =>
+            setTimeout(
+              () => reject(new Error('inputValue timeout after 3s')),
+              3000
+            )
+          ),
+        ]).catch(() => 'NO_VALUE')
+        console.log('Got fullname value in debug section')
+
+        const fullnameVisible = await fullnameField
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
+        const fullnameEnabled = await fullnameField
+          .isEnabled({ timeout: 5000 })
+          .catch(() => false)
+        console.log(
+          `Fullname field - value: "${fullnameValue}", visible: ${fullnameVisible}, enabled: ${fullnameEnabled}`
+        )
+      } catch (fullnameError) {
+        console.log(`Fullname debug section failed: ${fullnameError.message}`)
+      }
+    }
+  } catch (debugError) {
+    console.log(`Form field debug error: ${debugError.message}`)
+  }
+  console.log('=== FORM FIELDS BEFORE FILLING DEBUG END ===')
+
+  // Fill in the email field
+  const emailInput = emailField
+  await emailInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  console.log(`About to type email: ${email}`)
+  await emailInput.type(email)
+  console.log('Email typed successfully')
+
+  // Fill in fullname field if we're in signup mode
+  if (inSignupMode && finalFullnameVisible) {
+    console.log('Filling fullname field for signup mode')
+    await fullnameField.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+    // Use a generic name for existing user login attempts
+    await fullnameField.type('Test User')
+  }
+
+  // Fill in the password field
+  const passwordInput = passwordField
+  await passwordInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  console.log(`About to type password: [REDACTED ${password.length} chars]`)
+  await passwordInput.type(password)
+  console.log('Password typed successfully')
+
+  // DEBUG: Check form state after filling all fields
+  console.log('=== FORM STATE AFTER FILLING ===')
+  try {
+    const emailValue = await Promise.race([
+      emailField.inputValue(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
+      ),
+    ]).catch(() => 'NO_VALUE')
+
+    const passwordValue = await Promise.race([
+      passwordField.inputValue(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
+      ),
+    ]).catch(() => 'NO_VALUE')
+
+    console.log(
+      `Final email value: "${emailValue}" (length: ${emailValue.length})`
+    )
+    console.log(
+      `Final password value: [REDACTED ${passwordValue.length} chars]`
+    )
+
+    if (finalFullnameVisible && fullnameField) {
+      const fullnameValue = await Promise.race([
+        fullnameField.inputValue(),
+        new Promise((_resolve, reject) =>
+          setTimeout(
+            () => reject(new Error('inputValue timeout after 3s')),
+            3000
+          )
+        ),
+      ]).catch(() => 'NO_VALUE')
+      console.log(
+        `Final fullname value: "${fullnameValue}" (length: ${fullnameValue.length})`
+      )
+    }
+
+    // Check if form is valid
+    const form = page.locator('form').first()
+    const formValid = await form
+      .evaluate((el) => el.checkValidity())
+      .catch(() => false)
+    console.log(`Form validity: ${formValid}`)
+  } catch (debugError) {
+    console.log(`Final form state debug error: ${debugError.message}`)
+  }
+  console.log('=== FORM STATE AFTER FILLING END ===')
+
+  // Verify marketing consent if specified
+  if (expectedMarketingConsent !== null) {
+    console.log(`Verifying marketing consent is: ${expectedMarketingConsent}`)
+    const marketingCheckbox = page.locator('#marketingConsent')
+
+    // Wait for the checkbox to be visible
+    await marketingCheckbox.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+
+    const isChecked = await marketingCheckbox
+      .isChecked({ timeout: 5000 })
+      .catch(() => false)
+    if (expectedMarketingConsent !== isChecked) {
+      console.error(
+        `Marketing consent mismatch: expected ${expectedMarketingConsent}, got ${isChecked}`
+      )
+      return false
+    }
+    console.log(`Marketing consent verification passed: ${isChecked}`)
+  }
+
+  // Debug: Check field values before submitting
+  try {
+    console.log('About to get email input value...')
+    const emailValue = await Promise.race([
+      emailInput.inputValue(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
+      ),
+    ]).catch(() => 'NO_VALUE')
+
+    console.log('About to get password input value...')
+    const passwordValue = await Promise.race([
+      passwordInput.inputValue(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
+      ),
+    ]).catch(() => 'NO_VALUE')
+
+    console.log(`Form field values before submit:`)
+    console.log(`  Email: "${emailValue}" (length: ${emailValue.length})`)
+    console.log(
+      `  Password: "${passwordValue}" (length: ${passwordValue.length})`
+    )
+    console.log('Just printed password, about to continue...')
+
+    console.log(
+      `About to check signup mode - inSignupMode: ${inSignupMode}, finalFullnameVisible: ${finalFullnameVisible}`
+    )
+
+    if (inSignupMode && finalFullnameVisible) {
+      console.log(`  Fullname: (skipping value retrieval to avoid hang)`)
+    }
+    console.log('Finished getting all field values, exiting try block...')
+  } catch (error) {
+    console.log(`Error getting field values: ${error.message}`)
+  }
+
+  console.log('Exited field values try-catch block successfully')
+
+  console.log('About to take screenshot before submitting...')
+
+  // Take a screenshot before submitting — bounded to 8s to avoid hanging on an
+  // unresponsive renderer. Uses Buffer (no file I/O) to avoid shared-dir races.
+  try {
+    await Promise.race([
+      page.screenshot({ fullPage: false }),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('screenshot-timeout')), 8000)
+      ),
+    ])
+    console.log('Screenshot taken successfully')
+  } catch (screenshotError) {
+    console.log(`Screenshot skipped (non-fatal): ${screenshotError.message}`)
+  }
+
+  // Find and click the submit button (text varies by mode)
+  console.log(
+    `Clicking submit button (mode: ${inSignupMode ? 'signup' : 'login'})`
+  )
+
+  // DEBUG: Before looking for submit buttons
+  console.log('=== SUBMIT BUTTON DEBUG START ===')
+
+  // Debug: Check all buttons on the page
+  const allButtons = await page.locator('button').all()
+  console.log(`Total buttons found on page: ${allButtons.length}`)
+
+  for (let i = 0; i < Math.min(allButtons.length, 10); i++) {
+    try {
+      const button = allButtons[i]
+      const text = await button.textContent().catch(() => 'NO_TEXT')
+      const isVisible = await button.isVisible({ timeout: 5000 }).catch(() => false)
+      const isDisabled = await button.isDisabled().catch(() => 'UNKNOWN')
+      const classes = await button.getAttribute('class').catch(() => 'NO_CLASS')
+      const type = await button.getAttribute('type').catch(() => 'NO_TYPE')
+      console.log(
+        `  Button ${i}: text="${text}", visible=${isVisible}, disabled=${isDisabled}, type="${type}", class="${classes}"`
+      )
+    } catch (error) {
+      console.log(`  Button ${i}: Error getting info - ${error.message}`)
+    }
+  }
+
+  // Debug: Check form state
+  try {
+    const modal = page.locator('#loginModal')
+    const modalVisible = await modal.isVisible({ timeout: 5000 }).catch(() => false)
+    console.log(`Login modal visible: ${modalVisible}`)
+
+    if (modalVisible) {
+      const modalHTML = await modal
+        .innerHTML()
+        .catch(() => 'ERROR_GETTING_HTML')
+      console.log(`Modal HTML length: ${modalHTML.length}`)
+
+      // Look for specific text patterns in the modal
+      const hasSignupText =
+        modalHTML.includes('Join') || modalHTML.includes('Sign up')
+      const hasLoginText =
+        modalHTML.includes('Log in') || modalHTML.includes('Login')
+      console.log(`Modal contains signup text: ${hasSignupText}`)
+      console.log(`Modal contains login text: ${hasLoginText}`)
+    }
+  } catch (debugError) {
+    console.log(`Modal debug error: ${debugError.message}`)
+  }
+
+  // Selectors must be scoped to #loginModal to avoid clicking navbar buttons
+  const submitSelectors = [
+    '#loginModal button:has-text("Log in"):not([disabled]):not([disable]):not(.disabled)',
+    '#loginModal button:has-text("Join Freegle!"):not([disabled]):not([disable]):not(.disabled)',
+    '#loginModal button[type="submit"]:not([disabled]):not([disable]):not(.disabled)',
+  ]
+
+  let submitButton = null
+  console.log('Trying submit button selectors...')
+  for (let i = 0; i < submitSelectors.length; i++) {
+    const selector = submitSelectors[i]
+    console.log(`  Testing selector ${i}: ${selector}`)
+    try {
+      const button = page.locator(selector)
+      const count = await button.count()
+      console.log(`    Found ${count} buttons matching this selector`)
+
+      if (count > 0) {
+        const isVisible = await button
+          .first()
+          .isVisible({ timeout: 2000 })
+          .catch(() => false)
+        const isEnabled = await button
+          .first()
+          .isEnabled({ timeout: 5000 })
+          .catch(() => false)
+        console.log(
+          `    First button: visible=${isVisible}, enabled=${isEnabled}`
+        )
+
+        if (isVisible && isEnabled) {
+          console.log(`✅ Found working submit button: ${selector}`)
+          submitButton = button.first()
+          break
+        } else {
+          console.log(
+            `❌ Button found but not usable: visible=${isVisible}, enabled=${isEnabled}`
+          )
+        }
+      } else {
+        console.log(`    No buttons found for this selector`)
+      }
+    } catch (error) {
+      console.log(`    Selector error: ${error.message}`)
+    }
+  }
+
+  console.log('=== SUBMIT BUTTON DEBUG END ===')
+
+  if (!submitButton) {
+    console.error('❌ Could not find any usable submit button')
+
+    // Take a screenshot for debugging
+    await page.screenshot({
+      path: `playwright-screenshots/login-no-button-${Date.now()}.png`,
+      fullPage: true,
+    })
+
+    return false
+  }
+
+  // Wait for button to be enabled and clickable
+  await submitButton.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.interaction,
+  })
+
+  // Double check that the button is enabled
+  const isEnabled = await submitButton
+    .isEnabled({ timeout: 5000 })
+    .catch(() => false)
+  if (!isEnabled) {
+    console.error('Submit button is disabled')
+    return false
+  }
+
+  await submitButton.click()
+
+  // Wait for successful login
+  console.log('Waiting for successful login')
+
+  try {
+    // Look for error messages
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    // If there's an error message visible, login failed
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`Login failed with error: ${errorText}`)
+
+      // Debug: Get all error elements and their text
+      try {
+        const allErrorElements = await page
+          .locator(
+            '.alert, .text-danger, .invalid-feedback, [class*="error"], [class*="danger"]'
+          )
+          .all()
+        console.log(
+          `Found ${allErrorElements.length} potential error elements:`
+        )
+        for (let i = 0; i < allErrorElements.length; i++) {
+          const element = allErrorElements[i]
+          const isVisible = await element.isVisible({ timeout: 5000 }).catch(() => false)
+          const text = await element.textContent().catch(() => '')
+          console.log(`  ${i}: visible=${isVisible}, text="${text.trim()}"`)
+        }
+      } catch (debugError) {
+        console.log(`Error debugging error elements: ${debugError.message}`)
+      }
+
+      return false
+    }
+
+    // Wait for the modal to disappear (successful login)
+    await page
+      .locator('#loginModal')
+      .waitFor({
+        state: 'detached',
+        timeout: timeouts.ui.appearance,
+      })
+      .catch(() => {
+        // If modal doesn't disappear, check for "My account" or similar indicators of logged-in state
+      })
+
+    // Check for elements that indicate logged in state
+    const loggedInIndicators = [
+      '.btn:has-text("My account")',
+      '.btn:has-text("Settings")',
+      '.test-user-dropdown',
+      'a:has-text("Log out")',
+    ]
+
+    for (const indicator of loggedInIndicators) {
+      if (
+        await page
+          .locator(indicator)
+          .isVisible({ timeout: timeouts.ui.appearance / 2 })
+          .catch(() => false)
+      ) {
+        console.log('Login successful - found logged in indicator')
+        // Wait for auth to be persisted to localStorage before returning
+        await waitForAuthPersistence(page)
+        return true
+      }
+    }
+
+    // If we get here and don't see login modal anymore, assume success
+    const loginModalVisible = await page
+      .locator('#loginModal')
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+    if (!loginModalVisible) {
+      console.log('Login appears successful - modal closed')
+      // Wait for auth to be persisted to localStorage before returning
+      await waitForAuthPersistence(page)
+      return true
+    }
+
+    console.log('Could not confirm successful login')
+    return false
+  } catch (error) {
+    console.error(`Login error: ${error.message}`)
+    return false
+  }
+}
+
+const getScreenshotPath = (filename) => {
+  return path.join(SCREENSHOTS_DIR, filename)
+}
+
+/**
+ * Unsubscribes an email address manually by using the unsubscribe form
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @param {string} email - Email address to unsubscribe
+ * @returns {Promise<boolean>} - Returns true if unsubscribe was successful
+ */
+async function unsubscribeManually(page, email) {
+  console.log(`Starting unsubscribe process for: ${email}`)
+
+  // Try to sign in.
+  const loggedIn = await loginViaHomepage(page, email, DEFAULT_TEST_PASSWORD)
+  if (loggedIn) {
+    console.log('Logged in successfully')
+  } else {
+    console.log('Login failed, assuming user is not registered')
+    return true
+  }
+
+  // Navigate to the unsubscribe page
+  await page.gotoAndVerify('/unsubscribe', {
+    timeout: timeouts.navigation.default,
+    maxRetries: 1,
+  })
+
+  try {
+    // See if emailInput is present
+    const emailInput = page
+      .locator('input[type="email"], input[name="email"]')
+      .first()
+
+    // If so, fill it
+    try {
+      console.log('Filling in email input')
+      await emailInput.waitFor({
+        state: 'visible',
+        timeout: timeouts.ui.appearance,
+      })
+      await emailInput.type(email)
+    } catch {
+      console.log('Email input not found, likely already logged in')
+    }
+
+    console.log('Clicking "Leave Freegle completely" button')
+    const leaveButton = page.locator(
+      '.btn:has-text("Leave Freegle completely")'
+    )
+
+    // The leave button might not appear if the account has already unsubscribed but is in limbo.
+    try {
+      await leaveButton.waitFor({
+        state: 'visible',
+        timeout: timeouts.ui.appearance,
+      })
+      await leaveButton.click()
+      // If no error message, look for the confirmation modal
+      console.log('Waiting for confirmation modal in unsubscribe')
+
+      // Wait for the confirmation modal to appear and animations to complete
+      await waitForModal(page, 'Permanently delete your account?')
+
+      console.log('Found confirmation modal, clicking Confirm button')
+      // Click the Confirm button
+      const confirmButton = page.locator(
+        '.btn:has-text("Confirm"), button:has-text("Confirm")'
+      )
+      await confirmButton.waitFor({
+        state: 'visible',
+        timeout: timeouts.ui.appearance,
+      })
+      await confirmButton.click()
+
+      console.log('Wait for confirmation')
+      await page.locator('div:has-text("removed your account")')
+
+      console.log('Successfully unsubscribed email')
+    } catch {
+      console.log(
+        'Leave button not found or not clickable - account may already be unsubscribed'
+      )
+    }
+
+    return true
+  } catch (error) {
+    console.error(`Failed to unsubscribe: ${error.message}`)
+
+    await page.screenshot({
+      path: getScreenshotPath(`failed-to-unsubscribe-${Date.now()}.png`),
+      fullPage: true,
+    })
+
+    return false
+  }
+}
+
+/**
+ * Gets the current user's groups using the useMe composable
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @returns {Promise<Array>} - Array of the user's groups
+ */
+async function getMyGroups(page) {
+  console.log('Getting user groups using useMe composable')
+
+  try {
+    // Execute JavaScript in the browser context to use the useMe composable
+    const groups = await page.evaluate(() => {
+      // We need to access the composable from the Vue app
+      // This relies on the composable being exposed on the window for testing
+      if (!window.$nuxt) {
+        console.error('Nuxt app not available')
+        return []
+      }
+
+      // Use the composable through the Vue app
+      const { useMe } = window.$nuxt.$composables || {}
+
+      if (!useMe) {
+        console.error('useMe composable not found')
+        return []
+      }
+
+      const { myGroups } = useMe()
+
+      // Convert to plain array for serialization
+      return Array.isArray(myGroups.value)
+        ? JSON.parse(JSON.stringify(myGroups.value))
+        : []
+    })
+
+    console.log(`Found ${groups.length} groups for current user`)
+    return groups
+  } catch (error) {
+    console.error(`Error getting user groups: ${error.message}`)
+
+    // Take a screenshot to help debug
+    await page.screenshot({
+      path: getScreenshotPath(`get-my-groups-error-${Date.now()}.png`),
+      fullPage: true,
+    })
+
+    return []
+  }
+}
+
+/**
+ * Logs into ModTools by navigating to the ModTools base URL and completing
+ * the login modal. ModTools is a separate Nuxt app with separate auth from
+ * the Freegle site.
+ *
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @param {string} email - Email address to log in with
+ * @param {string} [password='freegle'] - Password to use
+ * @returns {Promise<boolean>} - Returns true if login was successful
+ */
+async function loginViaModTools(page, email, password = 'freegle') {
+  const { environment } = require('../config')
+  const modtoolsBaseUrl = environment.modtoolsBaseUrl
+
+  console.log(`Starting ModTools login for: ${email}`)
+
+  // Navigate to ModTools root — the layout shows LoginModal when not authenticated.
+  await page.goto(`${modtoolsBaseUrl}/`, {
+    timeout: timeouts.navigation.initial,
+    waitUntil: 'domcontentloaded',
+  })
+
+  // Wait for the login modal's email field to be visible — this confirms both
+  // that Vue has hydrated and the modal is rendered. Playwright locators
+  // auto-retry across navigation/hydration, unlike page.waitForFunction.
+  const loginModal = page.locator('#loginModal')
+  const emailField = loginModal
+    .locator('input[type="email"], input[name="email"]')
+    .first()
+  await emailField.waitFor({
+    state: 'visible',
+    timeout: timeouts.navigation.slowPage,
+  })
+
+  // Wait for the submit button to stabilise in either login or signup mode.
+  // We wait for the EXACT text we need ("Log in") with the full appearance
+  // timeout. If it's in signup mode ("Join Freegle!") we click the switch
+  // link and keep waiting — the single waitFor handles both branches without
+  // the point-in-time fullname visibility race that previously caused CI failures.
+  const loginButton = page.locator(
+    '#loginModal button[type="submit"]:has-text("Log in")'
+  )
+  const joinButton = page.locator(
+    '#loginModal button[type="submit"]:has-text("Join Freegle")'
+  )
+
+  // Poll until we either see "Log in" or need to switch from "Join Freegle"
+  await expect
+    .poll(
+      async () => {
+        const loginVisible = await loginButton
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
+        if (loginVisible) {
+          return true
+        }
+        const joinVisible = await joinButton
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
+        if (joinVisible) {
+          console.log('In signup mode, clicking switch to login mode')
+          const loginLink = page.locator('.test-already-a-freegler').first()
+          await loginLink.click().catch(() => {})
+        }
+        return false
+      },
+      {
+        message: 'Waiting for login modal to show "Log in" button',
+        timeout: timeouts.ui.appearance,
+        intervals: [500, 500, 500, 1000, 1000, 2000],
+      }
+    )
+    .toBe(true)
+  console.log('Login modal is in login mode')
+
+  // Fill credentials — emailField already declared above (scoped to loginModal)
+  const passwordField = page
+    .locator('input[type="password"], input[name="password"]')
+    .first()
+
+  console.log(`Typing email: ${email}`)
+  await emailField.fill(email)
+
+  console.log('Typing password')
+  await passwordField.fill(password)
+
+  // Click the Log in button (never Join Freegle!)
+  await loginButton.first().click()
+  console.log('Clicked Log in button')
+
+  // Check for error messages before waiting for modal to close
+  // Some errors (like "We don't know that email address") keep the modal visible
+  try {
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`ModTools login failed with error: ${errorText}`)
+      return false
+    }
+  } catch (e) {
+    // Continue if error check fails - modal might close successfully
+  }
+
+  // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
+  await loginModal.waitFor({
+    state: 'detached',
+    timeout: timeouts.navigation.slowPage,
+  })
+  console.log('Login modal closed — login successful')
+
+  // Wait for the authenticated layout to render — the sidebar nav confirms login.
+  // No full page reload happens (reloadNuxtApp was removed from app.vue);
+  // the layout re-renders via loginStateKnown watcher + bump.
+  await page.locator('a[href="/messages/pending"]').waitFor({
+    state: 'visible',
+    timeout: timeouts.navigation.slowPage,
+  })
+  console.log('Authenticated layout rendered')
+
+  return true
+}
+
+module.exports = {
+  signUpViaHomepage,
+  loginViaHomepage,
+  loginViaModTools,
+  unsubscribeManually,
+  logoutIfLoggedIn,
+  getMyGroups,
+  clearSessionData,
+  waitForEnabledSignInButton,
+}

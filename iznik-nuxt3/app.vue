@@ -1,0 +1,408 @@
+<template>
+  <div :key="'loginCount-' + loginCount">
+    <!-- SVG filter for AI image duotone effect - converts to consistent green/white palette -->
+    <svg
+      style="position: absolute; width: 0; height: 0; overflow: hidden"
+      aria-hidden="true"
+    >
+      <defs>
+        <filter id="ai-duotone-green" color-interpolation-filters="sRGB">
+          <!-- Convert to grayscale using luminance -->
+          <feColorMatrix
+            type="matrix"
+            values="0.299 0.587 0.114 0 0
+                    0.299 0.587 0.114 0 0
+                    0.299 0.587 0.114 0 0
+                    0     0     0     1 0"
+          />
+          <!-- Map grayscale to duotone: dark green (#0D3311) to white (#FFFFFF) -->
+          <!-- Using darker green so mid-grays still appear dark -->
+          <feComponentTransfer>
+            <feFuncR type="table" tableValues="0.05 1" />
+            <feFuncG type="table" tableValues="0.20 1" />
+            <feFuncB type="table" tableValues="0.07 1" />
+          </feComponentTransfer>
+        </filter>
+      </defs>
+    </svg>
+    <client-only>
+      <header v-if="shouldShowNavbar">
+        <NavbarDesktop />
+        <NavbarMobile />
+      </header>
+      <div
+        class="position-absolute top-50 start-50 translate-middle z-3 pointer-none"
+      >
+        <LoadingIndicator
+          with-transition
+          :throttle="loadingIndicatorThrottle"
+        />
+      </div>
+      <template #fallback>
+        <header>
+          <nav
+            id="navbar_large"
+            data-v-454188a5=""
+            class="navbar fixed-top navbar-expand ourBack d-none d-xl-flex ps-1 pe-2 navbar-dark navbar-expand-xl"
+          >
+            <div class="container-fluid">
+              <a
+                data-v-454188a5=""
+                aria-current="page"
+                href="/"
+                class="router-link-active router-link-exact-active navbar-brand p-0"
+                ><picture data-v-454188a5="" class="logo me-2"
+                  ><source
+                    type="image/webp"
+                    sizes="58px"
+                    :srcset="navbarFallbackImage.srcset" />
+                  <img
+                    alt="Home"
+                    loading="eager"
+                    data-nuxt-pic=""
+                    :src="navbarFallbackImage.src"
+                    sizes="58px"
+                    :srcset="navbarFallbackImage.srcset" /></picture></a
+              ><!----><!---->
+              <div data-v-454188a5="" class="navbar-nav ms-auto">
+                <div data-v-454188a5="" class="nav-item" no-prefetch="">
+                  <button
+                    data-v-454188a5=""
+                    class="btn btn-md btn-white me-2 test-signinbutton"
+                    disabled
+                    type="button"
+                  >
+                    Sign&nbsp;in
+                  </button>
+                </div>
+              </div>
+            </div>
+          </nav>
+          <nav
+            class="navbar fixed-top navbar-expand ourBack d-flex justify-content-between d-xl-none showNavBarTop"
+            type="dark"
+          >
+            <div class="container-fluid">
+              <div />
+              <div />
+              <div class="d-flex align-items-center">
+                <ul class="nav">
+                  <a><div class="btn btn-white me-2">Log in or Join</div></a>
+                </ul>
+              </div>
+            </div>
+          </nav>
+        </header>
+      </template>
+    </client-only>
+    <div id="chat-navbar-portal" />
+    <div
+      v-if="ready"
+      class="nuxt-layout-wrapper"
+      :style="{
+        filter: isLoading ? 'blur(1rem)' : 'unset',
+      }"
+    >
+      <NuxtLayout>
+        <NuxtPage />
+      </NuxtLayout>
+    </div>
+  </div>
+</template>
+<script setup>
+import { useNoticeboardStore } from './stores/noticeboard'
+import { useAuthStore } from './stores/auth'
+import { useGroupStore } from './stores/group'
+import { useMessageStore } from './stores/message'
+import { useUserStore } from './stores/user'
+import { useNearbyStore } from './stores/nearby'
+import { useComposeStore } from './stores/compose'
+import { useChatStore } from './stores/chat'
+import { useAddressStore } from './stores/address'
+import { useTrystStore } from './stores/tryst'
+import { useNotificationStore } from './stores/notification'
+import { useNewsfeedStore } from './stores/newsfeed'
+import { useReplyStore } from './stores/reply'
+import { useSearchStore } from './stores/search'
+import { useStoryStore } from './stores/stories'
+import { useVolunteeringStore } from './stores/volunteering'
+import { useCommunityEventStore } from './stores/communityevent'
+import { useJobStore } from './stores/job'
+import { useTeamStore } from './stores/team'
+import { useDonationStore } from './stores/donations'
+import { useGiftAidStore } from './stores/giftaid'
+import { useAuthorityStore } from './stores/authority'
+import { useMobileStore } from './stores/mobile'
+import { useStatsStore } from './stores/stats'
+import { useMicroVolunteeringStore } from './stores/microvolunteering'
+import { useImageStore } from './stores/image'
+import { useDomainStore } from './stores/domain'
+import { useLogoStore } from './stores/logo'
+import { useLocationStore } from './stores/location'
+import { useShortlinkStore } from './stores/shortlinks'
+import { useMiscStore } from './stores/misc'
+import { computed, onMounted, useRoute } from '#imports'
+// polyfills
+import 'core-js/actual/array/to-sorted'
+import { useConfigStore } from '~/stores/config'
+import { badgeTitle, useReactiveTabBadge } from '~/composables/useTitleBadge'
+
+const route = useRoute()
+const loadingIndicatorThrottle = ref(5000)
+const { isLoading } = useLoadingIndicator({
+  throttle: loadingIndicatorThrottle.value,
+})
+
+// Don't render the app until we've done everything in here.
+let ready = false
+
+// We're having trouble accessing the Nuxt config from within a Pinia store.  So instead we access it here, then
+// pass it in to each store via an init() action.
+//
+// Starting with around Nuxt 3.4.1, when we first access the config (here) it has public as we'd expect, but
+// if we store that and access it later, we are just looking at the contents of public.  I don't understand why
+// this is, but we don't expect the config to change, so we take a copy here.
+
+const runtimeConfig = JSON.parse(
+  JSON.stringify({
+    public: useRuntimeConfig().public,
+    app: useRuntimeConfig().app,
+  })
+)
+
+// Navbar SSR-fallback image URLs.
+//
+// Pre-hydration the <client-only fallback> renders a stand-in navbar so the
+// page layout doesn't jump when the real <NavbarDesktop/> mounts. Previously
+// the <img>/<source> srcsets in that fallback hard-coded Freegle's CDN and
+// site URLs verbatim, which meant any consumer that uses this codebase as a
+// Nuxt layer (e.g. a sister site re-skinning Freegle) saw Freegle's icon
+// flash for ~100 ms before hydration.
+//
+// Derive the URLs from runtime config so a layer or env override changes
+// what's shown without forking app.vue.
+const navbarFallbackImage = (() => {
+  const userSite = runtimeConfig.public.USER_SITE || ''
+  const delivery = runtimeConfig.public.IMAGE_DELIVERY || ''
+  const source = `${userSite}/icon.png`
+  const widths = [58, 116]
+  // Same URL shape upstream used; just parameterised. The `output=png` is
+  // intentional even on the <source type="image/webp"> — historically the
+  // delivery proxy was set up to deliver PNG here.
+  const srcset = widths
+    .map(
+      (w) =>
+        `${delivery}/?filename=icon.png&we&w=${w}&output=png&fit=inside&url=${source} ${w}w`
+    )
+    .join(', ')
+  // Fallback <img src> used when the <source> set doesn't match: same
+  // delivery proxy at the largest width.
+  const src = `${delivery}/?filename=icon.png&we&w=116&output=png&fit=inside&url=${source}`
+  return { source, src, srcset }
+})()
+
+const miscStore = useMiscStore()
+const groupStore = useGroupStore()
+const messageStore = useMessageStore()
+const authStore = useAuthStore()
+const userStore = useUserStore()
+const nearbyStore = useNearbyStore()
+const composeStore = useComposeStore()
+const configStore = useConfigStore()
+const chatStore = useChatStore()
+const addressStore = useAddressStore()
+const trystStore = useTrystStore()
+const notificationStore = useNotificationStore()
+const newsfeedStore = useNewsfeedStore()
+const replyStore = useReplyStore()
+const searchStore = useSearchStore()
+const storyStore = useStoryStore()
+const volunteeringStore = useVolunteeringStore()
+const communityEventStore = useCommunityEventStore()
+const jobStore = useJobStore()
+const teamStore = useTeamStore()
+const donationStore = useDonationStore()
+const giftAidStore = useGiftAidStore()
+const authorityStore = useAuthorityStore()
+const noticeboardStore = useNoticeboardStore()
+const mobileStore = useMobileStore()
+const statsStore = useStatsStore()
+const microVolunteeringStore = useMicroVolunteeringStore()
+const imageStore = useImageStore()
+const domainStore = useDomainStore()
+const logoStore = useLogoStore()
+const locationStore = useLocationStore()
+const shortlinkStore = useShortlinkStore()
+
+miscStore.init(runtimeConfig)
+groupStore.init(runtimeConfig)
+messageStore.init(runtimeConfig)
+authStore.init(runtimeConfig)
+userStore.init(runtimeConfig)
+nearbyStore.init(runtimeConfig)
+composeStore.init(runtimeConfig)
+chatStore.init(runtimeConfig)
+addressStore.init(runtimeConfig)
+trystStore.init(runtimeConfig)
+notificationStore.init(runtimeConfig)
+newsfeedStore.init(runtimeConfig)
+replyStore.init(runtimeConfig)
+searchStore.init(runtimeConfig)
+storyStore.init(runtimeConfig)
+volunteeringStore.init(runtimeConfig)
+communityEventStore.init(runtimeConfig)
+configStore.init(runtimeConfig)
+jobStore.init(runtimeConfig)
+teamStore.init(runtimeConfig)
+donationStore.init(runtimeConfig)
+giftAidStore.init(runtimeConfig)
+authorityStore.init(runtimeConfig)
+noticeboardStore.init(runtimeConfig)
+mobileStore.init(runtimeConfig)
+statsStore.init(runtimeConfig)
+microVolunteeringStore.init(runtimeConfig)
+imageStore.init(runtimeConfig)
+domainStore.init(runtimeConfig)
+logoStore.init(runtimeConfig)
+locationStore.init(runtimeConfig)
+shortlinkStore.init(runtimeConfig)
+
+const loginCount = computed(() => {
+  return authStore.loginCount
+})
+
+const shouldShowNavbar = computed(() => {
+  // Hide navbar for layouts that shouldn't show it
+  const layout = route.meta?.layout || 'default'
+  return layout !== 'no-navbar'
+})
+
+// watch(loginCount, async () => {
+//   if (!route.query.k) {
+//     console.log('loginCount changed - reload')
+//     await reloadNuxtApp({
+//       force: true,
+//       persistState: false,
+//     })
+//   }
+// })
+
+// Impersonation link: /?u=<userid>&k=<key>
+// Must use window.location.search (not route.query) because on pre-rendered pages the
+// Vue Router syncs with the real URL asynchronously — route.query is still {} when
+// onMounted fires, causing the login check to silently skip.
+onMounted(async () => {
+  // Read from __initSearch (set by inline head script) because Nuxt router
+  // calls history.replaceState('/') during hydration before onMounted fires,
+  // wiping window.location.search. The inline script captures it first.
+  const params = new URLSearchParams(window.__initSearch || '')
+  const u = params.get('u')
+  const k = params.get('k')
+  if (u && k) {
+    try {
+      await authStore.clearRelated()
+      await authStore.login({ u, k })
+    } catch (e) {
+      console.log('Impersonation login failed', e?.message ?? e)
+    }
+  }
+})
+
+if (process.client) {
+  if (typeof window !== 'undefined') {
+    // There's a bug https://github.com/nuxt/framework/issues/3141 which causes route to stop working.
+    const messages = [
+      `Uncaught NotFoundError: Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.`, // chromium based
+      `NotFoundError: The object can not be found here.`, // safari
+      `Cannot read properties of null (reading 'subTree')`,
+    ]
+
+    window.addEventListener('error', (ev) => {
+      if (messages.includes(ev.message)) {
+        console.log('Error, reload')
+        ev.preventDefault()
+        window.location.reload()
+      }
+    })
+
+    window.onunhandledrejection = (ev) => {
+      // We get various of these - some from Leaflet.  It seems to break Nuxt routing and we get stuck, so if we
+      // get one of these reload the page so that at least we keep going.
+      if (messages.includes(ev.message)) {
+        console.error('Unhandled rejection - may break Nuxt - reload')
+        ev.preventDefault()
+        window.location.reload()
+      }
+    }
+
+    window.onerror = function (message, url, line, col, error) {
+      // We can get this, for example if the CookieYes script is blocked.
+      console.log('Uncaught error', message, url, line, col, error)
+
+      if (url.includes('cookieyes')) {
+        // If CookieYes fails with an error, then we proceed as though it wasn't configured.
+        //
+        // This catches the error on Firefox, but not on Chrome, so it's of limited use.
+        console.log('CookieYes error')
+        if (window.postCookieYes) {
+          window.postCookieYes()
+        }
+      }
+    }
+
+    // Extract any src parameter from the url
+    const src = new URLSearchParams(window.location.search).get('src')
+    if (src) {
+      // Store the source in the store
+      console.log('Record source in store', src)
+      miscStore.setSource(src)
+    }
+  }
+
+  const chatCount = computed(() => {
+    return chatStore.unreadCount
+  })
+
+  const notificationCount = computed(() => {
+    return notificationStore.count
+  })
+
+  useHead({
+    titleTemplate: (titleChunk) => {
+      // Read the count refs' .value here (inside the reactive titleTemplate) so
+      // the badge updates as chats/notifications arrive. totalCount is a plain
+      // number - the previous code checked totalCount.value (undefined), so the
+      // count was never shown on the Freegle site (Discourse 9806/6).
+      const totalCount = notificationCount.value + chatCount.value
+      return badgeTitle(titleChunk, totalCount)
+    },
+  })
+
+  // useHead's titleTemplate above is NOT reactive to the count refs read inside it,
+  // so the badge only refreshed on navigation (Discourse 9806/9). Watch the count
+  // and update document.title directly so it stays live as chats/notifications arrive.
+  useReactiveTabBadge(() => notificationCount.value + chatCount.value)
+}
+ready = true
+</script>
+<style lang="scss">
+.nuxt-layout-wrapper {
+  transition: all 0.25s;
+}
+
+.trans {
+  background-color: transparent !important;
+  color: transparent !important;
+  border: none !important;
+}
+
+.pointer-none {
+  pointer-events: none;
+}
+
+/* AI image duotone filter - applies consistent green/white color scheme */
+.ai-image-duotone,
+.ai-image-duotone img {
+  filter: url(#ai-duotone-green);
+}
+</style>

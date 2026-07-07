@@ -1,0 +1,292 @@
+<?php
+namespace Freegle\Iznik;
+
+if (!defined('UT_DIR')) {
+    define('UT_DIR', dirname(__FILE__) . '/../..');
+}
+
+require_once(UT_DIR . '/../../include/config.php');
+require_once(UT_DIR . '/../../include/db.php');
+
+/**
+ * @backupGlobals disabled
+ * @backupStaticAttributes disabled
+ */
+class ModConfigTest extends IznikTestCase {
+    private $dbhr, $dbhm;
+
+    protected function setUp() : void {
+        parent::setUp ();
+
+        global $dbhr, $dbhm;
+        $this->dbhr = $dbhr;
+        $this->dbhm = $dbhm;
+
+        $dbhm->preExec("DELETE FROM users WHERE fullname = 'Test User';");
+        $dbhm->preExec("DELETE FROM `groups` WHERE nameshort = 'testgroup1'");
+
+        list($this->user, $this->uid) = $this->createTestUserWithLogin('Test User', 'testpw');
+    }
+
+    public function testBasic() {
+        # Basic create
+        $this->log("Create");
+        $c = new ModConfig($this->dbhr, $this->dbhm);
+        $id = $c->create('TestConfig');
+        $this->assertNotNull($id);
+        $c = new ModConfig($this->dbhr, $this->dbhm, $id);
+        $c->setPrivate('default', TRUE);
+        $this->assertNotNull($c);
+
+        # Use on a group
+        $this->log("Use on group");
+        list($g, $group1) = $this->createTestGroup('testgroup1', Group::GROUP_REUSE);
+        list($u, $uid, $emailid) = $this->createTestUser(NULL, NULL, 'Test User', 'test1@test.com', 'testpw');
+        $u->addMembership($group1, User::ROLE_MODERATOR);
+        $c->useOnGroup($uid, $group1);
+        $this->assertEquals($id, $c->getForGroup($uid, $group1));
+
+        $this->log("Login and get");
+        $this->assertTrue($this->user->login('testpw'));
+        $configs = $this->user->getConfigs(TRUE);
+        unset($_SESSION['id']);
+
+        # Another mod on this group with no config set up should pick this one up as shared.
+        $this->log("Another mod");
+        $c->setPrivate('default', FALSE);
+        list($u2, $uid2, $emailid2) = $this->createTestUser(NULL, NULL, 'Test User', 'test2@test.com', 'testpw');
+        $u2->addMembership($group1, User::ROLE_OWNER);
+        $this->assertEquals($id, $c->getForGroup($uid, $group1));
+        $this->assertEquals($id, $c->getForGroup($uid2, $group1));
+        $this->assertTrue($u2->login('testpw'));
+
+        # Check the "cansee" shows shared.
+        $atts = $c->getPublic(TRUE, TRUE);
+        $this->assertEquals(ModConfig::CANSEE_SHARED, $atts['cansee']);
+        $this->assertEquals('Test User', $atts['sharedby']['displayname']);
+
+        # Check the username is right in different cases.
+        $u->setPrivate('fullname', NULL);
+        $u->setPrivate('firstname', 'Test');
+        $u->setPrivate('lastname', 'User');
+        User::clearCache();
+        $atts = $c->getPublic(TRUE, TRUE);
+        $this->assertEquals(ModConfig::CANSEE_SHARED, $atts['cansee']);
+        $this->assertEquals('Test User', $atts['sharedby']['displayname']);
+
+        # Sleep for redis cache to expire
+        $this->log("Sleep redis");
+        sleep(REDIS_TTL+1);
+        $this->log("Slept redis");
+
+        # Should show in our list of all configs.
+        $configs = $u2->getConfigs(TRUE);
+        $this->log("Got configs " . count($configs));
+        $found = FALSE;
+        foreach ($configs as $config) {
+            if ($config['id'] == $id) {
+                $found = TRUE;
+            }
+        }
+        $this->assertTrue($found);
+
+        # Should also show in our active configs.
+        $configs = $u2->getConfigs(FALSE);
+        $this->log("Got configs " . count($configs));
+        $found = FALSE;
+        foreach ($configs as $config) {
+            if ($config['id'] == $id) {
+                $found = TRUE;
+            }
+        }
+        $this->assertTrue($found);
+
+        unset($_SESSION['id']);
+
+        $this->log("New StdMessage");
+        $m = new StdMessage($this->dbhr, $this->dbhm);
+        $mid = $m->create("TestStdMessage", $id);
+        $this->assertNotNull($mid);
+        $m = new StdMessage($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('body', 'Test');
+        $this->assertEquals('Test', $m->getPublic()['body']);
+        $this->assertFalse(array_key_exists('body', $m->getPublic(FALSE)));
+
+        $this->assertEquals('TestConfig', $c->getPublic()['name']);
+        $this->assertEquals('TestStdMessage', $c->getPublic()['stdmsgs'][0]['title']);
+
+        $this->log("Delete message");
+        $m->delete();
+        $this->log("Delete config");
+        $c->delete();
+
+        # Create as current user
+        $this->log("As current user");
+        $this->assertTrue($this->user->login('testpw'));
+        $id = $c->create('TestConfig');
+        $this->log("Created $id");
+        $this->assertNotNull($id);
+        $c = new ModConfig($this->dbhr, $this->dbhm, $id);
+        $this->assertNotNull($c);
+        $this->assertEquals($this->uid, $c->getPrivate('createdby'));
+
+        $this->log("bulk op");
+        $b = new BulkOp($this->dbhr, $this->dbhm);
+        $bid = $b->create('TestBulk', $id);
+        $this->assertNotNull($bid);
+
+        $this->log("GetConfigs");
+        $configs = $this->user->getConfigs(TRUE);
+
+        # Have to scan as there are defaults.
+        $found = FALSE;
+        foreach ($configs as $config) {
+            if ($id == $config['id']) {
+                $found = TRUE;
+                $this->assertEquals($bid, $config['bulkops'][0]['id']);
+            }
+        }
+        $this->assertTrue($found);
+
+        # Sleep for background logging
+        $this->log("Wait background");
+        $this->waitBackground();
+
+        $this->log("Find log");
+        $ctx = NULL;
+        $logs = [ $this->uid => [ 'id' => $this->uid ] ];
+        $u = new User($this->dbhr, $this->dbhm);
+        $u->getPublicLogs($u, $logs, FALSE, $ctx);
+        $log = $this->findLog(Log::TYPE_CONFIG, Log::SUBTYPE_CREATED, $logs[$this->uid]['logs']);
+        $this->assertEquals($this->uid, $log['byuser']['id']);
+
+        # Copy
+        $this->log("Copy");
+        $m = new StdMessage($this->dbhr, $this->dbhm);
+        $sid1 = $m->create("TestStdMessage1", $id);
+        $sid2 = $m->create("TestStdMessage2", $id);
+        $m = new StdMessage($this->dbhr, $this->dbhm, $sid1);
+        $m->setPrivate('action', 'Approve');
+        $id2 = $c->create('TestConfig (Copy)', $this->user->getId(), $id);
+        $this->log("Copied $id to $id2");
+        $c = new ModConfig($this->dbhr, $this->dbhm, $id);
+        $c2 = new ModConfig($this->dbhr, $this->dbhm, $id2);
+        $oldatts = $c->getPublic();
+        $this->log("Old " . var_export($oldatts, TRUE));
+        $newatts = $c2->getPublic();
+        $this->log("New " . var_export($newatts, TRUE));
+
+        # Should have created a message order during the copy.
+        $this->assertNull($oldatts['messageorder']);
+        $this->assertNotNull($newatts['messageorder']);
+
+        $this->assertEquals('TestConfig (Copy)', $newatts['name']);
+        unset($oldatts['id']);
+        unset($oldatts['name']);
+        unset($oldatts['messageorder']);
+        unset($oldatts['stdmsgs']);
+        unset($oldatts['bulkops']);
+
+        foreach ($oldatts as $att => $val) {
+            $this->assertEquals($val, $newatts[$att]);
+        }
+
+        $this->assertEquals('Approve', $newatts['stdmsgs'][0]['action']);
+
+        # As support we should be able to see the config.
+        $this->log("Check can see");
+        $this->user->setPrivate('systemrole', User::SYSTEMROLE_SUPPORT);
+        $c = new ModConfig($this->dbhr, $this->dbhm, $id);
+        $c->setPrivate('createdby', NULL);
+        $this->assertTrue($c->canSee());
+        $this->assertTrue($c->canModify());
+
+        # Export and import
+        $exp = $c->export();
+        $this->log("Export $exp");
+        $id = $c->import($exp);
+        $pub = $c->getPublic();
+        $this->log(var_export($pub, TRUE));
+        $this->assertEquals(2, count($pub['stdmsgs']));
+
+        $c->delete();
+    }
+
+    public function testOrder() {
+        $c = new ModConfig($this->dbhr, $this->dbhm);
+        $id1 = $c->create('TestConfig3');
+        $this->assertNotNull($id1);
+        $id2 = $c->create('TestConfig1');
+        $this->assertNotNull($id2);
+        $id3 = $c->create('TestConfig2');
+        $this->assertNotNull($id3);
+
+        list($g, $group1) = $this->createTestGroup('testgroup1', Group::GROUP_REUSE);
+        list($g, $group2) = $this->createTestGroup('testgroup2', Group::GROUP_REUSE);
+        list($g, $group3) = $this->createTestGroup('testgroup3', Group::GROUP_REUSE);
+        $this->user->addMembership($group1, User::ROLE_MODERATOR);
+        $this->user->addMembership($group2, User::ROLE_MODERATOR);
+        $this->user->addMembership($group3, User::ROLE_MODERATOR);
+        $c1 = new ModConfig($this->dbhr, $this->dbhm, $id1);
+        $c1->useOnGroup($this->user->getId(), $group1);
+        $c2 = new ModConfig($this->dbhr, $this->dbhm, $id2);
+        $c2->useOnGroup($this->user->getId(), $group2);
+        $c3 = new ModConfig($this->dbhr, $this->dbhm, $id3);
+        $c3->useOnGroup($this->user->getId(), $group3);
+
+        $this->assertTrue($this->user->login('testpw'));
+        $configs = $this->user->getConfigs(FALSE);
+        $this->assertEquals('TestConfig1', $configs[0]['name']);
+        $this->assertEquals('TestConfig2', $configs[1]['name']);
+        $this->assertEquals('TestConfig3', $configs[2]['name']);
+    }
+
+    public function testErrors() {
+        $mock = $this->getMockBuilder('Freegle\Iznik\LoggedPDO')
+            ->disableOriginalConstructor()
+            ->setMethods(array('preExec', 'preQuery'))
+            ->getMock();
+        $mock->method('preExec')->willThrowException(new \Exception());
+
+        $c = new ModConfig($this->dbhr, $this->dbhm);
+        $c->setDbhm($mock);
+        $id = $c->create('TestConfig');
+        $this->assertNull($id);
+
+        $mock->method('preQuery')->willThrowException(new \Exception());
+        $id = $c->create('TestConfig');
+        $this->assertNull($id);
+
+        $c = new StdMessage($this->dbhr, $this->dbhm);
+        $c->setDbhm($mock);
+        $id = $c->create('TestStd', $id);
+        $this->assertNull($id);
+
+        $c = new BulkOp($this->dbhr, $this->dbhm);
+        $c->setDbhm($mock);
+        $id = $c->create('TestStd', $id);
+        $this->assertNull($id);
+
+        }
+
+    public function testCC()
+    {
+        $c = new ModConfig($this->dbhr, $this->dbhm);
+        $id = $c->create('TestConfig');
+        $this->assertNotNull($id);
+        $m = new StdMessage($this->dbhr, $this->dbhm);
+        $mid = $m->create("TestStdMessage", $id);
+        $this->assertNotNull($mid);
+
+        $c->setPrivate('ccrejectto', 'Specific');
+        $c->setPrivate('ccrejectaddr', 'test-specific-reject@test.com');
+        $c->setPrivate('ccfollowupto', 'Specific');
+        $c->setPrivate('ccfollowupaddr', 'test-specific-follow@test.com');
+        $this->assertEquals('test-specific-reject@test.com', $c->getBcc('Reject'));
+
+        $m->setPrivate('action', 'Delete Approved Message');
+        $this->assertEquals('test-specific-follow@test.com', $c->getBcc('Delete Approved Message'));
+        $this->assertEquals(NULL, $c->getBcc('Delete Approved Member'));
+    }
+}
+

@@ -1,0 +1,197 @@
+<template>
+  <div v-if="!hide">
+    <b-row>
+      <b-col cols="6" md="3" class="ps-3">
+        <div>
+          <b-form-input
+            v-model="editgiftaid.firstname"
+            class="mb-1"
+            :class="{ 'border-danger': nameInvalid }"
+            placeholder="First name"
+          />
+          <b-form-input
+            v-model="editgiftaid.lastname"
+            class="mb-1"
+            :class="{ 'border-danger': nameInvalid }"
+            placeholder="Last name"
+          />
+          <div v-if="email">
+            <!-- eslint-disable-next-line -->
+            <ExternalLink :href="'mailto:' + email + '?subject=A question about your Gift Aid declaration'"><v-icon icon="envelope" />&nbsp;{{ email
+              }}</ExternalLink>
+          </div>
+          <NoticeMessage v-if="editgiftaid.donations" variant="info">
+            Total donations &pound;{{ editgiftaid.donations }}
+          </NoticeMessage>
+          <NoticeMessage v-else variant="danger">
+            No donations found - please ask what donation method they used and
+            if their donation was made using a different email address. If so
+            then you need to add that as a secondary email address on their
+            account using Support Tools.
+          </NoticeMessage>
+          <span class="small text-muted">
+            {{ timeago(editgiftaid.timestamp) }}
+            User ID <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
+              editgiftaid.userid
+            }}
+            Gift Aid ID
+            <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
+              editgiftaid.id
+            }}
+          </span>
+        </div>
+      </b-col>
+      <b-col cols="6" md="5">
+        <b-form-textarea v-model="editgiftaid.homeaddress" rows="4" />
+        <b-form-input
+          v-model="editgiftaid.housenameornumber"
+          :class="{ 'border-danger': houseInvalid, 'mt-1': true }"
+          placeholder="House name or number"
+        />
+        <b-form-input
+          v-model="editgiftaid.postcode"
+          :class="{ 'border-danger': postcodeInvalid, 'mt-1': true }"
+          placeholder="Postcode"
+        />
+      </b-col>
+      <b-col cols="6" md="4" class="">
+        <SpinButton
+          class="mb-2"
+          variant="white"
+          icon-name="save"
+          label="Save Changes"
+          @handle="save"
+        />
+        <SpinButton
+          class="mb-2"
+          variant="warning"
+          icon-name="trash-alt"
+          label="Give Up"
+          confirm
+          @handle="giveup"
+        />
+        <SpinButton
+          class="mb-2"
+          variant="success"
+          icon-name="check"
+          label="Looks Good"
+          :disabled="
+            houseInvalid ||
+            postcodeInvalid ||
+            nameInvalid ||
+            !editgiftaid.donations
+          "
+          @handle="reviewed"
+        />
+      </b-col>
+    </b-row>
+    <b-row>
+      <b-col>
+        <hr />
+      </b-col>
+    </b-row>
+  </div>
+</template>
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useNuxtApp } from '#app'
+import { useModMe } from '~/modtools/composables/useModMe'
+import { useGiftAidStore } from '~/modtools/stores/giftaid'
+
+const props = defineProps({
+  giftaidid: {
+    type: Number,
+    required: true,
+  },
+})
+
+const { $api } = useNuxtApp()
+const { checkWork } = useModMe()
+const giftAidStore = useGiftAidStore()
+
+const editgiftaid = ref(false)
+const hide = ref(false)
+
+const nameInvalid = computed(() => {
+  if (!editgiftaid.value) return false
+  const { firstname, lastname, fullname } = editgiftaid.value
+  // Valid if dedicated columns are both set, or if fullname contains a space
+  if (firstname && lastname) return false
+  return !fullname || !fullname.includes(' ')
+})
+
+const postcodeInvalid = computed(() => {
+  if (!editgiftaid.value) return false
+  return (
+    !editgiftaid.value?.postcode ||
+    editgiftaid.value?.postcode.indexOf(' ') === -1
+  )
+})
+
+const houseInvalid = computed(() => {
+  if (!editgiftaid.value) return false
+  return !editgiftaid.value?.housenameornumber
+})
+
+const email = computed(() => {
+  return editgiftaid.value?.email || null
+})
+
+function save(callback) {
+  const {
+    id,
+    period,
+    fullname,
+    firstname,
+    lastname,
+    homeaddress,
+    postcode,
+    housenameornumber,
+  } = editgiftaid.value
+  $api.giftaid.edit(
+    id,
+    period,
+    fullname,
+    homeaddress,
+    postcode,
+    housenameornumber,
+    false,
+    false,
+    firstname,
+    lastname
+  )
+  callback()
+}
+
+function reviewed(callback) {
+  $api.giftaid.edit(editgiftaid.value.id, null, null, null, null, null, true)
+  if (callback) callback()
+  hide.value = true
+  checkWork(true)
+}
+
+function giveup(callback) {
+  if (!editgiftaid.value.donations) {
+    // Approve these as a way of getting them off the list even though they're not linked to a donation.
+    reviewed()
+  } else {
+    $api.giftaid.edit(
+      editgiftaid.value.id,
+      null,
+      null,
+      null,
+      null,
+      null,
+      false,
+      true
+    )
+    hide.value = true
+    checkWork(true)
+  }
+  callback()
+}
+
+onMounted(() => {
+  editgiftaid.value = giftAidStore.byId(props.giftaidid)
+})
+</script>
