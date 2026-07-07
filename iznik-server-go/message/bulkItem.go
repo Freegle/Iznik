@@ -20,11 +20,11 @@ import (
 // A message is a bulk offer when it has rows in messages_bulk_items; the message
 // itself stays a normal Offer. See plans/active/bulk-offer-clearance-design.md.
 type BulkItem struct {
-	ID          uint64  `json:"id" gorm:"primary_key"`
-	Msgid       uint64  `json:"-"`
-	Position    uint    `json:"position"`
-	Name        string  `json:"name"`
-	Quantity    uint    `json:"quantity"`
+	ID       uint64 `json:"id" gorm:"primary_key"`
+	Msgid    uint64 `json:"-"`
+	Position uint   `json:"position"`
+	Name     string `json:"name"`
+	Quantity uint   `json:"quantity"`
 	// Available is the owner's per-item on-offer flag: false once they mark the
 	// item taken/gone (here or via the logged-out secret-link update page).
 	Available   bool    `json:"available"`
@@ -328,11 +328,13 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		sendAccessInstructions(db, msgid, fromuser, *req.Userid)
 	}
 
-	// Collected: record who collected the item (messages_by) and reduce the
-	// post's available count. This is the per-item equivalent of the messages_by
-	// insert in handleOutcome for a single-item post. ON DUPLICATE KEY UPDATE
-	// accumulates quantities when one collector takes several items from the same
-	// bulk post, so their profile "collected" count stays accurate.
+	// Collected: record who collected the item (messages_by) and update the
+	// post's available count via a full recompute. Using recomputeBulkAvailableNow
+	// instead of a raw decrement prevents a double-deduction when the external-owner
+	// toggle (PostBulkEditOffer) has already marked this item available=0 and
+	// recomputed: a second recompute from the same source table is a no-op rather
+	// than a further subtraction. Reducing the item's quantity first ensures the
+	// recompute reflects the collected units.
 	if *req.State == "Collected" && priorState != "Collected" {
 		var qty int
 		db.Raw("SELECT COALESCE(quantity, 1) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
@@ -342,7 +344,12 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		}
 		db.Exec("INSERT INTO messages_by (msgid, userid, count) VALUES (?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE count = count + VALUES(count)", msgid, *req.Userid, qty)
-		db.Exec("UPDATE messages SET availablenow = GREATEST(0, availablenow - ?) WHERE id = ?", qty, msgid)
+		db.Exec("UPDATE messages_bulk_items SET quantity = GREATEST(0, quantity - ?) WHERE id = ?", qty, *req.Bulkitemid)
+		// If collecting cleared the remaining stock, mark the line unavailable so
+		// the external-owner page reflects it and updated_at bumps for flip-day arms.
+		db.Exec("UPDATE messages_bulk_items SET available = 0 WHERE id = ? AND quantity = 0", *req.Bulkitemid)
+		recomputeBulkAvailableNow(db, msgid)
+		recordBulkOutcomeIfComplete(db, msgid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
