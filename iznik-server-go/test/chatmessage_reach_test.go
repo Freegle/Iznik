@@ -256,23 +256,35 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
 
-	// 1. Notified-ledger hit (no location on file, no memberships) -> ripple_notified.
+	// CreateTestUser defaults every user's settings.mylocation to Edinburgh, which is
+	// OUTSIDE this post's reach polygon - the write-path reach gate would 403 the reply
+	// before the capture ever ran. Repliers below are placed inside the reach (or have
+	// their location removed entirely for the no-location case).
+
+	// 1. Notified-ledger hit -> ripple_notified. Inside the reach, outside the origin
+	//    catchment - the notified rung must outrank the location rungs.
 	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, notifiedID)
 	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 HOUR)",
 		msgID, notifiedID)
 	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, notifiedID, posterID, msgID, ""))
 	row, ok := fetchAttribution(t, msgID, notifiedID)
 	assert.True(t, ok)
 	if assert.NotNil(t, row.Attribution) {
-		assert.Equal(t, "ripple_notified", *row.Attribution)
+		assert.Equal(t, "ripple_notified", *row.Attribution,
+			"notified outranks the location rungs")
 	}
 	if assert.NotNil(t, row.WasNotified) {
 		assert.Equal(t, 1, *row.WasNotified)
 	}
-	assert.Nil(t, row.InOrigin, "no location on file -> location evidence is NULL, not 0")
+	if assert.NotNil(t, row.InReach) {
+		assert.Equal(t, 1, *row.InReach)
+	}
 
-	// 2. Established member of the group the post rippled INTO -> ripple_group.
+	// 2. Established member of the group the post rippled INTO -> ripple_group (also
+	//    outranks the location rungs).
 	rippleMemberID := CreateTestUser(t, prefix+"_rgmember", "User")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, rippleMemberID)
 	CreateTestMembership(t, rippleMemberID, rippledGroup, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 1 HOUR, collection = 'Approved' WHERE userid = ? AND groupid = ?",
 		rippleMemberID, rippledGroup)
@@ -281,6 +293,19 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 	assert.True(t, ok)
 	if assert.NotNil(t, row.Attribution) {
 		assert.Equal(t, "ripple_group", *row.Attribution)
+	}
+
+	// 2b. No location on file at all: the reach gate fails open, and the location
+	//     evidence is NULL (unknown), not a definite 0 -> unknown attribution.
+	nolocID := CreateTestUser(t, prefix+"_noloc", "User")
+	db.Exec("UPDATE users SET settings = NULL WHERE id = ?", nolocID)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, nolocID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, nolocID)
+	assert.True(t, ok)
+	assert.Nil(t, row.InOrigin, "no location on file -> location evidence is NULL, not 0")
+	assert.Nil(t, row.InReach, "no location on file -> location evidence is NULL, not 0")
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "unknown", *row.Attribution)
 	}
 
 	// 3. Non-member INSIDE the origin catchment (and inside the reach) -> organic_local, with

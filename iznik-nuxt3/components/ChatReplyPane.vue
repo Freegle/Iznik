@@ -288,6 +288,7 @@ import {
   useReplyStateMachine,
   ReplyState,
 } from '~/composables/useReplyStateMachine'
+import { useRoute } from '#imports'
 import { action } from '~/composables/useClientLog'
 import { replySurfaceForRoute } from '~/composables/useReplySurface'
 import EmailValidator from '~/components/EmailValidator'

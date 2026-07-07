@@ -144,6 +144,7 @@ describe('useReplyToPost', () => {
         replyMsgId: 42,
         replyMessage: 'Hello, is this still available?',
         replyingAt: RECENT_AT,
+        replySource: 'browse',
       })
     })
 
@@ -154,17 +155,19 @@ describe('useReplyToPost', () => {
       expect(replyToSend.value.replyMsgId).toBe(42)
     })
 
-    it('includes all three store fields in the returned object', () => {
+    it('includes the pending-send store fields in the returned object', () => {
       mockReplyStore = freshReplyStore({
         replyMsgId: 99,
         replyMessage: 'Test message',
         replyingAt: RECENT_AT,
+        replySource: 'message_page',
       })
       const { replyToSend } = useReplyToPost()
       expect(replyToSend.value).toEqual({
         replyMsgId: 99,
         replyMessage: 'Test message',
         replyingAt: RECENT_AT,
+        replySource: 'message_page',
       })
     })
   })

@@ -552,8 +552,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			latlng := user.GetLatLng(myid)
 			if latlng.Lat != 0 || latlng.Lng != 0 {
 				reach.haveLocation = true
-				reach.lat = latlng.Lat
-				reach.lng = latlng.Lng
+				reach.lat = float64(latlng.Lat)
+				reach.lng = float64(latlng.Lng)
 				// One query answers both "does a reach row exist" and "does it contain the
 				// replier" (msgid is the PK, so at most one row): the gate blocks when a reach
 				// row exists that does NOT contain the point, and the attribution capture
