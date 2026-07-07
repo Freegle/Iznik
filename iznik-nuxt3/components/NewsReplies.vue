@@ -1,73 +1,52 @@
 <template>
   <div class="replies-container" :class="'depth-' + depth">
-    <!-- Head replies: first HEAD_COUNT replies, visible only when collapsed -->
-    <div
-      v-for="reply in headReplies"
-      :key="'newsfeed-head-' + reply.id"
-      class="reply-thread"
-    >
-      <NewsRefer
-        v-if="reply.type && reply.type.indexOf('ReferTo') === 0"
-        :id="reply.id"
-        :type="reply.type"
-        :threadhead="threadhead"
-        class="reply-content"
-      />
-      <NewsReply
+    <!--
+      Ordered render plan. When collapsed, middle replies WITHOUT new activity in
+      their subtree hide behind one expander; a parent whose nested replies contain
+      anything new is exempted and stays visible in place, so new activity is never
+      hidden (ChitChat threads nest - 40% of replies are replies-to-replies - so
+      newness must be judged per subtree, not per top-level row).
+    -->
+    <template v-for="entry in renderEntries" :key="entryKey(entry)">
+      <div v-if="entry.expander" class="show-more-replies">
+        <button
+          class="show-more-btn"
+          :aria-expanded="showAllReplies ? 'true' : 'false'"
+          @click="expandReplies"
+        >
+          {{ expanderLabel }}
+        </button>
+      </div>
+      <div
         v-else
-        :id="reply.id"
-        :reply-data="reply"
-        :threadhead="threadhead"
-        :scroll-to="scrollTo"
-        class="reply-content"
-        :depth="depth"
-        @rendered="rendered"
-        @expand-combined="expandCombined"
-      />
-    </div>
-
-    <!-- Middle expander: shown between head and tail when collapsed -->
-    <div v-if="showExpander" class="show-more-replies">
-      <button
-        class="show-more-btn"
-        :aria-expanded="showAllReplies ? 'true' : 'false'"
-        @click="expandReplies"
+        class="reply-thread"
+        :data-reply-id="entry.reply.id"
+        :class="{ 'reply-thread--new': isReplyNew(entry.reply) }"
       >
-        {{ expanderLabel }}
-      </button>
-    </div>
-
-    <!-- Tail replies: last TAIL_COUNT when collapsed, or ALL when expanded -->
-    <div
-      v-for="reply in tailReplies"
-      :key="'newsfeed-tail-' + reply.id"
-      class="reply-thread"
-      :data-reply-id="reply.id"
-      :class="{ 'reply-thread--new': isReplyNew(reply) }"
-    >
-      <NewsRefer
-        v-if="reply.type && reply.type.indexOf('ReferTo') === 0"
-        :id="reply.id"
-        :type="reply.type"
-        :threadhead="threadhead"
-        class="reply-content"
-      />
-      <NewsReply
-        v-else
-        :id="reply.id"
-        :reply-data="reply"
-        :threadhead="threadhead"
-        :scroll-to="scrollTo"
-        class="reply-content"
-        :depth="depth"
-        @rendered="rendered"
-        @expand-combined="expandCombined"
-      />
-    </div>
+        <NewsRefer
+          v-if="entry.reply.type && entry.reply.type.indexOf('ReferTo') === 0"
+          :id="entry.reply.id"
+          :type="entry.reply.type"
+          :threadhead="threadhead"
+          class="reply-content"
+        />
+        <NewsReply
+          v-else
+          :id="entry.reply.id"
+          :reply-data="entry.reply"
+          :threadhead="threadhead"
+          :scroll-to="scrollTo"
+          class="reply-content"
+          :depth="depth"
+          @rendered="rendered"
+          @expand-combined="expandCombined"
+        />
+      </div>
+    </template>
   </div>
 </template>
 <script setup>
-import { ref, computed, defineAsyncComponent, nextTick } from 'vue'
+import { ref, computed, defineAsyncComponent } from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
@@ -254,7 +233,7 @@ const filteredReplies = computed(() => {
       ret = visiblereplies.value
     }
   } else {
-    // Return all - head/tail splitting is handled by headReplies / tailReplies.
+    // Return all - hiding is handled by collapsePlan.
     ret = visiblereplies.value
   }
 
@@ -282,53 +261,83 @@ const shouldCollapse = computed(() => {
   )
 })
 
-const headReplies = computed(() => {
-  if (!shouldCollapse.value) return []
-  return combinedReplies.value.slice(0, HEAD_COUNT)
+// A reply (or combined group) counts as containing new activity if it, or ANY
+// descendant in its nested reply tree, is newer than the pre-visit baseline.
+function resolveReply(r) {
+  return r && typeof r === 'object' ? r : newsfeedStore.byId(r)
+}
+
+function childrenHaveNew(reply) {
+  const kids = reply?.replies || []
+  for (const kid of kids) {
+    const child = resolveReply(kid)
+    if (child && subtreeHasNew(child)) return true
+  }
+  return false
+}
+
+function subtreeHasNew(entry) {
+  if (!seenBeforeVisit.value) return false
+  if (isReplyNew(entry)) return true
+  if (entry.combinedIds) {
+    for (const cid of entry.combinedIds) {
+      const r = newsfeedStore.byId(cid)
+      if (r && childrenHaveNew(r)) return true
+    }
+    return false
+  }
+  return childrenHaveNew(entry)
+}
+
+// Ordered render plan: hide only middle entries whose whole subtree is old.
+// A single expander sits where the first hidden entry was.
+const collapsePlan = computed(() => {
+  const list = combinedReplies.value
+  const passthrough = { entries: list.map((r) => ({ reply: r })), hidden: [] }
+  if (!shouldCollapse.value) return passthrough
+
+  const hidden = []
+  const entries = []
+  let expanderPlaced = false
+
+  list.forEach((r, idx) => {
+    const inMiddle = idx >= HEAD_COUNT && idx < list.length - TAIL_COUNT
+    if (inMiddle && !subtreeHasNew(r)) {
+      hidden.push(r)
+      if (!expanderPlaced) {
+        entries.push({ expander: true })
+        expanderPlaced = true
+      }
+    } else {
+      entries.push({ reply: r })
+    }
+  })
+
+  return hidden.length ? { entries, hidden } : passthrough
 })
 
-const tailReplies = computed(() => {
-  if (!shouldCollapse.value) return combinedReplies.value
-  return combinedReplies.value.slice(-TAIL_COUNT)
-})
+const renderEntries = computed(() => collapsePlan.value.entries)
 
-// The middle chunk that is hidden behind the expander when collapsed.
-const hiddenMiddle = computed(() => {
-  if (!shouldCollapse.value) return []
-  return combinedReplies.value.slice(HEAD_COUNT, -TAIL_COUNT)
-})
+const hiddenCount = computed(() => collapsePlan.value.hidden.length)
 
-const hiddenCount = computed(() => hiddenMiddle.value.length)
+const showExpander = computed(
+  () => shouldCollapse.value && hiddenCount.value > 0
+)
 
-const hiddenNewCount = computed(() => {
-  if (!seenBeforeVisit.value) return 0
-  return hiddenMiddle.value.filter((r) => isReplyNew(r)).length
-})
-
-const showExpander = computed(() => shouldCollapse.value && hiddenCount.value > 0)
-
+// Hidden entries never contain new activity (they are exempted above), so the
+// label only ever describes older conversation.
 const expanderLabel = computed(() => {
   const n = hiddenCount.value
   const replyWord = n === 1 ? 'reply' : 'replies'
-  const newSuffix =
-    hiddenNewCount.value > 0 ? ` - ${hiddenNewCount.value} new` : ''
-  return `Show ${n} more ${replyWord}${newSuffix}`
+  return `Show ${n} older ${replyWord}`
 })
 
-async function expandReplies() {
-  // Remember the first new reply that was hidden, so we can scroll to it after expansion.
-  const firstNewHidden = hiddenMiddle.value.find((r) => isReplyNew(r))
-  showAllReplies.value = true
+function entryKey(entry) {
+  return entry.expander ? 'reply-expander' : 'newsfeed-' + entry.reply.id
+}
 
-  if (firstNewHidden) {
-    await nextTick()
-    const el = document.querySelector(
-      `.reply-thread[data-reply-id="${firstNewHidden.id}"]`
-    )
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    }
-  }
+function expandReplies() {
+  showAllReplies.value = true
 }
 
 function rendered(id) {

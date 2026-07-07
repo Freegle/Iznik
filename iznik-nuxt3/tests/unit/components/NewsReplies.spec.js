@@ -186,7 +186,7 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).toContain('Show 3 more replies')
+      expect(wrapper.find('.show-more-btn').text()).toContain('Show 3 older replies')
     })
 
     it('expander label shows correct hidden count for N=25 remaining', () => {
@@ -198,7 +198,7 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).toContain('Show 25 more replies')
+      expect(wrapper.find('.show-more-btn').text()).toContain('Show 25 older replies')
     })
 
     it('uses singular "reply" when hidden count is 1', () => {
@@ -222,7 +222,7 @@ describe('NewsReplies', () => {
 
       const wrapper = createWrapper()
       // 7 total - 2 head - 3 tail = 2 hidden
-      expect(wrapper.find('.show-more-btn').text()).toContain('Show 2 more replies')
+      expect(wrapper.find('.show-more-btn').text()).toContain('Show 2 older replies')
     })
 
     it('does not show expander for 3 replies', () => {
@@ -231,11 +231,10 @@ describe('NewsReplies', () => {
     })
   })
 
-  describe('new reply surfacing', () => {
-    it('expander label appends "N new" when new replies are hidden', () => {
-      // 10 replies (ids 10-19), seenBeforeVisit=13 means ids 14-19 are new
-      // With 10 total: head=[10,11], hidden=[12,13,14,15,16], tail=[17,18,19] -- 5 hidden
-      // New in hidden: 14,15,16 = 3 new
+  describe('new reply surfacing (subtree-aware exemption)', () => {
+    it('a new middle reply is exempted from hiding and stays visible', () => {
+      // 10 replies (ids 10-19), baseline 13: middle candidates are 12..16, of
+      // which 14/15/16 are new. They must render; only 12 and 13 hide.
       const replies = makeReplies(10, { startId: 10 })
       mockNewsfeedStore.seenBeforeVisit = 13
       mockNewsfeedStore.byId.mockImplementation((id) => {
@@ -244,24 +243,52 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).toContain('new')
-      expect(wrapper.find('.show-more-btn').text()).toMatch(/\d+ new/)
+      expect(wrapper.findAll('.news-reply').length).toBe(8) // 10 - 2 hidden old
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 2 older replies'
+      )
+      expect(wrapper.find('.show-more-btn').text()).not.toContain('new')
+      // The exempted new middles carry the new marker.
+      const marked = wrapper
+        .findAll('.reply-thread--new')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(marked).toEqual(expect.arrayContaining([14, 15, 16]))
     })
 
-    it('expander label has no "new" suffix when seenBeforeVisit is null', () => {
+    it('an OLD middle parent with a NEW nested child is exempted (subtree check)', () => {
+      // 10 top-level replies (ids 10-19), baseline 100 so none are new
+      // themselves - but reply 13 (middle) has a nested child id 101 > baseline.
       const replies = makeReplies(10, { startId: 10 })
-      mockNewsfeedStore.seenBeforeVisit = null
+      const child = {
+        id: 101,
+        userid: 300,
+        displayname: 'Nested User',
+        message: 'Nested new reply',
+        added: '2024-01-15T12:00:00Z',
+        deleted: false,
+        type: 'Reply',
+      }
+      replies[3].replies = [101] // id 13, a middle entry
+      mockNewsfeedStore.seenBeforeVisit = 100
       mockNewsfeedStore.byId.mockImplementation((id) => {
         if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        if (id === 101) return child
         return replies.find((r) => r.id === id)
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).not.toContain('new')
+      // 13 is exempted; hidden = 12, 14, 15, 16 (4 old middles)
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 4 older replies'
+      )
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toContain(13)
+      expect(renderedIds).not.toContain(12)
     })
 
-    it('expander label has no "new" suffix when all hidden replies are old', () => {
-      // 10 replies (ids 10-19), seenBeforeVisit=20 means nothing is new
+    it('hides all middles when nothing is new (baseline above all ids)', () => {
       const replies = makeReplies(10, { startId: 10 })
       mockNewsfeedStore.seenBeforeVisit = 20
       mockNewsfeedStore.byId.mockImplementation((id) => {
@@ -270,24 +297,13 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).not.toContain('new')
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 5 older replies'
+      )
+      expect(wrapper.findAll('.news-reply').length).toBe(5)
     })
 
-    it('tail replies visible before expand get reply-thread--new class when new', () => {
-      // 10 replies (ids 10-19), seenBeforeVisit=16; tail=[17,18,19] are all new
-      const replies = makeReplies(10, { startId: 10 })
-      mockNewsfeedStore.seenBeforeVisit = 16
-      mockNewsfeedStore.byId.mockImplementation((id) => {
-        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
-        return replies.find((r) => r.id === id)
-      })
-
-      const wrapper = createWrapper()
-      const newThreads = wrapper.findAll('.reply-thread--new')
-      expect(newThreads.length).toBeGreaterThan(0)
-    })
-
-    it('does not mark tail replies as new when seenBeforeVisit is null', () => {
+    it('treats nothing as new when seenBeforeVisit is null', () => {
       const replies = makeReplies(10, { startId: 10 })
       mockNewsfeedStore.seenBeforeVisit = null
       mockNewsfeedStore.byId.mockImplementation((id) => {
@@ -297,6 +313,19 @@ describe('NewsReplies', () => {
 
       const wrapper = createWrapper()
       expect(wrapper.findAll('.reply-thread--new').length).toBe(0)
+      expect(wrapper.findAll('.news-reply').length).toBe(5)
+    })
+
+    it('marks visible new replies with reply-thread--new', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      mockNewsfeedStore.seenBeforeVisit = 16
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+
+      const wrapper = createWrapper()
+      expect(wrapper.findAll('.reply-thread--new').length).toBeGreaterThan(0)
     })
   })
 
