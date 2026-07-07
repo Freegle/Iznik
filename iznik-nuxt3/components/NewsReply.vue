@@ -107,6 +107,11 @@
             <span class="d-none d-md-inline">{{ replyaddedago }}</span>
             <span class="d-md-none">{{ replyaddedagoShort }}</span>
           </span>
+          <span
+            v-if="isNew"
+            class="reply-new-pill ms-1 me-1"
+            aria-label="New reply"
+          >New</span>
           <NewsUserInfo :id="id" class="me-1 d-inline" />
         </div>
         <div class="reply-actions">
@@ -466,6 +471,12 @@ const threadUsers = computed(() => {
 
 const scrollToThis = computed(() => {
   return parseInt(props.scrollTo) === props.id
+})
+
+const isNew = computed(() => {
+  const seenBefore = newsfeedStore.seenBeforeVisit
+  if (!seenBefore) return false
+  return reply.value?.id > seenBefore
 })
 
 const getShowLovesLabel = computed(() => {
@@ -931,5 +942,20 @@ function showReplyPhotoModal() {
 
 :deep(.strike) {
   text-decoration: line-through;
+}
+
+.reply-new-pill {
+  display: inline-block;
+  padding: 0.1rem 0.375rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: $color-success-fg;
+  background: $color-success-bg;
+  border: 1px solid $color-success-border;
+  border-radius: 0.75rem;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 </style>

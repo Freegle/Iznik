@@ -2291,7 +2291,12 @@ onUnmounted(() => {
     }
   }
 
-  /* Sticky ad adjustment - add bottom padding instead of positioning */
+  /* Sticky ad adjustment - add bottom padding instead of positioning.
+     Mirrors the width+height matrix used by .navbar-bottom and .modal-content:
+     from md up the desktop ad creative renders ($sticky-banner-height-desktop,
+     -tall), so branching on height alone under-reserved by 40px in short-but-
+     wide windows (e.g. ~820x420, an email client's embedded browser) and the
+     fixed ad zone swallowed real clicks on Cancel/Reply. */
   &.stickyAdRendered {
     padding-bottom: calc(1rem + $sticky-banner-height-mobile);
 
@@ -2299,8 +2304,12 @@ onUnmounted(() => {
       padding-bottom: calc(1rem + $sticky-banner-height-mobile-tall);
     }
 
-    @media (min-height: $desktop-tall) {
-      padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
+    @include media-breakpoint-up(md) {
+      padding-bottom: calc(1rem + $sticky-banner-height-desktop);
+
+      @media (min-height: $desktop-tall) {
+        padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
+      }
     }
   }
 
@@ -2314,6 +2323,57 @@ onUnmounted(() => {
   .in-modal &.stickyAdRendered {
     @media (min-width: 1200px) {
       padding-bottom: 1rem;
+    }
+  }
+
+  /* On the standalone message page (wrapper has neither .in-modal nor
+     .fullscreen-overlay) the footer used to scroll with the page, so below xl
+     the Reply button could start hidden under the fixed bottom nav, the
+     sticky ad zone or the floating New Post button - a natural tap silently
+     hit those instead, or nothing. Pin the footer sticky above that fixed
+     chrome so the page's primary action is always visible and clickable.
+     The bottom nav is d-xl-none (67px, 76px from md), and the ad zone adds
+     the same height matrix as .navbar-bottom's --ad-offset. When pinned, the
+     ad-clearance padding above is unnecessary - reset to normal padding. */
+  @media (max-width: 1199.98px) {
+    .message-expanded-wrapper:not(.in-modal):not(.fullscreen-overlay) & {
+      position: sticky;
+      z-index: 1031;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.15);
+      bottom: calc(67px + env(safe-area-inset-bottom, 0px));
+
+      @include media-breakpoint-up(md) {
+        bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+      }
+    }
+
+    .message-expanded-wrapper:not(.in-modal):not(.fullscreen-overlay)
+      &.stickyAdRendered {
+      padding-bottom: 1rem;
+      bottom: calc(
+        67px + $sticky-banner-height-mobile + env(safe-area-inset-bottom, 0px)
+      );
+
+      @media (min-height: $mobile-tall) {
+        bottom: calc(
+          67px + $sticky-banner-height-mobile-tall +
+            env(safe-area-inset-bottom, 0px)
+        );
+      }
+
+      @include media-breakpoint-up(md) {
+        bottom: calc(
+          76px + $sticky-banner-height-desktop +
+            env(safe-area-inset-bottom, 0px)
+        );
+
+        @media (min-height: $desktop-tall) {
+          bottom: calc(
+            76px + $sticky-banner-height-desktop-tall +
+              env(safe-area-inset-bottom, 0px)
+          );
+        }
+      }
     }
   }
 }
