@@ -20,6 +20,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
@@ -165,6 +166,25 @@ func recomputeBulkAvailableNow(db *gorm.DB, msgid uint64) {
 		"WHERE id = ?", msgid, msgid)
 }
 
+// recordBulkOutcomeIfComplete inserts a Taken outcome row for a bulk offer once
+// its availablenow reaches zero, making the completed offer visible to every
+// legacy stats pipeline (heatmap, happiness, V1 readers). Called after either
+// recompute path. Idempotent: a second call when a Taken or Received row already
+// exists is a no-op.
+func recordBulkOutcomeIfComplete(db *gorm.DB, msgid uint64) {
+	var availablenow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgid).Scan(&availablenow)
+	if availablenow > 0 {
+		return
+	}
+	db.Exec(
+		"INSERT INTO messages_outcomes (msgid, outcome) "+
+			"SELECT ?, ? WHERE NOT EXISTS "+
+			"(SELECT 1 FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?))",
+		msgid, utils.OUTCOME_TAKEN,
+		msgid, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED)
+}
+
 // GetBulkEditOffer returns a bulk offer's catalogue for the logged-out owner
 // page, authorised solely by the secret token in the path. No JWT, no PII.
 //
@@ -255,6 +275,7 @@ func PostBulkEditOffer(c *fiber.Ctx) error {
 	}
 
 	recomputeBulkAvailableNow(db, msgid)
+	recordBulkOutcomeIfComplete(db, msgid)
 
 	items := bulkEditItems(db, msgid)
 	return c.JSON(fiber.Map{
