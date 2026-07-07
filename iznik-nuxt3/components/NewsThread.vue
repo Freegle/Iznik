@@ -283,6 +283,7 @@ import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
 import NewsReplies from '~/components/NewsReplies'
 import { untwem } from '~/composables/useTwem'
+import { scrollToAndPin } from '~/composables/useScrollAnchor'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
@@ -520,14 +521,14 @@ async function sendComment(callback) {
     // property. Keep the poster anchored to their reply: the post-send refetch
     // re-renders in the server's new order (replied-to parents get bumped), so
     // without this the viewport content swaps and the reply lands off-screen.
+    // The pin re-resolves the selector every frame, so it waits for the
+    // refetch to render the new reply and holds it through the shuffle.
     if (newid) {
       nextTick(() => {
-        setTimeout(() => {
-          const el = document.querySelector(`[data-reply-id="${newid}"]`)
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          }
-        }, 100)
+        scrollToAndPin(
+          () => document.querySelector(`[data-reply-id="${newid}"]`),
+          { block: 'center' }
+        )
       })
     }
 

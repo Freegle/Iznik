@@ -61,6 +61,12 @@ vi.mock('~/composables/useTimeFormat', () => ({
   timeagoShort: (date) => '2h',
 }))
 
+const mockScrollToAndPin = vi.fn(() => vi.fn())
+vi.mock('~/composables/useScrollAnchor', () => ({
+  scrollToAndPin: (...args) => mockScrollToAndPin(...args),
+  fixedHeaderOffset: () => 74,
+}))
+
 vi.mock('pluralize', () => ({
   default: (word, count, includeCount) =>
     includeCount ? `${count} ${word}${count !== 1 ? 's' : ''}` : word,
@@ -517,6 +523,32 @@ describe('NewsReply', () => {
     it('does not highlight when scrollTo does not match', () => {
       const wrapper = createWrapper({ scrollTo: '200' })
       expect(wrapper.find('.bg-info').exists()).toBe(false)
+    })
+
+    it('pins the reply row when scrollTo changes to match the id', async () => {
+      const wrapper = createWrapper({ scrollTo: '' })
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+
+      await wrapper.setProps({ scrollTo: '100' })
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      // Anchored to the top, below the fixed navbar.
+      expect(opts).toEqual({ block: 'start', offset: 74 })
+
+      // The resolver re-queries the row NewsReplies stamps with
+      // data-reply-id, so re-renders that replace the node are followed.
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '100')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+
+    it('does not pin when scrollTo changes to a different id', async () => {
+      const wrapper = createWrapper({ scrollTo: '' })
+      await wrapper.setProps({ scrollTo: '200' })
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
     })
   })
 
