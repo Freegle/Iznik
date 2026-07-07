@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, effectScope } from 'vue'
 
+// ~/stores/auth is pre-aliased to tests/unit/mocks/auth-store.js;
+// override via globalThis.__mockAuthStore.
+
+import { useMessageDisplay } from '~/composables/useMessageDisplay'
+
 // ---- mocks (vi.mock is hoisted before imports) ----
 
 const mockTimeagoShort = vi.fn()
@@ -58,11 +63,6 @@ const mockMe = ref(null)
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({ me: mockMe }),
 }))
-
-// ~/stores/auth is pre-aliased to tests/unit/mocks/auth-store.js;
-// override via globalThis.__mockAuthStore.
-
-import { useMessageDisplay } from '~/composables/useMessageDisplay'
 
 // ---- helpers ----
 
@@ -122,7 +122,10 @@ afterEach(() => {
 describe('useMessageDisplay', () => {
   describe('messageId can be a plain value (non-ref)', () => {
     it('resolves message when messageId is a plain number', () => {
-      mockByIdMessage.mockReturnValue({ id: 42, subject: 'OFFER: Plain ID test' })
+      mockByIdMessage.mockReturnValue({
+        id: 42,
+        subject: 'OFFER: Plain ID test',
+      })
       let c
       const scope = effectScope()
       scope.run(() => {
@@ -199,7 +202,11 @@ describe('useMessageDisplay', () => {
 
     it('uses custom group keyword for offer when provided', () => {
       const c = make(
-        { id: 1, subject: 'GIVE: Custom keyword item', groups: [{ groupid: 10 }] },
+        {
+          id: 1,
+          subject: 'GIVE: Custom keyword item',
+          groups: [{ groupid: 10 }],
+        },
         { group: { settings: { keywords: { offer: 'GIVE' } } } }
       )
       expect(c.strippedSubject.value).toBe('Custom keyword item')
@@ -216,7 +223,7 @@ describe('useMessageDisplay', () => {
     it('falls back to default keywords when group has no settings', () => {
       const c = make(
         { id: 1, subject: 'OFFER: Fallback test', groups: [{ groupid: 10 }] },
-        { group: {} }  // group without settings
+        { group: {} } // group without settings
       )
       expect(c.strippedSubject.value).toBe('Fallback test')
     })
@@ -239,7 +246,10 @@ describe('useMessageDisplay', () => {
     })
 
     it('returns stripped subject unchanged when no parentheses at end', () => {
-      const c = make({ id: 1, subject: 'OFFER: Item name with (parens) in middle' })
+      const c = make({
+        id: 1,
+        subject: 'OFFER: Item name with (parens) in middle',
+      })
       // Parens not at end — no trailing location
       expect(c.subjectItemName.value).toBe('Item name with (parens) in middle')
     })
@@ -284,11 +294,14 @@ describe('useMessageDisplay', () => {
       [[], false, 0],
       [[{ id: 1 }], true, 1],
       [[{ id: 1 }, { id: 2 }, { id: 3 }], true, 3],
-    ])('attachments %j → gotAttachments=%s, count=%d', (attachments, gotAtt, count) => {
-      const c = make({ id: 1, attachments })
-      expect(c.gotAttachments.value).toBe(gotAtt)
-      expect(c.attachmentCount.value).toBe(count)
-    })
+    ])(
+      'attachments %j → gotAttachments=%s, count=%d',
+      (attachments, gotAtt, count) => {
+        const c = make({ id: 1, attachments })
+        expect(c.gotAttachments.value).toBe(gotAtt)
+        expect(c.attachmentCount.value).toBe(count)
+      }
+    )
 
     it('returns false/0 when attachments property is absent', () => {
       const c = make({ id: 1 })
@@ -322,13 +335,43 @@ describe('useMessageDisplay', () => {
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
     })
 
+    it('uses the ORIGIN group arrival, not a rippled-in copy that happens to be first', () => {
+      // Rippling adds a messages_groups row per group the post spreads to, with
+      // arrival = the ripple-bump time, and groups[] order is arbitrary. Showing a
+      // bump time made a 7-hour-old post read "1 hour" and the "Newest posted"
+      // order look shuffled - the sort correctly uses original post time.
+      const c = make({
+        id: 1,
+        groups: [
+          { arrival: '2026-05-16T10:00:00Z', rippled_in: 1 },
+          { arrival: '2026-05-14T10:00:00Z', rippled_in: 0 },
+          { arrival: '2026-05-15T10:00:00Z', rippled_in: 1 },
+        ],
+        arrival: '2026-05-13T10:00:00Z',
+      })
+      expect(c.timeAgo.value).toBe('2h')
+      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-14T10:00:00Z')
+    })
+
+    it('falls back to message arrival when every group row is rippled-in', () => {
+      // Should not happen (there is always an origin row), but a bump time must
+      // never be shown as the posted age.
+      const c = make({
+        id: 1,
+        groups: [{ arrival: '2026-05-16T10:00:00Z', rippled_in: 1 }],
+        arrival: '2026-05-15T10:00:00Z',
+      })
+      expect(c.timeAgo.value).toBe('2h')
+      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
+    })
+
     it('falls back to arrival when groups arrival is absent', () => {
       const c = make({
         id: 1,
         groups: [{}],
         arrival: '2026-05-15T10:00:00Z',
       })
-      c.timeAgo.value // trigger
+      expect(c.timeAgo.value).toBe('2h')
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
 
@@ -337,7 +380,7 @@ describe('useMessageDisplay', () => {
         id: 1,
         date: '2026-05-14T10:00:00Z',
       })
-      c.timeAgo.value // trigger
+      expect(c.timeAgo.value).toBe('2h')
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-14T10:00:00Z')
     })
 
@@ -360,13 +403,13 @@ describe('useMessageDisplay', () => {
         groups: [{ arrival: '2026-05-16T10:00:00Z' }],
         arrival: '2026-05-15T10:00:00Z',
       })
-      c.timeAgoExpanded.value
+      expect(c.timeAgoExpanded.value).toBe('2 hours')
       expect(mockTimeagoMedium).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
     })
 
     it('falls back to arrival when groups arrival is absent', () => {
       const c = make({ id: 1, groups: [{}], arrival: '2026-05-15T10:00:00Z' })
-      c.timeAgoExpanded.value
+      expect(c.timeAgoExpanded.value).toBe('2 hours')
       expect(mockTimeagoMedium).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
 
@@ -412,13 +455,13 @@ describe('useMessageDisplay', () => {
         groups: [{ arrival: '2026-05-16T10:00:00Z' }],
         arrival: '2026-05-15T10:00:00Z',
       })
-      c.fullTimeAgo.value // trigger
+      expect(c.fullTimeAgo.value).toBe('Posted 2 hours ago')
       expect(mockTimeago).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
     })
 
     it('falls back to arrival when groups arrival is absent', () => {
       const c = make({ id: 1, groups: [{}], arrival: '2026-05-15T10:00:00Z' })
-      c.fullTimeAgo.value
+      expect(c.fullTimeAgo.value).toBe('Posted 2 hours ago')
       expect(mockTimeago).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
   })
