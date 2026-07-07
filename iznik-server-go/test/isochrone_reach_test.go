@@ -310,3 +310,44 @@ func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
 			"posted (original post time) is strictly earlier than the ripple-bumped spatial arrival")
 	}
 }
+
+// A post whose reach has been frozen for moderation (rippling_reach.status = 'held' -
+// set when its origin copy is pulled back to Pending by reports or Back to Pending)
+// must NOT appear on the nearby browse feed. Every batch-side reach consumer already
+// excludes held rows; this pins the read side, which is how a reported post kept
+// showing in browse (https://discourse.ilovefreegle.org/t/reporting-posts/9862/7).
+func TestNearbyReachFeedExcludesHeld(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("nearbyheld")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	live := CreateTestMessage(t, posterID, group, "OFFER: live reach (nearbyheld)", 51.5, -0.1)
+	held := CreateTestMessage(t, posterID, group, "OFFER: held reach (nearbyheld)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", live, held)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", live, held)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// Both reach polygons cover the viewer - only the status differs.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", live)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'held') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	got := map[uint64]bool{}
+	for _, m := range msgs {
+		got[m.ID] = true
+	}
+	assert.True(t, got[live], "a post with a live reach appears in the nearby feed")
+	assert.False(t, got[held], "a post whose reach is held for moderation is absent from the nearby feed")
+}

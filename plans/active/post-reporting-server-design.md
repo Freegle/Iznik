@@ -1,3 +1,11 @@
+> **STATUS (2026-07-07): NOT IMPLEMENTED - superseded.** The shipped reporting flow is the
+> microactions quorum in `iznik-server-go/microvolunteering` (`RecordReportVerdict`), not the
+> `messages_reports`/`reportcount` design below. Current behaviour (per Edward, Discourse 9862):
+> a report from a moderator of the reported community (or Support/Admin) counts as quorum on
+> its own - the post goes to Pending on ALL its communities and the ripple reach is frozen;
+> reports from members need 2 distinct Reject verdicts to do the same. Kept for the parts not
+> yet built (report reasons enum, mod-review loop prevention, DismissReports, metrics).
+
 # Post Reporting System — Server-Side Design
 
 ## 1. New Database Schema
