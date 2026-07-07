@@ -180,8 +180,8 @@ class StatsGenerationService
             $activeUsers[(int) $row->gid] = (int) $row->cnt;
         }
 
-        // OUTCOMES: distinct messages with a Taken/Received outcome dated $date,
-        // per native group. (Replaces the per-group distinct count.)
+        // OUTCOMES non-bulk: distinct messages with a Taken/Received outcome dated $date,
+        // per native group, excluding bulk-offer messages (counted via available=0 flips below).
         $outcomes = [];
         foreach (
             DB::table('messages_outcomes')
@@ -190,11 +190,52 @@ class StatsGenerationService
                 ->where('messages_outcomes.timestamp', '>=', $date)
                 ->where('messages_outcomes.timestamp', '<', $next)
                 ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages_bulk_items')
+                        ->whereColumn('messages_bulk_items.msgid', 'messages_outcomes.msgid');
+                })
                 ->groupBy('messages_groups.groupid')
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
                 ->get() as $row
         ) {
             $outcomes[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // OUTCOMES bulk flip: catalogue items flipped to available=0 on $date count by
+        // their quantity (remaining units at flip time).
+        foreach (
+            DB::table('messages_bulk_items')
+                ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_bulk_items.msgid')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->where('messages_bulk_items.available', 0)
+                ->where('messages_bulk_items.updated_at', '>=', $date)
+                ->where('messages_bulk_items.updated_at', '<', $next)
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, SUM(messages_bulk_items.quantity) AS cnt')
+                ->get() as $row
+        ) {
+            $gid = (int) $row->gid;
+            $outcomes[$gid] = ($outcomes[$gid] ?? 0) + (int) $row->cnt;
+        }
+
+        // OUTCOMES collected: in-app collections (interest rows flipped to Collected on $date)
+        // count by the interest-row quantity. These units were already deducted from
+        // messages_bulk_items.quantity before any flip, so there is no overlap with the
+        // available=0 arm above.
+        foreach (
+            DB::table('messages_bulk_items_interest')
+                ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_bulk_items_interest.msgid')
+                ->where('messages_groups.rippled_in', 0) // native posts only
+                ->where('messages_bulk_items_interest.state', 'Collected')
+                ->where('messages_bulk_items_interest.updated_at', '>=', $date)
+                ->where('messages_bulk_items_interest.updated_at', '<', $next)
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, SUM(messages_bulk_items_interest.quantity) AS cnt')
+                ->get() as $row
+        ) {
+            $gid = (int) $row->gid;
+            $outcomes[$gid] = ($outcomes[$gid] ?? 0) + (int) $row->cnt;
         }
 
         // APPROVED_MESSAGE_COUNT: distinct approved native messages arriving $date.
@@ -211,6 +252,34 @@ class StatsGenerationService
                 ->get() as $row
         ) {
             $approvedMessages[(int) $row->gid] = (int) $row->cnt;
+        }
+
+        // BULK TOP-UP: bulk messages count by initial unit total (messages.availableinitially),
+        // not 1 per message. The base query already counted each bulk message as 1; add
+        // availableinitially - 1 per bulk message per group. Using availableinitially (set at
+        // creation) keeps the arrival-day figure immune to same-day collections shrinking
+        // messages_bulk_items.quantity.
+        foreach (
+            DB::table('messages_groups')
+                ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+                ->whereExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages_bulk_items')
+                        ->whereColumn('messages_bulk_items.msgid', 'messages_groups.msgid');
+                })
+                ->where('messages_groups.rippled_in', 0)
+                ->where('messages.arrival', '>=', $date)
+                ->where('messages.arrival', '<', $next)
+                ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, SUM(messages.availableinitially - 1) AS topup')
+                ->get() as $row
+        ) {
+            $gid = (int) $row->gid;
+            $topup = (int) $row->topup;
+            if ($topup > 0) {
+                $approvedMessages[$gid] = ($approvedMessages[$gid] ?? 0) + $topup;
+            }
         }
 
         // APPROVED_MEMBER_COUNT: cumulative approved members as of $date
@@ -316,8 +385,8 @@ class StatsGenerationService
             $ourPosting[(int) $row->gid][$row->ourPostingStatus] = (int) $row->cnt;
         }
 
-        // REPLIES: "Interested" chat messages referring to approved native
-        // posts on $date, per group.
+        // REPLIES non-bulk: "Interested" chat messages referring to approved native
+        // non-bulk posts on $date, per group.
         $replies = [];
         foreach (
             DB::table('chat_messages')
@@ -326,6 +395,11 @@ class StatsGenerationService
                 ->where('chat_messages.date', '<', $next)
                 ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
                 ->where('messages_groups.rippled_in', 0) // native posts only
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages_bulk_items')
+                        ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
+                })
                 ->groupBy('messages_groups.groupid')
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
@@ -333,11 +407,56 @@ class StatsGenerationService
             $replies[(int) $row->gid] = (int) $row->cnt;
         }
 
-        // WEIGHT: estimated kg moved on $date per group, using the same
+        // REPLIES bulk part 1: structured interest rows created on $date — one row
+        // per (item, user) pair counts as one reply signal.
+        foreach (
+            DB::table('messages_bulk_items_interest')
+                ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_bulk_items_interest.msgid')
+                ->where('messages_groups.rippled_in', 0)
+                ->where('messages_bulk_items_interest.created_at', '>=', $date)
+                ->where('messages_bulk_items_interest.created_at', '<', $next)
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $gid = (int) $row->gid;
+            $replies[$gid] = ($replies[$gid] ?? 0) + (int) $row->cnt;
+        }
+
+        // REPLIES bulk part 2: free-text Interested chat messages for bulk msgids
+        // where the sender has no interest row — they replied outside the structured
+        // flow and would otherwise be missed entirely.
+        foreach (
+            DB::table('chat_messages')
+                ->join('messages_groups', 'chat_messages.refmsgid', '=', 'messages_groups.msgid')
+                ->where('chat_messages.date', '>=', $date)
+                ->where('chat_messages.date', '<', $next)
+                ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
+                ->where('messages_groups.rippled_in', 0)
+                ->whereExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages_bulk_items')
+                        ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
+                })
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages_bulk_items_interest')
+                        ->whereColumn('messages_bulk_items_interest.msgid', 'chat_messages.refmsgid')
+                        ->whereColumn('messages_bulk_items_interest.userid', 'chat_messages.userid');
+                })
+                ->groupBy('messages_groups.groupid')
+                ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
+                ->get() as $row
+        ) {
+            $gid = (int) $row->gid;
+            $replies[$gid] = ($replies[$gid] ?? 0) + (int) $row->cnt;
+        }
+
+        // WEIGHT non-bulk: estimated kg moved on $date per group, using the same
         // grouped subquery as regenerateWeightForRange() — DISTINCT
         // (msgid, groupid, eff_weight) with items.weight when known/non-zero,
         // else the popularity-weighted population mean. Equivalent to the old
-        // per-group distinct()+foreach.
+        // per-group distinct()+foreach. Bulk-offer messages are excluded here.
         $weight = [];
         foreach (
             DB::select(
@@ -351,12 +470,58 @@ class StatsGenerationService
                 . '  LEFT JOIN items i ON i.id = mi.itemid '
                 . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
                 . '    AND mo.outcome IN (?, ?)'
+                . '    AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)'
                 . ') sub '
                 . 'GROUP BY sub.groupid',
                 [$avg, $date, $next, Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]
             ) as $row
         ) {
             $weight[(int) $row->gid] = (int) $row->total_weight;
+        }
+
+        // WEIGHT bulk flip: catalogue items marked available=0 on $date, weighted by
+        // items.weight matched by name (not itemid), multiplied by remaining quantity.
+        foreach (
+            DB::select(
+                'SELECT mg.groupid AS gid, '
+                . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
+                . 'FROM messages_bulk_items bi '
+                . 'INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 '
+                . 'LEFT JOIN items i ON i.name = bi.name '
+                . 'WHERE bi.available = 0 '
+                . '  AND bi.updated_at >= ? AND bi.updated_at < ? '
+                . 'GROUP BY mg.groupid',
+                [$avg, $date, $next]
+            ) as $row
+        ) {
+            $gid = (int) $row->gid;
+            $bw = (int) $row->bulk_weight;
+            if ($bw !== 0) {
+                $weight[$gid] = ($weight[$gid] ?? 0) + $bw;
+            }
+        }
+
+        // WEIGHT collected: in-app collections attributed on updated_at day, weighted by
+        // items.weight matched via the parent bulk item's name, times interest-row quantity.
+        foreach (
+            DB::select(
+                'SELECT mg.groupid AS gid, '
+                . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight '
+                . 'FROM messages_bulk_items_interest mbi '
+                . 'INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid '
+                . 'INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 '
+                . 'LEFT JOIN items i ON i.name = bi.name '
+                . 'WHERE mbi.state = ? '
+                . '  AND mbi.updated_at >= ? AND mbi.updated_at < ? '
+                . 'GROUP BY mg.groupid',
+                [$avg, 'Collected', $date, $next]
+            ) as $row
+        ) {
+            $gid = (int) $row->gid;
+            $cw = (int) $row->coll_weight;
+            if ($cw !== 0) {
+                $weight[$gid] = ($weight[$gid] ?? 0) + $cw;
+            }
         }
 
         return [
@@ -506,7 +671,7 @@ class StatsGenerationService
             // one (msgid, eff_weight) tuple counts once, but a msgid linked
             // to multiple items with different weights contributes all of
             // them — same shape as the PHP `distinct()` + foreach the old
-            // path had.
+            // path had. Bulk-offer messages are excluded and handled below.
             $rows = DB::select(
                 'SELECT sub.groupid, ROUND(SUM(sub.eff_weight)) AS total_weight '
                 . 'FROM ('
@@ -518,27 +683,77 @@ class StatsGenerationService
                 . '  LEFT JOIN items i ON i.id = mi.itemid '
                 . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
                 . '    AND mo.outcome IN (?, ?)'
+                . '    AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)'
                 . ') sub '
                 . 'GROUP BY sub.groupid',
                 [$avg, $date, $next, Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]
             );
 
+            // Merge non-bulk results into a groupid-keyed array.
+            $weightByGroup = [];
+            foreach ($rows as $row) {
+                $w = (int) $row->total_weight;
+                if ($w !== 0) {
+                    $weightByGroup[(int) $row->groupid] = $w;
+                }
+            }
+
+            // WEIGHT bulk flip arm: catalogue items marked available=0 on this date,
+            // weighted by items.weight matched by name, multiplied by remaining quantity.
+            foreach (
+                DB::select(
+                    'SELECT mg.groupid, '
+                    . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
+                    . 'FROM messages_bulk_items bi '
+                    . 'INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 '
+                    . 'LEFT JOIN items i ON i.name = bi.name '
+                    . 'WHERE bi.available = 0 '
+                    . '  AND bi.updated_at >= ? AND bi.updated_at < ? '
+                    . 'GROUP BY mg.groupid',
+                    [$avg, $date, $next]
+                ) as $bulkRow
+            ) {
+                $gid = (int) $bulkRow->groupid;
+                $bw = (int) $bulkRow->bulk_weight;
+                if ($bw !== 0) {
+                    $weightByGroup[$gid] = ($weightByGroup[$gid] ?? 0) + $bw;
+                }
+            }
+
+            // WEIGHT collected arm: in-app collections attributed on updated_at day.
+            foreach (
+                DB::select(
+                    'SELECT mg.groupid, '
+                    . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight '
+                    . 'FROM messages_bulk_items_interest mbi '
+                    . 'INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid '
+                    . 'INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 '
+                    . 'LEFT JOIN items i ON i.name = bi.name '
+                    . 'WHERE mbi.state = ? '
+                    . '  AND mbi.updated_at >= ? AND mbi.updated_at < ? '
+                    . 'GROUP BY mg.groupid',
+                    [$avg, 'Collected', $date, $next]
+                ) as $collRow
+            ) {
+                $gid = (int) $collRow->groupid;
+                $cw = (int) $collRow->coll_weight;
+                if ($cw !== 0) {
+                    $weightByGroup[$gid] = ($weightByGroup[$gid] ?? 0) + $cw;
+                }
+            }
+
             $datesProcessed++;
 
             if ($dryRun) {
-                $rowsWritten += count(array_filter($rows, fn ($r) => (int) $r->total_weight !== 0));
+                $rowsWritten += count($weightByGroup);
                 continue;
             }
 
             $placeholders = [];
             $values = [];
-            foreach ($rows as $row) {
-                $w = (int) $row->total_weight;
-                if ($w === 0) {
-                    continue;
-                }
+            foreach ($weightByGroup as $gid => $w) {
                 $placeholders[] = '(?, ?, ?, ?)';
-                array_push($values, $date, (int) $row->groupid, self::TYPE_WEIGHT, $w);
+                array_push($values, $date, $gid, self::TYPE_WEIGHT, $w);
             }
 
             if (!empty($placeholders)) {

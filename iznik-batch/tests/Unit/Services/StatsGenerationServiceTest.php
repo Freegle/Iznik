@@ -505,4 +505,120 @@ class StatsGenerationServiceTest extends TestCase
 
         $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_POST_METHOD_BREAKDOWN, []);
     }
+
+    // ── Bulk-offer per-item counting ──────────────────────────────────────────
+    //
+    // A "bulk offer" message has rows in messages_bulk_items. Each stat type must
+    // count by item quantity rather than by message count:
+    //
+    //   ApprovedMessageCount — SUM(quantity) over all bulk items (not 1 per message)
+    //   Outcomes             — SUM(quantity) for items flipped available=0 on $date
+    //   Weight               — SUM(weight * quantity) matched by items.name
+    //   Replies              — interest rows + free-text Interested with no interest row
+    //
+    // A normal (non-bulk) control message must be unaffected.
+
+    public function test_bulk_offer_per_item_counting(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $replier1 = $this->createTestUser();
+        $freeTextReplier = $this->createTestUser();
+
+        // ── Control: one normal message with one Interested reply ──────────────
+        $control = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 08:00:00']);
+        $controlRoom = $this->createTestChatRoom($owner, $replier1);
+        $this->createTestChatMessage($controlRoom, $replier1, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $control->id,
+            'date' => $this->date.' 08:30:00',
+        ]);
+
+        // ── Bulk offer message: availableinitially=6 (item1 qty=3 + item2 qty=3). ──────
+        // 1 unit of item1 was collected in-app (quantity decremented to 2), then
+        // the offerer flipped the remainder to available=0 on $date. Item2 is still
+        // available.
+        $bulk = $this->createTestMessage($owner, $group, [
+            'arrival' => $this->date.' 10:00:00',
+            'availableinitially' => 6,
+        ]);
+
+        // Item 1 (qty=2 remaining after 1 collected): flipped available=0 on $date;
+        // matched by name in the items table with weight=10.
+        $item1Name = 'BulkItemA_'.uniqid();
+        $item1Id = DB::table('messages_bulk_items')->insertGetId([
+            'msgid' => $bulk->id,
+            'name' => $item1Name,
+            'quantity' => 2,
+            'available' => 0,
+            'updated_at' => $this->date.' 11:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+
+        // Item 2 (qty=3): still available; no items-table row.
+        $item2Id = DB::table('messages_bulk_items')->insertGetId([
+            'msgid' => $bulk->id,
+            'name' => 'BulkItemB_'.uniqid(),
+            'quantity' => 3,
+            'available' => 1,
+            'updated_at' => $this->date.' 09:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+
+        // Items-table row for item1 with known weight=10.
+        DB::table('items')->insert(['name' => $item1Name, 'weight' => 10.0, 'popularity' => 1.0]);
+
+        // ── Collected interest row for item1: 1 unit collected in-app on $date ──
+        // state=Collected, updated_at in day, qty=1 (the 1 unit that was collected).
+        // created_at in day so it also counts in the Replies part-1 arm.
+        DB::table('messages_bulk_items_interest')->insert([
+            'bulkitemid' => $item1Id,
+            'msgid' => $bulk->id,
+            'userid' => $replier1->id,
+            'quantity' => 1,
+            'state' => 'Collected',
+            'created_at' => $this->date.' 10:30:00',
+            'updated_at' => $this->date.' 10:30:00',
+        ]);
+
+        // ── Structured interest for item2 (Interested, not yet collected) ────
+        DB::table('messages_bulk_items_interest')->insert([
+            'bulkitemid' => $item2Id,
+            'msgid' => $bulk->id,
+            'userid' => $replier1->id,
+            'quantity' => 1,
+            'state' => 'Interested',
+            'created_at' => $this->date.' 10:30:00',
+            'updated_at' => $this->date.' 10:30:00',
+        ]);
+
+        // ── Free-text reply: freeTextReplier sends an Interested chat message
+        //    but has no interest row for the bulk message ──────────────────────
+        $bulkRoom = $this->createTestChatRoom($owner, $freeTextReplier);
+        $this->createTestChatMessage($bulkRoom, $freeTextReplier, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $bulk->id,
+            'date' => $this->date.' 10:45:00',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        // ApprovedMessageCount uses availableinitially (not current quantity):
+        //   base = 2 (control + bulk message), top-up = availableinitially(6) - 1 = 5
+        //   total = 2 + 5 = 7.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 7);
+
+        // Outcomes = 2 (flip arm: item1 qty=2 remaining) + 1 (collected arm: interest qty=1) = 3.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_OUTCOMES, 3);
+
+        // Weight = 10*2 (flip arm) + 10*1 (collected arm) = 30.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_WEIGHT, 30);
+
+        // Replies = 1 (control) + 2 (interest rows: item1 Collected + item2 Interested,
+        //   both counted by created_at) + 1 (free-text bulk) = 4.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 4);
+
+        // Activity = approvedMessages + replies = 7 + 4 = 11.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 11);
+    }
 }
