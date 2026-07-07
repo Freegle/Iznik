@@ -59,8 +59,11 @@
         />
       </div>
       <div class="align-top reply-content">
+        <!-- text--small matches the message text so the name shares its
+             glyph size and baseline; without it the 1rem name floats above
+             the 0.9rem first line. -->
         <span
-          class="text-success fw-bold clickme"
+          class="text-success fw-bold clickme text--small"
           title="Click to see their profile"
           @click="showInfo"
           >{{ reply.displayname }}</span
