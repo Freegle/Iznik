@@ -94,6 +94,22 @@ describe('useReplyToPost', () => {
       expect(replyToSend.value).toBeNull()
     })
 
+    it('never treats a composing draft as a pending send', () => {
+      // Drafts (typed but never submitted) live in separate draft* fields.
+      // They must never surface here, or an unsent draft would auto-send on
+      // the next page load after login.
+      mockReplyStore = freshReplyStore({
+        replyMsgId: null,
+        replyMessage: null,
+        replyingAt: null,
+        draftMsgId: 42,
+        draftMessage: 'Half-typed draft that must never auto-send',
+        draftAt: RECENT_AT,
+      })
+      const { replyToSend } = useReplyToPost()
+      expect(replyToSend.value).toBeNull()
+    })
+
     it('returns null when replyMessage is missing', () => {
       mockReplyStore = freshReplyStore({ replyMessage: null })
       const { replyToSend } = useReplyToPost()
