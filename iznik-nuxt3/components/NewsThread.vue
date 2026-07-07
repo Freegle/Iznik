@@ -126,6 +126,7 @@
           :depth="1"
           :class="newsfeed.deleted ? 'strike me-1' : 'me-1'"
           @rendered="rendered"
+          @subtree-rendered="repliesRendered = true"
         />
         <span v-if="!newsfeed?.closed">
           <div v-if="enterNewLine">
@@ -276,6 +277,7 @@ import {
   defineAsyncComponent,
   watch,
   onMounted,
+  onBeforeUnmount,
   nextTick,
 } from 'vue'
 import AutoHeightTextarea from './AutoHeightTextarea'
@@ -283,7 +285,13 @@ import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
 import NewsReplies from '~/components/NewsReplies'
 import { untwem } from '~/composables/useTwem'
-import { scrollToAndPin } from '~/composables/useScrollAnchor'
+import {
+  scrollToAndPin,
+  fixedHeaderOffset,
+  imagesComplete,
+  whenImagesComplete,
+  whenAllSettled,
+} from '~/composables/useScrollAnchor'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
@@ -484,10 +492,70 @@ onMounted(() => {
   emit('rendered')
 })
 
+// True once the whole reply tree has reported mounting (or there was
+// nothing to mount). Feeds the deep-link pin's completion signal.
+const repliesRendered = ref(!newsfeed.value?.replies?.length)
+
+// The pin this component started, if any, so unmount can stop it.
+let ownPin = null
+let deepLinkPinned = false
+
+onBeforeUnmount(() => {
+  if (ownPin) ownPin()
+})
+
+// An {ok, wait} condition from any reactive getter, for whenAllSettled.
+function condition(get) {
+  return {
+    ok: () => !!get(),
+    wait: () =>
+      new Promise((resolve) => {
+        const stop = watch(get, (v) => {
+          if (v) {
+            stop()
+            resolve()
+          }
+        })
+      }),
+  }
+}
+
+// Resolves when nothing that could still move the layout is outstanding:
+// the reply tree has fully mounted, no API requests are in flight and no
+// images are still loading. Entirely event-driven - component rendered
+// events, store reactivity and image load/error events. No timers: if a
+// chunk takes ten seconds, the pin simply holds for ten seconds.
+function threadContentSettled() {
+  return whenAllSettled([
+    condition(() => repliesRendered.value),
+    condition(() => !miscStore.apiCount),
+    {
+      ok: () => imagesComplete(),
+      wait: () => whenImagesComplete(),
+    },
+  ])
+}
+
 // Methods
 function rendered(id) {
   if (parseInt(id) === parseInt(props.scrollTo)) {
     scrollDownTo.value = props.scrollTo
+
+    // Deep link (/chitchat/<replyid>): hold the reply centred while the
+    // rest of the thread streams in around it, releasing only when the
+    // content is provably complete. Once per page - re-mounts of the same
+    // target must not restart a released pin.
+    if (!deepLinkPinned) {
+      deepLinkPinned = true
+      ownPin = scrollToAndPin(
+        () => document.querySelector(`[data-reply-id="${props.scrollTo}"]`),
+        {
+          block: 'center',
+          offset: fixedHeaderOffset(),
+          done: threadContentSettled(),
+        }
+      )
+    }
   }
 }
 
@@ -521,13 +589,20 @@ async function sendComment(callback) {
     // property. Keep the poster anchored to their reply: the post-send refetch
     // re-renders in the server's new order (replied-to parents get bumped), so
     // without this the viewport content swaps and the reply lands off-screen.
-    // The pin re-resolves the selector every frame, so it waits for the
-    // refetch to render the new reply and holds it through the shuffle.
+    // The pin re-resolves the selector on every correction, so it waits for
+    // the refetch to render the new reply and holds it through the shuffle,
+    // releasing when the refetch and image loads are complete.
     if (newid) {
       nextTick(() => {
-        scrollToAndPin(
+        ownPin = scrollToAndPin(
           () => document.querySelector(`[data-reply-id="${newid}"]`),
-          { block: 'center' }
+          {
+            block: 'center',
+            done: whenAllSettled([
+              condition(() => !miscStore.apiCount),
+              { ok: () => imagesComplete(), wait: () => whenImagesComplete() },
+            ]),
+          }
         )
       })
     }
