@@ -21,6 +21,19 @@ use Illuminate\Support\Facades\Log;
  */
 class ReachService
 {
+    /** groupProximity() status: definitive answer; body carries closest/furthest/quicker. */
+    public const PROX_OK = 'ok';
+
+    /** groupProximity() status: definitive answer - group not reachable within the budget. */
+    public const PROX_UNREACHABLE = 'unreachable';
+
+    /**
+     * groupProximity() status: no usable answer (exception, timeout, non-2xx - e.g. the routing
+     * server mid-restart). NOT definitive: callers must retry later and never memoize this,
+     * otherwise a routing restart would permanently suppress notes for rows checked during it.
+     */
+    public const PROX_ERROR = 'error';
+
     private string $url;
     private string $curve;
     private string $mode;
@@ -145,11 +158,16 @@ class ReachService
     /**
      * P/Q proximity for a post rippling into a group: P = nearest in-group point to the offer,
      * Q = the in-group point furthest FROM P, each with road drive-time. Backs the moderator
-     * "quicker to get to" line. Returns null on any failure/unreachable (never throws).
+     * "quicker to get to" line. Never throws.
      *
-     * @return array{closest:array{lat:float,lng:float,drive_min:float},furthest:array{lat:float,lng:float,drive_min:float},quicker:bool}|null
+     * Tri-state so callers can tell a definitive "no" (safe to memoize checked-once-forever)
+     * from a failed call (must retry): PROX_OK carries the routing body, PROX_UNREACHABLE means
+     * the routing server answered that the group is beyond the budget, PROX_ERROR means no
+     * usable answer was obtained (timeout/non-2xx/exception) and nothing may be memoized.
+     *
+     * @return array{status:string, body:?array{closest:array{lat:float,lng:float,drive_min:float},furthest:array{lat:float,lng:float,drive_min:float},quicker:bool}}
      */
-    public function groupProximity(float $lat, float $lng, int $groupid, ?float $maxMinutes = null): ?array
+    public function groupProximity(float $lat, float $lng, int $groupid, ?float $maxMinutes = null): array
     {
         // Best-effort moderator note, computed OUT of the hot ripple:expand cron (by the
         // ripple:proximity-notes command), so a slacker timeout is fine here. Slow or failed calls
@@ -175,22 +193,22 @@ class ReachService
                 ->get("{$this->url}/v1/group-proximity", $query);
         } catch (\Throwable $e) {
             $this->reportProximityTiming($groupid, (microtime(true) - $started) * 1000, $e->getMessage());
-            return null;
+            return ['status' => self::PROX_ERROR, 'body' => null];
         }
 
         $elapsedMs = (microtime(true) - $started) * 1000;
         if (!$response->successful()) {
             $this->reportProximityTiming($groupid, $elapsedMs, "HTTP {$response->status()}");
-            return null;
+            return ['status' => self::PROX_ERROR, 'body' => null];
         }
         $this->reportProximityTiming($groupid, $elapsedMs, null);
 
         $body = $response->json() ?? [];
         if (!($body['reachable'] ?? false)) {
-            return null;
+            return ['status' => self::PROX_UNREACHABLE, 'body' => null];
         }
 
-        return $body;
+        return ['status' => self::PROX_OK, 'body' => $body];
     }
 
     /**

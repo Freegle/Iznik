@@ -910,6 +910,10 @@ class ExpandServiceTest extends TestCase
             $this->assertNotNull($note, 'proximity note written for the rippled-in copy');
             $this->assertSame('AB10 1XG (Gilcomston)', $note->p);
             $this->assertSame('AB11 5QN (Aberdeen)', $note->q);
+            $this->assertNotNull(
+                DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+                'noted row is also marked checked'
+            );
         } finally {
             $this->removeSpatial('postcodes', [$pId, $qId]);
             DB::table('locations')->whereIn('id', [$pId, $qId, $pAreaId, $qAreaId])->delete();
@@ -986,6 +990,140 @@ class ExpandServiceTest extends TestCase
 
         $this->assertNull(
             DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first()
+        );
+    }
+
+    /** Count of /v1/group-proximity requests recorded by Http::fake so far. */
+    private function proximityRequestCount(): int
+    {
+        return Http::recorded(fn ($req) => str_contains($req->url(), 'group-proximity'))->count();
+    }
+
+    /**
+     * Negative memoization (Phase 0, plans/routing-performance-step-change.md): a definitive
+     * "not quicker" answer writes a rippling_proximity_checked marker, so the row is never
+     * re-queried. Previously these rows were recomputed on every 5-minute run for the whole
+     * 8-day candidate window (the 2026-07-06 group-21521 Sentry storm's standing tax).
+     */
+    public function test_proximity_not_quicker_writes_marker_and_is_never_rechecked(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, false, 58.0, 1.0, 58.5, 1.5);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'not quicker - no note'
+        );
+        $this->assertNotNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'definitive not-quicker answer - checked marker written'
+        );
+
+        $before = $this->proximityRequestCount();
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+        $this->assertSame(
+            $before,
+            $this->proximityRequestCount(),
+            'marked row must not be re-queried on subsequent runs'
+        );
+    }
+
+    /**
+     * A definitive "unreachable within budget" answer (HTTP 200, reachable=false) is also
+     * memoized: marker written, no re-query on later runs.
+     */
+    public function test_proximity_unreachable_writes_marker_and_is_never_rechecked(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(false);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNotNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'definitive unreachable answer - checked marker written'
+        );
+
+        $before = $this->proximityRequestCount();
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+        $this->assertSame($before, $this->proximityRequestCount(), 'unreachable row not re-queried');
+    }
+
+    /**
+     * An HTTP failure is NOT a definitive answer: no marker may be written (else a routing
+     * restart would permanently suppress notes for whatever rows were checked during it),
+     * and the row IS re-queried on the next run.
+     */
+    public function test_proximity_http_failure_writes_no_marker_and_is_retried(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, status: 500);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'HTTP failure is not definitive - no marker'
+        );
+
+        $before = $this->proximityRequestCount();
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+        $this->assertSame(
+            $before + 1,
+            $this->proximityRequestCount(),
+            'failed row is retried on the next run'
+        );
+    }
+
+    /**
+     * Markers older than the candidate window are purged by the command (candidates require
+     * mg.arrival within 8 days, so a 14-day-old marker can never be needed again); fresh
+     * markers are kept.
+     */
+    public function test_proximity_marker_purge_removes_only_expired_rows(): void
+    {
+        $this->fakeRouting(1);
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $oldMsg = $this->createTestMessage($user, $group);
+        $freshMsg = $this->createTestMessage($user, $group);
+        DB::table('rippling_proximity_checked')->insert([
+            ['msgid' => $oldMsg->id, 'groupid' => $group->id, 'checked_at' => now()->subDays(20)],
+            ['msgid' => $freshMsg->id, 'groupid' => $group->id, 'checked_at' => now()->subDays(2)],
+        ]);
+
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $oldMsg->id)->first(),
+            'marker past the candidate window is purged'
+        );
+        $this->assertNotNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $freshMsg->id)->first(),
+            'recent marker is kept'
         );
     }
 
