@@ -77,6 +77,15 @@ func InitDatabase() {
 	// SELECTs go to the replica. db.DB() still returns the source pool, so the
 	// LastInsertId write sites are unaffected.
 	//
+	// Replica failover: the Replicas dialector is backed by a failoverConnector
+	// (database/failover.go) that automatically falls back to the source when
+	// the replica is unreachable. After a failure it skips the replica for a
+	// 30-second window (to avoid stalling on a dial timeout), then re-probes it
+	// on the next new connection. Recovery is therefore automatic: once the
+	// replica is healthy again, the next connection attempt outside the window
+	// routes back to it. The 5-minute conn lifetime below bounds how long
+	// fallback-backed connections persist after recovery.
+	//
 	// When MYSQL_HOST_READ is empty the resolver is NOT registered and behaviour
 	// is byte-identical to a single-host deployment, so dev/CI/existing prod are
 	// unchanged until a replica is explicitly configured.
@@ -88,12 +97,16 @@ func InitDatabase() {
 		fmt.Println("Read replica enabled at", readHost)
 		resolverErr := DBConn.Use(
 			dbresolver.Register(dbresolver.Config{
-				Replicas: []gorm.Dialector{mysql.Open(buildDSN(readHost))},
+				Replicas: []gorm.Dialector{newFailoverDialector(buildDSN(readHost), buildDSN(writeHost))},
 				Policy:   dbresolver.RandomPolicy{},
 			}).
 				SetMaxOpenConns(200).
 				SetMaxIdleConns(200).
-				SetConnMaxLifetime(time.Hour),
+				// 5-minute lifetime ensures fallback-backed connections age out and
+				// reconnect via the primary (replica) path within 5 minutes of
+				// recovery, bounding how long the source carries replica-destined
+				// reads after the replica comes back.
+				SetConnMaxLifetime(5 * time.Minute),
 		)
 		if resolverErr != nil {
 			panic("failed to register read replica: " + resolverErr.Error())
