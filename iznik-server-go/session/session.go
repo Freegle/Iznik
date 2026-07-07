@@ -1827,6 +1827,15 @@ func PatchSession(c *fiber.Ctx) error {
 
 	if string(req.Deleted) == "null" {
 		setClauses = append(setClauses, "deleted = NULL")
+
+		// Deletion writes a (User, Deleted) audit log; record the matching
+		// reinstatement so mods can see the full story. The INSERT..SELECT only
+		// fires if the account is actually flagged deleted right now (the UPDATE
+		// clearing the flag runs after this), so a routine settings save that
+		// happens to include deleted:null doesn't spam the log.
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) "+
+			"SELECT NOW(), ?, ?, id, id FROM users WHERE id = ? AND deleted IS NOT NULL",
+			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED, myid)
 	}
 
 	if req.Marketingconsent != nil {
