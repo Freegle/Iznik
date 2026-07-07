@@ -107,7 +107,7 @@
  *   ERROR          - Something went wrong
  */
 
-import { ref, computed, getCurrentInstance, watch } from 'vue'
+import { ref, computed, getCurrentInstance, watch, onScopeDispose } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
@@ -174,6 +174,9 @@ export const ReplyEvent = {
 
 // 24 hours in milliseconds - replies older than this are considered stale
 const STALE_REPLY_THRESHOLD = 24 * 60 * 60 * 1000
+
+// How long after the last keystroke a composing draft is persisted
+const DRAFT_PERSIST_DEBOUNCE = 400
 
 // Processing timeout - if stuck for 30 seconds, fallback
 const PROCESSING_TIMEOUT = 30 * 1000
@@ -294,6 +297,68 @@ export function useReplyStateMachine(messageId, options = {}) {
     return age > STALE_REPLY_THRESHOLD
   }
 
+  // Check if a saved composing draft is stale (older than 24 hours)
+  function isDraftStale() {
+    if (!replyStore.draftAt) return true
+    const age = Date.now() - replyStore.draftAt
+    return age > STALE_REPLY_THRESHOLD
+  }
+
+  // ── Composing-draft persistence ─────────────────────────────────────────
+  // Typed-but-unsent text is saved (debounced) to separate draft* fields in
+  // the store, so closing and reopening the pane restores it. It must NEVER
+  // go into replyMsgId/replyMessage: for a logged-in user those mean "send
+  // this on next page load" (useReplyToPost).
+  let draftTimer = null
+
+  function persistDraftNow() {
+    draftTimer = null
+
+    // Only persist while the user is editing - never mid-send or after
+    // completion, where the fields no longer represent an unsent draft.
+    if (!canSend.value) return
+
+    if (replyText.value || collectText.value || email.value) {
+      replyStore.saveDraft({
+        msgId: messageId,
+        message: replyText.value,
+        collect: collectText.value,
+        email: email.value,
+      })
+      log('Draft persisted', { messageLength: replyText.value.length })
+    } else if (replyStore.draftMsgId === messageId) {
+      // User deleted everything they'd typed - forget the draft.
+      replyStore.clearDraft()
+      log('Draft cleared (fields emptied)')
+    }
+  }
+
+  watch([replyText, collectText, email], () => {
+    if (draftTimer) clearTimeout(draftTimer)
+    draftTimer = setTimeout(persistDraftNow, DRAFT_PERSIST_DEBOUNCE)
+  })
+
+  // If the pane unmounts with a persist still pending, flush it so the last
+  // few keystrokes aren't lost.
+  onScopeDispose(() => {
+    if (draftTimer) {
+      clearTimeout(draftTimer)
+      persistDraftNow()
+    }
+  })
+
+  // Restore a composing draft into the form fields
+  function restoreDraftFromStore() {
+    replyText.value = replyStore.draftMessage || ''
+    collectText.value = replyStore.draftCollect || ''
+    email.value = replyStore.draftEmail || ''
+    log('Draft restored from store', {
+      replyLength: replyText.value.length,
+      collectLength: collectText.value.length,
+      hasEmail: !!email.value,
+    })
+  }
+
   // Persist current state to the store
   function persistState() {
     replyStore.machineState = state.value
@@ -366,7 +431,8 @@ export function useReplyStateMachine(messageId, options = {}) {
     // message). Match that exact string so the OTHER reply 403s — "User banned from group",
     // "Not a member of this chat" — are NOT mislabelled as a reach block.
     const body = error.response?.data ?? error.data ?? ''
-    const bodyText = typeof body === 'string' ? body : JSON.stringify(body || '')
+    const bodyText =
+      typeof body === 'string' ? body : JSON.stringify(body || '')
     return `${error.message || ''} ${bodyText}`.includes('not_in_reach')
   }
 
@@ -536,6 +602,26 @@ export function useReplyStateMachine(messageId, options = {}) {
           reason: 'unknown_state',
         })
       }
+    } else if (
+      replyStore.draftMsgId === messageId &&
+      (replyStore.draftMessage ||
+        replyStore.draftCollect ||
+        replyStore.draftEmail)
+    ) {
+      // No pending send, but the user typed a draft here earlier and closed
+      // the pane - restore it so their work isn't lost.
+      if (isDraftStale()) {
+        log('Found composing draft but it is stale, discarding')
+        replyStore.clearDraft()
+        state.value = ReplyState.IDLE
+      } else {
+        log('Restoring composing draft for this message')
+        restoreDraftFromStore()
+        transitionTo(ReplyState.COMPOSING, {
+          event: ReplyEvent.RESTORED,
+          reason: 'draft_resume',
+        })
+      }
     } else if (replyStore.replyMsgId && replyStore.replyMsgId !== messageId) {
       // There's a saved reply for a DIFFERENT message - don't interfere
       log('Found saved reply for different message, starting fresh', {
@@ -635,7 +721,9 @@ export function useReplyStateMachine(messageId, options = {}) {
     // re-login). The catch-side isNotInReachError handling stays as a backstop for a stale
     // cached flag, a bypassable client, or a ?reply= deep link.
     if (messageStore.byId?.(messageId)?.replyeligible === false) {
-      log('Reply blocked proactively: post not yet in reach (replyeligible=false)')
+      log(
+        'Reply blocked proactively: post not yet in reach (replyeligible=false)'
+      )
       action('reply_blocked_not_in_reach_proactive', { message_id: messageId })
       handleNotInReach(callback)
       return
