@@ -460,17 +460,28 @@ test.describe('Reply-to-Chat - standalone page CTA reachability', () => {
 
       // A real hit-test at the button's own centre must resolve to the button,
       // not the fixed nav / ad zone / New Post button layered over the page.
-      const hit = await page.evaluate(
-        ({ x, y }) => {
-          const el = document.elementFromPoint(x, y)
-          const btn = el && el.closest('button')
-          return btn && btn.classList.contains('reply-button')
-            ? 'reply'
-            : (el && (el.className || el.tagName).toString().slice(0, 80)) ||
-                'none'
-        },
-        { x: box.x + box.width / 2, y: box.y + box.height / 2 }
-      )
+      // Sample the centre inside the same evaluate as the hit-test: the
+      // sticky footer jumps when the ad zone renders (stickyAdRendered
+      // changes its bottom offset), so a coordinate captured earlier via
+      // boundingBox() can go stale and the hit-test lands on the wrapper
+      // background where the button used to be. A real tap tracks the
+      // button's current position, so the assertion must too.
+      const hit = await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button.reply-button')].find(
+          (b) => b.getClientRects().length && /Reply/.test(b.textContent)
+        )
+        if (!btn) return 'no-visible-reply-button'
+        const r = btn.getBoundingClientRect()
+        const el = document.elementFromPoint(
+          r.x + r.width / 2,
+          r.y + r.height / 2
+        )
+        const hitBtn = el && el.closest('button')
+        return hitBtn && hitBtn.classList.contains('reply-button')
+          ? 'reply'
+          : (el && (el.className || el.tagName).toString().slice(0, 80)) ||
+              'none'
+      })
       expect(
         hit,
         `${viewport.width}x${viewport.height}: click lands on wrong element`
