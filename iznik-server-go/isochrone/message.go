@@ -153,6 +153,11 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 "+
 			unseenFilter+
+			// held = the reach was frozen because the origin copy was pulled back
+			// to Pending (member reports / Back to Pending). Every batch-side reach
+			// consumer already skips held rows; without this filter the reported
+			// post kept appearing in the nearby browse feed (Discourse 9862).
+			"AND rr.status != 'held' "+
 			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))",
 		utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
 		myid, utils.MESSAGE_LIKES_VIEW,
