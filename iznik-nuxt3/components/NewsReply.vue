@@ -1,8 +1,5 @@
 <template>
-  <div
-    v-observe-visibility="visibilityChanged"
-    :class="{ 'bg-info': scrollToThis }"
-  >
+  <div :class="{ 'bg-info': scrollToThis }">
     <div v-if="mod || myid === reply.userid || !reply.hidden" class="reply">
       <!-- More actions dropdown - positioned at top right of reply -->
       <button
@@ -114,7 +111,8 @@
             v-if="isNew"
             class="reply-new-pill ms-1 me-1"
             aria-label="New reply"
-          >New</span>
+            >New</span
+          >
           <NewsUserInfo :id="id" class="me-1 d-inline" />
         </div>
         <div class="reply-actions">
@@ -326,10 +324,15 @@ import {
   defineAsyncComponent,
   nextTick,
   onMounted,
+  onBeforeUnmount,
   watch,
 } from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
+import {
+  scrollToAndPin,
+  fixedHeaderOffset,
+} from '~/composables/useScrollAnchor'
 import { twem, untwem } from '~/composables/useTwem'
 import NewsUserInfo from '~/components/NewsUserInfo'
 import NewsHighlight from '~/components/NewsHighlight'
@@ -411,8 +414,6 @@ const imagemods = ref(null)
 const showDeleteModal = ref(false)
 const showLoveModal = ref(false)
 const showEditModal = ref(false)
-const hasBecomeVisible = ref(false)
-const isVisible = ref(false)
 const showProfileModal = ref(false)
 const showNewsPhotoModal = ref(false)
 const currentAtts = ref([])
@@ -526,11 +527,18 @@ watch(
   { deep: true }
 )
 
+// The pin this component started, if any, so unmount can stop it.
+let ownPin = null
+
 // Lifecycle hooks
 onMounted(() => {
   // This will get propogated up the stack so that we know if the reply to which we'd like to scroll has been
   // rendered.  We'll then come through the watch above.
   emit('rendered', props.id)
+})
+
+onBeforeUnmount(() => {
+  if (ownPin) ownPin()
 })
 
 // Methods
@@ -598,12 +606,13 @@ async function sendReply(callback) {
 function scrollReplyIntoView(id) {
   if (!id) return
   nextTick(() => {
-    setTimeout(() => {
-      const el = document.querySelector(`[data-reply-id="${id}"]`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    }, 100)
+    // The pin re-resolves the selector every frame, so it simply waits for
+    // the refetched thread to render the new reply, then holds it centered
+    // through the re-order shuffle.
+    ownPin = scrollToAndPin(
+      () => document.querySelector(`[data-reply-id="${id}"]`),
+      { block: 'center' }
+    )
   })
 }
 
@@ -686,43 +695,14 @@ function photoAdd() {
 }
 
 function scrollIntoView() {
-  const api = miscStore.apiCount
-
-  if (api) {
-    // Try later
-    setTimeout(scrollIntoView, 100)
-  } else {
-    // No outstanding requests, so we can scroll. The reply rows are stamped
-    // with data-reply-id by NewsReplies; the historical getElementById
-    // ('newsreply-{id}') target was never rendered anywhere, so notification
-    // deep-links (/chitchat/{replyid}) silently failed to scroll.
-    const el = document.querySelector(`[data-reply-id="${props.id}"]`)
-    if (el) {
-      el.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-        inline: 'nearest',
-      })
-
-      nextTick(() => {
-        if (!isVisible.value) {
-          setTimeout(scrollIntoView, 200)
-        } else {
-          hasBecomeVisible.value = true
-        }
-      })
-    }
-  }
-}
-
-function visibilityChanged(visible) {
-  if (parseInt(props.scrollTo) === props.id && !hasBecomeVisible.value) {
-    isVisible.value = visible
-
-    if (!visible) {
-      scrollIntoView()
-    }
-  }
+  // The reply rows are stamped with data-reply-id by NewsReplies. Long
+  // threads keep rendering async reply chunks and images for several seconds
+  // after this fires, so a one-shot smooth scroll aims at a stale position -
+  // pin the row instead and let the pin follow the layout until it settles.
+  ownPin = scrollToAndPin(
+    () => document.querySelector(`[data-reply-id="${props.id}"]`),
+    { block: 'start', offset: fixedHeaderOffset() }
+  )
 }
 
 function showReplyPhotoModal() {
