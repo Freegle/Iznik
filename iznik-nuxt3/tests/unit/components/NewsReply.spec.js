@@ -212,6 +212,7 @@ describe('NewsReply', () => {
           NewsReplies: {
             template: '<div class="news-replies"></div>',
             props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth'],
+            emits: ['rendered'],
           },
           OurUploader: {
             template: '<div class="our-uploader"></div>',
@@ -539,6 +540,21 @@ describe('NewsReply', () => {
       const wrapper = createWrapper()
       expect(wrapper.emitted('rendered')).toBeTruthy()
       expect(wrapper.emitted('rendered')[0]).toEqual([100])
+    })
+
+    it('forwards rendered events from nested replies (depth 2+)', async () => {
+      // A reply with sub-replies renders a nested <NewsReplies>. Its
+      // rendered events must bubble through this component, otherwise
+      // NewsThread never hears about depth 2+ replies mounting and the
+      // notification deep-link scroll can't target them.
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({}, withNested)
+      const nested = wrapper.findComponent('.news-replies')
+      expect(nested.exists()).toBe(true)
+      nested.vm.$emit('rendered', 456)
+      await flushPromises()
+      const events = wrapper.emitted('rendered')
+      expect(events.some(([id]) => id === 456)).toBe(true)
     })
   })
 

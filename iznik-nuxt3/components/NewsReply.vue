@@ -170,6 +170,9 @@
         </div>
       </div>
     </div>
+    <!-- Forward rendered events from nested replies: without this the
+         notification deep-link scroll in NewsThread never hears about
+         depth 2+ replies mounting. -->
     <NewsReplies
       v-if="reply?.replies?.length"
       :id="id"
@@ -177,6 +180,7 @@
       :scroll-to="scrollTo"
       :reply-to="reply.id"
       :depth="depth + 1"
+      @rendered="$emit('rendered', $event)"
     />
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
