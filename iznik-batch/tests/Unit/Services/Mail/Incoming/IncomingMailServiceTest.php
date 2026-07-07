@@ -2905,11 +2905,12 @@ class IncomingMailServiceTest extends TestCase
         return [$user, $group, $userEmail];
     }
 
-    public function test_autoreply_to_notify_address_is_not_globally_dropped(): void
+    public function test_autoreply_to_notify_address_is_dropped(): void
     {
-        // Legacy code routes notify- addresses BEFORE checking auto-reply globally.
-        // An auto-reply to a notify address should reach handleChatNotificationReply(),
-        // not be dropped by the global auto-reply filter.
+        // An out-of-office / vacation auto-reply to a chat notification address is a
+        // machine response to our own email. It must be dropped, not delivered into
+        // the chat as if the member had replied - real OOO texts have been sent on
+        // to other freeglers this way.
         $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
         $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
         $chat = $this->createTestChatRoom($user1, $user2);
@@ -2919,6 +2920,8 @@ class IncomingMailServiceTest extends TestCase
         DB::table('chat_rooms')
             ->where('id', $chat->id)
             ->update(['latestmessage' => now()->subDays(1)]);
+
+        $chatMessagesBefore = DB::table('chat_messages')->where('chatid', $chat->id)->count();
 
         $email = $this->createMinimalEmail([
             'From' => $user2Email,
@@ -2935,7 +2938,102 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        // Should be routed to user (chat reply), NOT dropped
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            $chatMessagesBefore,
+            DB::table('chat_messages')->where('chatid', $chat->id)->count(),
+            'auto-reply must not create a chat message'
+        );
+    }
+
+    public function test_human_reply_to_notify_address_is_not_dropped_as_autoreply(): void
+    {
+        // A genuine reply without auto-reply markers must still be delivered.
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subDays(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'Yes please, I can collect tomorrow evening.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_USER, $result);
+    }
+
+    public function test_pattern_only_autoreply_dropped_when_chat_recently_active(): void
+    {
+        // No Auto-Submitted header, but the body matches an OOO pattern and the chat
+        // had a message within the last 5 hours - a real auto-responder firing right
+        // after our notification. Matches legacy MailRouter recency behaviour.
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subHours(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'I am currently away from the office until Monday.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+    }
+
+    public function test_pattern_only_autoreply_delivered_when_chat_not_recently_active(): void
+    {
+        // No Auto-Submitted header and the chat has been quiet for over 5 hours: a
+        // late reply whose wording merely matches an OOO pattern is usually human,
+        // so it must be delivered (legacy MailRouter tradeoff, kept deliberately).
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subDays(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'Sorry, I was away from the office yesterday. Yes please, still available?');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
         $this->assertEquals(RoutingResult::TO_USER, $result);
     }
 
@@ -2982,16 +3080,19 @@ class IncomingMailServiceTest extends TestCase
         }
     }
 
-    public function test_autoreply_to_replyto_address_is_not_globally_dropped(): void
+    public function test_autoreply_to_replyto_address_is_dropped(): void
     {
-        // Auto-replies to replyto- addresses should reach handleReplyToAddress(),
-        // not be dropped by the global auto-reply filter.
+        // An out-of-office auto-reply to a replyto- address is a machine response to
+        // our digest/notification mail. It must not open a chat with the poster - a
+        // member's OOO responder replied to digest posts and confused the posters.
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
         $group = $this->createTestGroup();
         $this->createMembership($poster, $group);
         $message = $this->createTestMessage($poster, $group);
         $replierEmail = $replier->emails->first()->email;
+
+        $chatMessagesBefore = DB::table('chat_messages')->count();
 
         $email = $this->createMinimalEmail([
             'From' => $replierEmail,
@@ -3008,8 +3109,12 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        // Should be routed to user (reply to message), NOT dropped by global auto-reply filter
-        $this->assertEquals(RoutingResult::TO_USER, $result);
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            $chatMessagesBefore,
+            DB::table('chat_messages')->count(),
+            'auto-reply must not create a chat message to the poster'
+        );
     }
 
     /**
