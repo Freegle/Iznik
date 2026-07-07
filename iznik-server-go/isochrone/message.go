@@ -128,6 +128,14 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 		unseenFilter = "AND ml.msgid IS NULL "
 	}
 
+	// reach_wkt is the BOUNDING-BOX envelope of the reach polygon (ST_Envelope), not the
+	// polygon itself. The reach-gate's exact display polygons are huge - up to ~1.25MB of WKT
+	// each - so ST_AsText(rr.polygon) for every in-reach post shipped tens of MB per browse
+	// load (one heavy user measured 64MB / 264 rows) and the query ran 30-50s, so clients
+	// timed out and saw NO posts. The WKT is only consumed by ReachRadiusMetres (the score's
+	// 'close' term), which takes the farthest vertex from the origin; the envelope's 5 points
+	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
+	// Visibility is unaffected: the WHERE below still tests ST_Contains on the FULL polygon.
 	var candidates []reachCandidateRow
 	db.Raw(
 		"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
@@ -136,7 +144,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(rr.polygon) AS reach_wkt "+
+			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt "+
 			"FROM messages_spatial ms "+
 			// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
 			// the ripple-bumped spatial arrival, so it can't stand in for "posted".
@@ -256,7 +264,7 @@ func Messages(c *fiber.Ctx) error {
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 				"ANY_VALUE(COALESCE(rr.lat, 0)) AS reach_lat, ANY_VALUE(COALESCE(rr.lng, 0)) AS reach_lng, "+
-				"ANY_VALUE(COALESCE(ST_AsText(rr.polygon), '')) AS reach_wkt "+
+				"ANY_VALUE(COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '')) AS reach_wkt "+
 				"FROM messages m "+
 				"INNER JOIN messages_groups mg ON mg.msgid = m.id "+
 				"LEFT JOIN messages_outcomes mo ON mo.msgid = m.id "+
@@ -450,7 +458,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(rr.polygon), '') AS reach_wkt "+
+				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt "+
 				"FROM messages_spatial ms "+
 				// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
 				// rippling — see the reach arm above.
