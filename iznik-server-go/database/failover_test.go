@@ -89,36 +89,40 @@ func TestFailoverConnector_FallsBackWhenPrimaryDown(t *testing.T) {
 
 // TestFailoverConnector_RetryWindowSkipsPrimary proves that after the first
 // failure the connector enters a retry window and subsequent Connect calls go
-// straight to the fallback without re-attempting the primary, so the second
-// connection costs much less than the dial timeout.
+// straight to the fallback without re-attempting the primary.
+//
+// The proof is via call counts on a countingConnector wrapper: after the first
+// Connect (which calls the primary once and fails), the second Connect must not
+// increment the count — the primary was skipped entirely, not just fast.
 func TestFailoverConnector_RetryWindowSkipsPrimary(t *testing.T) {
-	const dialTimeout = 200 * time.Millisecond
+	// Wrap the unreachable connector in a counter so we can observe exactly
+	// how many times the primary is called.
+	counted := &countingConnector{
+		inner: testUnreachableConnector(t, 200*time.Millisecond),
+	}
 
 	fc := &failoverConnector{
-		primary:    testUnreachableConnector(t, dialTimeout),
+		primary:    counted,
 		fallback:   testFallbackConnector(t),
 		retryAfter: 30 * time.Second,
 	}
 
 	ctx := context.Background()
 
-	// First Connect: must probe the primary (paying dialTimeout), then fall back.
-	start := time.Now()
+	// First Connect: must probe the primary (fails), then fall back to source.
 	conn1, err := fc.Connect(ctx)
-	firstDuration := time.Since(start)
 	require.NoError(t, err, "first Connect should succeed via fallback")
 	conn1.Close()
-	assert.GreaterOrEqual(t, firstDuration, dialTimeout,
-		"first connect should spend at least dialTimeout probing the unreachable primary")
+	assert.Equal(t, int64(1), counted.count.Load(),
+		"first Connect must attempt the primary exactly once")
 
-	// Second Connect: within retry window, must skip the primary entirely.
-	start = time.Now()
+	// Second Connect: within the 30-second retry window.  The primary must
+	// NOT be called again — the connector goes straight to fallback.
 	conn2, err := fc.Connect(ctx)
-	secondDuration := time.Since(start)
 	require.NoError(t, err, "second Connect should succeed via fallback")
 	conn2.Close()
-	assert.Less(t, secondDuration, dialTimeout,
-		"second connect should be faster than dialTimeout (primary skipped during window)")
+	assert.Equal(t, int64(1), counted.count.Load(),
+		"second Connect must skip the primary (count stays at 1 within retry window)")
 }
 
 // TestFailoverConnector_PrefersHealthyPrimary proves that when the primary
