@@ -18,9 +18,35 @@ return new class extends Migration
         // can see a deletion was reversed. Without the enum member MySQL
         // silently truncates the value to '' in non-strict mode. Original
         // values kept in order; new value appended at the end so storage stays
-        // at 1 byte. INPLACE + LOCK=NONE is valid for end-append on Percona
-        // 8.0; INSTANT is not supported for ENUM modification.
-        DB::statement("
+        // at 1 byte — which makes this INSTANT-eligible on MySQL/Percona 8.0
+        // (metadata-only): end-append with unchanged storage width is in the
+        // instant-DDL list. That matters on the Galera cluster: under TOI an
+        // INSTANT DDL pauses the cluster for milliseconds instead of the
+        // duration of a table rebuild, so it needs no maintenance window.
+        // (Verified on Percona 8.0.43 locally; prod is 8.0.45.) INPLACE +
+        // LOCK=NONE kept as a fallback for any environment where INSTANT is
+        // refused.
+        try {
+            DB::statement("
+            ALTER TABLE logs
+              MODIFY COLUMN subtype ENUM(
+                'Created','Deleted','Received','Sent','Failure','ClassifiedSpam',
+                'Joined','Left','Approved','Rejected','YahooDeliveryType',
+                'YahooPostingStatus','NotSpam','Login','Hold','Release','Edit',
+                'RoleChange','Merged','Split','Replied','Mailed','Applied',
+                'Suspect','Licensed','LicensePurchase','YahooApplied',
+                'YahooConfirmed','YahooJoined','MailOff','EventsOff',
+                'NewslettersOff','RelevantOff','Logout','Bounce','SuspendMail',
+                'Autoreposted','Outcome','OurPostingStatus','OurEmailFrequency',
+                'VolunteersOff','Autoapproved','Unbounce','WorryWords',
+                'NoteAdded','PostcodeChange','Repost',
+                'Restored'
+              ) DEFAULT NULL,
+              ALGORITHM=INSTANT
+            ");
+        } catch (\Illuminate\Database\QueryException $e) {
+            // INSTANT refused (older server / storage growth): online fallback.
+            DB::statement("
             ALTER TABLE logs
               MODIFY COLUMN subtype ENUM(
                 'Created','Deleted','Received','Sent','Failure','ClassifiedSpam',
@@ -36,7 +62,8 @@ return new class extends Migration
                 'Restored'
               ) DEFAULT NULL,
               ALGORITHM=INPLACE, LOCK=NONE
-        ");
+            ");
+        }
     }
 
     public function down(): void
