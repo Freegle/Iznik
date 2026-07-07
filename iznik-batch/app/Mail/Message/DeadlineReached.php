@@ -47,7 +47,7 @@ class DeadlineReached extends MjmlMailable
             ? Message::OUTCOME_TAKEN
             : Message::OUTCOME_RECEIVED;
 
-        $group = $this->recipientGroupForMessage($message, $user);
+        $group = $this->originGroupForMessage($message);
 
         $this->initTracking(
             'DeadlineReached',
@@ -60,20 +60,21 @@ class DeadlineReached extends MjmlMailable
     }
 
     /**
-     * Pick the group most relevant to the recipient for a message.
+     * The group to show the poster for their own message: the ORIGIN group,
+     * the one they actually posted to.
      *
-     * Prefers a group the recipient is a member of, sorted by most-recent
-     * arrival. Falls back to the first group if there is no overlap.
+     * Rippling adds a messages_groups row per group the post spreads into
+     * (rippled_in = 1, arrival = the ripple time) and auto-joins the poster
+     * there, so the old "recipient's membership with the most recent arrival"
+     * pick named whichever distant group the post most recently rippled into.
+     * Falls back to the earliest-arrival row for pre-rippling data.
      */
-    protected function recipientGroupForMessage(Message $message, User $user): ?object
+    protected function originGroupForMessage(Message $message): ?object
     {
-        $userGroupIds = $user->memberships->pluck('groupid')->map(fn ($id) => (int) $id)->all();
+        $groups = $message->groups;
 
-        return $message->groups
-            ->filter(fn ($g) => in_array((int) $g->id, $userGroupIds, true))
-            ->sortByDesc(fn ($g) => $g->pivot->arrival ?? null)
-            ->first()
-            ?? $message->groups->first();
+        return $groups->first(fn ($g) => !($g->pivot->rippled_in ?? 0))
+            ?? $groups->sortBy(fn ($g) => $g->pivot->arrival ?? null)->first();
     }
 
     /**
@@ -82,7 +83,7 @@ class DeadlineReached extends MjmlMailable
     public function build(): static
     {
         $userSite = config('freegle.sites.user');
-        $group = $this->recipientGroupForMessage($this->message, $this->user);
+        $group = $this->originGroupForMessage($this->message);
         $groupName = $group?->nameshort ?? 'Freegle';
 
         return $this->to($this->user->email_preferred, $this->user->displayname)
