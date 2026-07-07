@@ -7967,6 +7967,53 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 	assert.Nil(t, msgHeldby)
 }
 
+// Regression: a soft-deleted crosspost copy that still carries a stale heldby (e.g. the
+// member withdrew the message from another group while it was held there) must NOT keep
+// messages.heldby pinned. Before the fix, the "still held on any group?" count ignored
+// deleted rows, so Release returned Success but the message stayed stuck showing "Held"
+// and no number of retries could clear it. See prod msg 120888286 ("Fob Watch").
+func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
+	prefix := uniquePrefix("rel_deleted_hold")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a") // live group the mod moderates
+	groupB := CreateTestGroup(t, prefix+"_b") // withdrawn crosspost copy, still held
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	otherModID := CreateTestUser(t, prefix+"_othermod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+
+	// Orphaned hold: a soft-deleted messages_groups row on groupB still carrying heldby,
+	// set by a mod (otherModID) on a group our releasing mod has no rights to.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, heldby, deleted) VALUES (?, ?, NOW(), 'Pending', 0, ?, 1)", msgID, groupB, otherModID)
+	// The message-level hold that mirrors it (as handleHold would have set).
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", otherModID, msgID)
+
+	// Release on the live group.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// messages.heldby must be cleared: the only row that still holds it is soft-deleted,
+	// so it must not count towards "still held".
+	var msgHeldby *uint64
+	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	assert.Nil(t, msgHeldby, "deleted group's stale hold must not keep messages.heldby pinned")
+}
+
 func TestPostMessageDeletePerGroup(t *testing.T) {
 	prefix := uniquePrefix("del_pg")
 	db := database.DBConn

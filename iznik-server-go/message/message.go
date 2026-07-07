@@ -2015,10 +2015,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
+	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
+	// would pin messages.heldby forever, leaving the message stuck showing "Held".
 	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
 	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -2468,10 +2471,13 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
+	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
+	// would pin messages.heldby forever, leaving the message stuck showing "Held".
 	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
 	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
