@@ -48,6 +48,8 @@ function freshReplyStore(overrides = {}) {
     replyMsgId: 42,
     replyMessage: 'Hello, is this still available?',
     replyingAt: RECENT_AT,
+    draftMsgId: null,
+    clearDraft: vi.fn(),
     ...overrides,
   }
 }
@@ -299,6 +301,34 @@ describe('useReplyToPost', () => {
       await replyToPost(chatButtonRef)
       expect(mockReplyStore.replyMsgId).toBeNull()
       expect(mockReplyStore.replyMessage).toBeNull()
+    })
+
+    it('clears a composing draft for the same item after sending', async () => {
+      // After a page-load auto-send (LayoutCommon path, no state machine),
+      // the draft must be cleared so reopening the reply pane does not
+      // restore already-sent text and risk a duplicate send.
+      mockReplyStore = freshReplyStore({
+        replyMsgId: 42,
+        draftMsgId: 42,
+        clearDraft: vi.fn(),
+      })
+      const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef)
+      expect(mockReplyStore.clearDraft).toHaveBeenCalled()
+    })
+
+    it('does not clear a draft belonging to a different item', async () => {
+      // A draft for item 77 must survive a send for item 42.
+      mockReplyStore = freshReplyStore({
+        replyMsgId: 42,
+        draftMsgId: 77,
+        clearDraft: vi.fn(),
+      })
+      const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef)
+      expect(mockReplyStore.clearDraft).not.toHaveBeenCalled()
     })
 
     it('fires a Reply Sent conversion event on success', async () => {
