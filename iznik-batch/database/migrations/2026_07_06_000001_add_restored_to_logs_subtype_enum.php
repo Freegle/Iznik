@@ -18,14 +18,14 @@ return new class extends Migration
         // can see a deletion was reversed. Without the enum member MySQL
         // silently truncates the value to '' in non-strict mode. Original
         // values kept in order; new value appended at the end so storage stays
-        // at 1 byte — which makes this INSTANT-eligible on MySQL/Percona 8.0
-        // (metadata-only): end-append with unchanged storage width is in the
-        // instant-DDL list. That matters on the Galera cluster: under TOI an
-        // INSTANT DDL pauses the cluster for milliseconds instead of the
-        // duration of a table rebuild, so it needs no maintenance window.
-        // (Verified on Percona 8.0.43 locally; prod is 8.0.45.) INPLACE +
-        // LOCK=NONE kept as a fallback for any environment where INSTANT is
-        // refused.
+        // at 1 byte. We try ALGORITHM=INSTANT first (accepted on some Percona
+        // 8.0 builds - worked on 8.0.43 locally) but prod 8.0.45 REFUSES
+        // INSTANT for this change, so the INPLACE + LOCK=NONE path below is
+        // the one that actually runs there. That is still fine to run without
+        // a maintenance window: an end-append that keeps the enum at 1 byte is
+        // a metadata-only INPLACE change - NO table rebuild, no row copying,
+        // concurrent DML permitted - so under Galera TOI the cluster pause is
+        // the metadata update itself (seconds), not a scan of logs.
         try {
             DB::statement("
             ALTER TABLE logs
