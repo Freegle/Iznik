@@ -121,7 +121,7 @@
           v-if="newsfeed?.replies?.length"
           :id="id"
           :threadhead="newsfeed.id"
-          :scroll-to="scrollDownTo"
+          :scroll-to="scrollTo"
           :reply-to="replyingTo"
           :depth="1"
           :class="newsfeed.deleted ? 'strike me-1' : 'me-1'"
@@ -363,7 +363,6 @@ const threadcommentref = ref(null)
 const threadcommentautoheight = ref(null)
 
 // Reactive state
-const scrollDownTo = ref(null)
 const replyingTo = ref(null)
 const uploading = ref(false)
 const imageid = ref(null)
@@ -538,24 +537,23 @@ function threadContentSettled() {
 
 // Methods
 function rendered(id) {
-  if (parseInt(id) === parseInt(props.scrollTo)) {
-    scrollDownTo.value = props.scrollTo
-
-    // Deep link (/chitchat/<replyid>): hold the reply centred while the
-    // rest of the thread streams in around it, releasing only when the
-    // content is provably complete. Once per page - re-mounts of the same
-    // target must not restart a released pin.
-    if (!deepLinkPinned) {
-      deepLinkPinned = true
-      ownPin = scrollToAndPin(
-        () => document.querySelector(`[data-reply-id="${props.scrollTo}"]`),
-        {
-          block: 'center',
-          offset: fixedHeaderOffset(),
-          done: threadContentSettled(),
-        }
-      )
-    }
+  // Deep link (/chitchat/<replyid>): hold the reply centred while the
+  // rest of the thread streams in around it, releasing only when the
+  // content is provably complete. The scrollTo prop flows down from mount
+  // (NOT set after the target renders - the collapse must know the target
+  // up front, or a target hidden behind "Show older replies" could never
+  // mount to tell us). Once per page - re-mounts of the same target must
+  // not restart a released pin.
+  if (parseInt(id) === parseInt(props.scrollTo) && !deepLinkPinned) {
+    deepLinkPinned = true
+    ownPin = scrollToAndPin(
+      () => document.querySelector(`[data-reply-id="${props.scrollTo}"]`),
+      {
+        block: 'center',
+        offset: fixedHeaderOffset(),
+        done: threadContentSettled(),
+      }
+    )
   }
 }
 

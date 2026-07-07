@@ -1275,19 +1275,14 @@ describe('NewsThread', () => {
     })
   })
 
-  describe('rendered event', () => {
-    it('updates scrollDownTo when rendered id matches scrollTo prop', async () => {
+  describe('scrollTo pass-through', () => {
+    it('hands the deep-link target to NewsReplies from mount, not after render', async () => {
+      // The collapse logic must know the target up front: a target hidden
+      // behind "Show older replies" can never mount to announce itself.
+      mockNewsfeed.value.replies = [5]
       const wrapper = await createWrapper({ scrollTo: '5' })
-      const comp = wrapper.findComponent(NewsThread)
-      comp.vm.rendered(5)
-      expect(comp.vm.scrollDownTo).toBe('5')
-    })
-
-    it('does not update scrollDownTo when ids do not match', async () => {
-      const wrapper = await createWrapper({ scrollTo: '5' })
-      const comp = wrapper.findComponent(NewsThread)
-      comp.vm.rendered(10)
-      expect(comp.vm.scrollDownTo).toBe(null)
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.props('scrollTo')).toBe('5')
     })
   })
 
