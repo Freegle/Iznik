@@ -26,6 +26,8 @@ const LOG_SUBTYPE_CREATED = "Created"
 
 const LOG_SUBTYPE_DELETED = "Deleted"
 
+const LOG_SUBTYPE_RESTORED = "Restored"
+
 const LOG_SUBTYPE_EDIT = "Edit"
 
 const LOG_SUBTYPE_APPROVED = "Approved"
