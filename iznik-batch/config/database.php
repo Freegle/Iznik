@@ -51,6 +51,14 @@ return [
         // back to DB_HOST so single-host deployments (dev/CI) are unchanged. Both
         // accept a comma-separated list of hosts; Laravel picks one at random.
         //
+        // Replica failover: App\Database\FailoverConnectionFactory (registered in
+        // AppServiceProvider) wraps the read PDO resolver so that if ALL read hosts
+        // are unreachable, reads automatically fall back to the write host and a
+        // warning is logged. Recovery is natural: the read PDO resolver is lazy and
+        // called fresh on each reconnect, so the replica is re-attempted on the next
+        // connection after it recovers. Single-host deployments (read == write hosts)
+        // are unaffected.
+        //
         // No 'sticky': Galera replication is synchronous (certification-based), so a
         // committed write is visible on the read nodes without meaningful delay -
         // reads can always use the read host, even in long-running daemons (V1 had no

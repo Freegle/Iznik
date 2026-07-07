@@ -6,6 +6,7 @@ use App\Console\FlockEventMutex;
 use App\Console\ResilientCacheEventMutex;
 use App\Console\SchedulerMutex;
 use App\Database\DeadlockRetryConnection;
+use App\Database\FailoverConnectionFactory;
 use App\Listeners\CronJobStatusListener;
 use App\Listeners\SpamCheckListener;
 use App\Services\LokiService;
@@ -26,6 +27,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // Replace the default ConnectionFactory with our FailoverConnectionFactory so
+        // that when all read-replica hosts are unreachable, Laravel automatically falls
+        // back to the write host instead of throwing. This must be registered before
+        // the 'db' service provider resolves 'db.factory'.
+        $this->app->singleton('db.factory', function ($app) {
+            return new FailoverConnectionFactory($app);
+        });
+
         // Use DeadlockRetryConnection for MySQL — automatically retries
         // deadlocked statements at autocommit level with exponential backoff.
         \Illuminate\Database\Connection::resolverFor('mysql', function ($connection, $database, $prefix, $config) {
