@@ -335,7 +335,15 @@ export const useChatStore = defineStore({
     async typing(chatid) {
       await api(this.config).chat.typing(chatid)
     },
-    async send(chatid, message, addressid, imageid, refmsgid, modnote) {
+    async send(
+      chatid,
+      message,
+      addressid,
+      imageid,
+      refmsgid,
+      modnote,
+      replysource
+    ) {
       const data = {
         roomid: chatid,
       }
@@ -359,6 +367,13 @@ export const useChatStore = defineStore({
 
       if (modnote) {
         data.modnote = true
+      }
+
+      // Advisory reply provenance (which surface the reply came from) - only
+      // meaningful alongside refmsgid; the server sanitises and stores it with
+      // the rippling reply attribution.
+      if (refmsgid && replysource) {
+        data.replysource = replysource
       }
 
       await api(this.config).chat.send(data)

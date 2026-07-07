@@ -8,6 +8,7 @@ export const useReplyStore = defineStore({
       'replyMsgId',
       'replyMessage',
       'replyingAt',
+      'replySource',
       'machineState',
       'isNewUser',
       'draftMsgId',
@@ -24,6 +25,10 @@ export const useReplyStore = defineStore({
     replyMsgId: null,
     replyMessage: null,
     replyingAt: null,
+    // The surface the reply was committed from (browse, search, message_page,
+    // email, ...) - persisted so provenance survives the login/registration
+    // redirect and still reaches the server with the eventual send.
+    replySource: null,
     // State machine state for resume capability
     machineState: null,
     isNewUser: false,
@@ -45,6 +50,7 @@ export const useReplyStore = defineStore({
       this.replyMsgId = null
       this.replyMessage = null
       this.replyingAt = null
+      this.replySource = null
       this.machineState = null
       this.isNewUser = false
       this.clearDraft()
