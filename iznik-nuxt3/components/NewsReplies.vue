@@ -39,6 +39,7 @@
           class="reply-content"
           :depth="depth"
           @rendered="rendered"
+          @subtree-rendered="childSubtreeRendered"
           @expand-combined="expandCombined"
         />
       </div>
@@ -46,7 +47,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
@@ -85,7 +86,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['rendered'])
+const emit = defineEmits(['rendered', 'subtree-rendered'])
 
 const newsfeedStore = useNewsfeedStore()
 const authStore = useAuthStore()
@@ -118,7 +119,9 @@ const seenBeforeVisit = computed(() => newsfeedStore.seenBeforeVisit)
 function isReplyNew(reply) {
   if (!seenBeforeVisit.value) return false
   if (reply.combinedIds) {
-    return reply.combinedIds[reply.combinedIds.length - 1] > seenBeforeVisit.value
+    return (
+      reply.combinedIds[reply.combinedIds.length - 1] > seenBeforeVisit.value
+    )
   }
   return reply.id > seenBeforeVisit.value
 }
@@ -318,11 +321,47 @@ const collapsePlan = computed(() => {
 
 const renderEntries = computed(() => collapsePlan.value.entries)
 
-const hiddenCount = computed(() => collapsePlan.value.hidden.length)
+// Deterministic completion for the deep-link scroll: this list's subtree is
+// rendered once every NewsReply row in the current render plan has reported
+// its own subtree mounted. NewsRefer rows are synchronous imports (mounted
+// with this component) and expander rows render nothing async, so neither
+// is waited on. Re-evaluated when the render plan changes (e.g. expanding
+// the collapse adds rows, regressing completion until they mount too).
+const completedSubtrees = new Set()
+let subtreeSatisfied = false
 
-const showExpander = computed(
-  () => shouldCollapse.value && hiddenCount.value > 0
-)
+function expectedSubtreeIds() {
+  return renderEntries.value
+    .filter(
+      (e) =>
+        !e.expander && !(e.reply.type && e.reply.type.indexOf('ReferTo') === 0)
+    )
+    .map((e) => e.reply.id)
+}
+
+function evaluateSubtree() {
+  const done = expectedSubtreeIds().every((id) => completedSubtrees.has(id))
+  if (done && !subtreeSatisfied) {
+    subtreeSatisfied = true
+    emit('subtree-rendered', props.id)
+  } else if (!done) {
+    subtreeSatisfied = false
+  }
+}
+
+function childSubtreeRendered(id) {
+  completedSubtrees.add(id)
+  evaluateSubtree()
+}
+
+watch(renderEntries, evaluateSubtree)
+
+onMounted(() => {
+  // Nothing async to wait for (all rows NewsRefer, or none) - report now.
+  evaluateSubtree()
+})
+
+const hiddenCount = computed(() => collapsePlan.value.hidden.length)
 
 // Hidden entries never contain new activity (they are exempted above), so the
 // label only ever describes older conversation.

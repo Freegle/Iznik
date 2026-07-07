@@ -97,7 +97,7 @@ describe('NewsReplies', () => {
             template:
               '<div class="news-reply" :data-id="id"><slot />{{ replyData?.message }}</div>',
             props: ['id', 'replyData', 'threadhead', 'scrollTo', 'depth'],
-            emits: ['rendered', 'expand-combined'],
+            emits: ['rendered', 'subtree-rendered', 'expand-combined'],
           },
           NewsRefer: {
             template: '<div class="news-refer" :data-id="id" />',
@@ -186,7 +186,9 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).toContain('Show 3 older replies')
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 3 older replies'
+      )
     })
 
     it('expander label shows correct hidden count for N=25 remaining', () => {
@@ -198,7 +200,9 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').text()).toContain('Show 25 older replies')
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 25 older replies'
+      )
     })
 
     it('uses singular "reply" when hidden count is 1', () => {
@@ -222,7 +226,9 @@ describe('NewsReplies', () => {
 
       const wrapper = createWrapper()
       // 7 total - 2 head - 3 tail = 2 hidden
-      expect(wrapper.find('.show-more-btn').text()).toContain('Show 2 older replies')
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 2 older replies'
+      )
     })
 
     it('does not show expander for 3 replies', () => {
@@ -364,7 +370,9 @@ describe('NewsReplies', () => {
       })
 
       const wrapper = createWrapper()
-      expect(wrapper.find('.show-more-btn').attributes('aria-expanded')).toBe('false')
+      expect(wrapper.find('.show-more-btn').attributes('aria-expanded')).toBe(
+        'false'
+      )
     })
   })
 
@@ -546,6 +554,58 @@ describe('NewsReplies', () => {
 
       const wrapper = createWrapper()
       expect(wrapper.findAll('.reply-thread').length).toBe(0)
+    })
+  })
+
+  describe('subtree rendered', () => {
+    // Default mock data combines replies 10+11 (same user, close in time)
+    // into one entry keyed 10, so the render plan is [10 (combined), 12].
+
+    it('emits subtree-rendered once every child reply has reported', async () => {
+      const wrapper = createWrapper()
+      const children = wrapper.findAllComponents('.news-reply')
+      expect(children.length).toBe(2)
+
+      children[0].vm.$emit('subtree-rendered', 10)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('subtree-rendered')).toBeFalsy()
+
+      children[1].vm.$emit('subtree-rendered', 12)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([1])
+    })
+
+    it('does not emit while any child is still outstanding', async () => {
+      const wrapper = createWrapper()
+      const children = wrapper.findAllComponents('.news-reply')
+
+      children[0].vm.$emit('subtree-rendered', 10)
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('subtree-rendered')).toBeFalsy()
+    })
+
+    it('emits immediately when there is nothing asynchronous to wait for', () => {
+      // All rows are NewsRefer (synchronous import): complete at mount.
+      const referReplies = [
+        {
+          id: 30,
+          userid: 100,
+          displayname: 'User One',
+          message: 'Referred',
+          added: '2024-01-15T10:00:00Z',
+          deleted: false,
+          type: 'ReferToOffer',
+        },
+      ]
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: [30] }
+        return referReplies.find((r) => r.id === id)
+      })
+
+      const wrapper = createWrapper()
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
     })
   })
 })
