@@ -144,10 +144,15 @@ var polygonRingRE = regexp.MustCompile(`(?s)POLYGON\s*\(\s*\(([^)]+)\)`)
 
 // ReachRadiusMetres is a post's reach extent in metres: the greatest
 // great-circle distance from the reach origin (originLat, originLng) to any
-// vertex of its reach polygon (as WKT, e.g. from ST_AsText(rr.polygon)).
+// vertex of the given reach-polygon WKT. The feed passes the polygon's
+// bounding-box envelope (ST_AsText(ST_Envelope(rr.polygon))) rather than the
+// full exact polygon — the exact reach polygons are up to ~1.25MB of WKT and
+// shipping them all made the browse query time out (see fetchReachCandidates).
+// The envelope's corners still give the reach extent for the 'close' term (a
+// small, uniform over-estimate that only nudges relevance ordering).
 // Mirrors UnifiedDigestService::reachRadiusMetres. Falls back to defaultM
-// when the polygon can't be parsed or has no extent — defensive; every
-// reach-arm post has a rippling_reach row with a real polygon.
+// when the WKT can't be parsed or has no extent — defensive; every reach-arm
+// post has a rippling_reach row with a real polygon.
 func ReachRadiusMetres(originLat, originLng float64, polygonWKT string, defaultM float64) float64 {
 	m := polygonRingRE.FindStringSubmatch(polygonWKT)
 	if m == nil {
