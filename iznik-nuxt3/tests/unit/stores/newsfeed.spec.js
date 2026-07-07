@@ -16,6 +16,12 @@ const mockConvertToStory = vi.fn()
 const mockReferto = vi.fn()
 const mockReport = vi.fn()
 
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => ({
+    user: { id: 77, displayname: 'Poster', profile: { paththumb: 'p.jpg' } },
+  }),
+}))
+
 vi.mock('~/api', () => ({
   default: () => ({
     news: {
@@ -717,6 +723,53 @@ describe('newsfeed store', () => {
       const users = store.tagusers
       expect(users).toHaveLength(1)
       expect(users[0].displayname).toBe('Alice')
+    })
+  })
+
+  describe('send: read-your-own-writes', () => {
+    it('adds an optimistic copy when the refetch misses the fresh reply', async () => {
+      const store = useNewsfeedStore()
+      store.init({ public: {} })
+      mockSend.mockResolvedValue(999)
+      // Thread refetch returns WITHOUT the new reply (replica lag).
+      mockFetchNews.mockResolvedValue({ id: 1, replies: [{ id: 2, replies: [] }] })
+
+      await store.send('hello there', 1, 1, null)
+
+      expect(store.list[999]).toBeTruthy()
+      expect(store.list[999].optimistic).toBe(true)
+      expect(store.list[999].message).toBe('hello there')
+      expect(store.list[999].userid).toBe(77)
+      expect(store.list[1].replies).toContain(999)
+    })
+
+    it('does not duplicate when the refetch already includes the reply', async () => {
+      const store = useNewsfeedStore()
+      store.init({ public: {} })
+      mockSend.mockResolvedValue(999)
+      mockFetchNews.mockResolvedValue({
+        id: 1,
+        replies: [{ id: 999, message: 'hello there', replies: [] }],
+      })
+
+      await store.send('hello there', 1, 1, null)
+
+      expect(store.list[999]).toBeTruthy()
+      expect(store.list[999].optimistic).toBeUndefined()
+      expect(store.list[1].replies.filter((r) => r === 999).length).toBe(1)
+    })
+
+    it('attaches the optimistic reply to a nested parent', async () => {
+      const store = useNewsfeedStore()
+      store.init({ public: {} })
+      mockSend.mockResolvedValue(1000)
+      // Replying to reply 2 within thread 1; refetch misses it.
+      mockFetchNews.mockResolvedValue({ id: 1, replies: [{ id: 2, replies: [] }] })
+
+      await store.send('nested reply', 2, 1, null)
+
+      expect(store.list[1000]).toBeTruthy()
+      expect(store.list[2].replies).toContain(1000)
     })
   })
 })
