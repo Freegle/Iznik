@@ -138,6 +138,12 @@ vi.mock('~/composables/useTwem', () => ({
   untwem: vi.fn((text) => text),
 }))
 
+const mockScrollToAndPin = vi.fn(() => vi.fn())
+vi.mock('~/composables/useScrollAnchor', () => ({
+  scrollToAndPin: (...args) => mockScrollToAndPin(...args),
+  fixedHeaderOffset: () => 74,
+}))
+
 // Mock child components
 vi.mock('~/components/AutoHeightTextarea', () => ({
   default: {
@@ -1011,6 +1017,45 @@ describe('NewsThread', () => {
       const comp = wrapper.findComponent(NewsThread)
       await comp.vm.sendComment()
       expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it('anchors the freshly sent reply with a centered pin', async () => {
+      // The post-send refetch re-orders the thread, so the new reply can
+      // land off-screen. sendComment must pin it, re-resolving by
+      // data-reply-id so it finds the row once the refetch renders it.
+      mockSend.mockResolvedValue(9876)
+      const wrapper = await createWrapper()
+      const textarea = wrapper.find('.auto-height-textarea')
+      await textarea.setValue('Anchor me')
+      await textarea.trigger('focus')
+
+      const comp = wrapper.findComponent(NewsThread)
+      await comp.vm.sendComment()
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts).toEqual({ block: 'center' })
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '9876')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+
+    it('does not pin when send returns no id', async () => {
+      mockSend.mockResolvedValue(null)
+      const wrapper = await createWrapper()
+      const textarea = wrapper.find('.auto-height-textarea')
+      await textarea.setValue('No id back')
+      await textarea.trigger('focus')
+
+      const comp = wrapper.findComponent(NewsThread)
+      await comp.vm.sendComment()
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
     })
   })
 
