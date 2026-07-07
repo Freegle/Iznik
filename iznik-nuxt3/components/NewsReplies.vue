@@ -1,32 +1,13 @@
 <template>
   <div class="replies-container" :class="'depth-' + depth">
-    <div v-if="showEarlierRepliesOption" class="show-earlier">
-      <b-button
-        v-if="!showAllReplies"
-        variant="link"
-        size="sm"
-        class="pl-0"
-        @click.prevent="showAllReplies = true"
-      >
-        Show earlier {{ numberOfRepliesNotShown }}
-      </b-button>
-      <b-button
-        v-else
-        variant="link"
-        size="sm"
-        class="pl-0"
-        @click.prevent="showAllReplies = false"
-      >
-        Hide earlier replies
-      </b-button>
-    </div>
+    <!-- Head replies: first HEAD_COUNT replies, visible only when collapsed -->
     <div
-      v-for="reply in repliestoshow"
-      :key="'newsfeed-' + reply"
+      v-for="reply in headReplies"
+      :key="'newsfeed-head-' + reply.id"
       class="reply-thread"
     >
       <NewsRefer
-        v-if="reply.type.indexOf('ReferTo') === 0"
+        v-if="reply.type && reply.type.indexOf('ReferTo') === 0"
         :id="reply.id"
         :type="reply.type"
         :threadhead="threadhead"
@@ -35,7 +16,45 @@
       <NewsReply
         v-else
         :id="reply.id"
-        :key="'reply-' + reply.id"
+        :reply-data="reply"
+        :threadhead="threadhead"
+        :scroll-to="scrollTo"
+        class="reply-content"
+        :depth="depth"
+        @rendered="rendered"
+        @expand-combined="expandCombined"
+      />
+    </div>
+
+    <!-- Middle expander: shown between head and tail when collapsed -->
+    <div v-if="showExpander" class="show-more-replies">
+      <button
+        class="show-more-btn"
+        :aria-expanded="showAllReplies ? 'true' : 'false'"
+        @click="expandReplies"
+      >
+        {{ expanderLabel }}
+      </button>
+    </div>
+
+    <!-- Tail replies: last TAIL_COUNT when collapsed, or ALL when expanded -->
+    <div
+      v-for="reply in tailReplies"
+      :key="'newsfeed-tail-' + reply.id"
+      class="reply-thread"
+      :data-reply-id="reply.id"
+      :class="{ 'reply-thread--new': isReplyNew(reply) }"
+    >
+      <NewsRefer
+        v-if="reply.type && reply.type.indexOf('ReferTo') === 0"
+        :id="reply.id"
+        :type="reply.type"
+        :threadhead="threadhead"
+        class="reply-content"
+      />
+      <NewsReply
+        v-else
+        :id="reply.id"
         :reply-data="reply"
         :threadhead="threadhead"
         :scroll-to="scrollTo"
@@ -48,8 +67,7 @@
   </div>
 </template>
 <script setup>
-import pluralize from 'pluralize'
-import { ref, computed, defineAsyncComponent } from 'vue'
+import { ref, computed, defineAsyncComponent, nextTick } from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
@@ -58,7 +76,10 @@ const NewsReply = defineAsyncComponent(() =>
   import('~/components/NewsReply.vue')
 )
 
-const INITIAL_NUMBER_OF_REPLIES_TO_SHOW = 5
+// Show first HEAD_COUNT + last TAIL_COUNT replies; collapse when total > COLLAPSE_THRESHOLD.
+const HEAD_COUNT = 2
+const TAIL_COUNT = 3
+const COLLAPSE_THRESHOLD = 6
 
 const props = defineProps({
   id: {
@@ -92,10 +113,6 @@ const authStore = useAuthStore()
 const showAllReplies = ref(false)
 const expandedCombinedIds = ref(new Set())
 
-// We do a lot of things in setup() in this component rather than computed properties via the legacy options API.
-//
-// This is because it allows us to identify which replies we are going to show, and then fetch the users for them
-// in advance.  That avoids the screen flicker that happens if we delay fetching the user until we render each reply.
 const me = authStore.user
 
 const mod = computed(() => {
@@ -115,18 +132,26 @@ const replies = computed(() => {
   return newsfeed.value?.replies || []
 })
 
-const visiblereplies = computed(() => {
-  // These are the replies which are candidates to show, i.e. not deleted or hidden.
-  const ret = []
+const seenBeforeVisit = computed(() => newsfeedStore.seenBeforeVisit)
 
+// Whether a reply (or combined group) counts as new to the user this session.
+// seenBeforeVisit === null or 0 means we have no baseline - treat nothing as new.
+function isReplyNew(reply) {
+  if (!seenBeforeVisit.value) return false
+  if (reply.combinedIds) {
+    return reply.combinedIds[reply.combinedIds.length - 1] > seenBeforeVisit.value
+  }
+  return reply.id > seenBeforeVisit.value
+}
+
+const visiblereplies = computed(() => {
+  const ret = []
   for (let i = 0; i < replies.value.length; i++) {
     const reply = newsfeedStore.byId(replies.value[i])
-
     if (!reply.deleted || mod.value) {
       ret.push(reply)
     }
   }
-
   return ret
 })
 
@@ -139,7 +164,6 @@ const combinedReplies = computed(() => {
     const currentTime = new Date(currentReply.added).getTime()
     const lastCombined = combined[combined.length - 1]
 
-    /* Check if this reply or the last combined group has been expanded */
     const isExpanded =
       expandedCombinedIds.value.has(currentReply.id) ||
       (lastCombined?.combinedIds &&
@@ -160,7 +184,6 @@ const combinedReplies = computed(() => {
         TEN_MINUTES
 
     if (canCombine) {
-      /* Create a fresh object to avoid mutating store data */
       combined[combined.length - 1] = {
         id: lastCombined.id,
         userid: lastCombined.userid,
@@ -186,7 +209,6 @@ const combinedReplies = computed(() => {
         previews: lastCombined.previews,
       }
     } else {
-      /* Deep clone to avoid reactivity issues with store objects */
       combined.push({
         id: currentReply.id,
         userid: currentReply.userid,
@@ -212,48 +234,35 @@ const combinedReplies = computed(() => {
 })
 
 const filteredReplies = computed(() => {
+  if (!visiblereplies.value.length) return []
+
   let ret = []
 
-  if (visiblereplies.value.length) {
-    if (
-      showAllReplies.value ||
-      props.scrollTo ||
-      visiblereplies.value.length <= INITIAL_NUMBER_OF_REPLIES_TO_SHOW
-    ) {
-      // Return all the replies
-      ret = visiblereplies.value
-    } else if (!props.replyTo) {
-      // Show the last 5
-      ret = visiblereplies.value.slice(-5)
-    } else {
-      // We are need to show what we are replying to and everything after that.
-      ret = []
-      let seen = false
-
-      for (let i = 0; i < visiblereplies.value.length; i++) {
-        const reply = newsfeedStore.byId(visiblereplies.value[i])
-
-        if (reply?.id === props.replyTo || seen) {
-          seen = true
-          ret.push(reply)
-        }
-      }
-
-      if (!seen) {
-        // Probably won't happen.
-        ret = visiblereplies.value.slice(-5)
+  if (props.scrollTo || showAllReplies.value) {
+    ret = visiblereplies.value
+  } else if (props.replyTo) {
+    // Show the reply we're replying to and everything after it.
+    let seen = false
+    for (let i = 0; i < visiblereplies.value.length; i++) {
+      const reply = visiblereplies.value[i]
+      if (reply?.id === props.replyTo || seen) {
+        seen = true
+        ret.push(reply)
       }
     }
+    if (!seen) {
+      ret = visiblereplies.value
+    }
+  } else {
+    // Return all - head/tail splitting is handled by headReplies / tailReplies.
+    ret = visiblereplies.value
   }
 
-  // Suppress replies where the message value is the same as the previous one.
+  // Suppress replies where the message is identical to the previous.
   let lastMessage = null
-
   let i = ret.length
-
   while (i--) {
     if (!ret[i].message.localeCompare(lastMessage)) {
-      // Remove this from the array
       ret.splice(i, 1)
     } else {
       lastMessage = ret[i].message
@@ -263,35 +272,70 @@ const filteredReplies = computed(() => {
   return ret
 })
 
-const repliestoshow = computed(() => {
-  return combinedReplies.value
-})
-
-const showEarlierRepliesOption = computed(() => {
-  return visiblereplies.value.length > INITIAL_NUMBER_OF_REPLIES_TO_SHOW
-})
-
-const numberOfRepliesNotShown = computed(() => {
-  if (
-    !visiblereplies.value ||
-    visiblereplies.value.length < INITIAL_NUMBER_OF_REPLIES_TO_SHOW
-  ) {
-    return null
-  }
-
-  return pluralize(
-    'reply',
-    visiblereplies.value.length - INITIAL_NUMBER_OF_REPLIES_TO_SHOW,
-    true
+// Collapse only at depth 1 (top-level replies), not for nested reply trees.
+const shouldCollapse = computed(() => {
+  return (
+    !showAllReplies.value &&
+    !props.scrollTo &&
+    !props.replyTo &&
+    combinedReplies.value.length > COLLAPSE_THRESHOLD
   )
 })
+
+const headReplies = computed(() => {
+  if (!shouldCollapse.value) return []
+  return combinedReplies.value.slice(0, HEAD_COUNT)
+})
+
+const tailReplies = computed(() => {
+  if (!shouldCollapse.value) return combinedReplies.value
+  return combinedReplies.value.slice(-TAIL_COUNT)
+})
+
+// The middle chunk that is hidden behind the expander when collapsed.
+const hiddenMiddle = computed(() => {
+  if (!shouldCollapse.value) return []
+  return combinedReplies.value.slice(HEAD_COUNT, -TAIL_COUNT)
+})
+
+const hiddenCount = computed(() => hiddenMiddle.value.length)
+
+const hiddenNewCount = computed(() => {
+  if (!seenBeforeVisit.value) return 0
+  return hiddenMiddle.value.filter((r) => isReplyNew(r)).length
+})
+
+const showExpander = computed(() => shouldCollapse.value && hiddenCount.value > 0)
+
+const expanderLabel = computed(() => {
+  const n = hiddenCount.value
+  const replyWord = n === 1 ? 'reply' : 'replies'
+  const newSuffix =
+    hiddenNewCount.value > 0 ? ` - ${hiddenNewCount.value} new` : ''
+  return `Show ${n} more ${replyWord}${newSuffix}`
+})
+
+async function expandReplies() {
+  // Remember the first new reply that was hidden, so we can scroll to it after expansion.
+  const firstNewHidden = hiddenMiddle.value.find((r) => isReplyNew(r))
+  showAllReplies.value = true
+
+  if (firstNewHidden) {
+    await nextTick()
+    const el = document.querySelector(
+      `.reply-thread[data-reply-id="${firstNewHidden.id}"]`
+    )
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }
+}
 
 function rendered(id) {
   emit('rendered', id)
 }
 
 function expandCombined(combinedIds) {
-  /* Add all IDs from this combined group to the expanded set */
   combinedIds.forEach((id) => expandedCombinedIds.value.add(id))
 }
 </script>
@@ -311,13 +355,10 @@ function expandCombined(combinedIds) {
     padding-left: 1rem;
   }
 
-  /* Nested replies get lighter borders */
   &.depth-2 {
     border-left-color: rgba($color-success, 0.25);
   }
 
-  /* After depth 2, stop indenting further to prevent narrow columns.
-     The @mentions in replies show who is replying to whom. */
   &[class*='depth-']:not(.depth-1):not(.depth-2) {
     margin-left: 0;
     padding-left: 0;
@@ -325,8 +366,30 @@ function expandCombined(combinedIds) {
   }
 }
 
-.show-earlier {
-  margin-bottom: 0.5rem;
+.show-more-replies {
+  margin: 0.25rem 0;
+}
+
+.show-more-btn {
+  background: none;
+  border: none;
+  padding: 0.25rem 0;
+  color: $color-success;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.4;
+
+  &:hover {
+    text-decoration: underline;
+    color: $color-success-hover;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $color-success;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 }
 
 .reply-thread {
@@ -335,6 +398,13 @@ function expandCombined(combinedIds) {
   &:not(:last-child) {
     border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   }
+}
+
+.reply-thread--new {
+  background: rgba($color-success-bg, 0.35);
+  border-radius: 4px;
+  padding-left: 0.25rem;
+  margin-left: -0.25rem;
 }
 
 .reply-content {
