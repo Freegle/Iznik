@@ -28,9 +28,25 @@ class DonationThankPrepMail extends MjmlMailable
     protected function getSubject(): string
     {
         $totalFormatted = number_format($this->total, 2);
+
+        // Normal case since the per-donation split: one card per email, with
+        // the donor's name, email address and amount in the subject so each
+        // donor is an identifiable thread in the thanker's inbox.
+        if (count($this->cards) === 1) {
+            $card     = $this->cards[0];
+            $donation = $card['donation'] ?? [];
+            $name     = trim((string) (($card['user']['displayName'] ?? '') ?: ($donation['payerName'] ?? '')));
+            $email    = (string) (($card['aliases'][0] ?? '') ?: ($donation['payer'] ?? ''));
+            if ($name === '' || $name === 'Unknown') {
+                $name = $email !== '' ? $email : 'Unknown donor';
+            }
+
+            return "Donation thanks: {$name} ({$email}) - £{$totalFormatted}";
+        }
+
+        // Legacy multi-card digest shape (kept for safety; no live caller).
         $n = count($this->cards);
-        $noun = $n === 1 ? 'donor' : 'donors';
-        return "Donations needing thanks: {$n} {$noun}, £{$totalFormatted}";
+        return "Donations needing thanks: {$n} donors, £{$totalFormatted}";
     }
 
     public function envelope(): Envelope
