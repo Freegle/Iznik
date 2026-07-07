@@ -208,13 +208,24 @@ class ParsedEmail
     }
 
     /**
+     * Check the Auto-Submitted header (RFC 3834) only. Unlike the subject/body
+     * patterns in isAutoReply(), this header is a definitive machine-generation
+     * marker with no false-positive risk from a human's wording.
+     */
+    public function isAutoSubmitted(): bool
+    {
+        $autoSubmitted = $this->getHeader('auto-submitted');
+
+        return $autoSubmitted !== null && strtolower($autoSubmitted) !== 'no';
+    }
+
+    /**
      * Check if this is an auto-reply (vacation, OOO, etc.).
      */
     public function isAutoReply(): bool
     {
         // Check Auto-Submitted header (RFC 3834)
-        $autoSubmitted = $this->getHeader('auto-submitted');
-        if ($autoSubmitted !== null && strtolower($autoSubmitted) !== 'no') {
+        if ($this->isAutoSubmitted()) {
             return TRUE;
         }
 

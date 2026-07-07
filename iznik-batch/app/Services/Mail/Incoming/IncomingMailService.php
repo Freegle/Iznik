@@ -1522,6 +1522,18 @@ class IncomingMailService
             return $this->handleBounce($email);
         }
 
+        // Drop auto-replies (out-of-office, vacation responders etc.). These are
+        // machine responses to our digest/notification mails; delivering them would
+        // open a chat with the poster containing someone's OOO text.
+        if ($email->isAutoReply()) {
+            Log::info('Dropping auto-reply to replyto address', [
+                'envelope_to' => $email->envelopeTo,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Auto-reply to replyto address");
+        }
+
         // Parse replyto-{msgid}-{fromid}
         $parts = explode('-', $localPart);
         if (count($parts) < 3) {
@@ -1800,6 +1812,26 @@ class IncomingMailService
             ]);
 
             return $this->dropped("Reply to non-existent chat");
+        }
+
+        // Drop auto-replies (out-of-office, vacation responders etc.) - delivering
+        // them as chat messages sends one member's OOO text to other freeglers.
+        // An Auto-Submitted header (RFC 3834) is definitive, so always drop on it.
+        // The subject/body patterns can false-positive on genuine human wording, so
+        // (matching legacy MailRouter::replyToChatNotification) only trust them when
+        // the chat had a message within the last 5 hours: real auto-responders fire
+        // rapidly after our notification, late replies are usually human.
+        $recentMessage = $chat->latestmessage
+            && $chat->latestmessage->gt(now()->subHours(5));
+
+        if ($email->isAutoSubmitted() || ($recentMessage && $email->isAutoReply())) {
+            Log::info('Dropping auto-reply to chat notification', [
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Auto-reply to chat notification");
         }
 
         // Check if chat is stale and sender email is unfamiliar
