@@ -208,9 +208,11 @@ type GroupOption struct {
 // rippling_reply_attribution. Exported (and parameterised) so the legacy variant - which only
 // runs against an unmigrated production DB - stays testable against a migrated test DB.
 //
-//   - wide: read the attribution channel the reply handler derived at capture time; rows the
-//     backfill hasn't visited (attribution NULL) fold into home/unknown off the legacy
-//     was_home_member bit.
+//   - wide: read the attribution channel the reply handler derived at capture time. Rows
+//     without one (pre-migration rows the backfill hasn't visited yet) fall back PER ROW to
+//     the same live derivation as the legacy variant - otherwise the window between the
+//     migration landing and the backfill running would read as a misleading zero-ripple
+//     chart (every attribution NULL folding to home/unknown).
 //   - legacy (graded columns not yet migrated): derive the durable channels live from the
 //     notified ledger and rippled-group memberships. Correct for home/notified/group; the
 //     location channels (ripple_reach/organic_local) are not derivable retrospectively
@@ -219,21 +221,22 @@ type GroupOption struct {
 // srcGroup is the optional origin-group scoping JOIN (aliases rra); it takes one bind arg
 // before the two replied_at window args.
 func ReplySourceSplitSQL(wide bool, srcGroup string) string {
-	bucket := "COALESCE(rra.attribution, IF(rra.was_home_member = 1, 'home', 'unknown'))"
-	if !wide {
-		bucket = `CASE
-		       WHEN rra.was_home_member = 1 THEN 'home'
-		       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
-		                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
-		                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
-		       WHEN EXISTS(SELECT 1 FROM messages_groups mgr
-		                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid
-		                     AND mem.userid = rra.userid AND mem.collection = 'Approved'
-		                     AND mem.added < mgr.arrival
-		                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1
-		                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'
-		       ELSE 'unknown'
-		       END`
+	derive := `CASE
+	       WHEN rra.was_home_member = 1 THEN 'home'
+	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
+	                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
+	                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
+	       WHEN EXISTS(SELECT 1 FROM messages_groups mgr
+	                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid
+	                     AND mem.userid = rra.userid AND mem.collection = 'Approved'
+	                     AND mem.added < mgr.arrival
+	                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1
+	                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'
+	       ELSE 'unknown'
+	       END`
+	bucket := derive
+	if wide {
+		bucket = "COALESCE(rra.attribution, " + derive + ")"
 	}
 	return `
 		SELECT day,
@@ -361,6 +364,7 @@ func Metrics(c *fiber.Ctx) error {
 	repliesPerPost := []RepliesPerPostRow{}
 	replySources := []ReplySourceRow{}
 	clientSources := []ClientSourceCount{}
+	captureFrom := ""
 	replyDistances := []ReplyDistanceRow{}
 	takenRates := []TakenRateRow{}
 	groupOpts := []GroupOption{}
@@ -565,6 +569,24 @@ func Metrics(c *fiber.Ctx) error {
 			ORDER BY count DESC`, gargs()...).Scan(&clientSources)
 	}()
 
+	// (2c) When did LIVE capture start? The first row carrying evidence only the reply-time
+	//      capture can write (location containment or a client-reported surface - the backfill
+	//      never sets those). The dashboard draws this as a boundary on the attribution chart:
+	//      before it the location channels are structurally zero (those replies sit in
+	//      unknown), after it the full split applies. Deliberately unscoped by ?groupid=
+	//      (it marks a deploy moment, not a per-group property).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !attributionWide {
+			return
+		}
+		db.Raw("SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') " +
+			"FROM rippling_reply_attribution " +
+			"WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL " +
+			"OR client_source IS NOT NULL").Scan(&captureFrom)
+	}()
+
 	// (3) Median crow-flies distance (km) from post to replier, per reply day. The origin-group
 	//     join is added only when filtering (avoids multi-group row inflation in the all view).
 	wg.Add(1)
@@ -745,6 +767,9 @@ func Metrics(c *fiber.Ctx) error {
 		// False until the graded-attribution migration has run on this DB: the location
 		// channels (ripple_reach/organic_local) read 0 and client sources are absent.
 		"attribution_channels_available": attributionWide,
+		// First day with reply-time-captured evidence ('' until the capture deploy has seen
+		// a reply): the boundary the dashboard marks on the attribution chart.
+		"attribution_capture_from": captureFrom,
 		"reply_distance_median":          replyDistances,
 		"taken_rate":                     takenRates,
 		"groups":                         groupOpts,

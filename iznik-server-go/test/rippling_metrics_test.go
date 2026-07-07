@@ -629,6 +629,10 @@ func TestRipplingMetricsClientSourceSummary(t *testing.T) {
 
 	summary, has := result["client_source_summary"].([]interface{})
 	assert.True(t, has, "client_source_summary present")
+	// The seeded rows carry client_source - evidence only live capture writes - so the
+	// live-capture boundary date must be surfaced for the dashboard's chart marker.
+	assert.NotEmpty(t, result["attribution_capture_from"],
+		"attribution_capture_from set once live-captured evidence exists")
 	counts := map[string]float64{}
 	for _, r := range summary {
 		if m, ok := r.(map[string]interface{}); ok {
@@ -703,6 +707,24 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 		assert.Equal(t, 0, row.RippleReach, "location channels are not derivable retrospectively")
 		assert.Equal(t, 0, row.OrganicLocal, "location channels are not derivable retrospectively")
 		assert.GreaterOrEqual(t, row.Unknown, 1, "un-evidenced replies sit in unknown")
+	}
+
+	// The WIDE variant must derive these same attribution-NULL rows per row, not fold them
+	// into home/unknown - otherwise the window between the migration landing on production
+	// and the backfill running reads as a misleading zero-ripple chart (seen live 2026-07-07).
+	wideRows := []rippling.ReplySourceRow{}
+	err = db.Raw(rippling.ReplySourceSplitSQL(true, ""), start, end).Scan(&wideRows).Error
+	assert.NoError(t, err)
+	var wideRow *rippling.ReplySourceRow
+	for i := range wideRows {
+		if wideRows[i].Replies >= 4 && wideRows[i].Home >= 1 {
+			wideRow = &wideRows[i]
+			break
+		}
+	}
+	if assert.NotNil(t, wideRow, "the seeded day is present in the wide variant") {
+		assert.GreaterOrEqual(t, wideRow.RippleNotified, 1, "NULL-attribution notified reply derived per row")
+		assert.GreaterOrEqual(t, wideRow.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
 	}
 }
 

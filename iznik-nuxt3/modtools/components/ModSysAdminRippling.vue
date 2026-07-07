@@ -102,6 +102,11 @@
           <span class="text-success fw-bold">Good:</span> a real green share -
           the lift is coming from reach, and the split says which ripple channel
           earns it.
+          <span v-if="attributionCaptureFrom">
+            Left of the "Live capture" line the history is derived after the
+            fact, so only the mail and group ripple channels can be credited -
+            reach-fed browse and local non-members sit in Unknown there.
+          </span>
         </p>
         <p v-if="!attributionChannelsAvailable" class="text-warning small mb-1">
           This database doesn't have the graded-attribution columns yet
@@ -292,6 +297,10 @@ const groupFilter = ref(0)
 // whether this DB has the graded-attribution columns yet (location channels pending).
 const clientSourceSummary = ref([])
 const attributionChannelsAvailable = ref(true)
+// First day with reply-time-captured evidence: before this the location channels are
+// structurally zero (derived history can only see mail/group evidence), so the chart marks
+// the boundary rather than letting it read as reach-browse suddenly springing to life.
+const attributionCaptureFrom = ref('')
 
 const COHORT_HEADER = (allLabel) => [
   'Date',
@@ -362,9 +371,20 @@ const replySourceChart = computed(() => {
     d.setDate(d.getDate() + i)
     const key = d.toISOString().slice(0, 10)
     const r = byDay.get(key)
-    rows.push([d, ...CHANNELS.map((c) => (r ? r[c.key] || 0 : 0))])
+    // A domain annotation draws a vertical marker where live reply-time capture began:
+    // to its left the history is derived (mail/group channels only, the rest in
+    // Unknown), to its right the full six-way split applies. One chart, two eras,
+    // boundary explicit.
+    const marker =
+      attributionCaptureFrom.value && key === attributionCaptureFrom.value
+        ? 'Live capture from here'
+        : null
+    rows.push([d, marker, ...CHANNELS.map((c) => (r ? r[c.key] || 0 : 0))])
   }
-  return [['Date', ...CHANNELS.map((c) => c.label)], ...rows]
+  return [
+    ['Date', { role: 'annotation' }, ...CHANNELS.map((c) => c.label)],
+    ...rows,
+  ]
 })
 const replyDistanceChart = computed(() => {
   if (!replyDistance.value.length) return null
@@ -446,6 +466,8 @@ function channelStackOptions() {
     chartArea: { width: '85%', height: '65%' },
     vAxis: { title: 'Share of replies', format: 'percent' },
     hAxis: dateHAxis(),
+    // The domain annotation marking where live capture began renders as a vertical line.
+    annotations: { style: 'line' },
     areaOpacity: 0.85,
     series: {
       0: { color: '#1592a6' }, // Home members — teal (matches the cohort charts)
@@ -507,6 +529,7 @@ async function fetchMetrics() {
     clientSourceSummary.value = result?.client_source_summary || []
     attributionChannelsAvailable.value =
       result?.attribution_channels_available !== false
+    attributionCaptureFrom.value = result?.attribution_capture_from || ''
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []
     groupOptions.value = result?.groups || []

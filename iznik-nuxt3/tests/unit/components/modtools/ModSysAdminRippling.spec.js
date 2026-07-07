@@ -112,6 +112,7 @@ describe('ModSysAdminRippling', () => {
     const data = charts[0].props('data')
     expect(data[0]).toEqual([
       'Date',
+      { role: 'annotation' },
       'Home members',
       'Local non-members',
       'Unknown',
@@ -125,10 +126,34 @@ describe('ModSysAdminRippling', () => {
         (r) =>
           r[0] instanceof Date && r[0].toISOString().startsWith('2026-06-20')
       )
-    // Channel counts in header order after the date.
-    expect(row.slice(1)).toEqual([4, 1, 1, 1, 2, 1])
+    // Channel counts in header order after the date + annotation columns.
+    expect(row.slice(2)).toEqual([4, 1, 1, 1, 2, 1])
     // The stack is a percent composition.
     expect(charts[0].props('options').isStacked).toBe('percent')
+    wrapper.unmount()
+  })
+
+  it('marks the live-capture boundary on the attribution chart', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      reply_source_split: [
+        { day: '2026-06-20', replies: 5, home: 5 },
+        { day: '2026-06-21', replies: 6, home: 3, ripple_reach: 3 },
+      ],
+      attribution_channels_available: true,
+      attribution_capture_from: '2026-06-21',
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const charts = wrapper.findAllComponents({ name: 'GChart' })
+    const rows = charts[0].props('data').slice(1)
+    const marked = rows.filter((r) => r[1] !== null)
+    expect(marked.length).toBe(1)
+    expect(marked[0][0].toISOString().startsWith('2026-06-21')).toBe(true)
+    expect(marked[0][1]).toBe('Live capture from here')
+    // The boundary is explained to the reader.
+    expect(wrapper.html()).toContain('Live capture')
     wrapper.unmount()
   })
 
