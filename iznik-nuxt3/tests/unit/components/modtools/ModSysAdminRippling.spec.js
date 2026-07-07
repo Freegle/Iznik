@@ -68,40 +68,100 @@ describe('ModSysAdminRippling', () => {
     const wrapper = mountComponent()
     await flushPromises()
 
-    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23', false)
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23')
     wrapper.unmount()
   })
 
-  it('scopes the metrics to the trial groups when "Trial groups only" is on', async () => {
-    mockFetchMetrics.mockResolvedValue({ trial_group_ids: [111, 222] })
-
-    const wrapper = mountComponent()
-    await flushPromises()
-    mockFetchMetrics.mockClear()
-
-    // Turn on the trial scope and refetch via the exposed handler.
-    wrapper.vm.trialOnly = true
-    wrapper.vm.onTrialChange()
-    await flushPromises()
-
-    // The refetch carries trialOnly=true (4th arg) with the group filter reset to 0,
-    // and the resolved trial set is surfaced in the UI.
-    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-24', '2026-06-23', true)
-    expect(wrapper.html()).toContain('in RIPPLE_WITHIN_GROUPS')
-    wrapper.unmount()
-  })
-
-  it('warns when trial scope is on but no trial groups are configured', async () => {
-    mockFetchMetrics.mockResolvedValue({ trial_group_ids: [] })
+  it('has retired the trial-groups scope (rippling is fully live)', async () => {
+    mockFetchMetrics.mockResolvedValue({})
 
     const wrapper = mountComponent()
     await flushPromises()
 
-    wrapper.vm.trialOnly = true
-    wrapper.vm.onTrialChange()
+    expect(wrapper.html()).not.toContain('Trial groups only')
+    expect(wrapper.vm.trialOnly).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('renders the attribution-channel composition from reply_source_split', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      reply_source_split: [
+        {
+          day: '2026-06-20',
+          replies: 10,
+          home: 4,
+          ripple_notified: 2,
+          ripple_group: 1,
+          ripple_reach: 1,
+          organic_local: 1,
+          unknown: 1,
+          ripple: 4,
+          ripple_pct: 40,
+        },
+      ],
+      attribution_channels_available: true,
+    })
+
+    const wrapper = mountComponent()
     await flushPromises()
 
-    expect(wrapper.html()).toContain('No trial groups configured')
+    expect(wrapper.html()).toContain('Where do replies come from?')
+
+    const charts = wrapper.findAllComponents({ name: 'GChart' })
+    expect(charts.length).toBe(1)
+    const data = charts[0].props('data')
+    expect(data[0]).toEqual([
+      'Date',
+      'Home members',
+      'Local non-members',
+      'Unknown',
+      'Rippled into their group',
+      'Ripple mail',
+      'Reach-fed browse',
+    ])
+    const row = data
+      .slice(1)
+      .find(
+        (r) =>
+          r[0] instanceof Date && r[0].toISOString().startsWith('2026-06-20')
+      )
+    // Channel counts in header order after the date.
+    expect(row.slice(1)).toEqual([4, 1, 1, 1, 2, 1])
+    // The stack is a percent composition.
+    expect(charts[0].props('options').isStacked).toBe('percent')
+    wrapper.unmount()
+  })
+
+  it('notes when the graded-attribution migration has not run on this DB', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      attribution_channels_available: false,
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('graded-attribution columns yet')
+    wrapper.unmount()
+  })
+
+  it('renders the client-reported surface cross-check table when present', async () => {
+    mockFetchMetrics.mockResolvedValue({
+      client_source_summary: [
+        { source: 'browse', count: 12 },
+        { source: 'message_page', count: 5 },
+        { source: '(not reported)', count: 2 },
+      ],
+      attribution_channels_available: true,
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const html = wrapper.html()
+    expect(html).toContain('What the app says')
+    expect(html).toContain('browse')
+    expect(html).toContain('message_page')
+    expect(html).toContain('(not reported)')
     wrapper.unmount()
   })
 
@@ -188,33 +248,66 @@ describe('ModSysAdminRippling', () => {
     })
   })
 
-  it('retitles the reply-source chart and renders cohort series', async () => {
+  it('renders cohort series with certainty flags on settling days', async () => {
     mockFetchMetrics.mockResolvedValue({
       reply_rate_36h: [
-        { day: '2026-06-20', posts: 10, replied: 4, reply_pct: 40,
-          home_posts: 6, home_replied: 2, home_pct: 33.3,
-          ripple_posts: 4, ripple_replied: 2, ripple_pct: 50, provisional: false },
-        { day: '2026-06-23', posts: 5, replied: 1, reply_pct: 20,
-          home_posts: 3, home_replied: 0, home_pct: 0,
-          ripple_posts: 2, ripple_replied: 1, ripple_pct: 50, provisional: true },
+        {
+          day: '2026-06-20',
+          posts: 10,
+          replied: 4,
+          reply_pct: 40,
+          home_posts: 6,
+          home_replied: 2,
+          home_pct: 33.3,
+          ripple_posts: 4,
+          ripple_replied: 2,
+          ripple_pct: 50,
+          provisional: false,
+        },
+        {
+          day: '2026-06-23',
+          posts: 5,
+          replied: 1,
+          reply_pct: 20,
+          home_posts: 3,
+          home_replied: 0,
+          home_pct: 0,
+          ripple_posts: 2,
+          ripple_replied: 1,
+          ripple_pct: 50,
+          provisional: true,
+        },
       ],
       reply_distance_median: [
-        { day: '2026-06-20', replies: 8, median_km: 5,
-          home_replies: 5, home_median_km: 3, ripple_replies: 3, ripple_median_km: 9 },
+        {
+          day: '2026-06-20',
+          replies: 8,
+          median_km: 5,
+          home_replies: 5,
+          home_median_km: 3,
+          ripple_replies: 3,
+          ripple_median_km: 9,
+        },
       ],
       taken_rate: [
-        { day: '2026-06-15', posts: 12, taken: 6, taken_pct: 50,
-          home_posts: 8, home_taken: 4, home_pct: 50,
-          ripple_posts: 4, ripple_taken: 2, ripple_pct: 50, provisional: false },
+        {
+          day: '2026-06-15',
+          posts: 12,
+          taken: 6,
+          taken_pct: 50,
+          home_posts: 8,
+          home_taken: 4,
+          home_pct: 50,
+          ripple_posts: 4,
+          ripple_taken: 2,
+          ripple_pct: 50,
+          provisional: false,
+        },
       ],
     })
 
     const wrapper = mountComponent()
     await flushPromises()
-
-    // Chart 2 retitled.
-    expect(wrapper.html()).toContain('Share of replies from rippling')
-    expect(wrapper.html()).not.toContain('How much of the lift is rippling?')
 
     const charts = wrapper.findAllComponents({ name: 'GChart' })
     // charts[0] is the reply-rate chart (reply-source is omitted from this mock, so it doesn't render).

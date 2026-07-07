@@ -48,6 +48,7 @@ function freshReplyStore(overrides = {}) {
     replyMsgId: 42,
     replyMessage: 'Hello, is this still available?',
     replyingAt: RECENT_AT,
+    replySource: 'browse',
     draftMsgId: null,
     clearDraft: vi.fn(),
     ...overrides,
@@ -264,13 +265,15 @@ describe('useReplyToPost', () => {
       const chatButtonRef = { openChat }
       const { replyToPost } = useReplyToPost()
       await replyToPost(chatButtonRef)
-      // openInNewTab=false, noNavigate=false by default.
+      // openInNewTab=false, noNavigate=false by default; the committing surface
+      // (reply provenance) rides along as the final argument.
       expect(openChat).toHaveBeenCalledWith(
         null,
         'Hello, is this still available?',
         42,
         false,
-        false
+        false,
+        'browse'
       )
     })
 
@@ -284,7 +287,8 @@ describe('useReplyToPost', () => {
         'Hello, is this still available?',
         42,
         false,
-        true
+        true,
+        'browse'
       )
     })
 
@@ -301,6 +305,7 @@ describe('useReplyToPost', () => {
       await replyToPost(chatButtonRef)
       expect(mockReplyStore.replyMsgId).toBeNull()
       expect(mockReplyStore.replyMessage).toBeNull()
+      expect(mockReplyStore.replySource).toBeNull()
     })
 
     it('clears a composing draft for the same item after sending', async () => {

@@ -289,6 +289,7 @@ import {
   ReplyState,
 } from '~/composables/useReplyStateMachine'
 import { action } from '~/composables/useClientLog'
+import { replySurfaceForRoute } from '~/composables/useReplySurface'
 import EmailValidator from '~/components/EmailValidator'
 import NewUserInfo from '~/components/NewUserInfo'
 import ChatButton from '~/components/ChatButton'
@@ -325,6 +326,9 @@ const faraway = FAR_AWAY
 
 const messageStore = useMessageStore()
 const userStore = useUserStore()
+// Captured at setup (useRoute needs the component context); read at send time -
+// the route object is reactive so it reflects wherever the user actually is then.
+const route = useRoute()
 const miscStore = useMiscStore()
 const authStore = useAuthStore()
 const forceLogin = computed(() => authStore.forceLogin)
@@ -478,7 +482,7 @@ onMounted(() => {
 
   action('chat_reply_pane_viewed', {
     message_id: props.messageId,
-    reply_source: 'chat_reply_pane',
+    reply_source: replySurfaceForRoute(route),
     message_type: message.value?.type,
     is_logged_in: !!me.value,
   })
@@ -545,7 +549,10 @@ async function handleSend(callback) {
     emailValidator: emailValidatorRef.value,
   })
 
-  stateMachine.setReplySource('chat_reply_pane')
+  // The surface the user is committing the reply from (browse, search, message_page,
+  // email deep link, ...) - sent to the server as advisory provenance for the rippling
+  // reply attribution, and logged with the Loki reply_* events.
+  stateMachine.setReplySource(replySurfaceForRoute(route))
   await stateMachine.submit(callback)
 }
 
