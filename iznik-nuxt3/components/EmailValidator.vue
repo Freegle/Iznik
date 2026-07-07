@@ -316,4 +316,33 @@ defineExpose({
   width: 100%;
   max-width: 480px;
 }
+
+/* On wide but short viewports (e.g. 820×420 — an email client's embedded
+   browser or a phone in landscape), lay the label and input side by side
+   so the composer fits on screen without scrolling. */
+@media (min-width: 768px) and (max-height: 500px) {
+  /* BFormGroup renders its root as div[role="group"] containing label + div. */
+  :deep(div[role='group']) {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  :deep(div[role='group'] > label) {
+    flex-shrink: 0;
+    white-space: nowrap;
+    margin-bottom: 0;
+  }
+
+  :deep(div[role='group'] > div) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Remove the capped width so the input grows to fill the remaining row space. */
+  .email {
+    max-width: none;
+  }
+}
 </style>
