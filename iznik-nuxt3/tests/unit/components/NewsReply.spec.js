@@ -11,6 +11,7 @@ const mockNewsfeedUnlove = vi.fn()
 const mockNewsfeedHide = vi.fn()
 const mockNewsfeedUnhide = vi.fn()
 const mockNewsfeedDelete = vi.fn()
+let mockSeenBeforeVisit = null
 
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => ({
@@ -22,6 +23,9 @@ vi.mock('~/stores/newsfeed', () => ({
     unhide: mockNewsfeedUnhide,
     delete: mockNewsfeedDelete,
     tagusers: [{ displayname: 'Alice' }, { displayname: 'Bob' }],
+    get seenBeforeVisit() {
+      return mockSeenBeforeVisit
+    },
   }),
 }))
 
@@ -234,6 +238,7 @@ describe('NewsReply', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSeenBeforeVisit = null
     mockAuthUser.value = {
       id: 1,
       displayname: 'Current User',
@@ -534,6 +539,48 @@ describe('NewsReply', () => {
       const wrapper = createWrapper()
       expect(wrapper.emitted('rendered')).toBeTruthy()
       expect(wrapper.emitted('rendered')[0]).toEqual([100])
+    })
+  })
+
+  describe('new pill', () => {
+    it('does not show new pill when seenBeforeVisit is null', () => {
+      mockSeenBeforeVisit = null
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when seenBeforeVisit is 0', () => {
+      mockSeenBeforeVisit = 0
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when reply id is below cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 200 means 100 <= 200 = not new
+      mockSeenBeforeVisit = 200
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when reply id equals cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 100 means 100 > 100 is false
+      mockSeenBeforeVisit = 100
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('shows new pill when reply id is above cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 50 means 100 > 50 = new
+      mockSeenBeforeVisit = 50
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(true)
+    })
+
+    it('new pill has accessible label', () => {
+      mockSeenBeforeVisit = 50
+      const wrapper = createWrapper()
+      const pill = wrapper.find('.reply-new-pill')
+      expect(pill.attributes('aria-label')).toBeTruthy()
     })
   })
 })
