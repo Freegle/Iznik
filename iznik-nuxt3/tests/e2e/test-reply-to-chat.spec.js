@@ -398,3 +398,96 @@ test.describe('Reply-to-Chat - Logged Out', () => {
     }
   })
 })
+
+test.describe('Reply-to-Chat - standalone page CTA reachability', () => {
+  // The standalone /message/:id page pins its Reply/Cancel footer sticky above
+  // the fixed bottom nav + ad zone below xl. Without that, Reply started
+  // hidden under the fixed chrome at small viewport heights, and a natural
+  // tap silently hit the nav, ad zone or the floating New Post button.
+  test('Reply is visible and receives real clicks without scrolling at small viewports', async ({
+    page,
+    postMessage,
+    testEnv,
+    getTestEmail,
+    withdrawPost,
+  }) => {
+    const posterEmail = getTestEmail('poster-r2c-cta')
+    const uniqueItem = `test-r2c-cta-${Date.now()}`
+    const result = await postMessage({
+      type: 'OFFER',
+      item: uniqueItem,
+      description: 'Test item for reply CTA reachability',
+      email: posterEmail,
+    })
+    expect(result.id).toBeTruthy()
+
+    await logoutIfLoggedIn(page)
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    await waitForAuthInLocalStorage(page)
+
+    // 320x568 was the worst case (Reply entirely below the fold); 375x667 sat
+    // under the sticky ad zone; 414x896's visible sliver was covered by the
+    // New Post button.
+    for (const viewport of [
+      { width: 320, height: 568 },
+      { width: 375, height: 667 },
+      { width: 414, height: 896 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await page.gotoAndVerify(`/message/${result.id}`)
+      await waitForAuthHydration(page)
+      await waitForNuxtHydration(page)
+
+      const replyButton = page
+        .locator('.reply-button:has-text("Reply")')
+        .first()
+      await replyButton.waitFor({ state: 'visible', timeout: 30000 })
+
+      // In the viewport at first paint - no scrolling performed.
+      const box = await replyButton.boundingBox()
+      expect(
+        box,
+        `${viewport.width}x${viewport.height}: no bounding box`
+      ).toBeTruthy()
+      expect(
+        box.y,
+        `${viewport.width}x${viewport.height}: Reply above viewport`
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        box.y + box.height,
+        `${viewport.width}x${viewport.height}: Reply below the fold`
+      ).toBeLessThanOrEqual(viewport.height + 1)
+
+      // A real hit-test at the button's own centre must resolve to the button,
+      // not the fixed nav / ad zone / New Post button layered over the page.
+      const hit = await page.evaluate(
+        ({ x, y }) => {
+          const el = document.elementFromPoint(x, y)
+          const btn = el && el.closest('button')
+          return btn && btn.classList.contains('reply-button')
+            ? 'reply'
+            : (el && (el.className || el.tagName).toString().slice(0, 80)) ||
+                'none'
+        },
+        { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+      )
+      expect(
+        hit,
+        `${viewport.width}x${viewport.height}: click lands on wrong element`
+      ).toBe('reply')
+    }
+
+    // And a real click opens the reply overlay.
+    await page.locator('.reply-button:has-text("Reply")').first().click()
+    await expect(page.locator('.reply-overlay')).toBeVisible({
+      timeout: 30000,
+    })
+
+    // Cleanup
+    await page.setViewportSize(DESKTOP_VIEWPORT)
+    const loggedInCta = await loginViaHomepage(page, posterEmail)
+    if (loggedInCta) {
+      await withdrawPost({ item: result.item })
+    }
+  })
+})
