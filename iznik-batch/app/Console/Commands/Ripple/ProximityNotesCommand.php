@@ -15,9 +15,17 @@ use Illuminate\Support\Facades\Log;
  * yet have a rippling_proximity row, resolves P (nearest in-group point to the offer) and Q
  * (furthest in-group point from P) to place names, and stores them only when quicker=true.
  *
- * Idempotent (skips rows that already have a note), bounded per run (--limit), and disabled by a
- * dedicated flag (freegle.ripple.proximity_notes) so it can be turned off without touching the
- * master RIPPLE_ENABLED switch.
+ * Negative memoization (Phase 0, plans/routing-performance-step-change.md): every DEFINITIVE
+ * routing answer — note written, not quicker, or unreachable within budget — also writes a
+ * checked-once-forever marker to rippling_proximity_checked, and marked rows are excluded from
+ * future runs. Without this, "no note needed" rows (the majority) were recomputed every 5-minute
+ * run for the whole 8-day window: up to ~12 CPU-hours/day of wasted routing work (the 2026-07-06
+ * group-21521 Sentry storm's standing tax). Failed calls (PROX_ERROR: timeout/non-2xx/mid-restart)
+ * are NOT marked, so those rows retry next run.
+ *
+ * Idempotent (skips rows that already have a note or a marker), bounded per run (--limit), and
+ * disabled by a dedicated flag (freegle.ripple.proximity_notes) so it can be turned off without
+ * touching the master RIPPLE_ENABLED switch.
  */
 class ProximityNotesCommand extends Command
 {
@@ -32,16 +40,28 @@ class ProximityNotesCommand extends Command
             return Command::SUCCESS;
         }
 
-        // Rippled-in copies still inside the ripple window that have no note yet, with the origin
-        // (degrees) from the reach row. leftJoin+whereNull keeps it idempotent; the group's own
-        // posts (rippled_in=0) are excluded.
+        // Purge markers past any possible candidacy: candidates require mg.arrival within 8
+        // days, so a marker older than that can never match again. 14 days keeps a margin;
+        // cheap (indexed on checked_at). Checked-once-forever is preserved by the arrival
+        // window, not by the marker's lifetime.
+        DB::table('rippling_proximity_checked')->where('checked_at', '<', now()->subDays(14))->delete();
+
+        // Rippled-in copies still inside the ripple window that have no note yet AND no
+        // checked-once-forever marker, with the origin (degrees) from the reach row.
+        // leftJoin+whereNull keeps it idempotent; the group's own posts (rippled_in=0) are
+        // excluded. The rp join stays alongside the marker join so pre-marker note rows
+        // (written before rippling_proximity_checked existed) are still excluded.
         $rows = DB::table('messages_groups as mg')
             ->join('rippling_reach as rr', 'rr.msgid', '=', 'mg.msgid')
             ->leftJoin('rippling_proximity as rp', function ($j) {
                 $j->on('rp.msgid', '=', 'mg.msgid')->on('rp.groupid', '=', 'mg.groupid');
             })
+            ->leftJoin('rippling_proximity_checked as rpc', function ($j) {
+                $j->on('rpc.msgid', '=', 'mg.msgid')->on('rpc.groupid', '=', 'mg.groupid');
+            })
             ->where('mg.rippled_in', 1)
             ->whereNull('rp.msgid')
+            ->whereNull('rpc.msgid')
             ->where('mg.arrival', '>=', now()->subDays(8))
             ->orderByDesc('mg.arrival')
             ->limit((int) $this->option('limit'))
@@ -55,21 +75,31 @@ class ProximityNotesCommand extends Command
                 // over-exploring is pure waste and trips the slow-call Sentry warning.
                 $budget = isset($r->max_drive_min) ? (float) $r->max_drive_min : null;
                 $prox = $reach->groupProximity((float) $r->lat, (float) $r->lng, (int) $r->groupid, $budget);
-                if ($prox === null || !($prox['quicker'] ?? false)) {
-                    continue; // not quicker, or routing unreachable — no note (re-tried next run)
+                if ($prox['status'] === ReachService::PROX_ERROR) {
+                    continue; // no usable answer (routing down/mid-restart) — retry next run, never memoized
                 }
-                $p = Location::describeNearest((float) $prox['closest']['lat'], (float) $prox['closest']['lng']);
-                $q = Location::describeNearest((float) $prox['furthest']['lat'], (float) $prox['furthest']['lng']);
-                if ($p === null || $q === null) {
-                    continue;
+
+                if ($prox['status'] === ReachService::PROX_OK && ($prox['body']['quicker'] ?? false)) {
+                    $p = Location::describeNearest((float) $prox['body']['closest']['lat'], (float) $prox['body']['closest']['lng']);
+                    $q = Location::describeNearest((float) $prox['body']['furthest']['lat'], (float) $prox['body']['furthest']['lng']);
+                    if ($p === null || $q === null) {
+                        continue; // place names unavailable (KNN gap) — retry next run rather than mark half-done
+                    }
+                    DB::table('rippling_proximity')->insertOrIgnore([
+                        'msgid' => (int) $r->msgid,
+                        'groupid' => (int) $r->groupid,
+                        'p' => $p,
+                        'q' => $q,
+                    ]);
+                    $written++;
                 }
-                DB::table('rippling_proximity')->insertOrIgnore([
+
+                // Definitive outcome (note written, not quicker, or unreachable): write the
+                // checked-once-forever marker so this row is never re-queried.
+                DB::table('rippling_proximity_checked')->insertOrIgnore([
                     'msgid' => (int) $r->msgid,
                     'groupid' => (int) $r->groupid,
-                    'p' => $p,
-                    'q' => $q,
                 ]);
-                $written++;
             } catch (\Throwable $e) {
                 Log::warning("ripple: proximity note failed for msg {$r->msgid} group {$r->groupid}: {$e->getMessage()}");
             }
