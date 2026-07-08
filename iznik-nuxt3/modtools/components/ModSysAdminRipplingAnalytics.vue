@@ -113,6 +113,9 @@
               {{ pct(s1.held_replies_pct) }}
             </div>
             <div class="sub">of replies held (waiting for reach)</div>
+            <div v-if="heldSourceBreakdown" class="sub muted">
+              held now by source: {{ heldSourceBreakdown }}
+            </div>
           </div>
         </div>
       </div>
@@ -336,10 +339,25 @@ const s3 = ref(null)
 const replySource = ref([])
 const hotspots = ref([])
 const attributionCaptureFrom = ref('')
+const heldBySource = ref([])
 
 const stratumLabel = computed(() =>
   stratum.value === 'all' ? 'all-density' : stratum.value
 )
+
+// Currently-held replies broken down by origin channel (email / tn / web), for the friction
+// panel - shows how many replies the new web reply-hold is capturing vs the email/TN path.
+const heldSourceBreakdown = computed(() => {
+  const by = {}
+  for (const r of heldBySource.value) {
+    if (r.status === 'held')
+      by[r.source] = (by[r.source] || 0) + Number(r.count || 0)
+  }
+  return ['email', 'tn', 'web']
+    .filter((s) => by[s])
+    .map((s) => `${s} ${by[s].toLocaleString()}`)
+    .join(' · ')
+})
 
 const CHANNELS = [
   { key: 'home', label: 'Home members' },
@@ -518,6 +536,7 @@ async function fetchAnalytics() {
     replySource.value = metrics?.reply_source_split || []
     hotspots.value = metrics?.hotspots || []
     attributionCaptureFrom.value = metrics?.attribution_capture_from || ''
+    heldBySource.value = metrics?.held_reply_by_source || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
