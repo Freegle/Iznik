@@ -53,12 +53,13 @@
 >   tiles/geocode/wiki behind applb (DNS repoint → HAProxy TLS) is an optional
 >   later step that removes certbot from this host and makes failover uniform.
 >
-> **Revised staging** (each step independently reversible, human-gated):
-> 0. **Immediately, before anything else:** disk is at 89% - add block storage
->    (£0.15/GB/mo) and grow the filesystem. Deploy PR #1006 slices (relief for
->    the current overload, and the priority mechanism everything else relies
->    on). Investigate batch-prod's 428% CPU separately (likely the ripple
->    loop - see plans/routing-performance-step-change.md).
+> **Revised staging** (each step independently reversible, human-gated).
+> **See the EXECUTION STATUS section immediately below the revision block for
+> what is DONE vs LEFT as of 2026-07-08.**
+> 0. **[DONE 2026-07-08]** disk: reclaimed ~168G (107G orphaned old tile PG-12
+>    DB, 41G legacy /opt/loki, 13G defunct /var/discourse) → 89%→55%; a 768G
+>    resize is DECIDED but no longer urgent (provider-side). PR #1006 cgroup
+>    slices deployed (interactive/batch). (Ripple CPU tracked separately.)
 > 1. **Upsize the host ONLY on evidence** (Krystal package upgrades are
 >    live/no-downtime, so buying early gains nothing). Measured 2026-07-08:
 >    the 12G swap is COLD pages (photon JVM 6.2G + renderd 4.0G idle;
@@ -69,29 +70,59 @@
 >    pressure, digest shards overrunning the 07:00-12:00 window, or
 >    interactive-tier CPU stalls after the ripple fix. Then: ROCK-48
 >    (16 vCPU/48G, +£120/mo), ROCK-96 as the further escape hatch.
-> 2. **Adopt standalone containers into Compose** (same host, same data):
->    `tile-server` service on external volumes `osm-data`/`osm-tiles` (stop
->    `confident_curran`, `up` the compose service); `wiki-media`+`wiki-mysql`
->    services on the existing `/var/wiki` binds; drop `ors-app` (superseded by
->    spatial on db1/2/3) and the stale discourse vhost. Photon stays native
->    under monit for now (own later stage). tile-server sits in the default
->    tier (it mixes user serving with render storms), wiki likewise.
-> 3. **Images migration (the only real move):** mount NFS `/images` ro; bring
->    up `delivery` (weserv) + `tusd` + `frontend-nginx` (uploads + delivery
->    vhosts only, pinned cache key per §2) on the new ports under
->    `interactive.slice`; low-priority rsync of app1's 41G `/wsrv_cache`;
->    replay-validate >90% HIT (§10); then HAProxy cutover per §8 - repoint
->    `tusd_backend`, add `delivery_backend`, and **keep app1 as `backup`
->    server in both** (free rollback AND a warm failover sibling until
->    retirement).
-> 4. **Legacy `images`/`cdn`/`users`-web** (app1 PHP-coupled, HAProxy default
->    backend): still the awkward tail - needs the legacy PHP served here
->    (apiv1 container or port the vhosts) before app1 can retire. Own stage;
->    `users` mail-alias MX remains a separate workstream (§8).
-> 5. **Retire app1** per §9 (after ≥1 week clean, and only after step 4).
->    Post-retirement failover: the next investments are a second HAProxy on a
->    Katapult VIP, and - if wanted later - a second mixed node as backup
->    backend for uploads/delivery (NFS is shared; caches cold-start).
+> 2. **[DONE 2026-07-08]** Adopted `tile-server` (osm volumes), `wiki-media`+
+>    `wiki-mysql` (/var/wiki binds) into Compose under the `edge` profile;
+>    dropped `ors-app` + the stale discourse vhost. tile-server render threads
+>    capped `THREADS=4` (100 thrashed the shared box). Old standalone
+>    containers kept stopped as rollback (remove after soak). Photon still
+>    native under monit.
+> 3. **[DONE 2026-07-08]** Images cutover: NFS `/images` mounted rw at
+>    `/srv/tusd-data` (→ bound to `/images` in the tusd container); `delivery`+
+>    `tusd`+`frontend-nginx` up in `interactive.slice` on :8180/:8188; 41G
+>    `/wsrv_cache` rsynced (chown 101:101 + nginx restart to index); replay
+>    validated 99% HIT; HAProxy cut - `tusd_backend`→edge, new
+>    `delivery_backend`→edge, **app1 `backup` in both**, dead `app4` removed
+>    everywhere. Three fixes: tusd `-upload-dir=/images` (Storage.Path
+>    symmetry), pin `tusd v2.4.0` (v2.10.0 `.lock`-on-GET broke reads), neg
+>    cache 15m→5m. Steady state 95-96% HIT / 0 500s / 0.3% 404 (= app1
+>    baseline). **uploadcare left on app1** (plan §8).
+> 4. **[LEFT] Legacy `images`/`cdn`/`users`-web** (HAProxy default backend).
+>    Verified live on app1 2026-07-08: **no PHP needs to survive** - the
+>    earlier "apiv1 container or port the vhosts" framing was wrong.
+>    - `users.ilovefreegle.org` web = literally one line
+>      (`return 302 https://www.ilovefreegle.org$request_uri`) - a server
+>      block on the edge front door.
+>    - `cdn.ilovefreegle.org`: DNS still CNAMEs to applb, but **no app1 vhost
+>      serves it any more** (no server_name match → falls through to the
+>      default server). Decide: formally kill it (DNS + any HAProxy acl), or
+>      alias it into the images rewrites if old emails used cdn-hosted
+>      `timg_*` links. Check HAProxy stats for residual volume first.
+>    - `images.ilovefreegle.org` is the ONLY live V1 PHP left anywhere: the
+>      vhost rewrites `img_/timg_/uimg_/tuimg_/gimg_/...` forms into V1
+>      `/api/image`, now ~3-5K req/day (the June audit's ~120K/day figure was
+>      the shared cache tier, not this vhost alone). Measured today: ~70%
+>      are DB-lookup → 302 to the modern delivery form (verified:
+>      `Location: delivery/?url=uploads:8080/<externaluid>/`), ~30% serve
+>      real bytes (200 image/jpeg - old user-profile thumbs with no
+>      externaluid). Replacement without PHP: move the rewrite block onto the
+>      edge front door and point it at a **small new apiv2 GET endpoint**
+>      (attachment lookup → 301; the Go side already has the attachment
+>      models and delivery-URL builder in `misc/imagedelivery.go`; V1's
+>      resolution order is externaluid → externalurl → Azure archive →
+>      defaultprofile fallback, see `Attachment::canRedirect`). The
+>      bytes-serving 30% needs a one-time decision: migrate those legacy
+>      blobs to tusd, or accept the defaultprofile fallback (cosmetic loss on
+>      ancient profiles). V1 then dies entirely with app1.
+>    - `users` mail-alias MX remains a separate workstream (§8).
+>      **uploadcare** also still on app1 (could move to its own edge backend,
+>      or leave).
+> 5. **[LEFT] Retire app1** per §9 (after ≥1 week clean, and only after step 4).
+>    **DECIDED 2026-07-08: NO second HAProxy / VIP** - the failover investment
+>    is declined. Consequence: `ha-internal` is a single point of failure (as
+>    it already is today), and once app1 is gone there is no warm failover
+>    sibling for uploads/delivery. Accept that, OR keep app1 alive as the
+>    backup-only sibling rather than fully decommissioning it. Either way app1
+>    retirement is gated on step 4.
 >
 > A host reboot now takes user-facing services down with it - the reboot
 > runbook (plans/2026-07-03-host-reboot-runbook.md) becomes the canonical
@@ -100,6 +131,85 @@
 >
 > The original plan below is retained for its verified facts, dev-validation
 > results, HAProxy mechanics, and safety protocol. Read §3/§7 as superseded.
+
+---
+
+## EXECUTION STATUS (2026-07-08)
+
+Everything below the two big rocks (Stage 1 adoption + Stage 3 images cutover)
+was **executed and verified on the live host** this day. All repo changes are on
+`master`. HAProxy is `ha-internal`.
+
+### DONE
+- **Disk**: reclaimed ~168G (107G orphaned PG-12 tile DB volume `_data`, 41G
+  legacy `/opt/loki`, 13G defunct `/var/discourse`, ~7G docker) → 89%→55%. 768G
+  resize DECIDED, no longer urgent (provider-side). Do NOT `docker image prune
+  -a` (breaks the loki-backup cron image).
+- **cgroup slices (PR #1006)**: `interactive.slice` (CPUWeight=800:
+  embedding-sidecar, postfix, + the images tier), `batch.slice` (25: batch-prod,
+  spatial, spatial-knn). Units in `/etc/systemd/system/`; host `.env`
+  `COMPOSE_FILE` includes `docker-compose.override.batchprod.yml`. NB
+  `IOWeight`/`ionice` are inert (scheduler is `mq-deadline`, not bfq).
+- **Stage 1 adoption**: `tile-server` + `wiki-media`/`wiki-mysql` now Compose
+  services under the `edge` profile in place (zero copy); `ors-app` + stale
+  discourse vhost dropped. `tile-server` `THREADS=4` (100 thrashed the shared
+  box; every recreate spikes CPU transiently - avoid during the 07:00-12:00
+  digest window). Old standalone containers kept STOPPED as rollback.
+- **Stage 3 images cutover** (the big user-facing move):
+  - NFS `/images` mounted **rw** at host `/srv/tusd-data`, bound to `/images`
+    inside the tusd container; durable in `/etc/fstab` (`_netdev,nofail`).
+  - `delivery`+`tusd`+`frontend-nginx` up in `interactive.slice` on :8180
+    (proxy_protocol) / :8188 (plain :8080-form). 41G `/wsrv_cache` copied from
+    app1 (needs `chown 101:101` + a frontend-nginx **restart** to index the
+    keys_zone). Replay-validated **99% HIT**.
+  - HAProxy: `tusd_backend` → `edge 10.220.0.103:8188` (app1:8080 backup); NEW
+    `delivery_backend` → `edge 10.220.0.103:8180` send-proxy (app1:80 backup);
+    only the `delivery` ACL switched; dead `app4` removed from ALL backends.
+  - Three fixes found live (tusd rolled back to app1 while diagnosing each):
+    (1) tusd `-upload-dir=/images` - tusd bakes an absolute `Storage.Path:
+    /images/<id>` into every `.info`; a `/srv/tusd-data` mount 404'd every
+    existing upload and broke app1-backup symmetry. (2) Pin `tusd v2.4.0` -
+    base `:latest`=v2.10.0 creates a `<id>.lock` even on GET → denied on NFS →
+    intermittent 500s; app1 runs v2.4.0. (3) frontend-nginx neg cache
+    `any 15m`→`5m` to match app1.
+  - **Steady state: 95-96% HIT, 0 500s, 0.3% 404 (all legit-missing = app1's
+    baseline).** app1 is the warm **backup** for uploads+delivery.
+
+### STILL LIVE ON app1 (so app1 is NOT retired)
+- `images.ilovefreegle.org` (legacy PHP image serving ~120k/day) → `http_backend`.
+- `cdn.ilovefreegle.org` (email image links) → `http_backend`.
+- `users.ilovefreegle.org` web 302 → `http_backend`; **and** the
+  `<id>@users.ilovefreegle.org` mail-alias reply domain → MX/exim.
+- `uploadcare-cache` / `uploadcare-proxy-cache` → `http_backend_cache` → app1.
+- app1 also = warm backup for uploads + delivery.
+
+### LEFT TO DO
+- **Step 4** - migrate legacy `images`/`cdn`/`users`-web off app1 (needs legacy
+  PHP served on the edge: apiv1 container or ported vhosts). The blocker to app1
+  retirement. `uploadcare` likewise (or leave).
+- `users.ilovefreegle.org` **mail-alias MX/exim** migration (separate workstream).
+- **promtail on the edge → Loki** (§10) with `X-Cache-Status` in the log format,
+  so cutover health is queryable in Loki (currently only via container logs).
+- **Sentry** `OurUploadedImage.vue` per-broken-image `captureMessage` (§10):
+  the acute flood was the cutover spike (passed); steady-state = pre-existing
+  app1 baseline and the signal is useful while the migration settles. DEFER
+  rate-limiting, revisit after a stable stretch.
+- **geocode/Photon** still native under monit - containerize later (optional).
+- **Soak, then `docker rm`** the stopped rollback containers (`confident_curran`,
+  standalone `wiki-media`/`wiki-mysql`).
+- **768G disk resize** (provider-side, unhurried).
+
+### DECIDED: NO second HAProxy / VIP (2026-07-08)
+The §9 failover investment (a 2nd HAProxy on a Katapult VIP, and/or a 2nd mixed
+node as a backup uploads/delivery backend) is **declined**. Consequences: (a)
+`ha-internal` remains a single point of failure - as it already is today; (b)
+app1 cannot be replaced by a warm failover sibling, so retiring it removes the
+only backup for uploads/delivery. Practical options for step 5: fully retire
+app1 and accept no image-tier failover, OR keep app1 running as backup-only
+rather than decommissioning. Read §9's "provision the 2nd VM before removing
+app1" as superseded by this decision.
+
+---
 
 **Goal.** ~~Stand up a new Katapult VM~~ **(superseded 2026-07-08 - see REVISION above: scale the existing docker host in place)** running a FreegleDocker Compose environment that hosts **every externally-accessed service** currently split across (a) `app1-internal` bare-metal and (b) this `docker` host's Compose env + host nginx. Afterwards: **app1 is retired** - the docker host runs everything, with cgroup slices separating the tiers (it remains the prod batch host, `batch-prod`).
 
@@ -249,7 +359,17 @@ Not locally verifiable (deferred to §7 on the VM): real tile render (needs the 
 
 ## 9. Decommission
 
-After ≥1 week clean **and** a rollback target exists (provision the 2nd VM as HAProxy primary/backup before removing app1 — app4 is dead, so single-VM = no failover): stop app1 tusd + `checktusd` monit, disable delivery/images/cdn/users nginx sites, delete `/wsrv_cache`, unmount `/images`. On this docker host: stop/rm the overv tile container + osm volumes, the Photon, the `wiki-media`/`wiki-mysql` (once on VM-B), drop `ors-app`, remove the stale `discourse` vhost. Every destructive step is **human-gated** (see §11).
+> **UPDATE 2026-07-08:** the "provision the 2nd VM/HAProxy before removing app1"
+> precondition is **superseded** - a 2nd HAProxy/VIP is NOT being added (see the
+> EXECUTION STATUS decision at the top). So app1 retirement is gated only on
+> step 4 (legacy `images`/`cdn`/`users` moved off app1). Accept no image-tier
+> failover, or keep app1 as backup-only rather than fully decommissioning.
+> Also: the docker-host adoptions in the last sentence are **already DONE** -
+> tile-server + `wiki-media`/`wiki-mysql` were adopted into Compose in place
+> (not moved to a VM-B), `ors-app` + discourse vhost dropped. What remains here
+> is `docker rm`-ing the STOPPED standalone rollback containers after a soak.
+
+After ≥1 week clean (and only after step 4): stop app1 tusd + `checktusd` monit, disable delivery/images/cdn/users nginx sites, delete `/wsrv_cache`, unmount `/images`. On this docker host: `docker rm` the stopped standalone `confident_curran` + `wiki-media`/`wiki-mysql` rollback containers. Every destructive step is **human-gated** (see §11).
 
 ---
 
