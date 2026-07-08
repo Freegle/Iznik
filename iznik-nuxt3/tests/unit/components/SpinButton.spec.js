@@ -48,7 +48,8 @@ describe('SpinButton', () => {
             props: ['icon'],
           },
           ConfirmModal: {
-            template: '<div class="confirm-modal" v-if="true" />',
+            template:
+              '<div class="confirm-modal"><button class="cancel-btn" @click="$emit(\'hidden\')" /></div>',
             emits: ['confirm', 'hidden'],
           },
         },
@@ -185,6 +186,18 @@ describe('SpinButton', () => {
       await wrapper.find('button').trigger('click')
 
       expect(wrapper.vm.showConfirm).toBe(true)
+    })
+
+    it('resets showConfirm when the confirm modal is dismissed', async () => {
+      const wrapper = createWrapper({ confirm: true })
+      await wrapper.find('button').trigger('click')
+      expect(wrapper.find('.confirm-modal').exists()).toBe(true)
+
+      await wrapper.find('.cancel-btn').trigger('click')
+
+      expect(wrapper.find('.confirm-modal').exists()).toBe(false)
+      expect(wrapper.vm.showConfirm).toBe(false)
+      expect(wrapper.emitted('handle')).toBeFalsy()
     })
   })
 
