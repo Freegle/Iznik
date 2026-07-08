@@ -43,14 +43,22 @@ Extend `GET /apiv2/rippling/metrics` (or a new `/rippling/analytics`) — params
 | 2 | Go: routing eval client + sampled drive-time helper | ✅ | rippling/analytics.go: meanDriveMinFromSample, fetchDriveSample (concurrency 8) |
 | 3 | Go: Section 1 KPI queries + drive-time sample + response | ✅ | + mean active-freeglers-reached KPI; StratumFilter terciles |
 | 6 | Wire ROUTING_EVAL_URL on apiv2-live | ✅ | compose env (default http://spatial:8194) + .env override → tunnel 1235; route registered; TIMING under test |
-| 3b | Verify endpoint end-to-end (timing/shape) | 🔄 | direct-container call running the routing sample; metrics endpoint 200 |
-| 7 | Vue: Section 1 (density selector, intro, pies/bignum) | 🔄 | fetchAnalytics added to RipplingAPI.js; component next |
-| 4 | Go: Section 2 trend buckets | ⬜ | day/week series |
-| 5 | Go: Section 3 rippled-out (server-derived + client cross-check) | ⬜ | fetchDriveSample already tags rippled per reply |
-| 8 | Go + vitest tests | ⬜ | |
-| 9 | Deploy + verify browser | ⬜ | modtools-dev-live sync |
+| 3b | Verify endpoint end-to-end (timing/shape) | ✅ | 14d/all: 9645 posts 56.1% replied 29.6% taken 3261 freeglers 17-18min drive |
+| 7 | Vue: Section 1 (density selector, intro, pies/bignum) | ✅ | ModSysAdminRipplingAnalytics.vue, deployed, compiles |
+| 4 | Go: Section 2 trend buckets (per-day KPIs) | ✅ | trendSeries; 15 daily points verified |
+| 5 | Go: Section 3 rippled-out (server-derived + client cross-check) | ✅ | 17.7% replies / 12.8% takers via rippling; client=~0 until #1001 live |
+| 7b | Vue: Sections 2 (line trend) + 3 (pies/bignum) | ✅ | deployed to modtools-dev-live |
+| 8 | Go + vitest tests | 🔄 | StratumFilter unit test added; endpoint/component tests + suite run PENDING |
+| 9 | Browser render verify (admin login) | ⬜ | test acct lacks prod sysadmin → Edward to eyeball, or run suites |
 
-### KEY RISK under test: traefik reset (000) on the slow analytics call via apiv2-live.localhost, though metrics (fast) = 200 and the DIRECT in-container call runs. If traefik times out the ~15-30s analytics request, need a traefik timeout bump OR make the endpoint faster (smaller sample / parallel SQL). Browser calls go via traefik, so this must be solved.
+### RESOLVED: the 000 was my curl -m 10 aborting, NOT traefik. Real timing: routing calls SERIALIZE
+through the container→Windows tunnel (~0.26s/isochrone regardless of concurrency), so 250 posts=66s
+LOCAL. Prod hits routing on the LAN (parallel) → ~5-10s. Local .env uses RIPPLE_ANALYTICS_SAMPLE=80
+(~11s) for review; prod default 250. Env-tunable, no rebuild.
+
+### OUTSTANDING before PR: run go+vitest suites; browser render check (needs prod Support/Admin login);
+add an endpoint smoke test + a component vitest. Rippled-out drive-time n is small at sample 80
+(CI ±3min) - fine at prod sample 250. Section 3 client-instrumented fills in after #1001 deploys.
 
 ## Notes
 - Read-only prod convention: endpoint must not write. Sampling is read-only.
