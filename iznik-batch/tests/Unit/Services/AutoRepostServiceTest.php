@@ -614,6 +614,16 @@ class AutoRepostServiceTest extends TestCase
         foreach ($rows as $r) {
             $this->assertNotNull($r->lastautopostwarning, 'every group of the item must be stamped');
         }
+
+        // And prove that claim with a second pass: every row now carries the
+        // fresh stamp, so nothing may re-warn (or repost - still mid-window).
+        // This also makes coverage of the lastwarnago computation
+        // deterministic: groups iterate in random order (V1 ORDER BY RAND()),
+        // so in one first-pass ordering out of three the home group processed
+        // last and no row ever reached that code with the stamp already set.
+        $stats2 = $this->service->process();
+        $this->assertEquals(0, $stats2['warned'], 'stamped rows must not re-warn within 24h');
+        $this->assertEquals(0, $stats2['reposted']);
     }
 
     /**
