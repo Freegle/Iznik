@@ -621,4 +621,99 @@ class StatsGenerationServiceTest extends TestCase
         // Activity = approvedMessages + replies = 7 + 4 = 11.
         $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 11);
     }
+
+    // ── Collation guard ───────────────────────────────────────────────────────
+    //
+    // items.name is utf8mb4_unicode_ci but messages_bulk_items was created on
+    // production with the MySQL 8 server default (utf8mb4_0900_ai_ci). The bulk
+    // weight queries join `items i ON i.name = bi.name`, so without an explicit
+    // COLLATE that join throws SQLSTATE[HY000] 1267 "Illegal mix of collations"
+    // and stats generation aborts for the whole day.
+    //
+    // This can't be reproduced by ALTERing the test table: DatabaseTransactions
+    // wraps each test in a transaction, and an ALTER forces an implicit commit
+    // that breaks isolation. Instead we assert the guard is present in the emitted
+    // SQL for BOTH code paths (buildDailyContext and regenerateWeightForRange),
+    // which is exactly what a regression here would remove.
+
+    /**
+     * Capture every SQL statement a callback runs, then return only those that
+     * join the items table by name (the collation-sensitive join).
+     *
+     * @return list<string>
+     */
+    private function captureItemNameJoins(callable $fn): array
+    {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $fn();
+        } finally {
+            $log = DB::getQueryLog();
+            DB::disableQueryLog();
+        }
+
+        return array_values(array_filter(
+            array_map(fn ($q) => $q['query'], $log),
+            fn ($sql) => str_contains($sql, 'items i ON i.name = bi.name')
+        ));
+    }
+
+    public function test_bulk_item_name_join_forces_unicode_collation_in_daily_context(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
+        $itemName = 'CollationItem_'.uniqid();
+        DB::table('messages_bulk_items')->insert([
+            'msgid' => $bulk->id,
+            'name' => $itemName,
+            'quantity' => 1,
+            'available' => 0,
+            'updated_at' => $this->date.' 11:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+        DB::table('items')->insert(['name' => $itemName, 'weight' => 10.0, 'popularity' => 1.0]);
+
+        $joins = $this->captureItemNameJoins(fn () => $this->service->generateForAllGroups($this->date));
+
+        $this->assertNotEmpty($joins, 'Expected the daily context to run the items-by-name join');
+        foreach ($joins as $sql) {
+            $this->assertStringContainsString(
+                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                $sql,
+                'items-by-name join must force utf8mb4_unicode_ci to match items.name'
+            );
+        }
+    }
+
+    public function test_bulk_item_name_join_forces_unicode_collation_in_weight_regen(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
+        $itemName = 'CollationItem_'.uniqid();
+        DB::table('messages_bulk_items')->insert([
+            'msgid' => $bulk->id,
+            'name' => $itemName,
+            'quantity' => 1,
+            'available' => 0,
+            'updated_at' => $this->date.' 11:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+        DB::table('items')->insert(['name' => $itemName, 'weight' => 10.0, 'popularity' => 1.0]);
+
+        $joins = $this->captureItemNameJoins(
+            fn () => $this->service->regenerateWeightForRange($this->date, $this->date)
+        );
+
+        $this->assertNotEmpty($joins, 'Expected weight regeneration to run the items-by-name join');
+        foreach ($joins as $sql) {
+            $this->assertStringContainsString(
+                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                $sql,
+                'items-by-name join must force utf8mb4_unicode_ci to match items.name'
+            );
+        }
+    }
 }

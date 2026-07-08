@@ -22,6 +22,12 @@ return new class extends Migration
         }
 
         Schema::create('messages_bulk_items', function (Blueprint $table) {
+            // Pin the collation to the schema-wide utf8mb4_unicode_ci rather than the
+            // MySQL 8 server default (utf8mb4_0900_ai_ci). items.name (and the rest of
+            // the legacy iznik schema) is utf8mb4_unicode_ci, and stats generation joins
+            // items i ON i.name = bi.name — a mismatch throws "Illegal mix of collations".
+            $table->charset = 'utf8mb4';
+            $table->collation = 'utf8mb4_unicode_ci';
             $table->comment('Structured catalogue items for a bulk offer (clearance) message.');
             $table->bigIncrements('id');
             $table->unsignedBigInteger('msgid');
