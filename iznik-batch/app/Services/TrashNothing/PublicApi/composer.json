@@ -11,6 +11,7 @@
         "api"
     ],
     "homepage": "https://openapi-generator.tech",
+    "version": "1.4.0",
     "license": "unlicense",
     "authors": [
         {
