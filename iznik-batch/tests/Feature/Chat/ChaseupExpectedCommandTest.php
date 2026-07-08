@@ -186,8 +186,15 @@ class ChaseupExpectedCommandTest extends TestCase
         // still chase the user only once (V1 GROUP BY expectee, chatid).
         [$expecter, $expectee, $room] = $this->makeExpectedScenario();
 
+        // NOT subDays(2): the expectee's lastaccess is now()-1d, so a message
+        // at now()-2d sits on the exact TIMESTAMPDIFF >= 1440-minute grace
+        // boundary - whether it qualified depended on sub-second timing
+        // between the two now() calls, so the dedupe path only sometimes ran
+        // (flipping its coverage on unrelated PRs) and this test only
+        // sometimes tested what its name claims. 2h of headroom makes the
+        // second row qualify every run.
         $message2 = $this->createTestChatMessage($room, $expecter, [
-            'date' => now()->subDays(2),
+            'date' => now()->subDays(2)->subHours(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
