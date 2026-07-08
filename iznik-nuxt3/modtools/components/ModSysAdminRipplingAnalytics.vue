@@ -1,39 +1,38 @@
 <template>
-  <div class="mb-4">
-    <p class="text-muted small mb-2">
-      <strong>Where we are as a platform.</strong> Reply and reuse rates are
-      over <em>rippled-out</em> offers in the window. "Reached" counts
-      <strong>active freeglers</strong> — members who have used Freegle in the
-      last ~6 months — inside each post's drive-time reach. Travel distance is
-      real <strong>drive-time</strong> (not straight-line), computed live from a
-      sample of posts, so it carries a small margin. "Taken" is an underestimate
-      — it only counts posts explicitly marked taken, and much reuse is never
-      marked.
+  <div class="rip-analytics mb-4">
+    <p class="text-muted small mb-3">
+      Over <em>rippled-out</em> offers in the window. Reply rate is measured
+      <strong>within 36 hours</strong> (the settling window); the smaller figure
+      is the eventual total. "Reached" counts
+      <strong>active freeglers</strong> — members who used Freegle in the last
+      ~6 months — inside each post's reach. Travel is real
+      <strong>drive-time</strong>, sampled live so it carries a small margin.
+      "Taken" is an underestimate — much reuse is never marked.
     </p>
 
-    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
       <ModEmailDateFilter
         :loading="loading"
         fetch-label="Fetch"
         default-preset="30days"
         @fetch="onFilterFetch"
       />
-      <b-form-radio-group
-        v-model="stratum"
-        size="sm"
-        buttons
-        button-variant="outline-primary"
-        :disabled="loading"
-        @change="fetchAnalytics"
-      >
-        <b-form-radio value="all">All</b-form-radio>
-        <b-form-radio value="rural">Rural</b-form-radio>
-        <b-form-radio value="suburban">Suburban</b-form-radio>
-        <b-form-radio value="dense">Dense</b-form-radio>
-      </b-form-radio-group>
+      <div class="seg" role="group" aria-label="Density">
+        <button
+          v-for="opt in strata"
+          :key="opt.v"
+          type="button"
+          class="seg-btn"
+          :class="{ active: stratum === opt.v }"
+          :disabled="loading"
+          @click="setStratum(opt.v)"
+        >
+          {{ opt.l }}
+        </button>
+      </div>
     </div>
 
-    <div v-if="loading" class="text-center py-4">
+    <div v-if="loading" class="text-center py-5">
       <b-spinner />
       <p class="text-muted small mt-2 mb-0">
         Computing live — sampling drive-times from the routing graph…
@@ -42,196 +41,193 @@
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else-if="s1">
       <p class="text-muted small mb-3">
-        {{ s1.posts.toLocaleString() }} rippled-out offers in this
-        {{ stratumLabel }} window.
+        <strong>{{ s1.posts.toLocaleString() }}</strong> rippled-out offers in
+        this {{ stratumLabel }} window.
       </p>
 
-      <!-- Section 1 - KPIs -->
-      <b-row class="g-3">
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card">
-            <strong class="small d-block mb-1">Getting a reply?</strong>
+      <!-- Section 1 - KPI panels -->
+      <div class="kpi-grid">
+        <div class="panel">
+          <div class="panel-title">Getting a reply?</div>
+          <div class="panel-body">
             <GChart
               type="PieChart"
               :data="repliedPie"
               :options="pieOptions"
-              style="width: 100%; height: 140px"
+              style="width: 100%; height: 120px"
             />
-            <div class="kpi-figure">{{ pct(s1.replied_pct) }}</div>
-            <div class="kpi-label">of offers get a reply</div>
+            <div class="figure">{{ pct(s1.replied_36h_pct) }}</div>
+            <div class="sub">reply within 36h</div>
+            <div class="sub muted">
+              {{ pct(s1.replied_ever_pct) }} eventually
+            </div>
           </div>
-        </b-col>
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card">
-            <strong class="small d-block mb-1">Getting taken?</strong>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Getting taken?</div>
+          <div class="panel-body">
             <GChart
               type="PieChart"
               :data="takenPie"
               :options="pieOptions"
-              style="width: 100%; height: 140px"
+              style="width: 100%; height: 120px"
             />
-            <div class="kpi-figure">{{ pct(s1.taken_pct) }}</div>
-            <div class="kpi-label">marked taken (underestimate)</div>
+            <div class="figure">{{ pct(s1.taken_pct) }}</div>
+            <div class="sub">marked taken (underestimate)</div>
           </div>
-        </b-col>
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card d-flex flex-column justify-content-center">
-            <div class="kpi-figure-lg">{{ s1.mean_replies.toFixed(2) }}</div>
-            <div class="kpi-label">mean replies per offer</div>
-            <hr class="my-2" />
-            <div class="kpi-figure-lg">
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Response depth</div>
+          <div class="panel-body justify-content-center">
+            <div class="figure">{{ s1.mean_replies.toFixed(2) }}</div>
+            <div class="sub">mean replies per offer</div>
+            <div class="divider"></div>
+            <div class="figure">
               {{ Math.round(s1.mean_freeglers_reached).toLocaleString() }}
             </div>
-            <div class="kpi-label">active freeglers reached (mean)</div>
+            <div class="sub">active freeglers reached (mean)</div>
           </div>
-        </b-col>
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card d-flex flex-column justify-content-center">
-            <template v-if="s1.reply_drive_min.available">
-              <div class="kpi-figure-lg">
-                {{ s1.reply_drive_min.mean_min.toFixed(1)
-                }}<small class="fs-6"> min</small>
-              </div>
-              <div class="kpi-label">mean reply travel (drive-time)</div>
-              <div class="text-muted small mt-1">
-                ±{{ s1.reply_drive_min.ci_half_min.toFixed(1) }} min · sample of
-                {{ s1.reply_drive_min.n_replies.toLocaleString() }} replies
-              </div>
-            </template>
-            <template v-else>
-              <div class="kpi-label">
-                No drive-time sample (routing unavailable).
-              </div>
-            </template>
-          </div>
-        </b-col>
-      </b-row>
+        </div>
 
-      <!-- Section 2 - trends, one small chart per metric -->
-      <h5 class="mt-4">Trends</h5>
+        <div class="panel">
+          <div class="panel-title">Reply travel &amp; friction</div>
+          <div class="panel-body justify-content-center">
+            <template v-if="s1.reply_drive_min.available">
+              <div class="figure">
+                {{ s1.reply_drive_min.mean_min.toFixed(1) }}<small> min</small>
+              </div>
+              <div class="sub">mean reply drive-time</div>
+              <div class="sub muted">
+                ±{{ s1.reply_drive_min.ci_half_min.toFixed(1) }} · n =
+                {{ s1.reply_drive_min.n_replies.toLocaleString() }}
+              </div>
+            </template>
+            <div v-else class="sub">No drive-time sample.</div>
+            <div class="divider"></div>
+            <div
+              class="figure"
+              :class="{ 'text-warning': s1.held_replies_pct >= 15 }"
+            >
+              {{ pct(s1.held_replies_pct) }}
+            </div>
+            <div class="sub">of replies held (waiting for reach)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2 - trends -->
+      <h5 class="section-h">Trends</h5>
       <p class="text-muted small mb-2">
         Each headline number over time, by post arrival day.
       </p>
-      <b-row class="g-3">
-        <b-col v-for="t in trendCharts" :key="t.title" cols="12" md="6" lg="4">
-          <div class="kpi-card">
-            <strong class="small d-block mb-1">{{ t.title }}</strong>
+      <div class="kpi-grid trends">
+        <div v-for="t in trendCharts" :key="t.title" class="panel">
+          <div class="panel-title">{{ t.title }}</div>
+          <div class="panel-body">
             <GChart
               v-if="t.data"
-              type="LineChart"
+              type="AreaChart"
               :data="t.data"
-              :options="miniLineOptions(t.color, t.format)"
-              style="width: 100%; height: 180px"
+              :options="areaOptions(t.color)"
+              style="width: 100%; height: 170px"
             />
-            <p v-else class="text-muted small mb-0">No data.</p>
-            <p v-if="t.note" class="text-muted small fst-italic mb-0">
-              {{ t.note }}
-            </p>
+            <p v-else class="sub">No data.</p>
+            <p v-if="t.note" class="sub muted mb-0">{{ t.note }}</p>
           </div>
-        </b-col>
-      </b-row>
+        </div>
+      </div>
 
       <!-- Section 3 - is rippling helping? -->
-      <h5 class="mt-4">Is rippling out helping?</h5>
+      <h5 class="section-h">Is rippling out helping?</h5>
       <p v-if="s3" class="text-muted small mb-2">
         Rippling shows offers to people beyond the origin group. The takes they
         produce are <strong>additive</strong> — the honest question is how many.
-        Per reply they convert worse (they're further away, so less likely to
-        follow through), but that isn't the point; a rippled take is reuse that
-        the origin group alone wouldn't have delivered.
+        Per reply they convert lower (further away, so less follow-through), but
+        a rippled take is reuse the origin group alone wouldn't have delivered.
       </p>
 
-      <div v-if="s3" class="kpi-card helping mb-3">
-        <div class="kpi-figure-lg">
+      <div v-if="s3" class="helping-panel">
+        <div class="figure-xl">
           {{ pct(s3.contribution_low_pct) }} –
           {{ pct(s3.contribution_high_pct) }}
         </div>
-        <div class="kpi-label mb-1">
+        <div class="sub mb-2">
           of the {{ s3.takers.toLocaleString() }} completed takes on these
           offers are down to rippling.
         </div>
         <div class="text-muted small">
           <strong>Floor</strong> — {{ s3.rescued_takes.toLocaleString() }} takes
-          rescued from silence (posts with <em>no</em> local reply at all, so
-          without rippling they'd have gone nowhere). <strong>Ceiling</strong> —
+          rescued from silence (posts with <em>no</em> local reply, which
+          without rippling would have gone nowhere). <strong>Ceiling</strong> —
           {{ s3.rippled_takers.toLocaleString() }} takes by people reached only
-          via rippling (some of those posts might have found a local taker
-          anyway). The truth sits between.
+          via rippling. The truth sits between.
         </div>
       </div>
 
-      <b-row v-if="s3" class="g-3">
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card">
-            <strong class="small d-block mb-1">Replies via rippling</strong>
+      <div v-if="s3" class="kpi-grid mt-3">
+        <div class="panel">
+          <div class="panel-title">Replies via rippling</div>
+          <div class="panel-body">
             <GChart
               type="PieChart"
               :data="rippledRepliesPie"
               :options="pieOptions"
-              style="width: 100%; height: 130px"
+              style="width: 100%; height: 110px"
             />
-            <div class="kpi-figure">{{ pct(s3.rippled_replies_pct) }}</div>
-            <div class="kpi-label">
-              of {{ s3.replies.toLocaleString() }} replies
-            </div>
+            <div class="figure">{{ pct(s3.rippled_replies_pct) }}</div>
+            <div class="sub">of {{ s3.replies.toLocaleString() }} replies</div>
           </div>
-        </b-col>
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card">
-            <strong class="small d-block mb-1">Takers via rippling</strong>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Takers via rippling</div>
+          <div class="panel-body">
             <GChart
               type="PieChart"
               :data="rippledTakersPie"
               :options="pieOptions"
-              style="width: 100%; height: 130px"
+              style="width: 100%; height: 110px"
             />
-            <div class="kpi-figure">{{ pct(s3.rippled_takers_pct) }}</div>
-            <div class="kpi-label">
-              of {{ s3.takers.toLocaleString() }} takers
-            </div>
+            <div class="figure">{{ pct(s3.rippled_takers_pct) }}</div>
+            <div class="sub">of {{ s3.takers.toLocaleString() }} takers</div>
           </div>
-        </b-col>
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card d-flex flex-column justify-content-center">
-            <strong class="small d-block mb-2">Reply → take</strong>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Reply → take</div>
+          <div class="panel-body justify-content-center">
             <div>
-              <span class="kpi-figure-lg">{{ pct(s3.home_conv_pct) }}</span>
-              <span class="kpi-label"> home members</span>
+              <span class="figure">{{ pct(s3.home_conv_pct) }}</span>
+              <span class="sub d-inline"> home</span>
             </div>
             <div>
-              <span class="kpi-figure-lg text-success">{{
+              <span class="figure text-success">{{
                 pct(s3.rippled_conv_pct)
               }}</span>
-              <span class="kpi-label"> rippled-out</span>
+              <span class="sub d-inline"> rippled</span>
             </div>
-            <div class="text-muted small mt-1">
-              Rippled converts lower per reply — expected, they travel further —
-              but every one is additive.
+            <div class="sub muted mt-1">
+              Lower per reply (further away) — but additive.
             </div>
           </div>
-        </b-col>
-        <b-col cols="12" md="6" lg="3">
-          <div class="kpi-card d-flex flex-column justify-content-center">
+        </div>
+        <div class="panel">
+          <div class="panel-title">Rippled-out travel</div>
+          <div class="panel-body justify-content-center">
             <template v-if="s3.ripple_drive_min.available">
-              <div class="kpi-figure-lg">
-                {{ s3.ripple_drive_min.mean_min.toFixed(1)
-                }}<small class="fs-6"> min</small>
+              <div class="figure">
+                {{ s3.ripple_drive_min.mean_min.toFixed(1) }}<small> min</small>
               </div>
-              <div class="kpi-label">
-                mean travel of a rippled-out reply (drive-time)
-              </div>
-              <div class="text-muted small mt-1">
-                ±{{ s3.ripple_drive_min.ci_half_min.toFixed(1) }} min · sample
-                of
+              <div class="sub">mean drive-time of a rippled-out reply</div>
+              <div class="sub muted">
+                ±{{ s3.ripple_drive_min.ci_half_min.toFixed(1) }} · n =
                 {{ s3.ripple_drive_min.n_replies.toLocaleString() }}
               </div>
             </template>
-            <template v-else>
-              <div class="kpi-label">No rippled-out drive-time sample.</div>
-            </template>
+            <div v-else class="sub">No sample.</div>
           </div>
-        </b-col>
-      </b-row>
+        </div>
+      </div>
       <p v-if="s3" class="text-muted small mt-2 mb-0">
         <span v-if="s3.client_instrumented_pct > 0">
           Client-instrumented cross-check:
@@ -255,8 +251,15 @@ import api from '~/api'
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
 
-const POS = '#28a745' // shared "positive outcome" green across every pie
-const NEG = '#ced4da' // shared neutral grey for the remainder
+const POS = '#28a745'
+const NEG = '#e4e8e3'
+
+const strata = [
+  { v: 'all', l: 'All' },
+  { v: 'rural', l: 'Rural' },
+  { v: 'suburban', l: 'Suburban' },
+  { v: 'dense', l: 'Dense' },
+]
 
 const loading = ref(true)
 const error = ref(null)
@@ -276,8 +279,8 @@ function pct(v) {
 }
 const pieOptions = {
   legend: { position: 'none' },
-  pieHole: 0.55,
-  chartArea: { width: '90%', height: '85%' },
+  pieHole: 0.6,
+  chartArea: { width: '92%', height: '88%' },
   colors: [POS, NEG],
   pieSliceText: 'none',
   backgroundColor: 'transparent',
@@ -287,8 +290,8 @@ const repliedPie = computed(() =>
   s1.value
     ? [
         ['Outcome', 'Offers'],
-        ['Got a reply', s1.value.replied],
-        ['Silent', s1.value.posts - s1.value.replied],
+        ['Replied 36h', s1.value.replied_36h],
+        ['Not (yet)', s1.value.posts - s1.value.replied_36h],
       ]
     : null
 )
@@ -296,7 +299,7 @@ const takenPie = computed(() =>
   s1.value
     ? [
         ['Outcome', 'Offers'],
-        ['Marked taken', s1.value.taken],
+        ['Taken', s1.value.taken],
         ['Not marked', s1.value.posts - s1.value.taken],
       ]
     : null
@@ -320,13 +323,9 @@ const rippledTakersPie = computed(() =>
     : null
 )
 
-// One small line chart per metric, so no single graph is overloaded.
-function series(rows, key, mult = 1) {
+function series(rows, key) {
   if (!rows || !rows.length) return null
-  return [
-    ['Date', 'v'],
-    ...rows.map((r) => [new Date(r.day), (r[key] || 0) * mult]),
-  ]
+  return [['Date', 'v'], ...rows.map((r) => [new Date(r.day), r[key] || 0])]
 }
 const trendCharts = computed(() => {
   const k = s2.value.kpis
@@ -351,18 +350,33 @@ const trendCharts = computed(() => {
           ? [['Date', 'v'], ...dt.map((r) => [new Date(r.day), r.mean_min])]
           : null,
       color: '#fd7e14',
-      note: 'Sample-based — small per-day counts, so read the shape not the wiggles.',
+      note: 'Sample-based — read the shape, not the wiggles.',
     },
   ]
 })
-function miniLineOptions(color) {
+function areaOptions(color) {
   return {
     curveType: 'function',
     legend: { position: 'none' },
-    chartArea: { width: '82%', height: '72%' },
-    vAxis: { viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { format: 'dd MMM', textStyle: { fontSize: 10 } },
-    series: { 0: { color } },
+    chartArea: { width: '84%', height: '74%', backgroundColor: 'transparent' },
+    vAxis: {
+      viewWindow: { min: 0 },
+      format: '#.#',
+      gridlines: { color: '#eef0ec', count: 4 },
+      minorGridlines: { count: 0 },
+      textStyle: { fontSize: 10, color: '#8a938c' },
+      baselineColor: '#e4e8e3',
+    },
+    hAxis: {
+      format: 'dd MMM',
+      gridlines: { color: 'transparent' },
+      textStyle: { fontSize: 10, color: '#8a938c' },
+      baselineColor: '#e4e8e3',
+    },
+    colors: [color],
+    areaOpacity: 0.12,
+    lineWidth: 2.5,
+    backgroundColor: 'transparent',
   }
 }
 
@@ -384,44 +398,168 @@ async function fetchAnalytics() {
     loading.value = false
   }
 }
-
+function setStratum(v) {
+  if (loading.value || stratum.value === v) return
+  stratum.value = v
+  fetchAnalytics()
+}
 function onFilterFetch({ start, end }) {
   startDate.value = start || ''
   endDate.value = end || ''
   fetchAnalytics()
 }
 
-defineExpose({ fetchAnalytics, stratum, onFilterFetch })
+defineExpose({ fetchAnalytics, stratum, setStratum, onFilterFetch })
 </script>
 
 <style scoped lang="scss">
-.kpi-card {
-  border: 1px solid #e4e6e1;
-  border-radius: 12px;
-  padding: 14px 16px;
-  height: 100%;
-  min-height: 170px;
+$green: #28a745;
+$ink: #1a1c1a;
+$muted: #6b756c;
+$line: #e4e8e3;
+
+.rip-analytics {
+  --card-bg: #ffffff;
 }
-.kpi-card.helping {
-  min-height: 0;
-  border-color: #28a745;
-  background: rgba(40, 167, 69, 0.05);
+
+/* Segmented density control - clear active highlight */
+.seg {
+  display: inline-flex;
+  border: 1px solid $line;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f6f7f4;
 }
-.kpi-figure {
-  font-size: 1.9rem;
-  font-weight: 750;
-  line-height: 1.1;
-  margin-top: 6px;
+.seg-btn {
+  border: 0;
+  background: transparent;
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: $muted;
+  cursor: pointer;
+  border-right: 1px solid $line;
+  transition: background 0.12s, color 0.12s;
+}
+.seg-btn:last-child {
+  border-right: 0;
+}
+.seg-btn:hover:not(:disabled):not(.active) {
+  background: #edf3ee;
+  color: $ink;
+}
+.seg-btn.active {
+  background: $green;
+  color: #fff;
+}
+.seg-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.section-h {
+  margin-top: 2rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid $line;
+  font-weight: 700;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.kpi-grid.trends {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+@media (max-width: 900px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--card-bg);
+  border: 1px solid $line;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(20, 30, 24, 0.04),
+    0 6px 16px rgba(20, 30, 24, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.panel-title {
+  background: #f4f7f4;
+  border-bottom: 1px solid $line;
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #46514a;
+  text-align: center;
+}
+.panel-body {
+  flex: 1;
+  padding: 14px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.figure {
+  font-size: 1.85rem;
+  font-weight: 760;
+  line-height: 1.05;
+  color: $ink;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+.figure small {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: $muted;
+}
+.figure-xl {
+  font-size: 2.4rem;
+  font-weight: 780;
+  line-height: 1;
+  color: darken($green, 6%);
   font-variant-numeric: tabular-nums;
 }
-.kpi-figure-lg {
-  font-size: 2.1rem;
-  font-weight: 750;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
+.sub {
+  font-size: 0.8rem;
+  color: $muted;
+  line-height: 1.35;
 }
-.kpi-label {
-  font-size: 0.82rem;
-  color: #55605a;
+.sub.muted {
+  color: #99a29a;
+  font-size: 0.75rem;
+}
+.sub.d-inline {
+  display: inline;
+}
+.divider {
+  width: 46px;
+  height: 1px;
+  background: $line;
+  margin: 12px 0;
+}
+
+.helping-panel {
+  border: 1px solid $green;
+  background: linear-gradient(
+    180deg,
+    rgba(40, 167, 69, 0.07),
+    rgba(40, 167, 69, 0.02)
+  );
+  border-radius: 14px;
+  padding: 18px 20px;
+  text-align: center;
 }
 </style>

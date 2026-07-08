@@ -19,14 +19,7 @@ function mountComponent() {
   return mount(ModSysAdminRipplingAnalytics, {
     global: {
       stubs: {
-        'b-row': { template: '<div><slot /></div>' },
-        'b-col': { template: '<div><slot /></div>' },
         'b-spinner': { template: '<div class="spinner" />' },
-        'b-form-radio-group': {
-          template: '<div><slot /></div>',
-          props: ['modelValue'],
-        },
-        'b-form-radio': { template: '<label><slot /></label>' },
         ModEmailDateFilter: {
           template: '<div class="date-filter" />',
           emits: ['fetch'],
@@ -48,12 +41,16 @@ const FULL = {
   stratum: 'all',
   section1: {
     posts: 9645,
-    replied: 5407,
-    replied_pct: 56.1,
+    replied_36h: 4940,
+    replied_36h_pct: 51.2,
+    replied_ever: 5407,
+    replied_ever_pct: 56.1,
     taken: 2857,
     taken_pct: 29.6,
     mean_replies: 1.28,
     mean_freeglers_reached: 3261,
+    held_replies: 1344,
+    held_replies_pct: 10.8,
     reply_drive_min: {
       mean_min: 17.2,
       ci_half_min: 0.85,
@@ -128,12 +125,14 @@ describe('ModSysAdminRipplingAnalytics', () => {
     const wrapper = mountComponent()
     await flushPromises()
     const html = wrapper.html()
-    expect(html).toContain('56.1%')
-    expect(html).toContain('29.6%')
-    expect(html).toContain('1.28')
-    expect(html).toContain('3,261')
-    expect(html).toContain('17.2')
-    expect(html).toContain('525')
+    expect(html).toContain('51.2%') // reply within 36h (headline)
+    expect(html).toContain('56.1%') // eventual total (smaller)
+    expect(html).toContain('29.6%') // taken
+    expect(html).toContain('1.28') // mean replies
+    expect(html).toContain('3,261') // freeglers
+    expect(html).toContain('17.2') // reply drive-time
+    expect(html).toContain('10.8%') // held-reply friction KPI
+    expect(html).toContain('of replies held')
     wrapper.unmount()
   })
 
@@ -146,7 +145,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
       .filter((c) => c.props('type') === 'PieChart')
     expect(pies.length).toBe(4) // replied, taken, rippled replies, rippled takers
     for (const p of pies) {
-      expect(p.props('options').colors).toEqual(['#28a745', '#ced4da'])
+      expect(p.props('options').colors[0]).toBe('#28a745')
     }
     wrapper.unmount()
   })
@@ -156,11 +155,11 @@ describe('ModSysAdminRipplingAnalytics', () => {
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.html()).toContain('Trends')
-    const lines = wrapper
+    const areas = wrapper
       .findAllComponents({ name: 'GChart' })
-      .filter((c) => c.props('type') === 'LineChart')
+      .filter((c) => c.props('type') === 'AreaChart')
     // 5 trend metrics: reply rate, taken rate, mean replies, freeglers, drive-time
-    expect(lines.length).toBe(5)
+    expect(areas.length).toBe(5)
     expect(wrapper.html()).toContain('Active freeglers reached')
     expect(wrapper.html()).toContain('Mean reply travel (min)')
     wrapper.unmount()
@@ -182,20 +181,26 @@ describe('ModSysAdminRipplingAnalytics', () => {
     wrapper.unmount()
   })
 
-  it('refetches with the selected stratum when the density changes', async () => {
+  it('highlights the active density and refetches on change (defaults to All)', async () => {
     mockFetchAnalytics.mockResolvedValue(FULL)
     const wrapper = mountComponent()
     await flushPromises()
-    mockFetchAnalytics.mockClear()
 
-    wrapper.vm.stratum = 'rural'
-    wrapper.vm.fetchAnalytics()
+    // "All" is active by default.
+    const buttons = wrapper.findAll('.seg-btn')
+    expect(buttons.length).toBe(4)
+    expect(buttons[0].classes()).toContain('active')
+    expect(buttons[1].classes()).not.toContain('active')
+
+    mockFetchAnalytics.mockClear()
+    await buttons[1].trigger('click') // Rural
     await flushPromises()
     expect(mockFetchAnalytics).toHaveBeenCalledWith(
       'rural',
       '2026-06-24',
       '2026-07-08'
     )
+    expect(wrapper.findAll('.seg-btn')[1].classes()).toContain('active')
     wrapper.unmount()
   })
 })

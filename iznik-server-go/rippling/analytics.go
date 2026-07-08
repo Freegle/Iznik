@@ -63,6 +63,7 @@ func driveConcurrency() int { return envInt("RIPPLE_ANALYTICS_CONCURRENCY", 16) 
 // StratumFilter renders the rippling_reach.total_freeglers SQL predicate for a density stratum.
 // Terciles from live data (active freeglers reached, ~6-month window): rural <1700, suburban
 // 1700-3800, dense >3800. "all" (or unknown) imposes no extra bound beyond total_freeglers>0.
+// Used where rippling_reach is already joined as `rr`.
 func StratumFilter(stratum string) string {
 	switch stratum {
 	case "rural":
@@ -296,17 +297,25 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 	return out
 }
 
-// Section1KPI is the "where we are as a platform" headline block for one stratum + window.
+// Section1KPI is the headline block for one stratum + window, over rippled-out offers.
+// The headline reply rate is WITHIN 36H (the settling-window convention, comparable to the old
+// dashboard); RepliedEverPct is the eventual total, shown smaller as context.
 type Section1KPI struct {
 	Stratum       string    `json:"stratum"`
 	Posts         int       `json:"posts"`
-	Replied       int       `json:"replied"`
-	RepliedPct    float64   `json:"replied_pct"`
+	Replied36h    int       `json:"replied_36h"`
+	Replied36hPct float64   `json:"replied_36h_pct"`
+	RepliedEver   int       `json:"replied_ever"`
+	RepliedEverPct float64  `json:"replied_ever_pct"`
 	Taken         int       `json:"taken"`
 	TakenPct      float64   `json:"taken_pct"`
 	MeanReplies   float64   `json:"mean_replies"`
 	MeanFreeglers float64   `json:"mean_freeglers_reached"`
 	ReplyDrive    DriveStat `json:"reply_drive_min"`
+	// Reply friction: share of replies that were HELD (an email/TN reply held because the post
+	// had not yet rippled to the replier's location).
+	HeldReplies    int     `json:"held_replies"`
+	HeldRepliesPct float64 `json:"held_replies_pct"`
 }
 
 // Analytics is the on-the-fly sysadmin rippling analytics endpoint. Support/Admin only.
@@ -333,20 +342,29 @@ func Analytics(c *fiber.Ctx) error {
 	// Section 1 counts - pure SQL, full set. Per-post nreplies/taken/freeglers, then aggregate.
 	var agg struct {
 		Posts         int
-		Replied       int
+		Replied36h    int
+		RepliedEver   int
 		Taken         int
 		TotalReplies  int
 		MeanFreeglers float64
 	}
+	// replied_36h: got a reply within 36h of the settling clock (first ripple, else origin
+	// arrival) - the headline convention. replied_ever: any reply eventually - the total.
 	db.Raw(`
 		SELECT COUNT(*) AS posts,
-		       SUM(nreplies > 0) AS replied,
+		       SUM(replied_36h) AS replied36h,
+		       SUM(nreplies > 0) AS replied_ever,
 		       SUM(taken) AS taken,
 		       SUM(nreplies) AS total_replies,
 		       AVG(freeglers) AS mean_freeglers
 		FROM (
 		    SELECT rr.total_freeglers AS freeglers,
 		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies,
+		           EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested'
+		                  AND c2.date <= COALESCE(
+		                       (SELECT MIN(arrival) FROM messages_groups WHERE msgid = rr.msgid AND rippled_in = 1 AND deleted = 0),
+		                       (SELECT MIN(arrival) FROM messages_groups WHERE msgid = rr.msgid AND rippled_in = 0 AND deleted = 0)
+		                  ) + INTERVAL 36 HOUR) AS replied_36h,
 		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken
 		    FROM rippling_reach rr
 		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
@@ -354,12 +372,28 @@ func Analytics(c *fiber.Ctx) error {
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d`, start, end).Scan(&agg)
 
-	kpi := Section1KPI{Stratum: stratum, Posts: agg.Posts, Replied: agg.Replied, Taken: agg.Taken,
-		MeanFreeglers: agg.MeanFreeglers}
+	kpi := Section1KPI{Stratum: stratum, Posts: agg.Posts, Replied36h: agg.Replied36h,
+		RepliedEver: agg.RepliedEver, Taken: agg.Taken, MeanFreeglers: agg.MeanFreeglers}
 	if agg.Posts > 0 {
-		kpi.RepliedPct = float64(agg.Replied) / float64(agg.Posts) * 100
+		kpi.Replied36hPct = float64(agg.Replied36h) / float64(agg.Posts) * 100
+		kpi.RepliedEverPct = float64(agg.RepliedEver) / float64(agg.Posts) * 100
 		kpi.TakenPct = float64(agg.Taken) / float64(agg.Posts) * 100
 		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
+	}
+
+	// Reply friction: held replies over the window on rippled-out offers, as a share of all
+	// replies. rippling_held_replies has msgid + created_at so it scopes by post + stratum.
+	var held int
+	db.Raw(`
+		SELECT COUNT(*) FROM rippling_held_replies hr
+		JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0`+stratumSQL+`
+		JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'
+		WHERE hr.created_at >= ? AND hr.created_at < ?
+		  AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)`,
+		start, end).Scan(&held)
+	kpi.HeldReplies = held
+	if agg.TotalReplies > 0 {
+		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
 	}
 
 	// ONE sampled routing pass feeds every drive-time figure: the Section 1 overall mean, the
