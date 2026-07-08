@@ -86,11 +86,36 @@
 >    symmetry), pin `tusd v2.4.0` (v2.10.0 `.lock`-on-GET broke reads), neg
 >    cache 15m→5m. Steady state 95-96% HIT / 0 500s / 0.3% 404 (= app1
 >    baseline). **uploadcare left on app1** (plan §8).
-> 4. **[LEFT] Legacy `images`/`cdn`/`users`-web** (app1 PHP-coupled, HAProxy
->    default backend): the awkward tail - needs the legacy PHP served here
->    (apiv1 container or port the vhosts) before app1 can retire. Own stage;
->    `users` mail-alias MX remains a separate workstream (§8). **uploadcare**
->    also still on app1 (could move to its own edge backend, or leave).
+> 4. **[LEFT] Legacy `images`/`cdn`/`users`-web** (HAProxy default backend).
+>    Verified live on app1 2026-07-08: **no PHP needs to survive** - the
+>    earlier "apiv1 container or port the vhosts" framing was wrong.
+>    - `users.ilovefreegle.org` web = literally one line
+>      (`return 302 https://www.ilovefreegle.org$request_uri`) - a server
+>      block on the edge front door.
+>    - `cdn.ilovefreegle.org`: DNS still CNAMEs to applb, but **no app1 vhost
+>      serves it any more** (no server_name match → falls through to the
+>      default server). Decide: formally kill it (DNS + any HAProxy acl), or
+>      alias it into the images rewrites if old emails used cdn-hosted
+>      `timg_*` links. Check HAProxy stats for residual volume first.
+>    - `images.ilovefreegle.org` is the ONLY live V1 PHP left anywhere: the
+>      vhost rewrites `img_/timg_/uimg_/tuimg_/gimg_/...` forms into V1
+>      `/api/image`, now ~3-5K req/day (the June audit's ~120K/day figure was
+>      the shared cache tier, not this vhost alone). Measured today: ~70%
+>      are DB-lookup → 302 to the modern delivery form (verified:
+>      `Location: delivery/?url=uploads:8080/<externaluid>/`), ~30% serve
+>      real bytes (200 image/jpeg - old user-profile thumbs with no
+>      externaluid). Replacement without PHP: move the rewrite block onto the
+>      edge front door and point it at a **small new apiv2 GET endpoint**
+>      (attachment lookup → 301; the Go side already has the attachment
+>      models and delivery-URL builder in `misc/imagedelivery.go`; V1's
+>      resolution order is externaluid → externalurl → Azure archive →
+>      defaultprofile fallback, see `Attachment::canRedirect`). The
+>      bytes-serving 30% needs a one-time decision: migrate those legacy
+>      blobs to tusd, or accept the defaultprofile fallback (cosmetic loss on
+>      ancient profiles). V1 then dies entirely with app1.
+>    - `users` mail-alias MX remains a separate workstream (§8).
+>      **uploadcare** also still on app1 (could move to its own edge backend,
+>      or leave).
 > 5. **[LEFT] Retire app1** per §9 (after ≥1 week clean, and only after step 4).
 >    **DECIDED 2026-07-08: NO second HAProxy / VIP** - the failover investment
 >    is declined. Consequence: `ha-internal` is a single point of failure (as
