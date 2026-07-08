@@ -93,6 +93,11 @@
           <template #title>
             <h2 class="ms-2 me-2">Rippling</h2>
           </template>
+          <ModSysAdminRipplingAnalytics
+            v-if="showRippling"
+            :key="'rippling-analytics-' + ripplingBump"
+          />
+          <hr class="my-4" />
           <ModSysAdminRippling
             v-if="showRippling"
             :key="'rippling-' + ripplingBump"
