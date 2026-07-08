@@ -76,13 +76,14 @@ class RippleReplyService
      * Record a hold (delivery is blocked via deliveryGateSql, NOT reviewrequired).
      * Returns the new rippling_held_replies row id.
      */
-    public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng): int
+    public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng, string $source = 'email'): int
     {
         $id = (int) DB::table('rippling_held_replies')->insertGetId([
             'chatid' => $chatid,
             'chatmsgid' => $chatmsgid,
             'msgid' => $msgid,
             'replieruserid' => $replieruserid,
+            'source' => $source,
             'lat' => $lat,
             'lng' => $lng,
             'status' => 'held',

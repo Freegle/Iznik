@@ -795,9 +795,10 @@ const send = async (callback) => {
       // Encode up any emojis.
       msg = untwem(msg)
 
-      // Send it. A failed send (e.g. a rippled post that hasn't reached us yet -> 403, or a post
-      // that's since been purged -> 404) must not throw to the global error.vue page: catch it,
-      // keep the typed text so they don't lose it, and show an inline explanation instead.
+      // Send it. A failed send (e.g. a post that's since been purged -> 404) must not throw to the
+      // global error.vue page: catch it, keep the typed text so they don't lose it, and show an
+      // inline explanation instead. Note: a rippled post outside our reach no longer 403s — the
+      // reply is now accepted and held server-side — so the 403 branch is a generic backstop.
       try {
         sendError.value = null
         await chatStore.send(props.id, msg)
@@ -806,7 +807,7 @@ const send = async (callback) => {
         const status = e?.response?.status
         if (status === 403) {
           sendError.value =
-            "We're showing this post to people closest to it first — you'll be able to reply once it reaches your area."
+            "Sorry, your message couldn't be sent just now. Please try again."
         } else if (status === 404) {
           sendError.value =
             "Sorry, this post is no longer available, so your message couldn't be sent."

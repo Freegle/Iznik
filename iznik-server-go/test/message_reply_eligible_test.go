@@ -83,9 +83,10 @@ func TestReplyEligibleReach(t *testing.T) {
 // Data-driven activation: with the RIPPLE_ENABLED master switch OFF, a post that is actually
 // rippling (it has a rippling_reach row) is STILL reply-gated. This is the per-group trial
 // (RIPPLE_WITHIN_GROUPS) case — the reach engine populates rippling_reach without the master
-// switch, and the write-path gate (chat.CreateChatMessage) is likewise data-driven. The read
-// path must mark out-of-reach posts view-only here too, otherwise the UI offers a Reply button
-// the write path then rejects with 403 not_in_reach (Discourse: dejavu / msg 120820564).
+// switch, and the write path (chat.CreateChatMessage) is likewise data-driven. The read path
+// must flag out-of-reach posts here too so the UI can show the "we'll pass your reply on when it
+// reaches you" hold notice — the reply itself is allowed and held server-side (Discourse: dejavu /
+// msg 120820564, which pre-dated the hold and hit the old 403 not_in_reach).
 func TestReplyEligibleReachWhenMasterSwitchOff(t *testing.T) {
 	t.Setenv("RIPPLE_ENABLED", "false")
 	db := database.DBConn
