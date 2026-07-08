@@ -15,8 +15,8 @@ Everything auto-restarts on boot (systemd unit `compose up -d`, restart policies
 
 ### freegledocker compose project (auto-started by freegle-docker.service; COMPOSE_PROFILES=backend,production,mail)
 - freegledocker-batch-prod   (the scheduler — prod crons)      restart: unless-stopped
-- freegledocker-spatial       (iznik-routing-go, 8196, ~6G graph — rebuilds on start ~7 min) unless-stopped
-- freegledocker-spatial-knn   (iznik-spatial-go, 8194)          unless-stopped
+- freegledocker-spatial       (iznik-routing-go, 8196, ~6G graph — rebuilds on start ~7 min) **no** (comes back via compose up; a crashed spatial stays down and batch-prod only gates on it at startup)
+- freegledocker-spatial-knn   (iznik-spatial-go, 8194)          **no** (same as spatial)
 - freegledocker-mjml          (email render — digests need it)  restart: **no** (comes back via compose up)
 - freegledocker-redis                                            **no**
 - freegledocker-postfix                                          unless-stopped
