@@ -349,12 +349,14 @@ services:
       - "traefik.http.middlewares.tusd-cors-headers.headers.customresponseheaders.Access-Control-Allow-Headers=Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Upload-Defer-Length, Upload-Concat, Upload-Complete, Upload-Draft-Interop-Version, x-token, baggage, sentry-trace"
 
   # ===========================================================================
-  # edge profile — front-end host (Katapult VM). See
-  # plans/2026-06-25-frontend-server-migration.md. These services run ONLY under
-  # the `edge` profile, which is in NO default profile set, so dev/CI never start
-  # them and are completely unaffected. Host port bindings live in the VM-only
-  # docker-compose.override.edge.yml (no traefik on the VM); on dev the stack is
-  # validated over the compose network.
+  # edge profile — user-facing front-end services, deployed on the existing
+  # docker/batch host (scale-in-place, decided 2026-07-08 — see the REVISION in
+  # plans/2026-06-25-frontend-server-migration.md). These services run ONLY
+  # under the `edge` profile, which is in NO default profile set, so dev/CI
+  # never start them and are completely unaffected. Host port bindings and the
+  # adoption of the host's existing osm volumes live in the host-only
+  # docker-compose.override.edge.yml; on dev the stack is validated over the
+  # compose network.
   # ===========================================================================
   frontend-nginx:
     image: nginx:1.27-alpine
@@ -382,7 +384,12 @@ services:
       start_period: 10s
 
   tile-server:
-    image: overv/openstreetmap-tile-server:latest
+    # Pinned to the EXACT image the prod host's standalone tile container
+    # (confident_curran) runs, so adopting its existing osm-data volume works:
+    # the PostGIS data dir is Postgres-major-version-locked and a newer
+    # :latest could refuse to start on it. Upgrade deliberately after
+    # adoption, not implicitly via a pull.
+    image: overv/openstreetmap-tile-server@sha256:b6a79da39b6d0758368f7c62d22e49dd3ec59e78b194a5ef9dee2723b1f3fa79
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tile-server
     profiles:
       - edge
