@@ -48,8 +48,20 @@ Extend `GET /apiv2/rippling/metrics` (or a new `/rippling/analytics`) — params
 | 4 | Go: Section 2 trend buckets (per-day KPIs) | ✅ | trendSeries; 15 daily points verified |
 | 5 | Go: Section 3 rippled-out (server-derived + client cross-check) | ✅ | 17.7% replies / 12.8% takers via rippling; client=~0 until #1001 live |
 | 7b | Vue: Sections 2 (line trend) + 3 (pies/bignum) | ✅ | deployed to modtools-dev-live |
-| 8 | Go + vitest tests | 🔄 | StratumFilter unit test added; endpoint/component tests + suite run PENDING |
-| 9 | Browser render verify (admin login) | ⬜ | test acct lacks prod sysadmin → Edward to eyeball, or run suites |
+| 8 | Go + vitest tests | ✅ | BOTH GREEN: Go 3428✓/0✗ (landed <10m), vitest 14239✓/0✗ (6 new component cases) |
+| 9 | Browser render verify (admin login) | ⬜ | test acct lacks prod sysadmin → EDWARD to eyeball. Component vitest covers render logic. |
+
+### GO SUITE 10m TIMEOUT - ROOT CAUSE (concrete, not dismissal):
+- 3293✓ 0✗, then `panic: test timed out after 10m0s` on TestPublicLocation_MostRecentMembership at 0s
+  (cumulative budget, not a hang). My code adds ZERO test runtime: grep shows only TestStratumFilter
+  (0.00s) touches it; analytics.go isn't exercised by any running test; compiles clean.
+- The running `freegle-status` executes a BUILT `.output/server/index.mjs` that predates the
+  `-timeout 20m` fix which sits UNCOMMITTED in `status/server.js:1862` (git status shows `M status/server.js`).
+  So the runner applies Go's DEFAULT 10m against a ~10min suite - the exact case the maintainer comment
+  at server.js:1855 documents. Affects ALL suites equally.
+- FIX for reliable green Go: deploy the staged `-timeout 20m` (rebuild/redeploy the status app). Out of
+  this feature's scope + it's someone else's uncommitted change, so NOT done unprompted. A run that lands
+  under 10m passes outright (re-running to try).
 
 ### RESOLVED: the 000 was my curl -m 10 aborting, NOT traefik. Real timing: routing calls SERIALIZE
 through the container→Windows tunnel (~0.26s/isochrone regardless of concurrency), so 250 posts=66s
