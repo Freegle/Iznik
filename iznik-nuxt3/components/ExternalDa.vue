@@ -26,6 +26,7 @@
           :max-height="maxHeight"
           :hide-header="hideJobsHeader"
           :list-only="listOnly"
+          :placement="placement"
           :class="{
             'text-center': maxWidth === '100vw',
           }"
@@ -57,6 +58,7 @@
               :max-height="maxHeight"
               :hide-header="hideJobsHeader"
               :list-only="listOnly"
+              :placement="placement"
               :class="{
                 'text-center': maxWidth === '100vw',
               }"
@@ -119,6 +121,14 @@ const props = defineProps({
   adUnitPath: {
     type: String,
     required: true,
+  },
+  // Which slot this ad unit sits in, forwarded to JobsDaSlot so job clicks/
+  // impressions are tagged per placement (sticky_footer_mobile/desktop,
+  // sidebar_left/right, ...). Defaults to 'daslot' (legacy/untagged).
+  placement: {
+    type: String,
+    required: false,
+    default: 'daslot',
   },
   minWidth: {
     type: String,

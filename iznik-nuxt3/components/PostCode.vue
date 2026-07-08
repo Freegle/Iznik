@@ -23,6 +23,11 @@
             anchor="name"
             label=""
             :placeholder="pconly ? 'Type postcode' : 'Type location'"
+            :choose-label="
+              pconly
+                ? 'Please choose your postcode'
+                : 'Please choose your location'
+            "
             :classes="{
               input: 'form-control form-control-' + size + ' text-center pcinp',
               list: 'postcodelist',

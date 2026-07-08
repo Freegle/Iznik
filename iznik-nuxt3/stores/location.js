@@ -22,6 +22,16 @@ export const useLocationStore = defineStore({
     async typeahead(query) {
       return await api(this.config).location.typeahead(query)
     },
+    async resolve(name) {
+      // Returns the location for an exact place name, or null if it isn't a known
+      // place (404) — used to offer "search near <place>" on an empty item search.
+      try {
+        const loc = await api(this.config).location.resolve(name)
+        return loc && loc.lat && loc.lng ? loc : null
+      } catch (e) {
+        return null
+      }
+    },
     async fetchByLatLng(lat, lng) {
       return await api(this.config).location.latlng(lat, lng)
     },

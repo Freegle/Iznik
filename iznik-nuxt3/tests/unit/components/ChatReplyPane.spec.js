@@ -100,6 +100,16 @@ vi.mock('~/constants', () => ({
   FAR_AWAY: 20,
 }))
 
+// ChatReplyPane captures the current route at setup to derive the reply surface
+// (provenance) at send time.
+vi.mock('#imports', async () => {
+  const actual = await vi.importActual('#imports')
+  return {
+    ...actual,
+    useRoute: () => ({ path: '/browse', query: {}, params: {} }),
+  }
+})
+
 vi.hoisted(() => {
   vi.resetModules()
 })
@@ -332,6 +342,31 @@ describe('ChatReplyPane', () => {
     it('shows the poster name in the header', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.reply-card__name').text()).toContain('Jane Doe')
+    })
+
+    it('pins the Send row outside the scrollable fields', async () => {
+      // In very short windows (e.g. 820x420, an email client's embedded
+      // browser) the composer's fields scroll internally - but Send must
+      // never scroll out of view, or the form looks like it has no submit
+      // button (audit finding 2.5).
+      const wrapper = await createWrapper()
+      const scrollable = wrapper.find('.composer-scrollable')
+      expect(scrollable.exists()).toBe(true)
+      expect(scrollable.find('.composer-form').exists()).toBe(true)
+      expect(scrollable.find('.composer-send').exists()).toBe(false)
+      expect(
+        wrapper.find('.reply-card__composer .composer-send').exists()
+      ).toBe(true)
+    })
+
+    it('keeps the error notice pinned with the Send row, not scrolled away', async () => {
+      mockReplyStateMachine.error.value = 'Something went wrong'
+      const wrapper = await createWrapper()
+      const scrollable = wrapper.find('.composer-scrollable')
+      expect(scrollable.find('.notice-message.danger').exists()).toBe(false)
+      expect(
+        wrapper.find('.reply-card__composer .notice-message.danger').exists()
+      ).toBe(true)
     })
   })
 

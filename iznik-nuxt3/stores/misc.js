@@ -16,6 +16,8 @@ export const useMiscStore = defineStore({
     vals: {},
     somethingWentWrong: false,
     errorDetails: null,
+    appOutOfDate: false,
+    appOutOfDateMessage: '',
     needToReload: false,
     needToReloadHard: false,
     visible: true,
@@ -74,6 +76,13 @@ export const useMiscStore = defineStore({
     clearError() {
       this.somethingWentWrong = false
       this.errorDetails = null
+    },
+    setAppOutOfDate(message) {
+      // The server kill switch (ret:123 from GET /session) tells us this client
+      // build is too old to function. Surface it as a clear, explicit message
+      // rather than letting it manifest as a silent logout or generic error.
+      this.appOutOfDate = true
+      this.appOutOfDateMessage = message || ''
     },
     api(diff) {
       this.apiCount += diff

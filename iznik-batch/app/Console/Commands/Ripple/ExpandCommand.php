@@ -5,6 +5,7 @@ namespace App\Console\Commands\Ripple;
 use App\Services\Ripple\ExpandService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -20,7 +21,7 @@ class ExpandCommand extends Command
 
     protected $signature = 'ripple:expand
                             {--dry-run : Compute and report without writing reach}
-                            {--limit=500 : Max posts to initialise/advance this run}
+                            {--limit=50 : Max posts to initialise/advance this run. initialiseNew computes ALL schedules (Phase 1) before writing any (Phase 2), so on a memory-pressured routing host a large batch stalls the whole tick before any reach row lands; 50 keeps each tick small and completing, and the per-minute cron still drains the backlog quickly}
                             {--msgid= : Restrict the whole run to a single message ID (controlled testing)}
                             {--within-poly= : Restrict the run to posts whose origin lies within this WKT polygon (area testing)}
                             {--within-group= : Restrict the run to posts within these group IDs\' area - comma-separated, resolved to the union of their polygons (group experiment / area testing)}';
@@ -31,6 +32,37 @@ class ExpandCommand extends Command
     {
         $this->registerShutdownHandlers();
 
+        // Hard single-instance guard. The scheduler's withoutOverlapping() is unreliable for
+        // runInBackground() jobs: the overlap mutex is released as soon as the foreground tick
+        // forks the background process, so a fresh run launches every minute even while the
+        // previous one is still going. On 2026-06-26 that let ~90 ripple:expand runs pile up,
+        // each holding messages_groups/logs row locks across slow spatial INSERT...SELECTs and
+        // starving the serial background-tasks worker (1205 lock-wait storm + backlog). This
+        // DB-backed lock (CACHE_STORE=database -> cache_locks table) is owned by this process
+        // and auto-expires, so at most one bulk run executes at a time and a crashed run can't
+        // wedge the lock forever. Controlled one-offs (--msgid / --dry-run) are exempt: they do
+        // no bulk expansion and an operator must be able to run them alongside the cron.
+        $exemptFromLock = $this->option('msgid') !== null || (bool) $this->option('dry-run');
+        $lock = $exemptFromLock ? null : Cache::lock('ripple:expand:run', 1800);
+        if ($lock !== null && !$lock->get()) {
+            Log::info('ripple:expand skipped: another run already holds the lock');
+            $this->info('Another ripple:expand run is in progress; exiting.');
+
+            return Command::SUCCESS;
+        }
+
+        try {
+            return $this->runExpansion($service);
+        } finally {
+            $lock?->release();
+        }
+    }
+
+    /**
+     * The actual expansion run, guarded by the single-instance lock in handle().
+     */
+    private function runExpansion(ExpandService $service): int
+    {
         $dryRun = (bool) $this->option('dry-run');
 
         // Mirror the current trial group set (RIPPLE_WITHIN_GROUPS) into the shared

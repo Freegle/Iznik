@@ -59,6 +59,19 @@ export const OWN_POSTS_AGE = 120
 export const MESSAGE_EXPIRE_TIME = 90
 export const GROUP_REPOSTS = { offer: 3, wanted: 14, max: 10, chaseups: 2 }
 
+// Sentinel for settings.browseMaxDistance meaning "no distance limit" - the default for
+// the Nearby browse distance slider. A MAXINT sentinel (rather than null) means every
+// caller can do a plain numeric comparison against the current limit without a null
+// check, and the far-right ("Further") position of the slider stores this rather than
+// the feed's current max distance, so the server's own reach limit keeps governing and
+// newly-arriving distant posts keep showing.
+export const BROWSE_DISTANCE_UNLIMITED = Number.MAX_SAFE_INTEGER
+
+// Colour for the reach/isochrone-style map polygons (the former per-user
+// isochrone fill, now reused for the browse "coverage" hull). Kept as a
+// constant so the map overlays don't hardcode the hex in several places.
+export const ISOCHRONE_COLOR = '#3388cc'
+
 export const TYPING_TIME_INVERVAL = 10000
 
 // Stale-build warning thresholds. When a newer production deploy exists we either

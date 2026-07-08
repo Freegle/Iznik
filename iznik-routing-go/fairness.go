@@ -134,7 +134,7 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	}
 
 	// ── Build polygons ────────────────────────────────────────────────────────
-	res := AutoResolution(limitSecs, mode)
+	res := NetworkResolution(g, standardNodes, mode)
 
 	result := FairnessResult{
 		Standard:      IsochronePolygon(g, standardNodes, res),

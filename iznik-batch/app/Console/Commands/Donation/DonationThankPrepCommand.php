@@ -20,7 +20,7 @@ class DonationThankPrepCommand extends Command
                             {--today : Select today\'s donations and leave the high-water mark untouched (for ad-hoc resends)}
                             {--recipient= : Send to this address instead of the configured thanks address}';
 
-    protected $description = 'Send daily thank-prep digest (rich donor cards) to the thanks address';
+    protected $description = 'Send per-donation thank-prep emails (rich donor cards) to the thanks address';
 
     public function handle(DonationThankPrepService $service): int
     {
@@ -43,7 +43,7 @@ class DonationThankPrepCommand extends Command
 
             $verb  = $dryRun ? 'Would send' : 'Sent';
             $total = number_format($result['total'], 2);
-            $this->info("{$verb} thank-prep digest for {$result['donations']} donor(s) needing thanks (of {$result['examined']} new donation(s) examined), totalling £{$total}.");
+            $this->info("{$verb} {$result['donations']} thank-prep email(s) for {$result['donations']} donor(s) needing thanks (of {$result['examined']} new donation(s) examined), totalling £{$total}.");
 
             if ($result['donations'] === 0) {
                 $this->info('No donations need thanks today — no email sent.');

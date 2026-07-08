@@ -1,26 +1,55 @@
 // Browse-feed scroll-depth capture.
 //
-// Tracks the FURTHEST feed position a browse session reached and reports it once,
-// on leave/hide, to POST /scrolldepth. This is the browse-feed analogue of the
-// digest click-by-position instrumentation: aggregated server-side into a
-// scroll-depth curve (what fraction of sessions reach position N) on the sysadmin
-// "Scrolling" tab.
+// Tracks the FURTHEST feed position a browse session reached and reports it to
+// POST /scrolldepth. This is the browse-feed analogue of the digest
+// click-by-position instrumentation: aggregated server-side into a scroll-depth
+// curve (what fraction of sessions reach position N) on the sysadmin "Scrolling"
+// tab.
 //
-// record(position, total) is called as the feed grows (e.g. from the infinite-scroll
-// load-more handler, which knows the furthest item index revealed). The send is
-// fire-and-forget via navigator.sendBeacon so it survives the page unload; a single
-// session reports at most once.
+// record(position, total) is called as items scroll into view (per-item
+// visibility), so even small scrolls register - not just the infinite-scroll
+// load-more boundary. The send is DEBOUNCED: it fires a short time after
+// scrolling settles, and re-sends only when the furthest position grows. Each
+// session has a stable id and the server upserts one row per session keeping the
+// max, so a debounced timer firing repeatedly - or after re-entry - never
+// double-counts. We also flush on tab-hide and on unmount (and clear the timer
+// then, so a stale timer can't fire after teardown).
 //
-// apiBase is the APIv2 base URL (so the composable stays unit-testable without the
-// Nuxt runtime). getContext returns 'browse' or 'search' for the current feed.
+// apiBase is the APIv2 base URL (so the composable stays unit-testable without
+// the Nuxt runtime). getContext returns 'browse' or 'search' for the current feed.
 
 import { onBeforeUnmount, getCurrentInstance } from 'vue'
 
-export function useScrollDepth(apiBase, getContext) {
+function newSessionId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return (
+    'sd-' + Math.random().toString(36).slice(2) + '-' + Date.now().toString(36)
+  )
+}
+
+export function useScrollDepth(apiBase, getContext, options = {}) {
+  const debounceMs =
+    typeof options.debounceMs === 'number' ? options.debounceMs : 1500
+
+  // Stable per-session id: one browse session = one row server-side.
+  const session = newSessionId()
+
   let maxPos = -1
   let itemsAvailable = 0
-  let sent = false
+  let lastSentPos = -1
+  let timer = null
 
+  function clearTimer() {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+  }
+
+  // Called as items scroll into view. Keeps the running max and (re)arms a
+  // debounced send so we report a short time after scrolling settles.
   function record(position, total) {
     if (typeof position === 'number' && position > maxPos) {
       maxPos = position
@@ -28,17 +57,26 @@ export function useScrollDepth(apiBase, getContext) {
     if (typeof total === 'number' && total > itemsAvailable) {
       itemsAvailable = total
     }
+    if (maxPos < 0 || !apiBase) {
+      return
+    }
+    clearTimer()
+    timer = setTimeout(send, debounceMs)
   }
 
   function send() {
-    // Nothing scrolled, already reported this session, or no API base (e.g. SSR
-    // or missing runtime config) — never emit a broken request.
-    if (sent || maxPos < 0 || !apiBase) {
+    clearTimer()
+    // Nothing scrolled, no growth since the last send, or no API base (SSR /
+    // missing runtime config) - never emit a redundant or broken request. The
+    // server keys on `session` and keeps GREATEST(max_position), so repeat sends
+    // and re-entry are idempotent.
+    if (maxPos < 0 || maxPos === lastSentPos || !apiBase) {
       return
     }
-    sent = true
+    lastSentPos = maxPos
 
     const body = JSON.stringify({
+      session,
       maxposition: maxPos,
       itemsavailable: itemsAvailable,
       context: (getContext && getContext()) || 'browse',
@@ -46,8 +84,8 @@ export function useScrollDepth(apiBase, getContext) {
     const url = `${apiBase}/scrolldepth`
 
     try {
-      // sendBeacon is the reliable way to get a request out during unload; fall back
-      // to a keepalive fetch where it's unavailable (older browsers / test env).
+      // sendBeacon survives unload; fall back to a keepalive fetch where it's
+      // unavailable (older browsers / test env).
       if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
         navigator.sendBeacon(
           url,
@@ -66,8 +104,8 @@ export function useScrollDepth(apiBase, getContext) {
     }
   }
 
-  // Report when the tab is hidden (covers mobile app-switch / tab close, where
-  // unmount may not fire) and on component teardown (SPA route change away).
+  // Flush immediately when the tab is hidden (mobile app-switch / tab close,
+  // where unmount may not fire).
   function onVisibilityChange() {
     if (
       typeof document !== 'undefined' &&
@@ -81,17 +119,18 @@ export function useScrollDepth(apiBase, getContext) {
     document.addEventListener('visibilitychange', onVisibilityChange)
   }
 
-  // Only register the unmount hook when used inside a component (the SPA
-  // route-away case). Guarding on the instance keeps the composable usable — and
-  // warning-free — outside a setup context, e.g. in unit tests.
+  // Flush and tear down on unmount (SPA route away). Clearing the timer here is
+  // what stops a debounced send firing after the component - and its session -
+  // are gone.
   if (getCurrentInstance()) {
     onBeforeUnmount(() => {
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisibilityChange)
       }
       send()
+      clearTimer()
     })
   }
 
-  return { record, send }
+  return { record, send, session }
 }

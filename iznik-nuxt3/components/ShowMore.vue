@@ -46,7 +46,8 @@
 const props = defineProps({
   items: {
     type: Array,
-    required: true,
+    required: false,
+    default: () => [],
   },
   limit: {
     type: Number,
@@ -67,14 +68,24 @@ const props = defineProps({
 
 const expanded = ref(false)
 
+// Tolerate a missing/non-array `items` (e.g. a caller binding data that is still loading, like
+// mydata.vue's status.data.memberships before the export arrives). Without this, props.items.length
+// threw "reading 'length'" and props.items.slice threw "items.slice is not a function", flooding
+// Sentry and blanking the page.
+const safeItems = computed(() =>
+  Array.isArray(props.items) ? props.items : []
+)
+
 const overflow = computed(() =>
-  props.items.length > props.limit ? props.items.length - props.limit : 0
+  safeItems.value.length > props.limit
+    ? safeItems.value.length - props.limit
+    : 0
 )
 
 const itemsToShow = computed(() => {
-  if (expanded.value || props.items.length <= props.limit) {
-    return props.items
+  if (expanded.value || safeItems.value.length <= props.limit) {
+    return safeItems.value
   }
-  return props.items.slice(0, props.limit)
+  return safeItems.value.slice(0, props.limit)
 })
 </script>

@@ -603,14 +603,20 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         $interestedInfo = $this->getLastInterestedMessageInfo();
 
         if ($interestedInfo) {
-            // Format: "Regarding: [GroupName] ItemSubject"
+            // Format: "Regarding: ItemSubject" - deliberately NO group name. With
+            // rippling a post sits on many groups and any single pick can mislead:
+            // the old "most relevant" pick (recipient's memberships sorted by
+            // messages_groups.arrival DESC) chose the most-recently-RIPPLED group,
+            // so a Bristol post's replies arrived as [Bath Freegle], [Dursley],
+            // [North Cotswolds] - changing as the poster's rippled memberships
+            // changed. The item subject's own location suffix says where it is.
             // Strip any existing "Regarding:" or "Re:" prefixes from the subject.
             $subject = $interestedInfo['subject'];
             $subject = str_replace('Regarding:', '', $subject);
             $subject = str_replace('Re: ', '', $subject);
             $subject = trim($subject);
 
-            return "Regarding: [{$interestedInfo['groupName']}] {$subject}";
+            return "Regarding: {$subject}";
         }
 
         // Fallback if no interested message found.
@@ -621,9 +627,9 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      * Get the last "interested in" message info for this chat.
      *
      * This queries the chat for the most recent TYPE_INTERESTED message and returns
-     * the associated item's subject and group name.
+     * the associated item's subject.
      *
-     * @return array{subject: string, groupName: string}|null
+     * @return array{subject: string}|null
      */
     protected function getLastInterestedMessageInfo(): ?array
     {
@@ -638,24 +644,13 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             return NULL;
         }
 
-        // Get the referenced message with its group.
         $refMessage = $interestedMessage->refMessage;
         if (!$refMessage) {
             return NULL;
         }
 
-        // Get the group for this message.
-        $userGroupIds = $this->recipient->memberships->pluck('groupid')->map(fn ($id) => (int) $id)->all();
-        $group = $refMessage->groups
-            ->filter(fn ($g) => in_array((int) $g->id, $userGroupIds, true))
-            ->sortByDesc(fn ($g) => $g->pivot->arrival ?? null)
-            ->first()
-            ?? $refMessage->groups->first();
-        $groupName = $group?->namefull ?? $group?->nameshort ?? 'Freegle';
-
         return [
             'subject' => $refMessage->subject,
-            'groupName' => $groupName,
         ];
     }
 

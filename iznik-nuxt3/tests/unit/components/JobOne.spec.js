@@ -22,7 +22,7 @@ const mockJobStore = {
 
 const mockRouter = {
   push: vi.fn(),
-  currentRoute: { value: { path: '/browse' } },
+  currentRoute: { value: { path: '/browse', name: 'browse-term' } },
 }
 
 const mockAction = vi.fn()
@@ -60,7 +60,9 @@ describe('JobOne', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockJobStore.byId.mockReturnValue({ ...mockJob })
-    mockRouter.currentRoute = { value: { path: '/browse' } }
+    mockRouter.currentRoute = {
+      value: { path: '/browse', name: 'browse-term' },
+    }
   })
 
   afterEach(() => {
@@ -215,12 +217,19 @@ describe('JobOne', () => {
   })
 
   describe('click handling', () => {
-    it('logs click to jobStore', async () => {
-      const wrapper = createWrapper()
+    it('logs click to jobStore with the placement (from context), source and page', async () => {
+      // placement = the slot the ad was in; page = the route we were on, so CTR is
+      // measurable per-slot AND per-page (the same slot appears on every page).
+      // Exact match (not objectContaining): this is the revenue signal, so any new
+      // field must be added here deliberately.
+      const wrapper = createWrapper({ context: 'sticky_footer_mobile' })
       await wrapper.find('.job-item').trigger('click')
       expect(mockJobStore.log).toHaveBeenCalledWith({
         id: 123,
         link: 'https://jobs.example.com/123',
+        placement: 'sticky_footer_mobile',
+        source: 'website',
+        page: 'browse-term',
       })
     })
 
@@ -238,21 +247,59 @@ describe('JobOne', () => {
           position: 2,
           list_length: 10,
           context: 'sidebar',
+          page: 'browse-term',
         })
       )
     })
 
-    it('navigates to /jobs when not already on jobs page', async () => {
-      const wrapper = createWrapper()
+    it('captures the current route NAME as page (low cardinality), not the path', async () => {
+      // On the jobs page the route name is 'jobs'; /explore/123 would be 'explore-id'
+      // etc, so dynamic ids never explode the cardinality of the page dimension.
+      mockRouter.currentRoute = { value: { path: '/jobs', name: 'jobs' } }
+      const wrapper = createWrapper({ context: 'jobspage' })
       await wrapper.find('.job-item').trigger('click')
-      expect(mockRouter.push).toHaveBeenCalledWith('/jobs')
+      expect(mockJobStore.log).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 'jobs' })
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'job_ad_click',
+        expect.objectContaining({ page: 'jobs' })
+      )
     })
 
-    it('does not navigate when already on jobs page', async () => {
-      mockRouter.currentRoute = { value: { path: '/jobs' } }
+    it("falls back to 'unknown' (never the high-cardinality path) when route name is absent", async () => {
+      mockRouter.currentRoute = {
+        value: { path: '/explore/12345', name: null },
+      }
+      const wrapper = createWrapper({ context: 'sidebar_left' })
+      await wrapper.find('.job-item').trigger('click')
+      expect(mockJobStore.log).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 'unknown' })
+      )
+    })
+
+    it('emits clicked with the job id when a job is clicked', async () => {
+      const wrapper = createWrapper({ id: 123 })
+      await wrapper.find('.job-item').trigger('click')
+      expect(wrapper.emitted('clicked')).toBeTruthy()
+      expect(wrapper.emitted('clicked')[0]).toEqual([123])
+    })
+
+    it('does not call router.push to navigate to /jobs', async () => {
+      // Navigation to /jobs was removed in Phase 3; the follow-up modal
+      // takes over as the "more jobs" mechanism from the parent (JobsDaSlot).
       const wrapper = createWrapper()
       await wrapper.find('.job-item').trigger('click')
       expect(mockRouter.push).not.toHaveBeenCalled()
+    })
+
+    it('contains no link or navigation to /jobs in the template', () => {
+      const wrapper = createWrapper()
+      // No anchor href pointing to /jobs in the rendered output.
+      const links = wrapper.findAll('a')
+      links.forEach((link) => {
+        expect(link.attributes('href')).not.toBe('/jobs')
+      })
     })
   })
 

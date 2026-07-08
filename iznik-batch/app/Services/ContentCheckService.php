@@ -43,7 +43,6 @@ class ContentCheckService
         'ml', 'sq', 'el-monoton', 'sv', 'da', 'nb', 'nn', 'fi', 'et', 'eu',
         'ca', 'gl',
     ];
-    public const CHECK_IP_ABUSE          = 'IpAbuse';
     public const CHECK_BULK_MAIL         = 'BulkMail';
     public const CHECK_SUBJECT_REPEAT    = 'SubjectRepeat';
     public const CHECK_KNOWN_SPAMMER     = 'KnownSpammer';
@@ -153,9 +152,6 @@ class ContentCheckService
             $reasons[] = $r;
         }
         if ($r = $this->checkKnownSpammer($textbody)) {
-            $reasons[] = $r;
-        }
-        if ($r = $this->checkIpAbuse($msgid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkBulkVolunteerMail($subject, $msgid)) {
@@ -314,7 +310,9 @@ class ContentCheckService
                                         'contentcheck_reasons'    => null,
                                     ]);
 
-                                if ($row->msgtype === Message::TYPE_OFFER) {
+                                // Clearance/bulk-offer posts are excluded from freebiealerts.app.
+                                if ($row->msgtype === Message::TYPE_OFFER &&
+                                    !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
                                     DB::table('background_tasks')->insert([
                                         'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
                                         'data'      => json_encode(['msgid' => (int) $row->msgid]),
@@ -1311,138 +1309,6 @@ class ContentCheckService
         return null;
     }
 
-    /**
-     * Cap on user/group IDs we embed in an IpAbuse reason so the JSON stays
-     * small. Mods only need to spot patterns; the headline count is also kept
-     * in the detail string for chronic-abuse cases beyond the cap.
-     */
-    private const IP_ABUSE_ID_CAP = 50;
-
-    /**
-     * Return true if $ip is in spam_whitelist_ips (exact match or IPv4 CIDR).
-     * V1 parity: Spam.php lines 105-114 nullified the IP before correlation
-     * queries when it matched spam_whitelist_ips. This method extends V1's
-     * exact-match with CIDR support so CDN ranges (e.g. 162.158.0.0/15) can
-     * be whitelisted without enumerating every individual address.
-     */
-    private function isIpWhitelisted(string $ip): bool
-    {
-        if (DB::table('spam_whitelist_ips')->where('ip', $ip)->exists()) {
-            return true;
-        }
-
-        // Check CIDR entries (rows whose ip value contains a '/')
-        $cidrs = DB::table('spam_whitelist_ips')
-            ->where('ip', 'like', '%/%')
-            ->pluck('ip');
-
-        $ipLong = ip2long($ip);
-        if ($ipLong === false) {
-            return false; // IPv6 — no CIDR support yet
-        }
-
-        foreach ($cidrs as $cidr) {
-            [$net, $prefix] = explode('/', $cidr, 2);
-            $netLong = ip2long($net);
-            if ($netLong === false) {
-                continue;
-            }
-            $prefixInt = (int)$prefix;
-            $mask = $prefixInt >= 32 ? -1 : ~((1 << (32 - $prefixInt)) - 1);
-            if (($ipLong & $mask) === ($netLong & $mask)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public function checkIpAbuse(int $msgid): ?array
-    {
-        $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
-
-        if (!$fromip) {
-            return null;
-        }
-
-        // V1 parity (Spam.php lines 105-114): skip whitelisted IPs.
-        // Shared CDN/proxy egress IPs (e.g. Cloudflare) are added to
-        // spam_whitelist_ips; flagging them produces false positives because
-        // many distinct, well-behaved users share the same egress IP.
-        if ($this->isIpWhitelisted($fromip)) {
-            return null;
-        }
-
-        // Match v1 behaviour: only look at the last 31 days.
-        // V1 queries `messages_history` which is pruned to 31 days by purge_messages.php.
-        // Without a window, CGNAT mobile IPs accumulate years of users and always trigger.
-        $window = now()->subDays(31);
-
-        // IP used by 5+ different users
-        $userCount = DB::table('messages')
-            ->where('fromip', $fromip)
-            ->where('arrival', '>=', $window)
-            ->whereNotNull('fromuser')
-            ->distinct('fromuser')
-            ->count();
-
-        if ($userCount > 5) {
-            $users = DB::table('messages')
-                ->where('fromip', $fromip)
-                ->where('arrival', '>=', $window)
-                ->whereNotNull('fromuser')
-                ->select('fromuser')
-                ->groupBy('fromuser')
-                ->orderByRaw('MAX(arrival) DESC')
-                ->limit(self::IP_ABUSE_ID_CAP)
-                ->pluck('fromuser')
-                ->map(fn($id) => (int) $id)
-                ->all();
-
-            return [
-                'check'    => self::CHECK_IP_ABUSE,
-                'category' => null,
-                'action'   => 'flag',
-                'detail'   => "IP {$fromip} recently used by {$userCount} different user accounts",
-                'ip'       => $fromip,
-                'users'    => $users,
-            ];
-        }
-
-        // IP used to post to 20+ different groups
-        $groupCount = DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages.fromip', $fromip)
-            ->where('messages.arrival', '>=', $window)
-            ->distinct('messages_groups.groupid')
-            ->count();
-
-        if ($groupCount >= 20) {
-            $groups = DB::table('messages_groups')
-                ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-                ->where('messages.fromip', $fromip)
-                ->where('messages.arrival', '>=', $window)
-                ->select('messages_groups.groupid')
-                ->groupBy('messages_groups.groupid')
-                ->orderByRaw('MAX(messages_groups.arrival) DESC')
-                ->limit(self::IP_ABUSE_ID_CAP)
-                ->pluck('messages_groups.groupid')
-                ->map(fn($id) => (int) $id)
-                ->all();
-
-            return [
-                'check'    => self::CHECK_IP_ABUSE,
-                'category' => null,
-                'action'   => 'flag',
-                'detail'   => "IP {$fromip} recently used to post to {$groupCount} different groups",
-                'ip'       => $fromip,
-                'groups'   => $groups,
-            ];
-        }
-
-        return null;
-    }
-
     public function checkBulkVolunteerMail(string $subject, int $msgid): ?array
     {
         $msg = DB::table('messages')->where('id', $msgid)->first();
@@ -1506,12 +1372,20 @@ class ContentCheckService
             return null;
         }
 
-        // Count distinct groups with same subject in the past N days
+        // Count distinct groups with same subject in the past N days.
+        // Exclude rippled-in rows (messages_groups.rippled_in = 1): rippling-out
+        // (ExpandService::rippleIntoNewGroups) inserts one messages_groups row
+        // per nearby group for the SAME message, so a single post fans out to
+        // 20-30 groups sharing one subject — which otherwise trips this check
+        // as if it were mass-submission spam (Discourse #9808/250). Only native
+        // (rippled_in = 0) postings count; genuine cross-group spam still has
+        // rippled_in = 0 rows and is unaffected.
         $distinctGroupCount = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->where('m.subject', $subject)
             ->where('mg.arrival', '>=', now()->subDays(self::SUBJECT_REPEAT_WINDOW))
             ->where('mg.deleted', 0)
+            ->where('mg.rippled_in', 0)
             ->distinct('mg.groupid')
             ->count();
 

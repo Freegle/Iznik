@@ -39,11 +39,22 @@ export const useComposeStore = defineStore({
     max: 4,
     uploading: false,
     lastSubmitted: 0,
+    // In-progress bulk "clearance" (pages/give/clearance.vue). Held here so it
+    // survives a refresh via this store's localStorage persistence — a clearance
+    // holds far more (many items + photos) than a normal post, so losing it hurts.
+    clearanceDraft: null,
   }),
   actions: {
     init(config) {
       this.config = config
       this.$api = api(config)
+    },
+    // Save / clear the in-progress clearance draft (persisted to localStorage).
+    saveClearanceDraft(draft) {
+      this.clearanceDraft = draft
+    },
+    clearClearanceDraft() {
+      this.clearanceDraft = null
     },
     calculateSteps(type) {
       let steps = 0
@@ -136,7 +147,47 @@ export const useComposeStore = defineStore({
         email,
       }
 
+      // Bulk offer ("clearance"): a single post carrying many structured items.
+      // The server creates the catalogue and derives availablenow from the total.
+      if (message.bulkitems && message.bulkitems.length) {
+        data.bulkitems = message.bulkitems
+          .filter((i) => i.name && i.name.trim())
+          .map((i) => ({
+            name: i.name.trim(),
+            quantity: parseInt(i.quantity, 10) || 1,
+            condition: i.condition || 'Unknown',
+            dimensions: i.dimensions || null,
+            photourl: i.photourl || null,
+            description: i.description || null,
+            attachments: Array.isArray(i.attachments) ? i.attachments : [],
+          }))
+      }
+      if (Array.isArray(message.bulkslots) && message.bulkslots.length) {
+        data.bulkslots = message.bulkslots
+      }
+      if (message.accessinstructions) {
+        data.accessinstructions = message.accessinstructions
+      }
+
+      if (data.bulkitems || data.bulkslots || data.accessinstructions) {
+        console.log('[compose] createDraft PUT /message (bulk)', {
+          bulkitemCount: data.bulkitems ? data.bulkitems.length : 0,
+          bulkitems: data.bulkitems,
+          bulkslots: data.bulkslots,
+          attachments: data.attachments,
+          hasAccess: !!data.accessinstructions,
+        })
+      }
+
       const ret = await this.$api.message.put(data)
+
+      if (data.bulkitems) {
+        console.log('[compose] createDraft <- response', {
+          id: ret?.id,
+          bulkcount: ret?.bulkcount,
+          ret,
+        })
+      }
 
       // For unauthenticated users, Go creates a user and returns auth tokens.
       // Store them so the subsequent JoinAndPost call is authenticated.
@@ -159,7 +210,11 @@ export const useComposeStore = defineStore({
           return data?.error !== 403
         },
       })
-      console.log('Returned', ret)
+      console.log('[compose] submitDraft joinAndPost <- response', {
+        id,
+        bulkcount: ret?.bulkcount,
+        ret,
+      })
 
       // Fetch the submitted message - if we're on My Posts, for example, we want to update what we see.
       const messageStore = useMessageStore()
@@ -201,7 +256,8 @@ export const useComposeStore = defineStore({
       textbody,
       attachments,
       availablenow,
-      groupid
+      groupid,
+      accessinstructions = null
     ) {
       const data = {
         id,
@@ -212,6 +268,9 @@ export const useComposeStore = defineStore({
         attachments,
         groupid,
         availablenow,
+      }
+      if (accessinstructions) {
+        data.accessinstructions = accessinstructions
       }
 
       const messageStore = useMessageStore()
@@ -463,7 +522,8 @@ export const useComposeStore = defineStore({
               message.description,
               attids,
               'availablenow' in message ? message.availablenow : 1,
-              this.group
+              this.group,
+              message.accessinstructions || null
             )
 
             const { groupid, newuser, newpassword } = await this.submitDraft(
@@ -609,20 +669,25 @@ export const useComposeStore = defineStore({
           )
           // A purely-numeric description ("24") is no more use than a blank one,
           // so it doesn't count as having a description.
-          const hasDescription =
-            message.description &&
-            message.description.trim() &&
-            !isNumericOnlyBody(message.description)
+          const desc = (message.description || '').trim()
+          const hasDescription = desc !== '' && !isNumericOnlyBody(desc)
           const hasRealPhotos = realPhotos.length > 0
+
+          // With no real photo the description must actually say something:
+          // require at least 3 characters, so a bare "I"/"hi" no-photo post is
+          // rejected (post 120808114 had a 1-char body "I"). A real photo carries
+          // the post, so no description minimum applies then.
+          const meaningfulDescription = hasDescription && desc.length >= 3
 
           // A message is valid if there is an item, the item isn't just a number
           // or a content-free catch-all ("anything"), and there is either a real
-          // description or real photos. AI-only photos require a description.
+          // photo or a meaningful description. AI-only photos don't count as a
+          // real photo, so they still require the 3-char-min description.
           if (
             !message.item ||
             !message.item.trim() ||
             isUnpostableItem(message.item) ||
-            (!hasDescription && !hasRealPhotos)
+            (!hasRealPhotos && !meaningfulDescription)
           ) {
             valid = false
           }

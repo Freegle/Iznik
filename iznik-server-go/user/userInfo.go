@@ -122,7 +122,14 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	go func() {
 		defer wg.Done()
 
-		rows, _ := db.Raw("SELECT COUNT(*) AS count, messages.type, messages_outcomes.outcome FROM messages "+
+		// COUNT(DISTINCT messages.id), not COUNT(*): rippling-out adds a messages_groups
+		// row (rippled_in = 1) per group a post ripples into, and genuine cross-posting
+		// adds one origin row (rippled_in = 0) per group posted to directly - either way
+		// the join fans out to multiple rows per message. Without the DISTINCT a single
+		// post reaching N groups inflated the Offers/Wanteds (and Openoffers/Openwanteds)
+		// counts by a factor of N. Same rippling pattern as the dashboard Popular Posts
+		// and mygroups counts (0e639acdf, 9fda94a29).
+		rows, _ := db.Raw("SELECT COUNT(DISTINCT messages.id) AS count, messages.type, messages_outcomes.outcome FROM messages "+
 			"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
 			"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
 			"WHERE fromuser = ? AND messages.arrival > ? AND collection = ? AND messages_groups.deleted = 0 "+

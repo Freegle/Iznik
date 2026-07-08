@@ -94,13 +94,19 @@ class DonationThankPrepCommandTest extends TestCase
         $this->insertDonation(['GrossAmount' => 25.50, 'Payer' => 'bob@example.com']);
 
         $this->artisan('mail:donations:thank-prep')
-            ->expectsOutputToContain('Sent thank-prep digest for 2 donor(s) needing thanks (of 2 new donation(s) examined), totalling £50.50')
+            ->expectsOutputToContain('Sent 2 thank-prep email(s) for 2 donor(s) needing thanks (of 2 new donation(s) examined), totalling £50.50')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        // One email PER donation, each with the donor's name, email and amount
+        // in the subject line.
+        Mail::assertSentCount(2);
+        $subjects = Mail::sent(DonationThankPrepMail::class)
+            ->map(fn (DonationThankPrepMail $m) => $m->envelope()->subject)
+            ->all();
+        $this->assertContains('Donation thanks: alice@example.com (alice@example.com) - £25.00', $subjects);
+        $this->assertContains('Donation thanks: bob@example.com (bob@example.com) - £25.50', $subjects);
         Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
-            return $mail->envelope()->subject === 'Donations needing thanks: 2 donors, £50.50'
-                && count($mail->cards) === 2;
+            return count($mail->cards) === 1;
         });
     }
 
@@ -123,21 +129,21 @@ class DonationThankPrepCommandTest extends TestCase
 
         $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
 
-        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
-            $byPayer = [];
+        $byPayer = [];
+        foreach (Mail::sent(DonationThankPrepMail::class) as $mail) {
             foreach ($mail->cards as $card) {
                 $byPayer[$card['donation']['payer']] = $card;
             }
-            $oneoff = $byPayer['big-oneoff@example.com']     ?? null;
-            $newrec = $byPayer['first-monthly@example.com']  ?? null;
+        }
+        $oneoff = $byPayer['big-oneoff@example.com']     ?? null;
+        $newrec = $byPayer['first-monthly@example.com']  ?? null;
 
-            return $oneoff !== null
-                && $oneoff['thankReasonKey'] === 'large-oneoff'
-                && str_contains($oneoff['thankReason'], '£30.00')
-                && $newrec !== null
-                && $newrec['thankReasonKey'] === 'new-recurring'
-                && $newrec['thankReason'] === 'New recurring donation just set up';
-        });
+        $this->assertNotNull($oneoff);
+        $this->assertSame('large-oneoff', $oneoff['thankReasonKey']);
+        $this->assertStringContainsString('£30.00', $oneoff['thankReason']);
+        $this->assertNotNull($newrec);
+        $this->assertSame('new-recurring', $newrec['thankReasonKey']);
+        $this->assertSame('New recurring donation just set up', $newrec['thankReason']);
     }
 
     public function test_today_mode_selects_todays_donations_and_leaves_mark_untouched(): void
@@ -156,7 +162,7 @@ class DonationThankPrepCommandTest extends TestCase
 
         $this->artisan('mail:donations:thank-prep', ['--today' => true])
             ->expectsOutputToContain('TODAY mode')
-            ->expectsOutputToContain('Sent thank-prep digest for 1 donor(s)')
+            ->expectsOutputToContain('for 1 donor(s) needing thanks')
             ->assertExitCode(0);
 
         Mail::assertSentCount(1);
@@ -205,7 +211,7 @@ class DonationThankPrepCommandTest extends TestCase
 
         $this->artisan('mail:donations:thank-prep', ['--dry-run' => true])
             ->expectsOutputToContain('DRY RUN')
-            ->expectsOutputToContain('Would send thank-prep digest for 1 donor(s)')
+            ->expectsOutputToContain('Would send 1 thank-prep email(s)')
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
@@ -220,15 +226,15 @@ class DonationThankPrepCommandTest extends TestCase
         $this->insertDonation(['GrossAmount' => 20.00, 'Payer' => 'second@example.com']);
 
         $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
-        Mail::assertSentCount(1);
+        Mail::assertSentCount(2);
 
-        // Second batch arrives after the digest ran.
+        // Second batch arrives after the first run.
         $this->insertDonation(['GrossAmount' => 30.00, 'Payer' => 'third@example.com']);
 
         $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
 
-        // Two mails total, and the second one only carries the new donation.
-        Mail::assertSentCount(2);
+        // Three mails total, and the last one only carries the new donation.
+        Mail::assertSentCount(3);
         $second = Mail::sent(DonationThankPrepMail::class)->last();
         $this->assertNotNull($second);
         $this->assertCount(1, $second->cards);
@@ -377,6 +383,34 @@ class DonationThankPrepCommandTest extends TestCase
         });
     }
 
+    public function test_subject_carries_matched_donor_name_email_and_amount(): void
+    {
+        Mail::fake();
+
+        $userId = $this->insertUser([
+            'firstname' => 'Elizabeth',
+            'lastname'  => 'Hibbert-Jones',
+            'fullname'  => 'Elizabeth Hibbert-Jones',
+        ]);
+        DB::table('users_emails')->insert([
+            'userid' => $userId, 'email' => 'elizabeth@example.com', 'preferred' => 1,
+        ]);
+        $this->insertDonation([
+            'userid'      => $userId,
+            'GrossAmount' => 25.00,
+            'Payer'       => 'paypal-alias@example.com',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        // Matched donors use their Freegle display name and preferred REAL
+        // email (not the PayPal payer alias) in the subject.
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return $mail->envelope()->subject
+                === 'Donation thanks: Elizabeth Hibbert-Jones (elizabeth@example.com) - £25.00';
+        });
+    }
+
     public function test_pgf_donation_excluded_from_digest(): void
     {
         Mail::fake();
@@ -422,20 +456,22 @@ class DonationThankPrepCommandTest extends TestCase
 
         $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
 
-        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) use ($userA, $userB) {
-            $byId = [];
+        $byId = [];
+        foreach (Mail::sent(DonationThankPrepMail::class) as $mail) {
             foreach ($mail->cards as $card) {
                 if ($card['user'] !== null) {
                     $byId[$card['user']['id']] = $card;
                 }
             }
-            $a = $byId[$userA] ?? null;
-            $b = $byId[$userB] ?? null;
-            return $a !== null && $a['giftaid'] === null
-                && $b !== null && $b['giftaid'] !== null
-                && $b['giftaid']['declined'] === true
-                && $b['giftaid']['period'] === 'Declined';
-        });
+        }
+        $a = $byId[$userA] ?? null;
+        $b = $byId[$userB] ?? null;
+        $this->assertNotNull($a);
+        $this->assertNull($a['giftaid']);
+        $this->assertNotNull($b);
+        $this->assertNotNull($b['giftaid']);
+        $this->assertTrue($b['giftaid']['declined']);
+        $this->assertSame('Declined', $b['giftaid']['period']);
     }
 
     public function test_clean_snippet_decodes_legacy_emoji_and_html_entities(): void

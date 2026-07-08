@@ -9,7 +9,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Builds the daily *thank-prep* digest — a card-per-donation email aimed at
+ * Builds the daily *thank-prep* mails — one email PER donation, aimed at
  * the person composing thank-you replies (currently Jacky). Each card
  * contains the data she'd otherwise gather by hand from Modtools, info@,
  * support@, giftaid@ and the Gift Aid register: donor identity, donation
@@ -125,23 +125,30 @@ class DonationThankPrepService
         }
 
         if (!$dryRun) {
-            // Spool through EmailSpoolerService so a transient mail-host
-            // failure doesn't lose the digest — same pattern as the simple
-            // status mail in DonationSummaryService.
-            app(\App\Services\EmailSpoolerService::class)->spool(
-                new DonationThankPrepMail(
-                    recipientEmail: (string) $recipient,
-                    cards: $cards,
-                    total: $total,
-                ),
-                (string) $recipient,
-            );
+            // One email PER donation (not a combined digest) so each donor is a
+            // separate thread in the thanker's inbox, with the donor's name,
+            // email and amount in the subject line. Spool through
+            // EmailSpoolerService so a transient mail-host failure doesn't lose
+            // any of them — same pattern as the simple status mail in
+            // DonationSummaryService.
+            $spooler = app(\App\Services\EmailSpoolerService::class);
+            foreach ($cards as $card) {
+                $spooler->spool(
+                    new DonationThankPrepMail(
+                        recipientEmail: (string) $recipient,
+                        cards: [$card],
+                        total: (float) $card['donation']['amount'],
+                    ),
+                    (string) $recipient,
+                );
+            }
 
-            // Advance the mark only after spool returns, and only in normal
-            // (high-water) mode. If spool throws we leave the mark in place
-            // and the next cron tick retries the same range — at-least-once
-            // delivery, the same trade-off the EmailSpoolerService callers
-            // already accept. --today mode never touches the mark.
+            // Advance the mark only after every spool returns, and only in
+            // normal (high-water) mode. If a spool throws we leave the mark in
+            // place and the next cron tick retries the same range — at-least-
+            // once delivery (some donors may be re-mailed), the same trade-off
+            // the EmailSpoolerService callers already accept. --today mode
+            // never touches the mark.
             if (!$todayOnly) {
                 $this->setLastSentId($maxId);
             }

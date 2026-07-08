@@ -136,6 +136,55 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    /**
+     * Regression (Discourse #9850): a poster reposts one item under the same subject/location with
+     * a slightly reworded body, and BOTH reposts ripple into several groups. The two reposts share
+     * a dedup key but differ by body. Each repost's own multi-group copies must still collapse into
+     * a single card — the earlier code kept only the FIRST post per key as a merge target, so the
+     * second repost's copies each failed bodiesMatch against the first and became a separate card
+     * (linda_rowlands' bed appeared ~10x). Expect exactly TWO cards (one per repost), each listing
+     * all its groups — not one-card-per-group.
+     */
+    public function test_deduplication_two_reworded_reposts_each_collapse_across_groups(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        // Two reposts of the same item: same subject + location, slightly different body.
+        $repost1 = $this->createTestMessage($user, $groupA, [
+            'subject' => 'OFFER: Divan bed frame (London)',
+            'textbody' => '5ft wide retail bedframe for queen sized divan. Dismantled.',
+        ]);
+        $repost2 = $this->createTestMessage($user, $groupA, [
+            'subject' => 'OFFER: Divan bed frame (London)',
+            'textbody' => '5ft wide retail bedframe only for queen. Dismantled, all fittings.',
+        ]);
+        $repost2->locationid = $repost1->locationid;
+        $repost2->save();
+
+        // Each repost appears on BOTH groups (the join produces one row per (msgid, group)),
+        // interleaved as the real query would return them by arrival.
+        $mk = function ($msg, $groupid) {
+            $row = $msg->fresh();
+            $row->locationid = $msg->locationid;
+            $row->groupid = $groupid;
+            return $row;
+        };
+        $posts = collect([
+            $mk($repost1, $groupA->id), $mk($repost2, $groupA->id),
+            $mk($repost1, $groupB->id), $mk($repost2, $groupB->id),
+        ]);
+
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        $this->assertCount(2, $deduplicated, 'each reworded repost is one card, not one card per group');
+        foreach ($deduplicated as $card) {
+            $this->assertCount(2, $card['postedToGroups'], 'each repost card lists both its groups');
+            $this->assertEqualsCanonicalizing([$groupA->id, $groupB->id], $card['postedToGroups']);
+        }
+    }
+
     public function test_deduplication_without_tnpostid(): void
     {
         $user = $this->createTestUser();
@@ -323,6 +372,93 @@ class UnifiedDigestServiceTest extends TestCase
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
         $this->assertEquals(1, $stats['emails_sent'], 'must send once the last digest was a prior day');
+    }
+
+    public function test_daily_digest_streams_most_overdue_first(): void
+    {
+        // The daily bulk run must process recipients MOST-OVERDUE-FIRST: never-sent users, then
+        // oldest lastsent. When the send window can't clear the whole population, id-order
+        // (the old lazyById streaming) permanently starves the same high-id tail; overdue-first
+        // rotates the lag fairly. Regression for streamDailyOverdueFirst.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $this->createTestMessage($poster, $group);
+
+        $mk = function () use ($group) {
+            $u = $this->createTestUser();
+            $u->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+            $u->lastaccess = now();
+            $u->save();
+            $this->createMembership($u, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+            return $u->fresh();
+        };
+
+        $neverSent = $mk();
+        $old = $mk();
+        $recent = $mk();
+
+        $prior = fn ($days) => \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays($days)->setTimezone('UTC');
+        // never-sent: deliberately NO users_digests row (NULL lastsent → most overdue).
+        UserDigest::create(['userid' => $old->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0, 'lastsent' => $prior(10)]);
+        UserDigest::create(['userid' => $recent->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0, 'lastsent' => $prior(1)]);
+
+        // Invoke the protected streamer directly and capture the yielded order.
+        $ref = new \ReflectionMethod($this->service, 'getUsersForDigest');
+        $ref->setAccessible(true);
+        $stream = $ref->invoke($this->service, UnifiedDigestService::MODE_DAILY);
+        $ids = $stream->pluck('id')->all();
+
+        // Other fixture users may share the stream — assert only the RELATIVE order of our three.
+        $ourOrder = array_values(array_filter($ids, fn ($id) => in_array($id, [$neverSent->id, $old->id, $recent->id], true)));
+        $this->assertEquals(
+            [$neverSent->id, $old->id, $recent->id],
+            $ourOrder,
+            'daily stream must yield never-sent first, then oldest lastsent, then most recent'
+        );
+    }
+
+    /**
+     * Regression for the 2026-07-05 daily-digest flood: a digest whose only content is a
+     * pinned post has an EMPTY cursor-post set ($allPosts) but STILL sends an email.
+     * updateDigestTracker must stamp lastsent in that case so the once-per-London-day
+     * guard skips the user on the next tick — otherwise the digest re-sends every minute.
+     */
+    public function test_update_tracker_stamps_lastsent_when_email_sent_with_no_cursor_posts(): void
+    {
+        $user = $this->createTestUser();
+        $old = \Carbon\Carbon::now()->subDays(2)->setTimezone('UTC');
+        $tracker = UserDigest::create([
+            'userid' => $user->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+            'lastsent' => $old,
+        ]);
+
+        $ref = new \ReflectionMethod($this->service, 'updateDigestTracker');
+        $ref->setAccessible(true);
+
+        $oldRaw = $tracker->fresh()->getRawOriginal('lastsent');
+
+        // Email sent, but no cursor posts (pinned-only digest): lastsent MUST advance.
+        $ref->invoke($this->service, $tracker->fresh(), collect(), true);
+        $this->assertNotEquals(
+            $oldRaw,
+            $tracker->fresh()->getRawOriginal('lastsent'),
+            'lastsent must be stamped when a daily email was sent with no cursor posts'
+        );
+
+        // No email sent and no posts: lastsent must NOT change (never mark unsent users).
+        $tracker->update(['lastsent' => $old]);
+        $resetRaw = $tracker->fresh()->getRawOriginal('lastsent');
+        $ref->invoke($this->service, $tracker->fresh(), collect(), false);
+        $this->assertEquals(
+            $resetRaw,
+            $tracker->fresh()->getRawOriginal('lastsent'),
+            'lastsent must not change when no email was sent'
+        );
     }
 
     public function test_format_posted_to_multiple_groups(): void
@@ -2010,7 +2146,7 @@ class UnifiedDigestServiceTest extends TestCase
     // Task 5: scoreAndSortAvailable (haversine distance + DigestPostScorer)
     // -----------------------------------------------------------------------
 
-    public function test_available_posts_sorted_by_score_descending_not_arrival(): void
+    public function test_available_posts_pin_two_nearest_then_score_for_the_rest(): void
     {
         config(['freegle.ripple.score.default_reach_metres' => 40000.0]);
         $latlng = [0.0, 0.0]; // recipient [lat, lng]
@@ -2026,18 +2162,22 @@ class UnifiedDigestServiceTest extends TestCase
             return $p;
         };
 
-        // ~0.0009deg ~= 100m; ~0.0027deg ~= 300m near origin. Distances are well within
-        // the 40km default radius so closeness differences are small but ordered; the
-        // dominating differentiator is the budget term (views).
-        $near = $mk(1, 0.0009, 0.0, 20, 0);   // nearest, unseen (oldest arrival)
-        $far  = $mk(2, 0.0027, 0.0, 1,  0);   // farther, unseen, newest
-        $busy = $mk(3, 0.0009, 0.0, 1,  500); // nearest but heavily viewed -> low budget
+        // First two posts are ALWAYS the two nearest (nearest first), regardless of
+        // score; the rest then follow the score order. id1 ~55m, id2 ~110m are the two
+        // nearest. id3/id4 are both ~1.1km, so the rest are ordered by the budget term:
+        // id3 unseen (higher score) before id4 heavily viewed (lower score).
+        $nearest  = $mk(1, 0.0005, 0.0, 1, 0);   // ~55m   -> pinned #1
+        $second   = $mk(2, 0.0010, 0.0, 1, 0);   // ~110m  -> pinned #2
+        $farFresh = $mk(3, 0.0100, 0.0, 1, 0);   // ~1.1km, unseen      -> rest, higher score
+        $farBusy  = $mk(4, 0.0100, 0.0, 1, 500); // ~1.1km, 500 views   -> rest, lower score
 
         $sorted = $this->callPrivate(
-            $this->service, 'scoreAndSortAvailable', [collect([$busy, $far, $near]), $latlng]
+            $this->service,
+            'scoreAndSortAvailable',
+            [collect([$farBusy, $farFresh, $second, $nearest]), $latlng]
         );
 
-        $this->assertSame([1, 2, 3], $sorted->pluck('id')->all());
+        $this->assertSame([1, 2, 3, 4], $sorted->pluck('id')->all());
     }
 
     // -----------------------------------------------------------------------
@@ -2089,6 +2229,92 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotNull($captured, 'daily digest should have been spooled');
         $ids = $captured->getPosts()->map(fn ($p) => $p['message']->id)->all();
         $this->assertSame([$near->id, $far->id], $ids); // near outranks far on closeness
+    }
+
+    // -----------------------------------------------------------------------
+    // Pinned posts (paid bulk-offer clearances)
+    // -----------------------------------------------------------------------
+
+    public function test_daily_digest_force_includes_pinned_open_post_at_the_top(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5, 'lng' => -0.12],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // A normal, recent, in-window post.
+        $normal = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: normal recent (TestLocation)',
+            'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subHours(1),
+        ]);
+        // A PINNED post that arrived 10 days ago — OUTSIDE the first-digest 24h window, so
+        // getPostsForUser would NOT return it. Pinning must force it in, at the very top.
+        $pinnedMsg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: pinned clearance (TestLocation)',
+            'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $pinnedMsg->id]);
+
+        $captured = null;
+        $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
+            $captured = $mailable;
+            return 'spooled';
+        });
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertNotNull($captured, 'daily digest should have been spooled');
+        $ids = $captured->getPosts()->map(fn ($p) => $p['message']->id)->all();
+        $this->assertContains($pinnedMsg->id, $ids, 'a pinned OPEN post is force-included even though it is outside the digest window');
+        $this->assertContains($normal->id, $ids, 'the normal in-window post is still included');
+        $this->assertSame($pinnedMsg->id, $ids[0], 'the pinned post is at the very top of the digest');
+    }
+
+    public function test_daily_digest_does_not_pin_a_closed_post(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // The only post is pinned but has been TAKEN (closed). Pinning applies only while a
+        // post is open, so it must NOT be force-included, and nothing should send.
+        $pinnedTaken = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: pinned but taken (TestLocation)',
+            'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $pinnedTaken->id,
+            'outcome' => 'Taken',
+            'timestamp' => now(),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $pinnedTaken->id]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'a pinned but closed (taken) post is not force-included, so nothing sends');
     }
 
     // ---- Decoupled, sharded reach-mail pass (sendReachDigests) -------------------
@@ -2167,6 +2393,520 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue(
             DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
             'the owning shard mails the reachable member'
+        );
+    }
+
+    // ─── DISTANCE-PREFERENCE EMAIL FILTERING ────────────────────────────
+    // settings.browseMaxDistance (miles) narrows the daily digest, the
+    // immediate cursor path and the reach-mail path — see
+    // docs/superpowers/specs/2026-07-01-distance-preference-email-filtering-design.md.
+    // London (51.5074, -0.1278) is the default group/message location
+    // (createTestGroup/createTestMessage); Edinburgh (55.9533, -3.1889) is
+    // ~330 miles away (always "far"); (51.5, 0.4) is ~22.7 miles away (a
+    // "medium-far" point used to straddle a 2-mile cap vs a 50-mile cap).
+
+    public function test_daily_digest_filters_out_post_beyond_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => 2,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'the far post is filtered out, leaving nothing to send');
+    }
+
+    public function test_daily_digest_keeps_post_within_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => 5,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        // ~0.9 miles from the recipient — inside the 5-mile cap.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Near item (London)',
+            'lat' => 51.52,
+            'lng' => -0.1278,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'a post within the limit is still sent');
+    }
+
+    public function test_daily_digest_distance_preference_noop_when_setting_absent(): void
+    {
+        // Majority-case regression check: no browseMaxDistance at all = unlimited,
+        // so a far post is unaffected by the new filter.
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'no browseMaxDistance set means unlimited — unaffected by the new filter');
+    }
+
+    public function test_daily_digest_distance_preference_noop_when_setting_is_sentinel(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => \App\Services\Ripple\DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'the sentinel value means unlimited — unaffected by the new filter');
+    }
+
+    public function test_daily_digest_own_post_bypasses_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => 1,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+
+        // The recipient's OWN post, far from their resolved location.
+        $this->createTestMessage($recipient, $group, [
+            'subject' => 'OFFER: My own far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'own post is always included regardless of distance preference');
+    }
+
+    public function test_daily_digest_distance_preference_fails_open_without_recipient_location(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'browseMaxDistance' => 1,
+            // No mylocation and no lastlocation — resolveUserLatLng() returns null.
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'cannot resolve recipient location — fail open, no filtering');
+    }
+
+    /**
+     * Proves the insertion-point choice actually kept push notifications out of
+     * scope: getPostsForUser is shared with SendDailyPostsPushCommand, so it must
+     * NOT be distance-filtered — only the email path (sendDigestToUser) is.
+     */
+    public function test_get_posts_for_user_unaffected_by_distance_preference(): void
+    {
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'browseMaxDistance' => 1,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->save();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $far = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+
+        $tracker = UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgdate' => null,
+        ]);
+
+        $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+
+        $this->assertTrue(
+            $posts->pluck('id')->contains($far->id),
+            'getPostsForUser (shared with the push command) is not distance-filtered'
+        );
+    }
+
+    public function test_immediate_cursor_filters_far_post_for_distance_limited_member(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+
+        $limited = $this->createTestUser();
+        $limited->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
+        $limited->save();
+        $this->createMembership($limited, $group);
+
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // Poster's own post always bypasses the filter; the distance-limited member
+        // does not get mailed — the post is ~330 miles away, beyond their 2-mile cap.
+        $this->assertEquals(1, $stats['emails_sent']);
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    public function test_immediate_cursor_does_not_filter_unlimited_member_for_distance_preference(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+
+        $unlimited = $this->createTestUser();
+        $unlimited->settings = ['mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]]; // no browseMaxDistance
+        $unlimited->save();
+        $this->createMembership($unlimited, $group);
+
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(2, $stats['emails_sent'], 'an unlimited member in the same group still gets the far post');
+        $this->assertEquals(2, $stats['users_processed']);
+    }
+
+    public function test_immediate_cursor_advances_even_when_every_recipient_is_distance_filtered(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        // The poster is NOT a member of this group, so there is no own-post
+        // bypass in play — the only recipient is filtered by distance.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $limited = $this->createTestUser();
+        $limited->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
+        $limited->save();
+        $this->createMembership($limited, $group);
+
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'the only recipient is filtered out by distance');
+
+        $cursor = DB::table('groups_digests')->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)->first();
+        $this->assertEquals(
+            (int) $msg->id,
+            (int) $cursor->msgid,
+            'cursor still advances past the message even though every recipient was distance-filtered'
+        );
+    }
+
+    public function test_immediate_cursor_own_post_bypasses_distance_preference(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $poster->settings = ['browseMaxDistance' => 1, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
+        $poster->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Own far item (Edinburgh)',
+            'lat' => 55.9533,
+            'lng' => -3.1889,
+        ]);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'own post always bypasses the distance filter');
+    }
+
+    public function test_mail_newly_reached_filters_distance_limited_member_inside_reach(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $memberC = $this->createTestUser();
+        $this->createMembership($memberC, $group);
+        // ~22.7 miles from the post origin — inside the reach polygon below, but
+        // beyond memberC's own 2-mile cap.
+        $memberC->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
+        $memberC->save();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach distance (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('c', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        // Wide enough to cover memberC's location (lng 0.4 is within -0.2..0.6).
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
+            'inside reach but beyond the personal distance preference — not mailed, no ledger write'
+        );
+    }
+
+    public function test_mail_newly_reached_does_not_ledger_a_distance_filtered_skip_then_mails_after_widening_distance_preference(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $memberC = $this->createTestUser();
+        $this->createMembership($memberC, $group);
+        $memberC->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
+        $memberC->save();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach distance widen (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('e', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+        $this->assertFalse(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
+            'first run: filtered out, no ledger row written'
+        );
+
+        // Widen the slider — a re-run within the reach-mail recency window now mails them,
+        // because the earlier skip was never ledgered (design's recommended semantics).
+        $memberC->settings = array_merge($memberC->settings, ['browseMaxDistance' => 50]);
+        $memberC->save();
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
+            'second run after widening: mailed and ledgered'
+        );
+    }
+
+    public function test_mail_newly_reached_own_post_bypasses_distance_preference(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        // Poster's own resolved location differs from the post's origin (e.g. they
+        // posted from work) and is beyond their own tight distance preference.
+        $poster->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
+        $poster->save();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: own reach post (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('f', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $poster->id)->exists(),
+            'own post is mailed and ledgered despite exceeding the personal distance preference'
+        );
+    }
+
+    public function test_cross_pipeline_distance_preference_decisions_agree(): void
+    {
+        // Same recipient location, same post location (~22.7 miles apart), same
+        // tight browseMaxDistance=2 miles: all three pipelines must independently
+        // reach the SAME "filter this out" decision, since all three call the one
+        // shared DistancePreferenceFilter helper.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipientSettings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
+        $farLat = 51.5074;
+        $farLng = -0.1278;
+
+        // --- Daily ---
+        $dailyGroup = $this->createTestGroup();
+        $dailyPoster = $this->createTestUser();
+        $dailyRecipient = $this->createTestUser();
+        $dailyRecipient->settings = array_merge(['simplemail' => User::SIMPLE_MAIL_BASIC], $recipientSettings);
+        $dailyRecipient->lastaccess = now();
+        $dailyRecipient->save();
+        $this->createMembership($dailyRecipient, $dailyGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($dailyPoster, $dailyGroup);
+        $this->createTestMessage($dailyPoster, $dailyGroup, [
+            'subject' => 'OFFER: Cross-pipeline daily (TestLocation)', 'lat' => $farLat, 'lng' => $farLng,
+        ]);
+        $dailyStats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $dailyRecipient->id);
+        $this->assertEquals(0, $dailyStats['emails_sent'], 'daily digest rejects the out-of-range post');
+
+        // --- Immediate cursor ---
+        $cursorGroup = $this->createTestGroup();
+        $cursorPoster = $this->createTestUser();
+        $cursorRecipient = $this->createTestUser();
+        $cursorRecipient->settings = $recipientSettings;
+        $cursorRecipient->save();
+        $this->createMembership($cursorPoster, $cursorGroup);
+        $this->createMembership($cursorRecipient, $cursorGroup);
+        $this->seedImmediateCursor($cursorGroup);
+        $cursorMsg = $this->createTestMessage($cursorPoster, $cursorGroup, [
+            'subject' => 'OFFER: Cross-pipeline cursor (TestLocation)', 'lat' => $farLat, 'lng' => $farLng,
+        ]);
+        $this->makeImmediateReady($cursorMsg);
+        $cursorStats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $cursorRecipient->id);
+        $this->assertEquals(0, $cursorStats['emails_sent'], 'cursor immediate rejects the out-of-range post');
+
+        // --- Reach-mail ---
+        $reachGroup = $this->createTestGroup();
+        $reachPoster = $this->createTestUser();
+        $reachRecipient = $this->createTestUser();
+        $reachRecipient->settings = $recipientSettings;
+        $reachRecipient->save();
+        $this->createMembership($reachPoster, $reachGroup);
+        $this->createMembership($reachRecipient, $reachGroup);
+        $reachMsg = $this->createTestMessage($reachPoster, $reachGroup, [
+            'subject' => 'OFFER: Cross-pipeline reach (TestLocation)', 'lat' => $farLat, 'lng' => $farLng,
+        ]);
+        DB::table('messages_groups')->where('msgid', $reachMsg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $reachMsg->id, 'externaluid' => 'freegletusd-'.str_repeat('g', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        // Polygon wide enough to cover both the post origin and the recipient's location.
+        $this->seedReach($reachMsg->id, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
+        $this->service->mailNewlyReachedForPost($reachMsg->id);
+        $this->assertFalse(
+            DB::table('rippling_reach_notified')->where('msgid', $reachMsg->id)->where('userid', $reachRecipient->id)->exists(),
+            'reach-mail rejects the out-of-range post, same as the other two pipelines'
         );
     }
 }

@@ -70,7 +70,7 @@ func handlePostsForMember(g *Graph, spatialURL string) fiber.Handler {
 				"posts":         []any{},
 			})
 		}
-		res := AutoResolution(maxSecs, Drive)
+		res := NetworkResolution(g, iso.ReachedNodes, Drive)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		ring := poly.Geometry.Coordinates
 		if len(ring) == 0 || len(ring[0]) < 4 {

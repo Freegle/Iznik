@@ -4,7 +4,11 @@
       <ModGroupSelect v-model="groupid" modonly />
     </div>
     <div v-if="group && group.mysettings" class="mt-2 scrollinplace">
-      <NoticeMessage v-if="group.settings?.closed" variant="danger" class="mb-1">
+      <NoticeMessage
+        v-if="group.settings?.closed"
+        variant="danger"
+        class="mb-1"
+      >
         Your community is currently closed. You can change this in
         <em>Features for Members</em>.
       </NoticeMessage>
@@ -982,7 +986,24 @@
               type="toggle"
               toggle-checked="On TN"
               toggle-unchecked="Not on TN"
-            />
+              disabled
+            >
+              <template #note>
+                <b-form-text class="text-warning mt-1">
+                  This only records whether the community is listed on
+                  TrashNothing - changing it here won't list or delist it, so
+                  it's read-only.
+                  <template v-if="group.tnkey && group.tnkey.url">
+                    To change it, use your
+                    <!-- eslint-disable-next-line -->
+                    <ExternalLink :href="group.tnkey.url">TrashNothing group settings</ExternalLink>.
+                  </template>
+                  <template v-else>
+                    Listing is managed in your TrashNothing group settings.
+                  </template>
+                </b-form-text>
+              </template>
+            </ModGroupSetting>
             <ModGroupSetting
               :groupid="groupid"
               name="onlovejunk"

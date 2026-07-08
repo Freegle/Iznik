@@ -78,150 +78,20 @@ class SpamCheckServiceTest extends TestCase
         $this->assertNull($service->checkIPCountry('1.2.3.4'));
     }
 
-    // ========================================
-    // IP Reputation - User Threshold Tests
-    // ========================================
-
-    public function test_ip_under_user_threshold_returns_null(): void
+    public function test_lookup_ip_country_code_returns_iso_code(): void
     {
-        $group = $this->createTestGroup();
-
-        for ($i = 0; $i < SpamCheckService::USER_THRESHOLD - 1; $i++) {
-            $user = $this->createTestUser();
-            DB::table('messages_history')->insert([
-                'fromip' => '5.6.7.8',
-                'fromuser' => $user->id,
-                'fromname' => "User {$i}",
-                'groupid' => $group->id,
-                'arrival' => now(),
-            ]);
-        }
-
-        $this->assertNull($this->service->checkIPUsers('5.6.7.8'));
+        // The ISO code is what gets stored in messages.fromcountry on incoming
+        // mail, so ModTools can flag posts from outside the UK.
+        $service = $this->createServiceWithMockedGeoIPCode('GB');
+        $this->assertSame('GB', $service->lookupIPCountryCode('1.2.3.4'));
     }
 
-    public function test_ip_over_user_threshold_returns_spam_result(): void
+    public function test_lookup_ip_country_code_returns_null_when_unresolved(): void
     {
-        $group = $this->createTestGroup();
-
-        for ($i = 0; $i <= SpamCheckService::USER_THRESHOLD; $i++) {
-            $user = $this->createTestUser();
-            DB::table('messages_history')->insert([
-                'fromip' => '9.8.7.6',
-                'fromuser' => $user->id,
-                'fromname' => "SpamUser {$i}",
-                'groupid' => $group->id,
-                'arrival' => now(),
-            ]);
-        }
-
-        $result = $this->service->checkIPUsers('9.8.7.6');
-
-        $this->assertNotNull($result);
-        $this->assertTrue($result[0]);
-        $this->assertEquals(SpamCheckService::REASON_IP_USED_FOR_DIFFERENT_USERS, $result[1]);
-    }
-
-    // ========================================
-    // IP Reputation - Group Threshold Tests
-    // ========================================
-
-    public function test_ip_under_group_threshold_returns_null(): void
-    {
-        $user = $this->createTestUser();
-
-        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD - 1; $i++) {
-            $group = $this->createTestGroup();
-            DB::table('messages_history')->insert([
-                'fromip' => '11.22.33.44',
-                'fromuser' => $user->id,
-                'fromname' => 'Test User',
-                'groupid' => $group->id,
-                'arrival' => now(),
-            ]);
-        }
-
-        $this->assertNull($this->service->checkIPGroups('11.22.33.44'));
-    }
-
-    public function test_ip_over_group_threshold_returns_spam_result(): void
-    {
-        $user = $this->createTestUser();
-
-        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD + 1; $i++) {
-            $group = $this->createTestGroup();
-            DB::table('messages_history')->insert([
-                'fromip' => '55.66.77.88',
-                'fromuser' => $user->id,
-                'fromname' => 'Test User',
-                'groupid' => $group->id,
-                'arrival' => now(),
-            ]);
-        }
-
-        $result = $this->service->checkIPGroups('55.66.77.88');
-
-        $this->assertNotNull($result);
-        $this->assertTrue($result[0]);
-        $this->assertEquals(SpamCheckService::REASON_IP_USED_FOR_DIFFERENT_GROUPS, $result[1]);
-    }
-
-    public function test_ip_groups_many_posters_one_group_each_not_flagged(): void
-    {
-        // The shared-NAT case: many distinct posters from one IP, each posting to ONLY their own
-        // group. The old all-posters group count would flag this (lots of distinct groups); the
-        // per-poster check must not, because no single account is reaching many groups.
-        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD * 2; $i++) {
-            $user = $this->createTestUser();
-            $group = $this->createTestGroup();
-            DB::table('messages_history')->insert([
-                'fromip' => '66.66.66.66',
-                'fromuser' => $user->id,
-                'fromname' => "NAT user {$i}",
-                'groupid' => $group->id,
-                'arrival' => now(),
-            ]);
-        }
-
-        $this->assertNull($this->service->checkIPGroups('66.66.66.66'));
-    }
-
-    public function test_ip_groups_ignores_history_outside_window(): void
-    {
-        // A single poster reaching many groups, but all of it older than the history window, must
-        // not be flagged - the unbounded check used to accumulate this forever.
-        $user = $this->createTestUser();
-
-        for ($i = 0; $i < SpamCheckService::USER_GROUP_THRESHOLD + 1; $i++) {
-            $group = $this->createTestGroup();
-            DB::table('messages_history')->insert([
-                'fromip' => '77.77.77.77',
-                'fromuser' => $user->id,
-                'fromname' => 'Old hopper',
-                'groupid' => $group->id,
-                'arrival' => now()->subDays(SpamCheckService::HISTORY_WINDOW_DAYS + 1),
-            ]);
-        }
-
-        $this->assertNull($this->service->checkIPGroups('77.77.77.77'));
-    }
-
-    public function test_ip_users_ignores_history_outside_window(): void
-    {
-        $group = $this->createTestGroup();
-
-        for ($i = 0; $i <= SpamCheckService::USER_THRESHOLD; $i++) {
-            $user = $this->createTestUser();
-            DB::table('messages_history')->insert([
-                'fromip' => '88.88.88.88',
-                'fromuser' => $user->id,
-                'fromname' => "Old user {$i}",
-                'groupid' => $group->id,
-                'arrival' => now()->subDays(SpamCheckService::HISTORY_WINDOW_DAYS + 1),
-            ]);
-        }
-
-        $this->assertNull($this->service->checkIPUsers('88.88.88.88'));
+        // Fail-soft: no country resolved (e.g. private IP or absent database)
+        // stores NULL rather than breaking the post.
+        $service = $this->createServiceWithMockedGeoIPCode(null);
+        $this->assertNull($service->lookupIPCountryCode('192.168.1.1'));
     }
 
     // ========================================
@@ -885,6 +755,27 @@ class SpamCheckServiceTest extends TestCase
             protected function lookupIPCountry(string $ip): ?string
             {
                 return $this->mockCountry;
+            }
+        };
+    }
+
+    /**
+     * Create a SpamCheckService whose GeoIP record lookup yields a given ISO
+     * code (or null), without needing the mmdb database.
+     */
+    private function createServiceWithMockedGeoIPCode(?string $isoCode): SpamCheckService
+    {
+        return new class($isoCode) extends SpamCheckService
+        {
+            public function __construct(private ?string $mockIsoCode) {}
+
+            protected function readGeoIPCountry(string $ip): ?\GeoIp2\Record\Country
+            {
+                if ($this->mockIsoCode === null) {
+                    return null;
+                }
+
+                return new \GeoIp2\Record\Country(['iso_code' => $this->mockIsoCode]);
             }
         };
     }

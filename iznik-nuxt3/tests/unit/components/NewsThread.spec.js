@@ -138,6 +138,15 @@ vi.mock('~/composables/useTwem', () => ({
   untwem: vi.fn((text) => text),
 }))
 
+const mockScrollToAndPin = vi.fn(() => vi.fn())
+vi.mock('~/composables/useScrollAnchor', () => ({
+  scrollToAndPin: (...args) => mockScrollToAndPin(...args),
+  fixedHeaderOffset: () => 74,
+  imagesComplete: () => true,
+  whenImagesComplete: () => Promise.resolve(),
+  whenAllSettled: () => Promise.resolve(),
+}))
+
 // Mock child components
 vi.mock('~/components/AutoHeightTextarea', () => ({
   default: {
@@ -163,7 +172,7 @@ vi.mock('~/components/NewsReplies', () => ({
     name: 'NewsReplies',
     template: '<div class="news-replies"></div>',
     props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth'],
-    emits: ['rendered'],
+    emits: ['rendered', 'subtree-rendered'],
   },
 }))
 
@@ -1012,6 +1021,94 @@ describe('NewsThread', () => {
       await comp.vm.sendComment()
       expect(mockSend).not.toHaveBeenCalled()
     })
+
+    it('anchors the freshly sent reply with a centered pin', async () => {
+      // The post-send refetch re-orders the thread, so the new reply can
+      // land off-screen. sendComment must pin it, re-resolving by
+      // data-reply-id so it finds the row once the refetch renders it.
+      mockSend.mockResolvedValue(9876)
+      const wrapper = await createWrapper()
+      const textarea = wrapper.find('.auto-height-textarea')
+      await textarea.setValue('Anchor me')
+      await textarea.trigger('focus')
+
+      const comp = wrapper.findComponent(NewsThread)
+      await comp.vm.sendComment()
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts.block).toBe('center')
+      // Released by the content-complete signal, not a timer.
+      expect(typeof opts.done?.then).toBe('function')
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '9876')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+
+    it('does not pin when send returns no id', async () => {
+      mockSend.mockResolvedValue(null)
+      const wrapper = await createWrapper()
+      const textarea = wrapper.find('.auto-height-textarea')
+      await textarea.setValue('No id back')
+      await textarea.trigger('focus')
+
+      const comp = wrapper.findComponent(NewsThread)
+      await comp.vm.sendComment()
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('deep-link pin', () => {
+    it('pins the target centred when the scrolled-to reply reports rendered', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.exists()).toBe(true)
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts.block).toBe('center')
+      expect(opts.offset).toBe(74)
+      expect(typeof opts.done?.then).toBe('function')
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '456')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+
+    it('pins only once even if the target re-reports', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not pin for renders of other replies', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 999)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
   })
 
   describe('computed properties', () => {
@@ -1178,19 +1275,14 @@ describe('NewsThread', () => {
     })
   })
 
-  describe('rendered event', () => {
-    it('updates scrollDownTo when rendered id matches scrollTo prop', async () => {
+  describe('scrollTo pass-through', () => {
+    it('hands the deep-link target to NewsReplies from mount, not after render', async () => {
+      // The collapse logic must know the target up front: a target hidden
+      // behind "Show older replies" can never mount to announce itself.
+      mockNewsfeed.value.replies = [5]
       const wrapper = await createWrapper({ scrollTo: '5' })
-      const comp = wrapper.findComponent(NewsThread)
-      comp.vm.rendered(5)
-      expect(comp.vm.scrollDownTo).toBe('5')
-    })
-
-    it('does not update scrollDownTo when ids do not match', async () => {
-      const wrapper = await createWrapper({ scrollTo: '5' })
-      const comp = wrapper.findComponent(NewsThread)
-      comp.vm.rendered(10)
-      expect(comp.vm.scrollDownTo).toBe(null)
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.props('scrollTo')).toBe('5')
     })
   })
 

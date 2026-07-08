@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
@@ -128,7 +129,16 @@ type groupsCollection struct {
 }
 
 var groupsDB *sql.DB
-var groupsDBMu sync.Mutex
+var groupsDBMu sync.RWMutex
+
+// configureGroupsPool sizes the shared pool so concurrent group-proximity requests
+// get pooled connections instead of contending. The server is GOMAXPROCS=NumCPU and
+// handles requests on many goroutines, so it needs more than the default 2 idle conns.
+func configureGroupsPool(db *sql.DB) {
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(16)
+	db.SetConnMaxLifetime(5 * time.Minute)
+}
 
 // groupsDSN builds the MySQL DSN from environment variables.
 func groupsDSN() string {
@@ -168,6 +178,7 @@ func initGroupsDB() {
 		db.Close()
 		return
 	}
+	configureGroupsPool(db)
 	groupsDB = db
 	host := os.Getenv("MYSQL_HOST")
 	port := os.Getenv("MYSQL_PORT")
@@ -184,15 +195,22 @@ func initGroupsDB() {
 // ensureGroupsDB returns the groups DB connection, reconnecting lazily if
 // the initial startup connection failed (e.g. the DB tunnel was not yet up).
 func ensureGroupsDB() *sql.DB {
+	// Hot path: shared RLock, no Ping. *sql.DB is a concurrency-safe pool that
+	// transparently reopens broken connections on the next query, so pinging on every
+	// call — while holding an EXCLUSIVE lock across a remote round trip — was both
+	// unnecessary and serialized the whole (GOMAXPROCS=NumCPU) server to ~1 core.
+	groupsDBMu.RLock()
+	db := groupsDB
+	groupsDBMu.RUnlock()
+	if db != nil {
+		return db
+	}
+	// Slow path: connect once under the exclusive lock (initGroupsDB failed at
+	// startup, e.g. the DB tunnel wasn't up yet). The pool self-heals thereafter.
 	groupsDBMu.Lock()
 	defer groupsDBMu.Unlock()
 	if groupsDB != nil {
-		if err := groupsDB.Ping(); err == nil {
-			return groupsDB
-		}
-		// Stale connection — close and reconnect.
-		groupsDB.Close()
-		groupsDB = nil
+		return groupsDB
 	}
 	dsn := groupsDSN()
 	if dsn == "" {
@@ -208,6 +226,7 @@ func ensureGroupsDB() *sql.DB {
 		db.Close()
 		return nil
 	}
+	configureGroupsPool(db)
 	groupsDB = db
 	host := os.Getenv("MYSQL_HOST")
 	port := os.Getenv("MYSQL_PORT")
@@ -311,5 +330,90 @@ func handleNearbyGroups() fiber.Handler {
 			features = []groupFeature{}
 		}
 		return c.JSON(groupsCollection{Type: "FeatureCollection", Features: features})
+	}
+}
+
+// groupSeedNodes loads a group's boundary and returns graph nodes to seed a catchment from —
+// the nearest node to each exterior-ring vertex plus the centroid. Seeding the whole boundary
+// (not just the centroid) is what lets the catchment capture corridor reach into the group's
+// edges (e.g. an M62 offer clipping HullFreegle's western strip). ok=false when the group or
+// its polygon is missing.
+func groupSeedNodes(g *Graph, groupID int64, mode Mode) ([]NodeID, bool) {
+	db := ensureGroupsDB()
+	if db == nil {
+		return nil, false
+	}
+	var wkt string
+	var clat, clng float64
+	err := db.QueryRow("SELECT ST_AsText(polyindex), ST_Y(ST_Centroid(polyindex)), "+
+		"ST_X(ST_Centroid(polyindex)) FROM `groups` WHERE id = ?", groupID).Scan(&wkt, &clat, &clng)
+	if err != nil {
+		return nil, false
+	}
+	rings, err := wktPolygonToCoords(wkt) // rings of [lng, lat]
+	if err != nil || len(rings) == 0 {
+		return nil, false
+	}
+
+	seen := make(map[NodeID]bool)
+	var seeds []NodeID
+	add := func(lat, lng float64) {
+		n := nearestNodeForMode(g, lat, lng, mode)
+		if n != noNode && !seen[n] {
+			seen[n] = true
+			seeds = append(seeds, n)
+		}
+	}
+	for _, ring := range rings {
+		for _, pt := range ring {
+			add(pt[1], pt[0]) // pt = [lng, lat]
+		}
+	}
+	add(clat, clng) // centroid ensures interior coverage for small budgets
+
+	return seeds, len(seeds) > 0
+}
+
+// groupListItem is one entry in the catchment tab's searchable group selector.
+type groupListItem struct {
+	ID   int64   `json:"id"`
+	Name string  `json:"name"`
+	Lat  float64 `json:"lat"`
+	Lng  float64 `json:"lng"`
+}
+
+// handleGroupsList returns every publishable Freegle group (id, short name, polygon
+// centroid) for the catchment tab's group picker. Requires MySQL; returns [] without it.
+// polyindex stores degree values tagged SRID 3857, so ST_X/ST_Y give lng/lat directly.
+func handleGroupsList() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		db := ensureGroupsDB()
+		if db == nil {
+			return c.JSON([]groupListItem{})
+		}
+		rows, err := db.Query("SELECT id, nameshort, " +
+			"ST_Y(ST_Centroid(polyindex)) AS lat, ST_X(ST_Centroid(polyindex)) AS lng " +
+			"FROM `groups` WHERE publish = 1 AND listable = 1 AND polyindex IS NOT NULL " +
+			"ORDER BY nameshort")
+		if err != nil {
+			log.Printf("groups list query: %v", err)
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer rows.Close()
+
+		items := []groupListItem{}
+		for rows.Next() {
+			var it groupListItem
+			var lat, lng sql.NullFloat64
+			if err := rows.Scan(&it.ID, &it.Name, &lat, &lng); err != nil {
+				continue
+			}
+			if !lat.Valid || !lng.Valid {
+				continue
+			}
+			it.Lat, it.Lng = lat.Float64, lng.Float64
+			items = append(items, it)
+		}
+		return c.JSON(items)
 	}
 }

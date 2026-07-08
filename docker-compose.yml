@@ -520,6 +520,10 @@ services:
       - dev
     environment:
       - CI=${CI:-false}
+      # Make file-sync.sh and the rebuild monitor worktree-aware: without this the
+      # container has no COMPOSE_PROJECT_NAME, so both fall back to "freegle" and a
+      # worktree's host-scripts syncs/rebuilds into the MAIN instance's containers.
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
@@ -543,10 +547,10 @@ services:
               svc=$$(docker inspect "$$container" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || echo "$$container")
               if [ "$$svc" != "" ] && [ "$$container" != "null" ]; then
                 echo "Rebuilding service: $$svc ($$container)"
-                docker-compose -p freegle stop "$$svc" 2>/dev/null || true
-                docker-compose -p freegle rm -f "$$svc" 2>/dev/null || true
-                if docker-compose -p freegle build "$$svc" &&
-                   docker-compose -p freegle up --no-deps -d "$$svc"; then
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" stop "$$svc" 2>/dev/null || true
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" rm -f "$$svc" 2>/dev/null || true
+                if docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" build "$$svc" &&
+                   docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" up --no-deps -d "$$svc"; then
                   echo "Rebuild completed successfully for $$service"
                 else
                   echo "Rebuild failed for $$service"
@@ -765,6 +769,13 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
+      # In dev, uploaded photos live in the local tusd, not the production
+      # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
+      # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
+      # so the resizer 404s on locally-uploaded files. Point it at local tusd's
+      # file-serving path (reachable from the delivery container) so dev images
+      # render — matching how V1 derives its base from TUS_UPLOADER.
+      - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
@@ -784,6 +795,10 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
@@ -888,7 +903,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 300s
+      start_period: 600s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.spatial.rule=Host(`spatial.localhost`)"
@@ -1654,6 +1669,10 @@ services:
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
@@ -1674,6 +1693,13 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-batch-prod
     profiles:
       - production
+    # Give the scheduler + daemons (schedule:work, mail:spool:process, ripple, digest
+    # shards) time to reach a safe stopping point on SIGTERM before Docker SIGKILLs them.
+    # The default is only 10s, too short for an in-flight email send / digest sweep to
+    # finish cleanly; a graceful shutdown was measured at ~9s, so 60s is generous headroom.
+    # This makes a plain `docker restart` / `docker compose restart` graceful without a
+    # manual -t flag (applied to the container's StopTimeout on next recreate).
+    stop_grace_period: 60s
     networks:
       - default
     build:
@@ -1710,6 +1736,15 @@ services:
       mjml:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # The scheduler fires spatial-dependent jobs (digest reach-gate, ripple, spatial
+      # index) the moment it starts, so it MUST wait for the spatial servers to finish
+      # their multi-minute graph/index rebuild — otherwise those jobs hang on a not-ready
+      # spatial, spin, hold their flocks and produce nothing (observed on the 2026-07-03
+      # reboot). Both have /health healthchecks that only pass once loaded.
+      spatial:
+        condition: service_healthy
+      spatial-knn:
         condition: service_healthy
     restart: unless-stopped
     environment:

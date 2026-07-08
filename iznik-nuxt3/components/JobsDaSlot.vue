@@ -33,21 +33,46 @@
           bg-colour="dark green"
           :position="index"
           :list-length="displayedJobs.length"
-          context="daslot"
+          :context="placement"
+          @clicked="onJobClicked"
         />
       </div>
     </div>
+    <!-- Always mounted; shown on-demand when a job is clicked and the cap allows. -->
+    <JobsFollowUpModal
+      ref="followUpModal"
+      :exclude-ids="displayedJobIds"
+      :placement="'modal_more_jobs'"
+    />
   </div>
 </template>
 <script setup>
-import { computed, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
+import {
+  computed,
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  defineAsyncComponent,
+} from 'vue'
 import { useJobStore } from '~/stores/job'
 import { useAuthStore } from '~/stores/auth'
+import { useJobsFollowUpModal } from '~/composables/useJobsFollowUpModal'
 const JobOne = defineAsyncComponent(() => import('./JobOne'))
+const JobsFollowUpModal = defineAsyncComponent(() =>
+  import('./JobsFollowUpModal')
+)
 const NoticeMessage = defineAsyncComponent(() => import('./NoticeMessage'))
 const DonationButton = defineAsyncComponent(() => import('./DonationButton'))
 
 const props = defineProps({
+  // Which slot this instance is mounted in (sticky_footer_mobile/desktop,
+  // sidebar_left/right, ...). Threaded onto each job's click/impression so
+  // per-placement performance is measurable. Defaults to the legacy 'daslot'.
+  placement: {
+    type: String,
+    required: false,
+    default: 'daslot',
+  },
   minWidth: {
     type: String,
     required: false,
@@ -82,6 +107,9 @@ const emit = defineEmits(['rendered', 'borednow'])
 
 const jobStore = useJobStore()
 const authStore = useAuthStore()
+const { shouldShowModal, recordShown } = useJobsFollowUpModal()
+
+const followUpModal = ref(null)
 
 const me = authStore.user
 const lat = me?.lat
@@ -136,6 +164,20 @@ const list = computed(() => {
 const displayedJobs = computed(() => {
   return props.listOnly ? list.value.slice(0, 10) : list.value.slice(0, 20)
 })
+
+/* IDs of the jobs currently displayed in this slot, passed to the modal so
+ * it can exclude them and show different ads. */
+const displayedJobIds = computed(() => displayedJobs.value.map((j) => j.id))
+
+/* Called when a JobOne inside this slot emits 'clicked'. Check the frequency
+ * cap; if allowed, open the follow-up modal with the remaining jobs. */
+function onJobClicked(clickedId) {
+  if (!shouldShowModal()) {
+    return
+  }
+  followUpModal.value?.show(clickedId, props.placement)
+  recordShown()
+}
 </script>
 <style scoped lang="scss">
 @import 'bootstrap/scss/functions';
@@ -144,7 +186,9 @@ const displayedJobs = computed(() => {
 
 .jobs-slot {
   width: 100%;
-  background: $white;
+  /* Muted (not pure white) so the job-ads block reads as distinct sponsored content and
+     separates from the white nav bar that can sit directly above it on Browse. */
+  background: $color-gray--lighter;
   border: 1px solid $gray-200;
   overflow-y: auto;
 }

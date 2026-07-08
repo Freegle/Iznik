@@ -267,12 +267,6 @@ export default defineNuxtPlugin((nuxtApp) => {
               console.log('Maintenance - suppress exception', this)
               return null
             } else if (
-              originalExceptionString?.match(/Piwik undefined after waiting/)
-            ) {
-              // Some privacy blockers can cause this.
-              console.log('Suppress Piwik/Matomo exception')
-              return null
-            } else if (
               originalExceptionString?.match(/Google ad script blocked/)
             ) {
               console.log('AdBlocker - no need to log.', this)

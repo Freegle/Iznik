@@ -1053,14 +1053,13 @@ func Post(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusNotFound, "Newsfeed entry not found")
 			}
 
-			// Create a story from this newsfeed entry
-			result := db.Exec("INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)", nf.Userid, nf.Message)
-			if result.Error != nil {
+			// Create a story from this newsfeed entry. Read the new id from the write result,
+			// not a read-split-routable SELECT (9832 class).
+			storyID, err := database.ExecInsertGetID(db,
+				"INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)", nf.Userid, nf.Message)
+			if err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create story")
 			}
-
-			var storyID uint64
-			db.Raw("SELECT id FROM users_stories WHERE userid = ? AND story = ? ORDER BY id DESC LIMIT 1", nf.Userid, nf.Message).Scan(&storyID)
 
 			return c.JSON(fiber.Map{"id": storyID})
 		}

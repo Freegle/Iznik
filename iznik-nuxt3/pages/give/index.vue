@@ -119,14 +119,9 @@ useHead(
 
 const { me, ids, messageValid, uploadingPhoto, notblank } = await setup('Offer')
 
-onMounted(() => {
-  if (globalThis.$gtm?.enabled()) {
-    globalThis.$gtm.trackEvent({
-      event: 'Give an Item',
-      label: 'YqHzCIHbv7kZELy618UD',
-    })
-  }
-})
+// The 'Give an Item' conversion event fires on actual post completion in
+// freegleIt() (composables/useCompose.js), not on page mount - mounting the
+// wizard is not a conversion.
 </script>
 
 <style scoped lang="scss">

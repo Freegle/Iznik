@@ -98,6 +98,124 @@ func TestJobClick_JSONBody(t *testing.T) {
 	assert.Equal(t, link, gotLink)
 }
 
+// TestJobClick_UserAttribution guards click->user attribution: a click from a logged-in
+// user must record their userid in logs_jobs. The handler previously read the userid from
+// c.Locals("session") - a context key nothing in this codebase ever sets - so every click,
+// web or email, was silently stored with userid=NULL. It now resolves the user via
+// user.WhoAmI, the same JWT / persistent-token path every other write handler uses.
+func TestJobClick_UserAttribution(t *testing.T) {
+	prefix := uniquePrefix("jobclick")
+	userID, token := CreateFullTestUser(t, prefix)
+	jobID := CreateTestJob(t, 52.5833189, -2.0455619)
+
+	// Post the click the way the web app does: JSON body + JWT in the Authorization header.
+	body := fmt.Sprintf(`{"id":%d,"link":"https://example.com/job/%d"}`, jobID, jobID)
+	req := httptest.NewRequest("POST", "/api/job", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", token)
+
+	resp, _ := getApp().Test(req, 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The click must be attributed to the logged-in user, not stored as NULL.
+	var gotUser uint64
+	database.DBConn.Raw("SELECT COALESCE(userid, 0) FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID).Row().Scan(&gotUser)
+	assert.Equal(t, userID, gotUser)
+}
+
+// TestJobClick_Placement guards per-placement attribution: a click records WHICH slot it came
+// from, so click-through can be measured per placement (sticky footer / sidebar / jobs page /
+// email / modal) rather than as a single global count. Covers the JSON body (web app), the query
+// string (email links), and the absent case (stored NULL, so legacy rows stay distinguishable).
+func TestJobClick_Placement(t *testing.T) {
+	// (a) JSON body — the web app transport. placement, source and page are written
+	// together in one INSERT, so assert all three to prove they don't clobber each other.
+	jobID := CreateTestJob(t, 52.5833189, -2.0455619)
+	body := fmt.Sprintf(`{"id":%d,"link":"https://example.com/job","placement":"sidebar_left","source":"website","page":"jobs"}`, jobID)
+	req := httptest.NewRequest("POST", "/api/job", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var placement, source, page string
+	database.DBConn.Raw("SELECT COALESCE(placement,''), COALESCE(source,''), COALESCE(page,'') FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID).Row().Scan(&placement, &source, &page)
+	assert.Equal(t, "sidebar_left", placement)
+	assert.Equal(t, "website", source)
+	assert.Equal(t, "jobs", page)
+
+	// (b) query string — the digest email redirect link.
+	jobID2 := CreateTestJob(t, 52.5833189, -2.0455619)
+	resp, _ = getApp().Test(httptest.NewRequest("POST", fmt.Sprintf("/api/job?id=%d&link=http://x/job&placement=email_redirect&source=email", jobID2), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var placement2 string
+	database.DBConn.Raw("SELECT COALESCE(placement,'') FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID2).Row().Scan(&placement2)
+	assert.Equal(t, "email_redirect", placement2)
+
+	// (c) absent placement → NULL, not '' — legacy/untagged clicks stay distinguishable.
+	jobID3 := CreateTestJob(t, 52.5833189, -2.0455619)
+	body3 := fmt.Sprintf(`{"id":%d,"link":"http://x/job"}`, jobID3)
+	req3 := httptest.NewRequest("POST", "/api/job", strings.NewReader(body3))
+	req3.Header.Set("Content-Type", "application/json")
+	getApp().Test(req3)
+	var nullCount int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE jobid = ? AND placement IS NULL", jobID3).Row().Scan(&nullCount)
+	assert.Equal(t, int64(1), nullCount)
+}
+
+// TestJobClick_Page guards per-page attribution: a click records WHICH Nuxt route the user was on
+// (jobs, browse-term, message-id, ...), orthogonal to placement, so click-through can be broken
+// down by page as well as by slot - the same slot appears on every page, so placement alone can't
+// answer "which page earns the most". Covers the JSON body (web app), the query string (so the
+// query/form parse tier works), the absent case (stored NULL), and page-only (no placement/source)
+// to prove the three attribution fields are written independently.
+func TestJobClick_Page(t *testing.T) {
+	// (a) JSON body — the web app transport; page alongside placement+source.
+	jobID := CreateTestJob(t, 52.5833189, -2.0455619)
+	body := fmt.Sprintf(`{"id":%d,"link":"https://example.com/job","placement":"sidebar_left","source":"website","page":"browse-term"}`, jobID)
+	req := httptest.NewRequest("POST", "/api/job", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var page string
+	database.DBConn.Raw("SELECT COALESCE(page,'') FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID).Row().Scan(&page)
+	assert.Equal(t, "browse-term", page)
+
+	// (b) query string — the parse tier the digest email redirect would use.
+	jobID2 := CreateTestJob(t, 52.5833189, -2.0455619)
+	resp, _ = getApp().Test(httptest.NewRequest("POST", fmt.Sprintf("/api/job?id=%d&link=http://x/job&page=jobs", jobID2), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var page2 string
+	database.DBConn.Raw("SELECT COALESCE(page,'') FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID2).Row().Scan(&page2)
+	assert.Equal(t, "jobs", page2)
+
+	// (c) absent page → NULL — email-redirect rows (placement='email_redirect') and legacy rows
+	// stay distinguishable. Callers isolating email clicks must filter page IS NULL AND
+	// placement='email_redirect', since legacy rows are page IS NULL AND placement IS NULL.
+	jobID3 := CreateTestJob(t, 52.5833189, -2.0455619)
+	body3 := fmt.Sprintf(`{"id":%d,"link":"http://x/job","placement":"email_redirect","source":"email"}`, jobID3)
+	req3 := httptest.NewRequest("POST", "/api/job", strings.NewReader(body3))
+	req3.Header.Set("Content-Type", "application/json")
+	getApp().Test(req3)
+	var nullCount int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE jobid = ? AND page IS NULL", jobID3).Row().Scan(&nullCount)
+	assert.Equal(t, int64(1), nullCount)
+
+	// (d) page only, no placement/source — the three attribution fields are independent, so a
+	// stripped-down caller sending just page must store page and leave the others NULL.
+	jobID4 := CreateTestJob(t, 52.5833189, -2.0455619)
+	body4 := fmt.Sprintf(`{"id":%d,"link":"http://x/job","page":"message-id"}`, jobID4)
+	req4 := httptest.NewRequest("POST", "/api/job", strings.NewReader(body4))
+	req4.Header.Set("Content-Type", "application/json")
+	getApp().Test(req4)
+	var page4 string
+	var placementNull, sourceNull int64
+	database.DBConn.Raw("SELECT COALESCE(page,'') FROM logs_jobs WHERE jobid = ? ORDER BY id DESC LIMIT 1", jobID4).Row().Scan(&page4)
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE jobid = ? AND placement IS NULL", jobID4).Row().Scan(&placementNull)
+	database.DBConn.Raw("SELECT COUNT(*) FROM logs_jobs WHERE jobid = ? AND source IS NULL", jobID4).Row().Scan(&sourceNull)
+	assert.Equal(t, "message-id", page4)
+	assert.Equal(t, int64(1), placementNull)
+	assert.Equal(t, int64(1), sourceNull)
+}
+
 // TestJobClick_ContentFree guards the bot/scanner case: a POST /job with neither an id nor a
 // link must record NOTHING (it returns success but writes no row), so logs_jobs is not flooded
 // with jobid=0/link='' noise that buries the genuine clicks.

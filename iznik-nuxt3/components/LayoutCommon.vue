@@ -38,6 +38,7 @@
                   div-id="div-gpt-ad-1699973618906-0"
                   :jobs="true"
                   :hide-jobs-header="true"
+                  placement="sticky_footer_mobile"
                   @rendered="adRendered"
                   @failed="adFailed"
                 />
@@ -51,6 +52,7 @@
                   div-id="div-gpt-ad-1707999304775-0"
                   :jobs="true"
                   :hide-jobs-header="true"
+                  placement="sticky_footer_desktop"
                   @rendered="adRendered"
                 />
               </VisibleWhen>
@@ -198,7 +200,9 @@ const allowAd = computed(() => {
   if (recentDonor.value) return false
   if (
     routePath.value === '/partnerships' ||
-    routePath.value === '/partnerships/'
+    routePath.value === '/partnerships/' ||
+    routePath.value === '/together' ||
+    routePath.value === '/together/'
   ) {
     return false
   }

@@ -261,11 +261,15 @@ class Message extends Model implements Auditable
 
     /**
      * Get the message's groups.
+     *
+     * rippled_in distinguishes the ORIGIN row (0 - the group the member actually
+     * posted to) from copies the rippling engine spread the post into (1, with
+     * arrival = the ripple time, not the post time).
      */
     public function groups(): BelongsToMany
     {
         return $this->belongsToMany(Group::class, 'messages_groups', 'msgid', 'groupid')
-            ->withPivot(['collection', 'arrival', 'approvedby', 'deleted']);
+            ->withPivot(['collection', 'arrival', 'approvedby', 'deleted', 'rippled_in']);
     }
 
     /**

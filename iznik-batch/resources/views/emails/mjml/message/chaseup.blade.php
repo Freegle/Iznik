@@ -9,10 +9,10 @@
                 <mj-text font-size="20px" font-weight="bold" mj-class="text-success">
                     What happened to: {{ $messageSubject }}
                 </mj-text>
-                <mj-text>
+                <mj-text font-size="16px" line-height="1.6">
                     Dear {{ $userName ?? 'there' }},
                 </mj-text>
-                <mj-text>
+                <mj-text font-size="16px" line-height="1.6">
                     Please click one of the following buttons to let us know what happened to your message <strong>{{ $messageSubject }}</strong>:
                 </mj-text>
             </mj-column>

@@ -16,6 +16,7 @@
               max-height="600px"
               div-id="div-gpt-ad-1691925773522-0"
               class="mt-2"
+              placement="message_sidebar"
               show-logged-out
             />
           </VisibleWhen>
@@ -32,9 +33,7 @@
                   message.deleted ||
                   (message.groups &&
                     message.groups.length &&
-                    message.groups.every(
-                      (g) => g.collection === 'Rejected'
-                    )))))
+                    message.groups.every((g) => g.collection === 'Rejected')))))
           "
           class="error-page"
         >

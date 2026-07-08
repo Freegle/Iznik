@@ -18,7 +18,21 @@ export function createRetryCoalescer(getUppy) {
     queueMicrotask(() => {
       scheduled = false
       try {
-        getUppy()?.retryAll()
+        // retryAll() returns a promise in Uppy 4. Uppy's own tus retry can throw
+        // "Cannot use 'in' operator to search for 'error' in undefined" from an
+        // undefined file in its internal list - and because that surfaces from
+        // an async continuation it REJECTS the promise rather than throwing
+        // synchronously, so the try/catch alone misses it and it reaches Sentry
+        // uncaught. Handle the rejection too.
+        const result = getUppy()?.retryAll()
+        if (result && typeof result.then === 'function') {
+          result.catch((retryError) => {
+            console.error(
+              'retryAll() rejected (Uppy state corruption)',
+              retryError
+            )
+          })
+        }
       } catch (retryError) {
         console.error('retryAll() failed (Uppy state corruption)', retryError)
       }

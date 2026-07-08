@@ -159,6 +159,7 @@ const (
 	PERM_SPAM_ADMIN          = "SpamAdmin"
 	PERM_TEAMS               = "Teams"
 	PERM_BUSINESS_CARDS      = "BusinessCardsAdmin"
+	PERM_CLEARANCE           = "Clearance"
 )
 
 // HasPermission checks if a user has a specific permission.
@@ -222,7 +223,6 @@ func IsModOfAnyGroup(myid uint64) bool {
 	return count > 0
 }
 
-
 // HashPassword computes sha1(password + salt).
 func HashPassword(password, salt string) string {
 	h := sha1.New()
@@ -277,15 +277,26 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 
-	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
+	// Read the new session id from the INSERT's LastInsertId on the write
+	// connection. A "SELECT id ... WHERE userid ORDER BY id DESC LIMIT 1" here is
+	// routed to a read replica by the read/write split and, under Galera's
+	// cross-node apply window, can return the user's PREVIOUS session - so the
+	// persistent token/JWT would carry the wrong session id (cf. message create,
+	// Discourse 9832). db.DB() returns the source even with dbresolver registered.
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, "", fmt.Errorf("database error: %w", err)
+	}
+	res, err := sqlDB.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
 		userID, series, token)
-
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&sessionID)
-
-	if sessionID == 0 {
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create session: %w", err)
+	}
+	lastID, err := res.LastInsertId()
+	if err != nil || lastID <= 0 {
 		return nil, "", fmt.Errorf("failed to create session")
 	}
+	sessionID := uint64(lastID)
 
 	persistent := map[string]interface{}{
 		"id":     sessionID,

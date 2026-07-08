@@ -457,14 +457,18 @@ func GetMemberships(c *fiber.Ctx) error {
 				groupArg, collection, searchID, limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
+			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
+			// users, created with fullname=NULL) have their name only in firstname/lastname,
+			// so a fullname-only LIKE silently excludes them from name search even though
+			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
 			db.Raw("SELECT "+selectCols+" "+
 				fromClause+filterJoin+
 				" LEFT JOIN users_emails ue ON ue.userid = m.userid "+
 				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
-				" AND (u.fullname LIKE ? OR ue.email LIKE ?) "+
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) "+
 				"GROUP BY m.id "+
 				"ORDER BY m.added DESC LIMIT ?",
-				groupArg, collection, searchPattern, searchPattern, limit).Scan(&members)
+				groupArg, collection, searchPattern, searchPattern, searchPattern, searchPattern, limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).

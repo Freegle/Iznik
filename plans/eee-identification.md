@@ -1231,3 +1231,70 @@ Three independent signals now line up:
 - **Per-field accuracy vs MV quorum** (live; Gemini 94 on Condition, 76 on Size)
 
 Each new signal has confirmed the previous one's direction without overturning it. The remaining work to make the dashboard tell a complete model-by-model story is mechanical: re-run the slower models against the newer item set.
+
+#### Live results (2026-06-11, 14d after launch)
+
+Live tunnel into prod `microactions`:
+
+| Metric | Value |
+|---|---:|
+| EEELabel microactions | **832** |
+| Distinct volunteers | **97** |
+| Distinct items labelled | 399 |
+| Items at quorum (≥3 labels) | **211 (53%)** |
+| Daily rate | 30–80 labels/day |
+
+Label distributions (n=832):
+
+- **Condition**: reusable 78%, unsure 18%, damaged 4%
+- **Weight**: under_1kg 25%, 1–5kg 25%, 5–20kg 19%, unsure 14%, 20–100kg 10%, over_100kg 6%
+- **Size**: large 29%, medium 25%, small 25%, unsure 14%, tiny 7%
+
+Volunteer "unsure" rate on Condition is 18% — notably higher than Weight (14%) and Size (14%), suggesting the condition prompt could be clearer.
+
+#### Model vs human agreement (current dashboard)
+
+| Field | n (ground truth) | Model | Agree |
+|---|---:|---|---:|
+| EEE (is-electrical) | 193 (Natalie) | Claude Sonnet 4.6 | **98%** |
+| EEE | 193 | Qwen2.5-VL-72B | 97% |
+| EEE | 193 | Gemini 2.0 Flash-Lite | 96% |
+| EEE | 193 | GPT-4o | 90% |
+| Condition | 232 (MV plurality) | Gemini 2.0 Flash-Lite | **93%** |
+| Size | 228 (MV) | Gemini 2.0 Flash-Lite | 72% |
+| Weight | 227 (MV) | Gemini 2.0 Flash-Lite | **65%** |
+
+Verdict:
+
+- **Is-electrical** is solved. Sonnet 4.6 (98%) and the much cheaper Gemini Flash-Lite (96%) are both well past prod-usable; pick on cost.
+- **Condition** at 93% matches the human prior (4% damaged) without over-flagging.
+- **Size** (72%) is mediocre; most disagreement is off-by-one in the 5-bucket scale. Acceptable for gross filtering.
+- **Weight** (65%) is the weak link. Image-only weight estimation is hard for humans too — volunteer "unsure" is highest on this field. The model may already be near the human ceiling; worth measuring inter-human agreement before chasing this further.
+
+#### Dataset dedupe finding (2026-07-01)
+
+Investigating the raw 7.3M-row `freegle_date.csv` (Offers + Wanteds since 2015) turned up material duplication that inflates the headline count:
+
+- **Same-day exact-subject collisions**: 632k groups covering 1.76M rows (24%).
+- **After stripping `[Group]` prefix + normalising**: 688k groups covering 1.90M rows.
+- **`Re:` reply captures**: only 1,664 rows (0.02%) — safe to drop; sample confirmed all are Yahoo-Groups reply-to-list captures, not real listings.
+- **Rippling contribution**: none — rippling went live June 2026, so pre-2026 dupes are all manual cross-post + relist + Yahoo Groups mail duplication.
+
+The correct dedupe key is `(fromuser, day, normalised subject)`. Measured live via V2 tunnel over all `messages` since 2015-01-01:
+
+| Method | Rows | Distinct listings | Removed |
+|---|---:|---:|---:|
+| Raw messages rows | 7,523,746 | — | — |
+| `(fromuser, day, full-subject)` | | 6,336,401 | **1,187,345 (15.8%)** |
+| `(fromuser, day, `[Group]`-stripped subject)` | | **6,266,134** | **1,257,612 (16.7%)** |
+
+The extra ~70k rows dropped between rows 2 and 3 are the cross-post pattern (same user + same second, N group-prefixed copies).
+
+Diagnostic anchors from the live DB:
+
+- **"OFFER Digital Camera Liberton" ×3** (2015-12-31): all `fromuser=2178238`, posted at 15:55/15:58/16:00. Same physical camera, three duplicate submissions (retry). Later same-day `TAKEN` for `Ricoh digital camera` confirmed.
+- **"OFFER: chest freezer" ×3** (2015-12-31, three neighbouring groups): all `fromuser=142567`, posted at exactly the same second across Letchworth / WGC / Stevenage. Classic manual cross-post.
+
+Both collapse cleanly under the user-aware key.
+
+For the impact report, the honest headline is **~6.3M distinct listings** (from 7.5M raw post rows), 2015 to date. The material-focus 7.3M → 2.17M → 1.21M cascade still holds directionally, but each of those numbers should be re-derived from the user-aware deduped base (2026-07-01 fresh dump: `freegle_electrical_v3.csv.gz` in `~/Downloads`, same 3-column format).

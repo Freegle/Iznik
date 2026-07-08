@@ -3,6 +3,7 @@ import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 import { useGroupStore } from '~/stores/group'
+import { useNearbyStore } from '~/stores/nearby'
 import { useMe } from '~/composables/useMe'
 import {
   timeagoShort,
@@ -22,11 +23,35 @@ export function useMessageDisplay(messageId) {
   const authStore = useAuthStore()
   const userStore = useUserStore()
   const groupStore = useGroupStore()
+  const nearbyStore = useNearbyStore()
   const { me } = useMe()
 
   const message = computed(() =>
     messageStore?.byId(messageId.value || messageId)
   )
+
+  // The browse feed carries a server-computed distance per post (blurred great-circle
+  // miles from the viewer) which the feed also sorts and filters on. Prefer it for the
+  // badge so the distance shown always matches the feed's ordering and the distance
+  // slider. It lives in the nearby store keyed by id (the full message record fetched
+  // here has no such field), so look it up by id; null when this message isn't a feed
+  // post (search, My Posts, ModTools ...), in which case we fall back to a client calc.
+  const serverDistanceMiles = computed(() => {
+    const id = Number(messageId?.value ?? messageId)
+    if (!Number.isFinite(id)) {
+      return null
+    }
+    const d = nearbyStore.distanceById.get(id)
+    return Number.isFinite(d) ? d : null
+  })
+
+  // Whether this post is pinned (a paid bulk-offer clearance floated to the top of the
+  // feed). Like the distance, `pinned` is a feed-only flag looked up by id from the
+  // nearby store; false off the feed (search, My Posts ...).
+  const isPinned = computed(() => {
+    const id = Number(messageId?.value ?? messageId)
+    return Number.isFinite(id) && nearbyStore.pinnedIds.has(id)
+  })
 
   // Get the group for this message (first group it's posted to)
   const messageGroup = computed(() => {
@@ -102,32 +127,34 @@ export function useMessageDisplay(messageId) {
     return message.value?.attachments?.length || 0
   })
 
+  // The timestamp the card's age reads from. Group arrival gives accurate
+  // autopost/repost times (like MessageHistory) - but under rippling, groups[]
+  // also contains rippled-IN copies whose arrival is the ripple-bump time, and
+  // groups[0] is whichever row the API returned first. Showing a bump time made
+  // a 7-hour-old post read "1 hour" while "Newest posted" (correctly) sorted it
+  // by original post time, so the feed order looked shuffled. Use the ORIGIN
+  // row (rippled_in = 0; absent on non-rippled feeds where !rippled_in is true).
+  const displayTimestamp = computed(() => {
+    const origin = message.value?.groups?.find((g) => !g.rippled_in)
+    return origin?.arrival || message.value?.arrival || message.value?.date
+  })
+
   const timeAgo = computed(() => {
-    // Use group arrival time (like MessageHistory does) for accurate autopost times
-    const timestamp =
-      message.value?.groups?.[0]?.arrival ||
-      message.value?.arrival ||
-      message.value?.date
+    const timestamp = displayTimestamp.value
     if (!timestamp) return ''
     return timeagoShort(timestamp)
   })
 
   const fullTimeAgo = computed(() => {
     // Full time description for tooltip
-    const timestamp =
-      message.value?.groups?.[0]?.arrival ||
-      message.value?.arrival ||
-      message.value?.date
+    const timestamp = displayTimestamp.value
     if (!timestamp) return ''
     return `Posted ${timeago(timestamp)}`
   })
 
   const timeAgoExpanded = computed(() => {
     // Medium time format for lg+ screens: "2 hours", "3 days"
-    const timestamp =
-      message.value?.groups?.[0]?.arrival ||
-      message.value?.arrival ||
-      message.value?.date
+    const timestamp = displayTimestamp.value
     if (!timestamp) return ''
     return timeagoMedium(timestamp)
   })
@@ -139,6 +166,10 @@ export function useMessageDisplay(messageId) {
   })
 
   const distanceText = computed(() => {
+    const server = serverDistanceMiles.value
+    if (server != null) {
+      return server < 1 ? '<1mi' : `${Math.round(server)}mi`
+    }
     if (!me.value?.lat || !message.value?.lat) {
       return message.value?.area || null
     }
@@ -155,6 +186,14 @@ export function useMessageDisplay(messageId) {
   })
 
   const distanceTextExpanded = computed(() => {
+    const server = serverDistanceMiles.value
+    if (server != null) {
+      if (server < 1) {
+        return 'less than 1 mile'
+      }
+      const rounded = Math.round(server)
+      return rounded === 1 ? '1 mile' : `${rounded} miles`
+    }
     if (!me.value?.lat || !message.value?.lat) {
       return message.value?.area || null
     }
@@ -234,6 +273,7 @@ export function useMessageDisplay(messageId) {
     fullTimeAgo,
     distanceText,
     distanceTextExpanded,
+    isPinned,
     replyCount,
     replyTooltip,
     isOffer,

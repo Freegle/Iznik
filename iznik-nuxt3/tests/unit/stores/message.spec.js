@@ -9,8 +9,10 @@ const mockSave = vi.fn()
 const mockFetch = vi.fn()
 const mockSearch = vi.fn()
 const mockFetchMessages = vi.fn()
-const mockFetchMT = vi.fn()
 const mockView = vi.fn()
+const mockMarkSeen = vi.fn()
+const mockCount = vi.fn()
+const mockNearbyMarkSeen = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -21,6 +23,8 @@ vi.mock('~/api', () => ({
       search: mockSearch,
       fetchMessages: mockFetchMessages,
       view: mockView,
+      markSeen: mockMarkSeen,
+      count: mockCount,
     },
   }),
 }))
@@ -37,8 +41,9 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => ({}),
 }))
 
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => ({}),
+const mockNearbyStore = { markSeen: mockNearbyMarkSeen, messageList: [] }
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => mockNearbyStore,
 }))
 
 const mockMiscStore = { modtools: false }
@@ -291,10 +296,7 @@ describe('message store - searchMT()', () => {
 
   it('handles fetchMT failure for individual results gracefully', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockSearch.mockResolvedValue([
-      { id: 201 },
-      { id: 202 },
-    ])
+    mockSearch.mockResolvedValue([{ id: 201 }, { id: 202 }])
 
     const store = useMessageStore()
     store.fetchMT = vi.fn().mockImplementation(({ id }) => {
@@ -316,11 +318,12 @@ describe('message store - searchMT()', () => {
     expect(ids).toEqual([202])
   })
 
-  it('uses keyword search when searchmode is not vector', async () => {
+  it('always uses vector search even when no searchmode is passed (keyword path retired)', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockFetchMessages.mockResolvedValue({
-      messages: [301, 302],
-    })
+    mockSearch.mockResolvedValue([
+      { id: 301, msgid: 301 },
+      { id: 302, msgid: 302 },
+    ])
 
     const store = useMessageStore()
     store.fetchMT = vi.fn().mockImplementation(({ id }) => {
@@ -334,27 +337,16 @@ describe('message store - searchMT()', () => {
       groupid: 50,
     })
 
-    expect(mockFetchMessages).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subaction: 'searchall',
-        search: 'bike',
-        exactonly: true,
-        groupid: 50,
-      })
-    )
+    // The V2 vector endpoint is used regardless of searchmode; the old keyword
+    // fetchMessages(subaction:'searchall') path has been removed.
+    expect(mockSearch).toHaveBeenCalledWith({
+      search: 'bike',
+      messagetype: 'All',
+      groupids: '50',
+      searchmode: 'vector',
+    })
+    expect(mockFetchMessages).not.toHaveBeenCalled()
     expect(store.fetchMT).toHaveBeenCalledTimes(2)
-  })
-
-  it('handles empty keyword search results', async () => {
-    useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockFetchMessages.mockResolvedValue({ messages: [] })
-
-    const store = useMessageStore()
-    store.fetchMT = vi.fn()
-
-    await store.searchMT({ term: 'nothing' })
-
-    expect(store.fetchMT).not.toHaveBeenCalled()
   })
 })
 
@@ -447,5 +439,112 @@ describe('message store - fetchMessagesMT() pagination context', () => {
     })
 
     expect(mockFetchMessages.mock.calls[0][0].context).toBeNull()
+  })
+})
+
+describe('message store - markSeen()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockCount.mockResolvedValue({ count: 0 })
+  })
+
+  it('marks only the given ids as seen in the local cache', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.list = {
+      1: { id: 1, unseen: true },
+      2: { id: 2, unseen: true },
+      3: { id: 3, unseen: true },
+    }
+
+    await store.markSeen([1, 3])
+
+    expect(mockMarkSeen).toHaveBeenCalledWith([1, 3])
+    expect(mockNearbyMarkSeen).toHaveBeenCalledWith([1, 3])
+    expect(store.list[1].unseen).toBe(false)
+    expect(store.list[2].unseen).toBe(true) // untouched
+    expect(store.list[3].unseen).toBe(false)
+  })
+
+  it('ignores ids that are not in the cache', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.list = { 1: { id: 1, unseen: true } }
+
+    await store.markSeen([1, 999])
+
+    expect(store.list[1].unseen).toBe(false)
+    expect(store.list[999]).toBeUndefined()
+  })
+
+  it('refreshes the count for the member browse view and distance, not the default', async () => {
+    useAuthStore.mockReturnValue({
+      user: { id: 1, settings: { browseView: 'mygroups', browseMaxDistance: 10 } },
+    })
+    const store = useMessageStore()
+    store.init({})
+    store.list = { 1: { id: 1, unseen: true } }
+
+    await store.markSeen([1])
+
+    // fetchCount -> api.message.count(browseView, maxDistance, log): the badge must be
+    // recomputed for the member's actual view, else a mygroups/slider member sees a
+    // different view's number and it never drops to zero.
+    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true)
+  })
+})
+
+describe('message store - markSeenSiblings()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockNearbyStore.messageList = []
+  })
+
+  it('marks only the still-unseen sibling copies and does not refetch the count', async () => {
+    mockNearbyStore.messageList = [
+      { id: 10, unseen: true },
+      { id: 11, unseen: true },
+      { id: 12, unseen: false }, // already seen - must be skipped
+    ]
+    const store = useMessageStore()
+    store.init({})
+    store.list = {
+      10: { id: 10, unseen: true },
+      11: { id: 11, unseen: true },
+      12: { id: 12, unseen: false },
+    }
+
+    await store.markSeenSiblings([11, 12])
+
+    expect(mockMarkSeen).toHaveBeenCalledWith([11])
+    expect(mockNearbyMarkSeen).toHaveBeenCalledWith([11])
+    expect(store.list[11].unseen).toBe(false)
+    expect(store.list[12].unseen).toBe(false) // unchanged
+    // Unlike markSeen(), the light sibling path leaves the count refresh to scroll/poll.
+    expect(mockCount).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when no sibling is still unseen', async () => {
+    mockNearbyStore.messageList = [{ id: 20, unseen: false }]
+    const store = useMessageStore()
+    store.init({})
+
+    await store.markSeenSiblings([20])
+
+    expect(mockMarkSeen).not.toHaveBeenCalled()
+    expect(mockNearbyMarkSeen).not.toHaveBeenCalled()
+  })
+
+  it('ignores an empty id list', async () => {
+    const store = useMessageStore()
+    store.init({})
+
+    await store.markSeenSiblings([])
+
+    expect(mockMarkSeen).not.toHaveBeenCalled()
   })
 })

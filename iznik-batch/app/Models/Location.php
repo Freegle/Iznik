@@ -43,6 +43,31 @@ class Location extends Model implements Auditable
             ->first();
     }
 
+    /**
+     * "AB10 1XG (Gilcomston)" or just "AB10 1XG" if no area — used for the ripple
+     * proximity ("quicker to get to") moderator note. Does not change
+     * closestPostcode()'s existing return shape; this is a separate helper with its
+     * own (postcode, area) join.
+     */
+    public static function describeNearest(float $lat, float $lng): ?string
+    {
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
+        if (empty($ids)) {
+            return null;
+        }
+
+        $loc = DB::table('locations as p')
+            ->leftJoin('locations as a', 'a.id', '=', 'p.areaid')
+            ->where('p.id', $ids[0])
+            ->select('p.name as postcode', 'a.name as area')
+            ->first();
+        if (!$loc) {
+            return null;
+        }
+
+        return $loc->area ? "{$loc->postcode} ({$loc->area})" : $loc->postcode;
+    }
+
     public static function findByName(string $name): ?int
     {
         return static::getByName($name)?->id;

@@ -1968,6 +1968,51 @@ func TestGetMembershipsSearch(t *testing.T) {
 	assert.True(t, found, "searched member should be in results")
 }
 
+// A LoveJunk member is created with fullname=NULL and a name only in firstname/lastname.
+// Name search must still find them (Discourse 9518/371) - previously the WHERE clause only
+// matched u.fullname, so NULL LIKE '%term%' silently excluded them while ID search worked.
+func TestGetMembershipsSearchNullFullname(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("lj_search")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Simulate a LoveJunk member: fullname NULL, name in firstname/lastname only.
+	lastname := prefix + "_findme"
+	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
+	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES ('Lj', ?, NULL, 'User', NULL, ?)", lastname, settings)
+	assert.NoError(t, res.Error)
+	var targetID uint64
+	db.Raw("SELECT id FROM users WHERE lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", lastname).Scan(&targetID)
+	assert.NotZero(t, targetID, "LoveJunk-style user should have been created")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%s&jwt=%s", groupID, prefix+"_findme", token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+
+	found := false
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+		if uid == targetID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "member with NULL fullname should be found by lastname search")
+}
+
 func TestGetMembershipsPendingCollection(t *testing.T) {
 	prefix := uniquePrefix("mod_getpend")
 	groupID := CreateTestGroup(t, prefix)

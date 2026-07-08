@@ -92,9 +92,6 @@
                   class="mb-2"
                 >
                   <option :value="null">None</option>
-                  <option value="little-free-shop-2026">
-                    Little Free Shop 2026
-                  </option>
                 </b-form-select>
               </b-form-group>
               <div v-if="selectedTemplate">
@@ -259,11 +256,10 @@ const created = ref(false)
 const essential = ref(true)
 const selectedTemplate = ref(null)
 
-const templateDefaults = {
-  'little-free-shop-2026': {
-    subject: 'Could you help us start a Little Free Shop?',
-  },
-}
+// Pre-designed admin-email templates, keyed by template id (see the template <select> above).
+// Empty now the one-off "Little Free Shop 2026" campaign is over; the mechanism stays for future
+// templated admin emails.
+const templateDefaults = {}
 
 // Computed properties
 const pendingcount = computed(() => {

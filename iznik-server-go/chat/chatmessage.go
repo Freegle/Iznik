@@ -12,11 +12,14 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 // =============================================================================
@@ -49,8 +52,13 @@ type ChatMessage struct {
 	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
 	Addressid      *uint64 `json:"addressid" gorm:"-"`
 	Modnote        bool    `json:"modnote" gorm:"-"`
-	Archived       int     `json:"-" gorm:"-"`
-	Deleted        bool    `json:"-"`
+	// Replysource is the client-reported surface an Interested reply came from (browse,
+	// search, message_page, notification, ...). Advisory reply-provenance evidence for the
+	// rippling attribution capture - sanitised there, stored in rippling_reply_attribution,
+	// never a chat_messages column.
+	Replysource *string `json:"replysource" gorm:"-"`
+	Archived    int     `json:"-" gorm:"-"`
+	Deleted     bool    `json:"-"`
 }
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the
@@ -334,6 +342,114 @@ func GetReviewChatMessages(c *fiber.Ctx) error {
 // POST / CREATE handlers
 // =============================================================================
 
+// replyReachEvidence carries what the rippling reply gate already computed about the replier's
+// location vs the post's reach polygon, so the attribution capture doesn't repeat the spatial
+// query. checked distinguishes "gate ran and found no reach row" from "gate couldn't run"
+// (no location, or rippling_reach doesn't exist yet).
+type replyReachEvidence struct {
+	haveLocation bool
+	lat, lng     float64
+	checked      bool
+	reachRows    int
+	inReach      int
+}
+
+// recordReplyAttribution snapshots, at reply time, the evidence for how the replier came to see
+// the post, plus the derived attribution channel (see rippling.DeriveAttribution for the ladder
+// and the rippling_reply_attribution migration for column semantics). Snapshotting matters
+// because the evidence decays: the Nuxt reply flow joins the replier to the group in order to
+// reply (useReplyStateMachine.handleJoinGroup) so a retrospective membership check would
+// mis-count every rippling reply as home-group; members leave; locations drift; reach polygons
+// grow. INSERT IGNORE = first reply only; frozen so none of that can rewrite history.
+// Best-effort throughout: attribution must never break replying, so errors are swallowed, and
+// until the graded columns are migrated (production lags dev) it falls back to the legacy
+// was_home_member-only insert.
+func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach replyReachEvidence, clientSource *string) {
+	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
+	// predates this reply by more than the join grace (300s)? A join made to reply
+	// (added ~ now) is excluded.
+	var wasHome int
+	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
+		"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+		"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
+		"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasHome)
+
+	if !rippling.AttributionSchemaReady(db) {
+		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
+			"VALUES (?, ?, NOW(), ?)", refmsgid, myid, wasHome)
+		return
+	}
+
+	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
+	// the notified ledger - the strongest direct ripple-delivery evidence.
+	var wasNotified int
+	db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach_notified WHERE msgid = ? AND userid = ?)",
+		refmsgid, myid).Scan(&wasNotified)
+
+	// Established member of a group the post rippled INTO: added before the rippled copy
+	// arrived, so they were already there when it rippled in and saw it in their own group's
+	// feed/digest because of the ripple. The cut is the copy's arrival, NOT the 300s grace:
+	// the join-to-reply flow can join the rippled copy's group, and a pre-arrival membership
+	// is the only sound "they were already there" test.
+	var wasRippleGroup int
+	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
+		"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+		"AND mem.collection = ? AND mem.added < mg.arrival "+
+		"WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasRippleGroup)
+
+	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
+	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the
+	// gate's reach lookup when it ran; only query rippling_reach (which may not exist yet -
+	// best-effort) when it didn't.
+	var postHadRippled int
+	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups WHERE msgid = ? AND rippled_in = 1 AND deleted = 0)",
+		refmsgid).Scan(&postHadRippled)
+	if postHadRippled == 0 && reach.reachRows > 0 {
+		postHadRippled = 1
+	}
+	if postHadRippled == 0 && !reach.checked {
+		var hasReach int
+		if err := db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach WHERE msgid = ?)",
+			refmsgid).Scan(&hasReach).Error; err == nil && hasReach == 1 {
+			postHadRippled = 1
+		}
+	}
+
+	// Location evidence - nil (NULL in the row) when the replier has no usable location, which
+	// is distinct from a definite "outside".
+	var inOrigin, inReach *int
+	if reach.haveLocation {
+		v := 0
+		// Inside any origin group's catchment? polyindex is the group's DPA-or-CGA; groups
+		// with only a POINT placeholder can't contain anything and are excluded.
+		db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN `groups` g ON g.id = mg.groupid "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
+			"AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+			"AND ST_Contains(g.polyindex, ST_SRID(POINT(?, ?), ?)))",
+			refmsgid, reach.lng, reach.lat, utils.SRID).Scan(&v)
+		inOrigin = &v
+		if reach.checked {
+			r := 0
+			if reach.reachRows > 0 && reach.inReach == 1 {
+				r = 1
+			}
+			inReach = &r
+		}
+	}
+
+	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, postHadRippled, inOrigin, inReach)
+
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution "+
+		"(msgid, userid, replied_at, was_home_member, was_notified, was_ripple_group_member, "+
+		"in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) "+
+		"VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
+		refmsgid, myid, wasHome, wasNotified, wasRippleGroup, inOrigin, inReach, postHadRippled,
+		attribution, rippling.SanitizeClientSource(clientSource))
+}
+
 func CreateChatMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	db := database.DBConn
@@ -399,20 +515,65 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to
+	// messages.id, and prod purges deleted/rejected/expired posts quickly. If the client replies
+	// to a post that has since been purged, the INSERT below would violate the FK and fail with a
+	// swallowed 500 ("Error creating chat message") — surfacing as the fatal "Oh Dear" page with no
+	// trace anywhere (the access log drops 500s). Detect it up front and return a clean status so
+	// the client can show "this post is no longer available" instead. (CreateChatMessageLoveJunk
+	// already does the equivalent check; the in-app path never had it.)
+	if payload.Refmsgid != nil {
+		var refExists int
+		db.Raw("SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND deleted IS NULL)", *payload.Refmsgid).Scan(&refExists)
+		if refExists == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "refmsg_gone")
+		}
+	}
+
 	// Rippling-out reply gate (#5): an in-app reply to a post (CHAT_MESSAGE_INTERESTED) the
 	// viewer can see but whose reach has not yet reached them (replyeligible=false in the read
 	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
 	// or modified client, or a ?reply= deep link. Mirror the read-path reply-eligibility check:
 	// a rippling_reach row exists for the post and does NOT contain the replier's location.
+	//
+	// This only governs a User2User reply to the POSTER — the flow reply-eligibility is about. A
+	// refmsgid-bearing message to mods (User2Mod) must NEVER be reach-gated: reporting a post has
+	// to work regardless of where you are. Reports carry refmsgid (to link the post) and so are
+	// typed CHAT_MESSAGE_INTERESTED, so without this scope a report of a rippled post 403s when the
+	// reporter is outside the post's reach polygon (Discourse #9852). Restricting to User2User does
+	// not weaken reply-eligibility, since genuine Interested replies are always User2User.
+	// The room type also scopes the attribution capture below (a refmsgid message in a
+	// User2Mod room is a REPORT, not a reply), so fetch it once here.
+	roomType := ""
+	reach := replyReachEvidence{}
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		latlng := user.GetLatLng(myid)
-		if latlng.Lat != 0 || latlng.Lng != 0 {
-			var blocked int
-			// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
-			if err := db.Raw("SELECT COUNT(*) FROM rippling_reach WHERE msgid = ? "+
-				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				*payload.Refmsgid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&blocked).Error; err == nil && blocked > 0 {
-				return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+		db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", id).Scan(&roomType)
+		if roomType == utils.CHAT_TYPE_USER2USER {
+			latlng := user.GetLatLng(myid)
+			if latlng.Lat != 0 || latlng.Lng != 0 {
+				reach.haveLocation = true
+				reach.lat = float64(latlng.Lat)
+				reach.lng = float64(latlng.Lng)
+				// One query answers both "does a reach row exist" and "does it contain the
+				// replier" (msgid is the PK, so at most one row): the gate blocks when a reach
+				// row exists that does NOT contain the point, and the attribution capture
+				// below reuses the containment result instead of repeating the spatial query.
+				// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
+				var rc struct {
+					ReachRows int `gorm:"column:reach_rows"`
+					InReach   int `gorm:"column:in_reach"`
+				}
+				if err := db.Raw("SELECT COUNT(*) AS reach_rows, "+
+					"COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach "+
+					"FROM rippling_reach WHERE msgid = ?",
+					latlng.Lng, latlng.Lat, utils.SRID, *payload.Refmsgid).Scan(&rc).Error; err == nil {
+					reach.checked = true
+					reach.reachRows = rc.ReachRows
+					reach.inReach = rc.InReach
+					if rc.ReachRows > 0 && rc.InReach == 0 {
+						return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+					}
+				}
 			}
 		}
 	}
@@ -424,30 +585,45 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
-	db.Create(&payload)
+	if result := db.Create(&payload); result.Error != nil {
+		// Don't swallow the underlying DB error: without this, FK violations (e.g. a purged
+		// refmsgid/chatid) and any other insert failure vanish — the access log drops 500s and
+		// nothing reaches Sentry, leaving the user's "Oh Dear" undiagnosable.
+		stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
+			id, myid, payload.Refmsgid, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
 	newid := payload.ID
 
 	if newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 
-	// Rippling reply attribution (sysadmin KPI): for an Interested reply, snapshot whether the
-	// replier was already an ESTABLISHED home-group member at the instant they replied. The Nuxt
-	// reply flow joins the group in order to reply (useReplyStateMachine.handleJoinGroup), so a
-	// membership existing right now isn't enough - we require an approved membership of an ORIGIN
-	// (non-rippled-in) group of the post that predates this reply by more than the join grace
-	// (300s). A join made to reply (added ~ now) is therefore excluded and counts as rippling.
-	// Frozen here so a later leave can't erase the signal. INSERT IGNORE = first reply only.
-	// Best-effort: never blocks the reply.
+	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the
+	// evidence for HOW the replier came to see the post, and the derived attribution channel.
+	// Scoped to User2User: a refmsgid message in a User2Mod room is a report of the post, not
+	// a reply, and must not pollute the reply-source metric. Best-effort: never blocks the reply.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER {
+		recordReplyAttribution(db, myid, *payload.Refmsgid, reach, payload.Replysource)
+	}
+
+	// A report from the website is a User2Mod chat message referencing the reported
+	// post (that's what the report flow sends). Treat it as a microvolunteering Reject
+	// verdict feeding the review quorum: a moderator of the reported community pulls that
+	// community's copy to Pending, and once the quorum of verdicts is reached the post is
+	// pulled to Pending on ALL its groups. The report's target community is the User2Mod
+	// chat's group. Only User2Mod refmsgid messages are reports - a User2User refmsgid
+	// message is an Interested reply to the poster, not a report. Best-effort: never
+	// blocks the report.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		var wasHome int
-		db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
-			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
-			myid, utils.COLLECTION_APPROVED, *payload.Refmsgid).Scan(&wasHome)
-		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
-			"VALUES (?, ?, NOW(), ?)", *payload.Refmsgid, myid, wasHome)
+		var reportRoom struct {
+			Chattype string
+			Groupid  uint64
+		}
+		db.Raw("SELECT chattype, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&reportRoom)
+		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
+			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
+		}
 	}
 
 	if payload.Imageid != nil {
@@ -1212,7 +1388,11 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 	}
 
 	var counts []countRow
-	db.Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
+	// Pin to the write host: callers invoke this immediately after UPDATEing
+	// chat_messages.reviewrequired/reviewrejected on the source, and these recounted
+	// totals are written back to chat_rooms. A lagging replica read would persist
+	// stale valid/invalid counts that survive until the next approve/reject.
+	db.Clauses(dbresolver.Write).Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
 		"COUNT(*) AS count FROM chat_messages WHERE chatid = ? "+
 		"GROUP BY CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END",
 		chatID).Scan(&counts)

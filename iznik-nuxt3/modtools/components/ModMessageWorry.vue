@@ -104,15 +104,6 @@
           see anything wrong, it's fine to approve.
         </span>
       </span>
-      <span v-else-if="reason.check === 'IpAbuse'">
-        <strong>IP abuse:</strong> {{ reason.detail }}.
-        <span v-if="reason.users && reason.users.length">
-          Recent sender user IDs from this IP: {{ reason.users.join(', ') }}
-        </span>
-        <span v-else-if="reason.groups && reason.groups.length">
-          Group IDs posted to from this IP: {{ reason.groups.join(', ') }}
-        </span>
-      </span>
       <span v-else-if="reason.check === 'NotAnItem'">
         <strong>Possibly not an item:</strong> {{ reason.detail }}. This may be
         a service, rental, job, or help/advice request rather than a physical

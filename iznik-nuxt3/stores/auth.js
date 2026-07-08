@@ -11,6 +11,13 @@ import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 import { useMobileStore } from '@/stores/mobile'
 import { useMiscStore } from '~/stores/misc'
+import { useDebugStore } from '~/stores/debug'
+import { trackConversion } from '~/composables/useTrackConversion'
+
+// A login that lands on an account created this recently is treated as the
+// registration itself (social logins create the account server-side, so the
+// client only finds out here).
+const NEW_ACCOUNT_WINDOW_MS = 5 * 60 * 1000
 
 export const useAuthStore = defineStore({
   id: 'auth',
@@ -234,6 +241,16 @@ export const useAuthStore = defineStore({
         const { persistent, jwt } = res
         this.setAuth(jwt, persistent)
         await this.fetchUser()
+
+        // Social logins create the account server-side on first use, so a
+        // brand-new account here means this login WAS the registration.
+        if (params.fblogin || params.googlelogin || params.applelogin) {
+          const added = Date.parse(this.user?.added)
+
+          if (added && Date.now() - added < NEW_ACCOUNT_WINDOW_MS) {
+            trackConversion('Register with Website')
+          }
+        }
       } catch (e) {
         if (e instanceof LoginError) {
           throw e
@@ -295,6 +312,9 @@ export const useAuthStore = defineStore({
         this.forceLogin = false
         this.setAuth(jwt, persistent)
         await this.fetchUser()
+
+        // Signup confirmed by the server - this is the conversion point.
+        trackConversion('Register with Website')
       } catch (e) {
         console.log('exception', e?.response?.data)
 
@@ -332,6 +352,18 @@ export const useAuthStore = defineStore({
             },
             false
           )
+
+          if (sessionData?.ret === 123) {
+            // Server kill switch: GET /session returns HTTP 200 with ret:123 when
+            // this client build is older than app_min_webversion and is therefore
+            // too old to function. The auth tokens are still valid, so we must NOT
+            // clear them - doing so would silently log the user out and bounce them
+            // to the login screen, which looks like a generic failure. Instead
+            // surface a clear "app is out of date" message and stop here.
+            useMiscStore().setAppOutOfDate(sessionData.status)
+            this.loginStateKnown = true
+            return this.user
+          }
 
           if (sessionData && sessionData.me && sessionData.me.id) {
             me = sessionData.me

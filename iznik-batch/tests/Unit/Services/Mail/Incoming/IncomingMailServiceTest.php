@@ -1105,6 +1105,58 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(ChatMessage::TYPE_INTERESTED, $chatMsg->type);
     }
 
+    /**
+     * Rippling-out: a direct-email reply to a specific post (refmsgid resolved via x-fd-msgid) from
+     * a replier whose area the post's reach has NOT reached yet must be HELD - the same gate as the
+     * digest reply path - so the poster is not notified out-of-reach via the direct-mail route.
+     */
+    public function test_direct_mail_reply_to_post_held_when_replier_outside_reach(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        // Replier located OUTSIDE the post's reach polygon (reach covers ~51.5,-0.1; replier 52.0,1.0).
+        $replier = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('replier'),
+            'lastlocation' => $this->createLocation(52.0, 1.0),
+        ]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // The post is rippling out; its reach does not yet cover the replier's location.
+        DB::statement('DELETE FROM rippling_reach WHERE msgid = ?', [$message->id]);
+        DB::insert(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, rejected_groups, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
+        );
+
+        $replierEmail = $replier->emails->first()->email;
+        $posterSlugAddr = "someslug-{$poster->id}@users.ilovefreegle.org";
+        $emailRaw = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => $posterSlugAddr,
+            'Subject' => $message->subject,
+            'x-fd-msgid' => (string) $message->id,
+        ], 'I would love this item!');
+        $parsed = $this->parser->parse($emailRaw, $replierEmail, $posterSlugAddr);
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $replier->id)
+            ->where('type', ChatMessage::TYPE_INTERESTED)
+            ->orderBy('id', 'desc')
+            ->first();
+        $this->assertNotNull($chatMsg, 'Direct mail reply to a post should create a TYPE_INTERESTED message');
+        $this->assertEquals($message->id, $chatMsg->refmsgid);
+
+        // The out-of-reach reply must be HELD so the poster is not notified until reach catches up.
+        $held = DB::table('rippling_held_replies')->where('chatmsgid', $chatMsg->id)->first();
+        $this->assertNotNull($held, 'Out-of-reach direct-email reply to a post must be held');
+        $this->assertSame('held', $held->status);
+    }
+
     public function test_direct_mail_finds_refmsgid_by_subject(): void
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
@@ -1740,74 +1792,6 @@ class IncomingMailServiceTest extends TestCase
 
         $parsed = $this->parser->parse(
             $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-    }
-
-    public function test_ip_user_threshold_detected_as_spam(): void
-    {
-        [$user, $group, $userEmail] = $this->createPostableUser();
-
-        // Create message history with many users from same IP (> USER_THRESHOLD=5)
-        for ($i = 0; $i < 6; $i++) {
-            $u = $this->createTestUser(['email_preferred' => $this->uniqueEmail("ipuser{$i}")]);
-            DB::table('messages_history')->insert([
-                'fromuser' => $u->id,
-                'prunedsubject' => "Subject {$i}",
-                'groupid' => $group->id,
-                'fromip' => '203.0.113.99',
-                'fromname' => "User {$i}",
-                'arrival' => now(),
-            ]);
-        }
-
-        // Email with the same suspicious IP
-        $rawEmail = "From: {$userEmail}\r\nTo: {$group->nameshort}@groups.ilovefreegle.org\r\n"
-            ."Subject: OFFER: Something (London)\r\nX-Freegle-IP: 203.0.113.99\r\n\r\n"
-            .'Normal body text';
-
-        $parsed = $this->parser->parse(
-            $rawEmail,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-    }
-
-    public function test_ip_group_threshold_detected_as_spam(): void
-    {
-        [$user, , $userEmail] = $this->createPostableUser();
-
-        // Create message history with many groups from same IP (>= GROUP_THRESHOLD=20)
-        for ($i = 0; $i < 20; $i++) {
-            $g = $this->createTestGroup();
-            DB::table('messages_history')->insert([
-                'fromuser' => $user->id,
-                'prunedsubject' => 'Subject',
-                'groupid' => $g->id,
-                'fromip' => '203.0.113.88',
-                'fromname' => 'Test User',
-                'arrival' => now(),
-            ]);
-        }
-
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
-
-        $rawEmail = "From: {$userEmail}\r\nTo: {$group->nameshort}@groups.ilovefreegle.org\r\n"
-            ."Subject: OFFER: Something (London)\r\nX-Freegle-IP: 203.0.113.88\r\n\r\n"
-            .'Normal body text';
-
-        $parsed = $this->parser->parse(
-            $rawEmail,
             $userEmail,
             $group->nameshort.'@groups.ilovefreegle.org'
         );
@@ -2921,11 +2905,12 @@ class IncomingMailServiceTest extends TestCase
         return [$user, $group, $userEmail];
     }
 
-    public function test_autoreply_to_notify_address_is_not_globally_dropped(): void
+    public function test_autoreply_to_notify_address_is_dropped(): void
     {
-        // Legacy code routes notify- addresses BEFORE checking auto-reply globally.
-        // An auto-reply to a notify address should reach handleChatNotificationReply(),
-        // not be dropped by the global auto-reply filter.
+        // An out-of-office / vacation auto-reply to a chat notification address is a
+        // machine response to our own email. It must be dropped, not delivered into
+        // the chat as if the member had replied - real OOO texts have been sent on
+        // to other freeglers this way.
         $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
         $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
         $chat = $this->createTestChatRoom($user1, $user2);
@@ -2935,6 +2920,8 @@ class IncomingMailServiceTest extends TestCase
         DB::table('chat_rooms')
             ->where('id', $chat->id)
             ->update(['latestmessage' => now()->subDays(1)]);
+
+        $chatMessagesBefore = DB::table('chat_messages')->where('chatid', $chat->id)->count();
 
         $email = $this->createMinimalEmail([
             'From' => $user2Email,
@@ -2951,7 +2938,102 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        // Should be routed to user (chat reply), NOT dropped
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            $chatMessagesBefore,
+            DB::table('chat_messages')->where('chatid', $chat->id)->count(),
+            'auto-reply must not create a chat message'
+        );
+    }
+
+    public function test_human_reply_to_notify_address_is_not_dropped_as_autoreply(): void
+    {
+        // A genuine reply without auto-reply markers must still be delivered.
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subDays(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'Yes please, I can collect tomorrow evening.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_USER, $result);
+    }
+
+    public function test_pattern_only_autoreply_dropped_when_chat_recently_active(): void
+    {
+        // No Auto-Submitted header, but the body matches an OOO pattern and the chat
+        // had a message within the last 5 hours - a real auto-responder firing right
+        // after our notification. Matches legacy MailRouter recency behaviour.
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subHours(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'I am currently away from the office until Monday.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+    }
+
+    public function test_pattern_only_autoreply_delivered_when_chat_not_recently_active(): void
+    {
+        // No Auto-Submitted header and the chat has been quiet for over 5 hours: a
+        // late reply whose wording merely matches an OOO pattern is usually human,
+        // so it must be delivered (legacy MailRouter tradeoff, kept deliberately).
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subDays(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'Sorry, I was away from the office yesterday. Yes please, still available?');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
         $this->assertEquals(RoutingResult::TO_USER, $result);
     }
 
@@ -2998,16 +3080,19 @@ class IncomingMailServiceTest extends TestCase
         }
     }
 
-    public function test_autoreply_to_replyto_address_is_not_globally_dropped(): void
+    public function test_autoreply_to_replyto_address_is_dropped(): void
     {
-        // Auto-replies to replyto- addresses should reach handleReplyToAddress(),
-        // not be dropped by the global auto-reply filter.
+        // An out-of-office auto-reply to a replyto- address is a machine response to
+        // our digest/notification mail. It must not open a chat with the poster - a
+        // member's OOO responder replied to digest posts and confused the posters.
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
         $group = $this->createTestGroup();
         $this->createMembership($poster, $group);
         $message = $this->createTestMessage($poster, $group);
         $replierEmail = $replier->emails->first()->email;
+
+        $chatMessagesBefore = DB::table('chat_messages')->count();
 
         $email = $this->createMinimalEmail([
             'From' => $replierEmail,
@@ -3024,8 +3109,12 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        // Should be routed to user (reply to message), NOT dropped by global auto-reply filter
-        $this->assertEquals(RoutingResult::TO_USER, $result);
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            $chatMessagesBefore,
+            DB::table('chat_messages')->count(),
+            'auto-reply must not create a chat message to the poster'
+        );
     }
 
     /**

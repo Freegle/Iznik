@@ -1,12 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import PostMap from '~/components/PostMap.vue'
 
+// Unmount each test's wrapper afterwards. PostMap watches the shared nearby-store bounds
+// ref; without cleanup a wrapper from a previous test stays mounted and re-runs its
+// getMessages() when a later test changes that ref, polluting call-count assertions.
+enableAutoUnmount(afterEach)
+
 // Hoisted mock values for reactive store state
 const {
-  mockIsochroneList,
-  mockIsochroneBounds,
+  mockNearbyBounds,
+  mockNearbyFetchMessages,
   mockGroupList,
   mockMessageStore,
   mockAuthStore,
@@ -19,8 +24,8 @@ const {
   const { ref } = require('vue')
 
   return {
-    mockIsochroneList: ref([]),
-    mockIsochroneBounds: ref(null),
+    mockNearbyBounds: ref(null),
+    mockNearbyFetchMessages: vi.fn().mockResolvedValue([]),
     mockGroupList: ref([]),
     mockMessageStore: {
       fetchInBounds: vi.fn().mockResolvedValue([]),
@@ -63,11 +68,10 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => ({
-    list: mockIsochroneList.value,
-    fetchMessages: vi.fn().mockResolvedValue([]),
-    bounds: mockIsochroneBounds,
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => ({
+    fetchMessages: mockNearbyFetchMessages,
+    bounds: mockNearbyBounds,
   }),
 }))
 
@@ -187,8 +191,8 @@ beforeEach(() => {
 describe('PostMap', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockIsochroneList.value = []
-    mockIsochroneBounds.value = null
+    mockNearbyBounds.value = null
+    mockNearbyFetchMessages.mockResolvedValue([])
     mockGroupList.value = []
     mockMyGroups.value = []
     mockMiscStore.get.mockReturnValue(false)
@@ -524,15 +528,20 @@ describe('PostMap', () => {
     })
   })
 
-  describe('isochrone display', () => {
-    it('renders isochrones when showIsochrones is true', async () => {
-      mockIsochroneList.value = [
-        { id: 1, polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))' },
-      ]
-      const wrapper = await createWrapper({ showIsochrones: true })
+  describe('isochrone overlay (fixed polygon override only)', () => {
+    it('renders the override polygon when showIsochrones is true', async () => {
+      const override = {
+        id: 1,
+        polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))',
+      }
+      const wrapper = await createWrapper({
+        showIsochrones: true,
+        isochroneOverride: override,
+      })
       await flushPromises()
-      // Isochrone geojson should be rendered
-      expect(wrapper.exists()).toBe(true)
+      // The override polygon's geojson should be rendered.
+      const geoJsonEls = wrapper.findAll('.l-geo-json')
+      expect(geoJsonEls.length).toBe(1)
     })
 
     it('applies Chaikin smoothing to isochrone polygons for the reach overlay', async () => {
@@ -574,18 +583,21 @@ describe('PostMap', () => {
     })
 
     it('does not render the reach overlay when showIsochrones is false', async () => {
-      mockIsochroneList.value = [
-        { id: 1, polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))' },
-      ]
-      const wrapper = await createWrapper({ showIsochrones: false })
+      const override = {
+        id: 1,
+        polygon: 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))',
+      }
+      const wrapper = await createWrapper({
+        showIsochrones: false,
+        isochroneOverride: override,
+      })
       await flushPromises()
       // With showIsochrones=false the l-geo-json elements for the overlay are not rendered.
       const geoJsonEls = wrapper.findAll('.l-geo-json')
       expect(geoJsonEls.length).toBe(0)
     })
 
-    it('renders no overlay when the user has no isochrones', async () => {
-      mockIsochroneList.value = []
+    it('renders no overlay when there is no override (no per-user isochrone polygon any more)', async () => {
       const wrapper = await createWrapper({ showIsochrones: true })
       await flushPromises()
       const geoJsonEls = wrapper.findAll('.l-geo-json')
@@ -733,6 +745,42 @@ describe('PostMap', () => {
       await flushPromises()
       // Messages should be filtered to only include Offer type
       expect(true).toBe(true)
+    })
+
+    it('fetches the nearby feed via the nearby store when showing nearby posts and the member has a location', async () => {
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      await createWrapper({ showIsochrones: true })
+      // getMessages() runs from the nearbyBounds watcher, so change the store bounds to
+      // trigger a fetch cycle.
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockNearbyFetchMessages).toHaveBeenCalled()
+    })
+
+    it('falls back to group bounds when showing nearby posts but the member has no location', async () => {
+      mockAuthStore.user = {
+        id: 1,
+        lat: null,
+        lng: null,
+        settings: {},
+      }
+      mockMyGroups.value = [{ id: 1 }]
+      await createWrapper({ showIsochrones: true })
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
     })
   })
 
@@ -886,6 +934,192 @@ describe('PostMap', () => {
 
       warnSpy.mockRestore()
       wrapper.unmount()
+    })
+  })
+
+  // Robust "point inside or on the boundary of a closed ring" test (ray-casting with
+  // a boundary tolerance), used below to assert the coverage hull actually encloses
+  // every post shown on the map - the key invariant behind bug class 2.
+  function pointOnSegment([px, py], [ax, ay], [bx, by], eps = 1e-9) {
+    const cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+    if (Math.abs(cross) > eps) return false
+    const dot = (px - ax) * (bx - ax) + (py - ay) * (by - ay)
+    if (dot < -eps) return false
+    const lenSq = (bx - ax) * (bx - ax) + (by - ay) * (by - ay)
+    return dot <= lenSq + eps
+  }
+  function pointInPolygon([x, y], ring) {
+    let inside = false
+    const pts = ring[0] === ring[ring.length - 1] ? ring.slice(0, -1) : ring
+    const n = pts.length
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const [xi, yi] = pts[i]
+      const [xj, yj] = pts[j]
+      if (pointOnSegment([x, y], [xi, yi], [xj, yj])) return true
+      const intersect =
+        yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
+      if (intersect) inside = !inside
+    }
+    return inside
+  }
+
+  // Bug class: distance-filter semantics (distanceFilteredMessages / messagesForMap /
+  // secondaryMessagesForMap) and the coverage hull that's built from them. These
+  // exercise the REAL PostMap wiring end-to-end (real useDistance + useReachPolygon
+  // helpers, only Leaflet/vue-leaflet are stubbed), not just the pure helpers.
+  describe('distance filter -> map markers + coverage hull (integration)', () => {
+    async function mountNearbyWithMessages(messages, props = {}) {
+      // Other tests earlier in this file mutate the shared mockAuthStore.user object
+      // (e.g. to null out lat/lng); reset it here so these tests don't depend on
+      // execution order to get the reach-feed branch (which needs a known location).
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      mockNearbyFetchMessages.mockResolvedValue(messages)
+      const wrapper = await createWrapper({
+        showIsochrones: true,
+        postZoom: 0, // so showMessages becomes true regardless of the (unmocked) zoom ref
+        ...props,
+      })
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // idle() fires getMessages(), which (showIsochrones + a known location) takes the
+      // reach-feed path and resolves to `messages`.
+      await map.vm.$emit('zoomend')
+      await flushPromises()
+      return wrapper
+    }
+
+    function primaryClusterMarker(wrapper) {
+      const markers = wrapper.findAllComponents({ name: 'ClusterMarker' })
+      return markers.find((m) => !m.props('cssClass'))
+    }
+
+    function secondaryClusterMarker(wrapper) {
+      const markers = wrapper.findAllComponents({ name: 'ClusterMarker' })
+      return markers.find((m) => m.props('cssClass') === 'fadedMarker')
+    }
+
+    it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [
+          { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
+          { id: 2, lat: 52.1, lng: -1.1, distance: 10, groupid: 1 },
+          { id: 3, lat: 52.2, lng: -1.2, distance: null, groupid: 1 },
+        ],
+        { selectedMaxDistance: 5 }
+      )
+
+      const primary = primaryClusterMarker(wrapper)
+      expect(primary).toBeTruthy()
+      const ids = primary.props('markers').map((m) => m.id)
+      // id 2 (distance 10) is excluded; id 3 (no distance) defensively stays in.
+      expect(ids.sort()).toEqual([1, 3])
+    })
+
+    it('includes every post when selectedMaxDistance is the unlimited sentinel (default)', async () => {
+      const wrapper = await mountNearbyWithMessages([
+        { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
+        { id: 2, lat: 52.1, lng: -1.1, distance: 500, groupid: 1 },
+      ])
+
+      const primary = primaryClusterMarker(wrapper)
+      const ids = primary.props('markers').map((m) => m.id)
+      expect(ids.sort()).toEqual([1, 2])
+    })
+
+    it('also filters the secondary (faded) marker set by the same distance limit', async () => {
+      // Not the nearby/reach view here - exercise the "some groups" branch instead
+      // (primary = fetchMyGroups, secondary = fetchInBounds), which is the other
+      // place secondaryMessagesForMap is populated from.
+      mockMyGroups.value = [{ id: 1 }]
+      mockMessageStore.fetchMyGroups.mockResolvedValue([
+        { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
+      ])
+      mockMessageStore.fetchInBounds.mockResolvedValue([
+        { id: 10, lat: 52.5, lng: -1.5, distance: 1, groupid: 9 },
+        { id: 11, lat: 52.6, lng: -1.6, distance: 20, groupid: 9 },
+      ])
+      // showMany:false disables the unrelated "not enough in bounds, zoom out" logic,
+      // which would otherwise set moved=true and hide the secondary marker set (it's
+      // gated on !moved) - not what this test is about.
+      const wrapper = await createWrapper({
+        selectedMaxDistance: 5,
+        postZoom: 0,
+        showMany: false,
+      })
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      await map.vm.$emit('zoomend')
+      await flushPromises()
+
+      const secondary = secondaryClusterMarker(wrapper)
+      expect(secondary).toBeTruthy()
+      const ids = secondary.props('markers').map((m) => m.id)
+      expect(ids).toEqual([10])
+    })
+
+    it('renders no primary ClusterMarker once every post is filtered out by the distance limit', async () => {
+      // The primary ClusterMarker is itself gated on messagesForMap.length
+      // (v-if="messagesForMap.length"), so a fully-filtered-out set means it isn't
+      // rendered at all - it doesn't linger with an empty markers array.
+      const wrapper = await mountNearbyWithMessages(
+        [{ id: 1, lat: 52.0, lng: -1.0, distance: 100, groupid: 1 }],
+        { selectedMaxDistance: 1 }
+      )
+
+      const primary = primaryClusterMarker(wrapper)
+      expect(primary).toBeFalsy()
+    })
+
+    it('draws a coverage hull that encloses every currently-shown post', async () => {
+      const messages = [
+        { id: 1, lat: 51.5, lng: -0.1, distance: 1, groupid: 1 },
+        { id: 2, lat: 51.6, lng: -0.2, distance: 2, groupid: 1 },
+        { id: 3, lat: 51.45, lng: -0.05, distance: 3, groupid: 1 },
+        { id: 4, lat: 51.55, lng: -0.15, distance: 2.5, groupid: 1 }, // interior-ish
+      ]
+      const wrapper = await mountNearbyWithMessages(messages, {
+        selectedMaxDistance: 10,
+      })
+
+      const geoJsonEls = wrapper.findAllComponents({ name: 'LGeoJson' })
+      expect(geoJsonEls.length).toBe(1)
+      const geo = geoJsonEls[0].props('geojson')
+      expect(geo.type).toBe('Polygon')
+      const ring = geo.coordinates[0]
+
+      messages.forEach((m) => {
+        expect(pointInPolygon([m.lng, m.lat], ring)).toBe(true)
+      })
+    })
+
+    it('shrinks the coverage hull (excludes a far post) once the distance slider narrows', async () => {
+      const messages = [
+        { id: 1, lat: 51.5, lng: -0.1, distance: 1, groupid: 1 },
+        { id: 2, lat: 51.51, lng: -0.11, distance: 1.5, groupid: 1 },
+        { id: 3, lat: 51.52, lng: -0.09, distance: 2, groupid: 1 },
+        { id: 4, lat: 53.0, lng: -2.0, distance: 100, groupid: 1 }, // far outlier
+      ]
+      const wrapper = await mountNearbyWithMessages(messages, {
+        selectedMaxDistance: 5,
+      })
+
+      const geo = wrapper.findComponent({ name: 'LGeoJson' }).props('geojson')
+      const ring = geo.coordinates[0]
+
+      // The far post is excluded by the 5-mile-ish limit, so the hull should NOT
+      // reach out to it.
+      expect(pointInPolygon([-2.0, 53.0], ring)).toBe(false)
+      // The near cluster should still be enclosed.
+      ;[messages[0], messages[1], messages[2]].forEach((m) => {
+        expect(pointInPolygon([m.lng, m.lat], ring)).toBe(true)
+      })
     })
   })
 

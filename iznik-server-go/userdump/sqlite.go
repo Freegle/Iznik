@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	// modernc.org/sqlite is a pure-Go SQLite driver (no cgo). apiv2 runs via "go run"
+	// without a C compiler available, so a cgo-based driver (e.g. mattn/go-sqlite3) would
+	// break the build. Do not swap to a cgo driver.
 	_ "modernc.org/sqlite"
 )
 

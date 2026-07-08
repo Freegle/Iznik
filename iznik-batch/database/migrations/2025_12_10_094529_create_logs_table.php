@@ -21,7 +21,12 @@ return new class extends Migration
             $table->timestamp('timestamp')->useCurrent()->index('timestamp')->comment('Machine assumed set to GMT');
             $table->unsignedBigInteger('byuser')->nullable()->index('byuser')->comment('User responsible for action, if any');
             $table->enum('type', ['Group', 'Message', 'User', 'Plugin', 'Config', 'StdMsg', 'Location', 'BulkOp', 'Chat'])->nullable();
-            $table->enum('subtype', ['Created', 'Deleted', 'Received', 'Sent', 'Failure', 'ClassifiedSpam', 'Joined', 'Left', 'Approved', 'Rejected', 'YahooDeliveryType', 'YahooPostingStatus', 'NotSpam', 'Login', 'Hold', 'Release', 'Edit', 'RoleChange', 'Merged', 'Split', 'Replied', 'Mailed', 'Applied', 'Suspect', 'Licensed', 'LicensePurchase', 'YahooApplied', 'YahooConfirmed', 'YahooJoined', 'MailOff', 'EventsOff', 'NewslettersOff', 'RelevantOff', 'Logout', 'Bounce', 'SuspendMail', 'Autoreposted', 'Outcome', 'OurPostingStatus', 'OurEmailFrequency', 'VolunteersOff', 'Autoapproved', 'Unbounce', 'WorryWords', 'NoteAdded', 'PostcodeChange', 'Repost'])->nullable();
+            // Value order must match the live DB's physical order: ENUM values are
+            // stored as 1-based ordinals, and later ALTERs authored from this list
+            // must be pure end-appends or they force a full-table COPY rebuild on
+            // the live cluster. 'OurEmailFrequency' was hot-fixed onto the live DB
+            // as an append, so it comes LAST - not next to 'OurPostingStatus'.
+            $table->enum('subtype', ['Created', 'Deleted', 'Received', 'Sent', 'Failure', 'ClassifiedSpam', 'Joined', 'Left', 'Approved', 'Rejected', 'YahooDeliveryType', 'YahooPostingStatus', 'NotSpam', 'Login', 'Hold', 'Release', 'Edit', 'RoleChange', 'Merged', 'Split', 'Replied', 'Mailed', 'Applied', 'Suspect', 'Licensed', 'LicensePurchase', 'YahooApplied', 'YahooConfirmed', 'YahooJoined', 'MailOff', 'EventsOff', 'NewslettersOff', 'RelevantOff', 'Logout', 'Bounce', 'SuspendMail', 'Autoreposted', 'Outcome', 'OurPostingStatus', 'VolunteersOff', 'Autoapproved', 'Unbounce', 'WorryWords', 'NoteAdded', 'PostcodeChange', 'Repost', 'OurEmailFrequency'])->nullable();
             $table->unsignedBigInteger('groupid')->nullable()->index('group')->comment('Any group this log is for');
             $table->unsignedBigInteger('user')->nullable()->index('user')->comment('Any user that this log is about');
             $table->unsignedBigInteger('msgid')->nullable()->index('msgid')->comment('id in the messages table');

@@ -4523,6 +4523,62 @@ func TestMessageHistory_NoDuplicatesOnRepost(t *testing.T) {
 		"exactly one messagehistory entry per (msgID, groupID) regardless of repost count")
 }
 
+// TestMessageHistory_NoDuplicatesOnRipple: a post rippled OUT to other groups gets
+// an extra messages_groups row (rippled_in=1) per receiving group. The posting
+// history must count the origin only, so a widely-rippled post appears ONCE - not
+// once per group (Discourse #9851 / the 23x Posting History for a bulk offer).
+func TestMessageHistory_NoDuplicatesOnRipple(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_ripple")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Table", 55.9533, -3.1883)
+
+	// Rippling-out: an Approved messages_groups row (rippled_in=1) on a receiving group.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var count int
+	for _, h := range history {
+		if h.ID == msgID {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count,
+		"a post rippled to another group appears once in posting history, not per group")
+}
+
+// TestUserInfo_OfferCountNotInflatedByRipple guards the COUNT(DISTINCT) fix in
+// GetUserInfo: a post rippled to N groups counts as ONE offer, not N (Discourse
+// #9851 - offer/wanted numbers showing incorrectly on chitchat).
+func TestUserInfo_OfferCountNotInflatedByRipple(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("info_ripple")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Chair", 55.9533, -3.1883)
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	info := user2.GetUserInfo(userID, 0)
+	assert.Equal(t, uint64(1), info.Offers,
+		"a post rippled to another group counts as one offer, not per group")
+}
+
 // TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary covers Discourse #9783/7.
 //
 // "Strange case": a post is in Pending state (collection='Pending', mg.deleted=0,
@@ -4647,4 +4703,95 @@ func TestMessageHistory_ArrivalUsesLatestGroupPosting(t *testing.T) {
 	assert.LessOrEqual(t, daysAgoA, 6, "groupA arrival should reflect its 5-day-old posting")
 	assert.GreaterOrEqual(t, daysAgoB, 1, "groupB arrival should reflect its 2-day-old posting")
 	assert.LessOrEqual(t, daysAgoB, 3, "groupB arrival should reflect its 2-day-old posting")
+}
+
+// TestGetUserInfoOffersNotInflatedByRippling verifies that a single OFFER which has
+// rippled into extra groups is counted ONCE in the profile page's "info.offers" /
+// "info.openoffers" summary, not once per group it reached. Rippling-out adds an
+// Approved messages_groups row (rippled_in = 1) per group a post ripples into;
+// GetUserInfo's offers/wanteds query joins messages to messages_groups, so a naive
+// COUNT(*) fans out across those extra rows and inflates the count - the same
+// rippling pattern already fixed for the dashboard Popular Posts (0e639acdf) and the
+// mygroups browse count (9fda94a29).
+func TestGetUserInfoOffersNotInflatedByRippling(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("uinfo_ripple_off")
+
+	groupOrigin := CreateTestGroup(t, prefix+"Origin")
+	groupRippledA := CreateTestGroup(t, prefix+"RippledA")
+	groupRippledB := CreateTestGroup(t, prefix+"RippledB")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	// Native OFFER on the origin group (origin row, rippled_in defaults to 0).
+	msgID := CreateTestMessage(t, posterID, groupOrigin, prefix+" OFFER: rippled item", 52.5, -1.8)
+
+	// Rippled into TWO further groups — Approved copies marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupRippledA)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupRippledB)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN (?, ?)", msgID, groupRippledA, groupRippledB)
+	})
+
+	url := fmt.Sprintf("/api/user/%d", posterID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(1), u.Info.Offers,
+		"a post rippled into extra groups must count once, not once per group it reached")
+	assert.Equal(t, uint64(1), u.Info.Openoffers,
+		"a post rippled into extra groups must count once in openoffers, not once per group it reached")
+}
+
+// TestGetUserInfoWantedsNotInflatedByRippling is the WANTED-side counterpart of
+// TestGetUserInfoOffersNotInflatedByRippling — the same query and switch statement in
+// GetUserInfo handles both message types, so both branches need coverage.
+func TestGetUserInfoWantedsNotInflatedByRippling(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("uinfo_ripple_wtd")
+
+	groupOrigin := CreateTestGroup(t, prefix+"Origin")
+	groupRippled := CreateTestGroup(t, prefix+"Rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	subject := prefix + " WANTED: rippled item"
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+		"VALUES (?, ?, 'body', 'body', 'Wanted', NOW())", posterID, subject)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, subject).Scan(&msgID)
+	require.NotZero(t, msgID, "wanted message must be created")
+
+	// Origin row (rippled_in = 0).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupOrigin)
+	// Rippled-in copy (rippled_in = 1).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupRippled)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d", posterID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(1), u.Info.Wanteds,
+		"a WANTED rippled into an extra group must count once, not once per group it reached")
+	assert.Equal(t, uint64(1), u.Info.Openwanteds,
+		"a WANTED rippled into an extra group must count once in openwanteds, not once per group it reached")
 }

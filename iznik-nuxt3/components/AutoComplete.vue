@@ -104,6 +104,17 @@
       />
       <ul :class="`${getClassName('listentrylist')}`">
         <li
+          v-if="chooseLabel && json.length"
+          :class="
+            (focusList < 0 ? 'focus-list ' : '') +
+            `${getClassName('listentry')}`
+          "
+          class="autocomplete-choose"
+          aria-disabled="true"
+        >
+          <span class="autocomplete-choose-label">{{ chooseLabel }}</span>
+        </li>
+        <li
           v-for="(data, i) in json"
           :key="'autocomplete' + data.id"
           :class="activeClass(i) + ' ' + `${getClassName('listentry')}`"
@@ -283,6 +294,16 @@ const props = defineProps({
     type: String,
     required: false,
     default: 'Sorry, we can\'t find that.'
+  },
+
+  // When set, show a non-selectable "please choose" row at the top of the list and
+  // do not pre-highlight the first result, so the user must make an explicit choice
+  // (rather than accidentally accepting the first item). A unique exact match still
+  // auto-selects via the logic in doAjax.
+  chooseLabel: {
+    type: String,
+    required: false,
+    default: ''
   }
 })
 
@@ -407,6 +428,9 @@ function cleanUp(data) {
 function handleInput(e) {
   const { value } = e.target
   showList.value = true
+  // Keep the "please choose" row highlighted as the user types, so we never
+  // silently leave a real result pre-selected for them to accept by accident.
+  if (props.chooseLabel) focusList.value = -1
   startTimer()
   // Callback Event
   if (props.onInput) props.onInput(value)
@@ -451,6 +475,9 @@ function handleKeyDown(e) {
         setTimeout(() => {
           handleKeyDown(e)
         }, 100)
+      } else if (props.chooseLabel && focusList.value < 0) {
+        // The "please choose" row is highlighted - require an explicit choice
+        // rather than accepting a result, and keep the list open.
       } else {
         selectList(json.value[focusList.value])
         showList.value = false
@@ -463,15 +490,15 @@ function handleKeyDown(e) {
       break
   }
 
+  // The smallest valid index is -1 when there's a "please choose" row (it sits
+  // "above" the first result); otherwise it's 0.
+  const minIndex = props.chooseLabel ? -1 : 0
   const listLength = json.value.length - 1
-  const outOfRangeBottom = focusList.value > listLength
-  const outOfRangeTop = focusList.value < 0
-  const topItemIndex = 0
   const bottomItemIndex = listLength
 
   let nextFocusList = focusList.value
-  if (outOfRangeBottom) nextFocusList = topItemIndex
-  if (outOfRangeTop) nextFocusList = bottomItemIndex
+  if (focusList.value > listLength) nextFocusList = minIndex
+  if (focusList.value < minIndex) nextFocusList = bottomItemIndex
   focusList.value = nextFocusList
 }
 
@@ -509,7 +536,9 @@ function handleBlur(e) {
 
 function handleFocus(e) {
   focused.value = true
-  focusList.value = 0
+  // With a "please choose" row, start with nothing highlighted (-1) so Enter/tap
+  // doesn't accept the first result by accident; otherwise highlight the first item.
+  focusList.value = props.chooseLabel ? -1 : 0
 
   // Force the list to show.
   showList.value = true
@@ -775,6 +804,19 @@ function close() {
 .autocomplete ul li a:hover,
 .autocomplete ul li.focus-list a {
   color: var(--color-gray-900);
+  background: var(--color-gray-50);
+}
+
+.autocomplete-choose {
+  padding: 0.5rem 0.75rem;
+  color: var(--color-gray-500);
+  font-size: 0.8rem;
+  font-style: italic;
+  cursor: default;
+  user-select: none;
+}
+
+.autocomplete-choose.focus-list {
   background: var(--color-gray-50);
 }
 

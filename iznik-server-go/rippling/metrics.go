@@ -3,8 +3,6 @@
 package rippling
 
 import (
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -133,18 +131,36 @@ type RepliesPerPostRow struct {
 	Provisional bool `json:"provisional"` // computed in Go (day within the 36h settling window)
 }
 
-// ReplySourceRow is the daily split of Interested replies by whether the replier reached the post
-// via rippling or via their own (home) group. A reply counts as "home" only if the replier was an
-// approved member of an ORIGIN (rippled_in=0) group of the post BEFORE the post arrived
-// (memberships.added < arrival). We key on the join TIMESTAMP, not current membership, because
-// replying can join the member to the group - a naive membership check would mis-label every
-// rippling reply as home-group. Everything else is rippling-attributable.
+// ReplySourceRow is the daily split of Interested replies by attribution channel (the graded
+// ladder captured at reply time in rippling_reply_attribution - see rippling/attribution.go):
+// home (established origin-group member), ripple_notified (we mailed them the post via the
+// ripple), ripple_group (saw it in their own group because it rippled in), ripple_reach
+// (Browse exposure that existed only because the reach extended to them), organic_local
+// (non-member who'd have seen it in Browse anyway), unknown (search / deep link / no location).
+// Rows the backfill hasn't derived yet fold into home/unknown off the legacy was_home_member
+// bit. Ripple/RipplePct is the headline: channels that are DEFINITELY rippling - unlike the
+// old replies-minus-home number, unknown is not credited to rippling.
 type ReplySourceRow struct {
-	Day       string  `json:"day"     gorm:"column:day"`
-	Replies   int     `json:"replies" gorm:"column:replies"`
-	Home      int     `json:"home"    gorm:"column:home"`
-	Ripple    int     `json:"ripple"`     // computed in Go (replies - home)
+	Day     string `json:"day"     gorm:"column:day"`
+	Replies int    `json:"replies" gorm:"column:replies"`
+	Home    int    `json:"home"    gorm:"column:home"`
+
+	RippleNotified int `json:"ripple_notified" gorm:"column:ripple_notified"`
+	RippleGroup    int `json:"ripple_group"    gorm:"column:ripple_group"`
+	RippleReach    int `json:"ripple_reach"    gorm:"column:ripple_reach"`
+	OrganicLocal   int `json:"organic_local"   gorm:"column:organic_local"`
+	Unknown        int `json:"unknown"         gorm:"column:unknown"`
+
+	Ripple    int     `json:"ripple"`     // computed in Go (notified + group + reach)
 	RipplePct float64 `json:"ripple_pct"` // computed in Go
+}
+
+// ClientSourceCount is one row of the client-reported reply-surface summary (browse, search,
+// message_page, notification, ...). Advisory: client-supplied, so it cross-checks the
+// server-derived attribution rather than feeding it.
+type ClientSourceCount struct {
+	Source string `json:"source" gorm:"column:source"`
+	Count  int    `json:"count"  gorm:"column:count"`
 }
 
 // ReplyDistanceRow is the daily median crow-flies distance (km) from a post's location to the
@@ -188,30 +204,57 @@ type GroupOption struct {
 	Name string `json:"name" gorm:"column:name"`
 }
 
-// trialGroupIDs returns the rippling trial group set. Laravel mirrors the current
-// RIPPLE_WITHIN_GROUPS value into the shared `config` table (key 'ripple.within_groups')
-// because the Go API runs on a different server and can't read that batch env var
-// directly. Returns an empty slice when the key is absent/empty or holds no valid ids.
-func trialGroupIDs() []uint64 {
-	var value string
-	database.DBConn.Raw("SELECT value FROM config WHERE `key` = 'ripple.within_groups'").Scan(&value)
-	ids := []uint64{}
-	for _, p := range strings.Split(value, ",") {
-		if n, err := strconv.ParseUint(strings.TrimSpace(p), 10, 64); err == nil && n > 0 {
-			ids = append(ids, n)
-		}
+// ReplySourceSplitSQL builds the per-day attribution-channel query over
+// rippling_reply_attribution. Exported (and parameterised) so the legacy variant - which only
+// runs against an unmigrated production DB - stays testable against a migrated test DB.
+//
+//   - wide: read the attribution channel the reply handler derived at capture time. Rows
+//     without one (pre-migration rows the backfill hasn't visited yet) fall back PER ROW to
+//     the same live derivation as the legacy variant - otherwise the window between the
+//     migration landing and the backfill running would read as a misleading zero-ripple
+//     chart (every attribution NULL folding to home/unknown).
+//   - legacy (graded columns not yet migrated): derive the durable channels live from the
+//     notified ledger and rippled-group memberships. Correct for home/notified/group; the
+//     location channels (ripple_reach/organic_local) are not derivable retrospectively
+//     (locations drift, polygons grow) so they read 0 and those replies sit in unknown.
+//
+// srcGroup is the optional origin-group scoping JOIN (aliases rra); it takes one bind arg
+// before the two replied_at window args.
+func ReplySourceSplitSQL(wide bool, srcGroup string) string {
+	derive := `CASE
+	       WHEN rra.was_home_member = 1 THEN 'home'
+	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
+	                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
+	                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
+	       WHEN EXISTS(SELECT 1 FROM messages_groups mgr
+	                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid
+	                     AND mem.userid = rra.userid AND mem.collection = 'Approved'
+	                     AND mem.added < mgr.arrival
+	                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1
+	                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'
+	       ELSE 'unknown'
+	       END`
+	bucket := derive
+	if wide {
+		bucket = "COALESCE(rra.attribution, " + derive + ")"
 	}
-	return ids
-}
-
-// uint64InList renders ids as a comma-separated SQL IN(...) body. Safe to inline:
-// the values are validated uint64s, not user-supplied strings.
-func uint64InList(ids []uint64) string {
-	parts := make([]string, len(ids))
-	for i, id := range ids {
-		parts[i] = strconv.FormatUint(id, 10)
-	}
-	return strings.Join(parts, ",")
+	return `
+		SELECT day,
+		       COUNT(*) AS replies,
+		       SUM(bucket = 'home') AS home,
+		       SUM(bucket = 'ripple_notified') AS ripple_notified,
+		       SUM(bucket = 'ripple_group') AS ripple_group,
+		       SUM(bucket = 'ripple_reach') AS ripple_reach,
+		       SUM(bucket = 'organic_local') AS organic_local,
+		       SUM(bucket = 'unknown') AS unknown
+		FROM (
+		    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,
+		           ` + bucket + ` AS bucket
+		    FROM rippling_reply_attribution rra` + srcGroup + `
+		    WHERE rra.replied_at >= ? AND rra.replied_at < ?
+		) b
+		GROUP BY day
+		ORDER BY day DESC`
 }
 
 // Metrics returns the rippling-out event counters plus the §15/§16 rollout-health metrics.
@@ -239,20 +282,8 @@ func Metrics(c *fiber.Ctx) error {
 	// rippled_in=0 messages_groups row), so results read per place - dense Croydon won't look
 	// like rural Ribble Valley. 0 = all groups. Each scoped query takes one gid arg.
 	gid := c.QueryInt("groupid", 0)
-	// Optional ?trialOnly=1 scopes every KPI to the rippling TRIAL groups (the set in
-	// RIPPLE_WITHIN_GROUPS). During the trial only a handful of groups ripple, so stats
-	// over all groups bury the signal under the majority that aren't rippling. The Go API
-	// runs on a different server from the batch container that holds that env var, so
-	// Laravel mirrors the current value into the shared `config` table (key
-	// 'ripple.within_groups') and we read it here. ?groupid= (a single group) wins when both
-	// are given.
-	trialOnly := c.QueryBool("trialOnly", false)
-	trialIDs := []uint64{}
-	if trialOnly && gid == 0 {
-		trialIDs = trialGroupIDs()
-	}
 	// Optional ?start= & ?end= date range bounds every KPI below; default to the last 30 days.
-	// This is what lets you read a treatment group's before vs after rippling went on.
+	// This is what lets you read a group's before vs after rippling went on.
 	start := c.Query("start")
 	end := c.Query("end")
 	if start == "" {
@@ -261,24 +292,15 @@ func Metrics(c *fiber.Ctx) error {
 	if end == "" {
 		end = time.Now().Format("2006-01-02 15:04:05")
 	}
+	// Whether the graded-attribution columns exist yet (production may lag the migration):
+	// picks the reply-source query variant and is surfaced to the dashboard so it can note
+	// that the location-based channels are pending.
+	attributionWide := AttributionSchemaReady(db)
 	rateGroup, srcGroup, distGroup := "", "", ""
 	if gid > 0 {
 		rateGroup = " AND mg.groupid = ? AND mg.rippled_in = 0"
 		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
 		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
-	} else if trialOnly {
-		// Inline the trial group ids as an IN(...) literal: they are validated uint64s read
-		// from trusted config, so there is no injection risk and no new bind args (the
-		// arg-builders only add a value when gid>0, so they stay correct). When the trial set
-		// is unset we scope to IN(0) so "trial only" honestly yields no data rather than
-		// silently showing all groups.
-		inList := "0"
-		if len(trialIDs) > 0 {
-			inList = uint64InList(trialIDs)
-		}
-		rateGroup = " AND mg.groupid IN (" + inList + ") AND mg.rippled_in = 0"
-		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid IN (" + inList + ") AND mg.rippled_in = 0 AND mg.deleted = 0"
-		distGroup = " JOIN messages_groups mg ON mg.msgid = m.id AND mg.groupid IN (" + inList + ") AND mg.rippled_in = 0 AND mg.deleted = 0"
 	}
 	// Per-query args: the group filter (when set) sits in a JOIN before the date-bounded WHERE,
 	// so gid comes first, then start, end.
@@ -290,26 +312,38 @@ func Metrics(c *fiber.Ctx) error {
 		return append(a, start, end)
 	}
 
-	// replyRateArgs orders args to match the SQL: optional group filter, then the fr-subquery
-	// window (start, end), then the outer arrival window (start, end).
+	// replyRateArgs orders args to match the SQL: optional group filter, then the `rip`
+	// subquery lower bound (start), then the fr-subquery window (start, end), then the
+	// outer arrival window (start, end).
 	// Parallel in structure to takenRateArgs — keep the two in sync.
+	//
+	// The rip subquery (first ripple per msgid) is bounded to windowStart rather than a
+	// fixed NOW()-100 DAY: a post only appears in the outer set when its ORIGIN
+	// (rippled_in=0) row's arrival is in [start, end), and a ripple can only happen after
+	// the post is posted, so first_ripple >= origin arrival >= start. Bounding to start
+	// therefore never drops a first_ripple for an in-window post, but lets the optimiser
+	// use the arrival index (a selective range) instead of scanning most of
+	// messages_groups via the deleted index to find the ~1.6% of rows that are
+	// rippled_in=1 — the difference between this query taking ~20s and ~4s.
 	replyRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
 		a := []interface{}{}
 		if groupID > 0 {
 			a = append(a, groupID)
 		}
-		return append(a, windowStart, windowEnd, windowStart, windowEnd)
+		return append(a, windowStart, windowStart, windowEnd, windowStart, windowEnd)
 	}
 
-	// takenRateArgs orders args to match the SQL: optional group filter, then the outcomes
-	// subquery lower bound (start), then the outer arrival window (start, end).
-	// Parallel in structure to replyRateArgs — keep the two in sync.
+	// takenRateArgs orders args to match the SQL: optional group filter, then the `rip`
+	// subquery lower bound (start), then the outcomes subquery lower bound (start), then
+	// the outer arrival window (start, end).
+	// Parallel in structure to replyRateArgs — keep the two in sync. See replyRateArgs for
+	// why the rip subquery is bounded to windowStart.
 	takenRateArgs := func(groupID int, windowStart, windowEnd string) []interface{} {
 		a := []interface{}{}
 		if groupID > 0 {
 			a = append(a, groupID)
 		}
-		return append(a, windowStart, windowStart, windowEnd)
+		return append(a, windowStart, windowStart, windowStart, windowEnd)
 	}
 
 	// ---- Declare all result variables up front so goroutines can capture them --------
@@ -329,6 +363,8 @@ func Metrics(c *fiber.Ctx) error {
 	replyRates := []ReplyRateRow{}
 	repliesPerPost := []RepliesPerPostRow{}
 	replySources := []ReplySourceRow{}
+	clientSources := []ClientSourceCount{}
+	captureFrom := ""
 	replyDistances := []ReplyDistanceRow{}
 	takenRates := []TakenRateRow{}
 	groupOpts := []GroupOption{}
@@ -445,19 +481,19 @@ func Metrics(c *fiber.Ctx) error {
 			       SUM(CASE WHEN is_rippled = 1 THEN replied ELSE 0 END) AS ripple_replied
 			FROM (
 			    SELECT m.id,
-			           DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
-			           MAX(CASE WHEN fr.first_reply <= m.arrival + INTERVAL 36 HOUR THEN 1 ELSE 0 END) AS replied,
-			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			           DATE_FORMAT(COALESCE(rip.first_ripple, mg.arrival), '%Y-%m-%d') AS day,
+			           MAX(CASE WHEN fr.first_reply <= COALESCE(rip.first_ripple, mg.arrival) + INTERVAL 36 HOUR THEN 1 ELSE 0 END) AS replied,
+			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
-			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= ? GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (
 			        SELECT refmsgid, MIN(date) AS first_reply FROM chat_messages
 			        WHERE type = 'Interested' AND date >= ? AND date < (? + INTERVAL 36 HOUR) GROUP BY refmsgid
 			    ) fr ON fr.refmsgid = m.id
 			    WHERE m.type = 'Offer'
-			      AND m.arrival >= ? AND m.arrival < ?
-			    GROUP BY m.id, m.arrival
+			      AND mg.arrival >= ? AND mg.arrival < ?
+			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
 			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&replyRates)
@@ -480,37 +516,75 @@ func Metrics(c *fiber.Ctx) error {
 			       SUM(CASE WHEN is_rippled = 1 THEN reply_count ELSE 0 END) AS ripple_replies
 			FROM (
 			    SELECT m.id,
-			           DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+			           DATE_FORMAT(COALESCE(rip.first_ripple, mg.arrival), '%Y-%m-%d') AS day,
 			           COUNT(DISTINCT cm.id) AS reply_count,
-			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
-			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= ? GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN chat_messages cm
 			           ON cm.refmsgid = m.id AND cm.type = 'Interested'
 			          AND cm.date >= ? AND cm.date < (? + INTERVAL 36 HOUR)
-			          AND cm.date >= m.arrival AND cm.date < m.arrival + INTERVAL 36 HOUR
+			          AND cm.date >= COALESCE(rip.first_ripple, mg.arrival) AND cm.date < COALESCE(rip.first_ripple, mg.arrival) + INTERVAL 36 HOUR
 			    WHERE m.type = 'Offer'
-			      AND m.arrival >= ? AND m.arrival < ?
-			    GROUP BY m.id, m.arrival
+			      AND mg.arrival >= ? AND mg.arrival < ?
+			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
 			ORDER BY day DESC`, replyRateArgs(gid, start, end)...).Scan(&repliesPerPost)
 	}()
 
-	// (2) Rippling vs home-group replies, per day, from rippling_reply_attribution (captured at
+	// (2) Reply attribution channels, per day, from rippling_reply_attribution (captured at
 	//     reply time - the only sound attribution, since replying joins the member to the group).
+	//     Two variants sharing one output shape:
+	//     - wide: read the attribution channel the Go reply handler derived at capture time.
+	//       Rows the backfill hasn't visited (attribution NULL) fold into home/unknown off the
+	//       legacy was_home_member bit.
+	//     - legacy (graded columns not yet migrated, e.g. production before the deploy): derive
+	//       the durable channels live from the notified ledger and rippled-group memberships.
+	//       Correct for notified/group/home; the location channels (ripple_reach/organic_local)
+	//       are not derivable retrospectively (locations drift, polygons grow) so they read 0
+	//       and those replies sit in unknown - attribution_channels_available tells the
+	//       dashboard to say so.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		db.Raw(ReplySourceSplitSQL(attributionWide, srcGroup), gargs()...).Scan(&replySources)
+	}()
+
+	// (2b) Client-reported reply surfaces over the same window (wide schema only - the column
+	//      arrives with the graded-attribution migration). Advisory cross-check of (2).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !attributionWide {
+			return
+		}
 		db.Raw(`
-			SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,
-			       COUNT(*) AS replies,
-			       COALESCE(SUM(rra.was_home_member), 0) AS home
+			SELECT COALESCE(rra.client_source, '(not reported)') AS source,
+			       COUNT(*) AS count
 			FROM rippling_reply_attribution rra`+srcGroup+`
 			WHERE rra.replied_at >= ? AND rra.replied_at < ?
-			GROUP BY DATE_FORMAT(rra.replied_at, '%Y-%m-%d')
-			ORDER BY day DESC`, gargs()...).Scan(&replySources)
+			GROUP BY source
+			ORDER BY count DESC`, gargs()...).Scan(&clientSources)
+	}()
+
+	// (2c) When did LIVE capture start? The first row carrying evidence only the reply-time
+	//      capture can write (location containment or a client-reported surface - the backfill
+	//      never sets those). The dashboard draws this as a boundary on the attribution chart:
+	//      before it the location channels are structurally zero (those replies sit in
+	//      unknown), after it the full split applies. Deliberately unscoped by ?groupid=
+	//      (it marks a deploy moment, not a per-group property).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !attributionWide {
+			return
+		}
+		db.Raw("SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') " +
+			"FROM rippling_reply_attribution " +
+			"WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL " +
+			"OR client_source IS NOT NULL").Scan(&captureFrom)
 	}()
 
 	// (3) Median crow-flies distance (km) from post to replier, per reply day. The origin-group
@@ -536,7 +610,7 @@ func Metrics(c *fiber.Ctx) error {
 			    SELECT DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
 			           ST_Distance_Sphere(POINT(ml.lng, ml.lat), POINT(ul.lng, ul.lat)) / 1000 AS dist_km,
 			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0 AND mgr.arrival <= cm.date) AS is_rippled
 			    FROM chat_messages cm
 			    JOIN messages m   ON m.id = cm.refmsgid AND m.type = 'Offer'`+distGroup+`
 			    JOIN locations ml ON ml.id = m.locationid
@@ -568,18 +642,18 @@ func Metrics(c *fiber.Ctx) error {
 			       SUM(CASE WHEN is_rippled = 1 THEN taken ELSE 0 END) AS ripple_taken
 			FROM (
 			    SELECT m.id,
-			           DATE_FORMAT(m.arrival, '%Y-%m-%d') AS day,
+			           DATE_FORMAT(COALESCE(rip.first_ripple, mg.arrival), '%Y-%m-%d') AS day,
 			           MAX(CASE WHEN o.msgid IS NOT NULL THEN 1 ELSE 0 END) AS taken,
-			           EXISTS (SELECT 1 FROM messages_groups mgr
-			                   WHERE mgr.msgid = m.id AND mgr.rippled_in = 1 AND mgr.deleted = 0) AS is_rippled
+			           (rip.first_ripple IS NOT NULL) AS is_rippled
 			    FROM messages m
-			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0`+rateGroup+`
+			    JOIN messages_groups mg ON mg.msgid = m.id AND mg.collection = 'Approved' AND mg.deleted = 0 AND mg.rippled_in = 0`+rateGroup+`
+			    LEFT JOIN (SELECT msgid, MIN(arrival) AS first_ripple FROM messages_groups WHERE rippled_in = 1 AND deleted = 0 AND arrival >= ? GROUP BY msgid) rip ON rip.msgid = m.id
 			    LEFT JOIN (SELECT DISTINCT msgid FROM messages_outcomes
 			               WHERE outcome IN ('Taken','Received') AND timestamp >= ?) o
 			           ON o.msgid = m.id
 			    WHERE m.type IN ('Offer','Wanted')
-			      AND m.arrival >= ? AND m.arrival < ?
-			    GROUP BY m.id, m.arrival
+			      AND mg.arrival >= ? AND mg.arrival < ?
+			    GROUP BY m.id, COALESCE(rip.first_ripple, mg.arrival)
 			) per_msg
 			GROUP BY day
 			ORDER BY day DESC`, takenRateArgs(gid, start, end)...).Scan(&takenRates)
@@ -635,9 +709,11 @@ func Metrics(c *fiber.Ctx) error {
 		repliesPerPost[i].Provisional = repliesPerPost[i].Day >= reply36hCutoff
 	}
 
-	// Compute derived fields for reply-source rows.
+	// Compute derived fields for reply-source rows. The headline ripple share counts only the
+	// channels that are DEFINITELY rippling - unknown is not credited (the old replies-minus-home
+	// number silently attributed every un-evidenced reply to rippling).
 	for i := range replySources {
-		replySources[i].Ripple = replySources[i].Replies - replySources[i].Home
+		replySources[i].Ripple = replySources[i].RippleNotified + replySources[i].RippleGroup + replySources[i].RippleReach
 		if replySources[i].Replies > 0 {
 			replySources[i].RipplePct = float64(replySources[i].Ripple) / float64(replySources[i].Replies) * 100
 		}
@@ -687,13 +763,18 @@ func Metrics(c *fiber.Ctx) error {
 		"reply_rate_36h":        replyRates,
 		"replies_per_post":      repliesPerPost,
 		"reply_source_split":    replySources,
-		"reply_distance_median": replyDistances,
-		"taken_rate":            takenRates,
-		"groups":                groupOpts,
-		"groupid":               gid,
-		"trial_only":            trialOnly,
-		"trial_group_ids":       trialIDs,
-		"start":                 start,
-		"end":                   end,
+		"client_source_summary": clientSources,
+		// False until the graded-attribution migration has run on this DB: the location
+		// channels (ripple_reach/organic_local) read 0 and client sources are absent.
+		"attribution_channels_available": attributionWide,
+		// First day with reply-time-captured evidence ('' until the capture deploy has seen
+		// a reply): the boundary the dashboard marks on the attribution chart.
+		"attribution_capture_from": captureFrom,
+		"reply_distance_median":          replyDistances,
+		"taken_rate":                     takenRates,
+		"groups":                         groupOpts,
+		"groupid":                        gid,
+		"start":                          start,
+		"end":                            end,
 	})
 }

@@ -723,10 +723,12 @@ func PostResponse(c *fiber.Ctx) error {
 					req.Msgid).Scan(&rejectCount)
 
 				if rejectCount >= int64(ApprovalQuorum) {
-					// Quorum reached — send the message for review on the group
-					// the voter is acting in. Other groups the message is on are
-					// left alone; their members can flag it independently.
-					sendForReview(db, req.Msgid, req.Groupid, "Members think there is something wrong with this message.")
+					// Quorum reached — pull the post back to Pending on ALL the
+					// groups it is live on (home + rippled-out copies), so every
+					// affected community's moderators review it, not only the group
+					// where this vote happened, then freeze the ripple.
+					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.")
+					FreezeReachIfOriginPending(db, req.Msgid)
 				}
 			}
 		}
@@ -884,20 +886,109 @@ func ModFeedback(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// sendForReview moves a message back to Pending on a single group and records
-// the spam reason on that group's row. Other groups the message is on are
-// left alone — each group's members must reach quorum independently to send
-// it for review on their group.
-//
-// If groupid is 0 (legacy clients that don't yet send a group context), no
-// update is made. The client is expected to pass the group the volunteer is
-// voting in via the request body.
-func sendForReview(db *gorm.DB, msgid uint64, groupid uint64, reason string) {
-	if groupid == 0 {
+// SendForReviewAllGroups moves a message back to Pending on ALL the groups it is
+// currently live (Approved) on - its home group AND any rippled-out copies. Used once
+// the aggregate review quorum is reached (from in-app CheckMessage checks or website
+// reports) or on a moderator Back to Pending, so every affected community's moderators
+// see the post. Only Approved rows are touched. Exported so the moderation path reuses it.
+func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string) {
+	if msgid == 0 {
 		return
 	}
-	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND groupid = ? AND collection = ?",
-		utils.COLLECTION_PENDING, reason, msgid, groupid, utils.COLLECTION_APPROVED)
+	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND collection = ?",
+		utils.COLLECTION_PENDING, reason, msgid, utils.COLLECTION_APPROVED)
+}
+
+// FreezeReachIfOriginPending freezes a post's ripple once its ORIGIN copy is no longer
+// live-Approved (pulled back for review). Freezing keeps the rippling_reach row but sets
+// status='held' + next_expansion_at=NULL, so: (a) it stops expanding, (b) ExpandService's
+// retraction paths skip it and the Pending rippled copies persist for per-group
+// moderation, and (c) initialiseNew's anti-join can never re-reach + re-notify it if a
+// moderator later re-approves a copy. No-op if the origin is still live, or there is no
+// reach row. Exported for the moderation Back to Pending path.
+func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
+	if msgid == 0 {
+		return
+	}
+	var approvedOrigin int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?",
+		msgid, utils.COLLECTION_APPROVED).Scan(&approvedOrigin)
+	if approvedOrigin > 0 {
+		return
+	}
+	db.Exec("UPDATE rippling_reach SET status = 'held', next_expansion_at = NULL WHERE msgid = ? AND status <> 'held'", msgid)
+}
+
+// reporterIsModOf reports whether the reporter's verdict on the group they reported on
+// is authoritative on its own: Support/Admin, or a Moderator/Owner of that group.
+func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
+	if auth.IsAdminOrSupport(reporterID) {
+		return true
+	}
+	if groupid == 0 {
+		return false
+	}
+	var c int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
+		reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&c)
+	return c > 0
+}
+
+// RecordReportVerdict treats a report of a post (the User2Mod chat message the website
+// report flow sends, targeted at `groupid`) as a microvolunteering "Reject" verdict, so
+// website reports feed the SAME review quorum as in-app CheckMessage checks:
+//   - a MODERATOR of the reported group (or Support/Admin) counts as quorum on their own:
+//     the post is pulled to Pending on ALL its groups (home + rippled-out) immediately.
+//     A scoped single-group pend proved insufficient - the other copies stayed live in
+//     browse and the next digest (Discourse 9862);
+//   - otherwise, once ApprovalQuorum distinct Reject verdicts accumulate, the post is
+//     pulled to Pending on ALL its groups.
+//
+// Whenever the origin copy ends up Pending the ripple is frozen, so the copies persist for
+// per-group moderation and it never re-ripples/re-notifies on a later re-approval.
+// Best-effort: never blocks the report itself.
+func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid uint64, comments string) {
+	if reporterID == 0 || msgid == 0 {
+		return
+	}
+
+	// A poster reporting their own post must not count toward the quorum.
+	var fromuser uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ?", msgid).Scan(&fromuser)
+	if fromuser == reporterID {
+		return
+	}
+
+	// Record the report as a CheckMessage Reject verdict: ShouldntBeHere + non-null
+	// comments so it counts toward the quorum, exactly like an in-app "something's not
+	// right" check. The (userid, msgid) unique key makes a repeat report one verdict.
+	if comments == "" {
+		comments = "Reported via the website"
+	}
+	db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
+			VALUES (?, ?, ?, 'Reject', 'ShouldntBeHere', ?, ?, 0)
+			ON DUPLICATE KEY UPDATE result = 'Reject', msgcategory = 'ShouldntBeHere', comments = ?, version = ?`,
+		ChallengeCheckMessage, reporterID, msgid, comments, Version, comments, Version)
+
+	const reason = "Members or moderators think there is something wrong with this message."
+
+	// A moderator's report is quorum on its own: pull the post to Pending everywhere.
+	if reporterIsModOf(db, reporterID, groupid) {
+		SendForReviewAllGroups(db, msgid, reason)
+	} else {
+		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
+		// pulls the post to Pending on every community it is on.
+		var rejectCount int64
+		db.Raw(`SELECT COUNT(*) FROM microactions
+			WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
+			AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`, msgid).Scan(&rejectCount)
+		if rejectCount >= int64(ApprovalQuorum) {
+			SendForReviewAllGroups(db, msgid, reason)
+		}
+	}
+
+	// If the origin copy is now Pending, freeze the ripple (stops spread + re-reach).
+	FreezeReachIfOriginPending(db, msgid)
 }
 
 // listMicroActions returns microvolunteering activity for moderator review.

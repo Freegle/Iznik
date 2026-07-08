@@ -10,13 +10,18 @@ use Illuminate\Support\Facades\Log;
 class SyncWhatJobsCommand extends Command
 {
     protected $signature = 'integrations:sync-whatjobs
-                            {--dry-run : Parse feeds and count jobs without writing to database}';
+                            {--dry-run : Parse feeds and count jobs without writing to database}
+                            {--refresh-geocode : Ignore the jobs-table geocode cache so every tuple re-geocodes fresh (one-time, to retro-correct mis-cached locations)}';
 
     protected $description = 'Sync WhatJobs job listings from XML feeds into the jobs table';
 
     public function handle(WhatJobsService $service): int
     {
         $dryRun = (bool) $this->option('dry-run');
+        $service->forceRegeocode = (bool) $this->option('refresh-geocode');
+        if ($service->forceRegeocode) {
+            $this->info('--refresh-geocode: bypassing jobs-table geocode cache (one-time full re-geocode).');
+        }
 
         // The WhatJobs XML feed currently parses ~180k jobs into memory
         // before insertJobs() flushes them in chunks (parseFeed builds the

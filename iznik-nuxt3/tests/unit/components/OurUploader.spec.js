@@ -76,6 +76,14 @@ vi.mock('@uppy/compressor', () => ({
   default: vi.fn(),
 }))
 
+// Spy on the Loki action() logger so we can assert the upload/compression
+// telemetry payloads. Keep the module's other exports real.
+const mockAction = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useClientLog', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, action: (...args) => mockAction(...args) }
+})
+
 // Mock Capacitor Camera
 vi.mock('@capacitor/camera', () => ({
   Camera: {
@@ -1375,6 +1383,201 @@ describe('OurUploader', () => {
 
       consoleError.mockRestore()
       vi.useRealTimers()
+    })
+  })
+
+  describe('compression telemetry', () => {
+    function getHandler(name) {
+      return mockUppy.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('registers the per-file compression bracket listeners', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      const names = mockUppy.on.mock.calls.map((c) => c[0])
+      expect(names).toContain('preprocess-progress')
+      expect(names).toContain('compressor:complete')
+      expect(names).toContain('preprocess-complete')
+    })
+
+    it('logs upload_compress_started with the original size on preprocess-progress', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith('upload_compress_started', {
+        uploader: 'our',
+        file_size: 5000,
+      })
+    })
+
+    it('does not double-log when preprocess-progress fires twice for one file', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      const onProgress = getHandler('preprocess-progress')
+      mockAction.mockClear()
+      onProgress({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      onProgress({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      const started = mockAction.mock.calls.filter(
+        (c) => c[0] === 'upload_compress_started'
+      )
+      expect(started).toHaveLength(1)
+    })
+
+    it('logs upload_compress_finished with sizes, elapsed and compressed=true after a successful compress', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      // compressor:complete carries only successfully-compressed files.
+      getHandler('compressor:complete')([{ id: 'f1' }])
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 1000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({
+          uploader: 'our',
+          file_type: 'image/jpeg',
+          original_size: 5000,
+          compressed_size: 1000,
+          elapsed_ms: expect.any(Number),
+          compressed: true,
+          shrunk: true,
+        })
+      )
+    })
+
+    it('records a silent compression failure (compressed=false, unchanged size) when compressor:complete omits the file', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      // No compressor:complete for f1 — compressor swallowed the error and the
+      // file uploads uncompressed, so its size is unchanged at preprocess-complete.
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({ compressed: false, shrunk: false })
+      )
+    })
+
+    it('ignores preprocess-complete for a file with no open bracket', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({ id: 'unknown', size: 100 })
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.anything()
+      )
+    })
+
+    it('clears any open compression brackets on modal close', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      getHandler('preprocess-progress')({ id: 'f1', size: 5000 })
+      getHandler('dashboard:modal-closed')()
+      mockAction.mockClear()
+      // The bracket was dropped, so a late preprocess-complete logs nothing.
+      getHandler('preprocess-complete')({ id: 'f1', size: 1000 })
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.anything()
+      )
+    })
+
+    it('tags the existing funnel events with uploader=our', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+      getHandler('file-added')({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_file_selected',
+        expect.objectContaining({ uploader: 'our' })
+      )
+    })
+  })
+
+  describe('upload failure telemetry', () => {
+    function getHandler(name) {
+      return mockUppy.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('logs enriched upload_failed on upload-error, not on the retry-only error event', async () => {
+      mockIsApp.value = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      await createWrapper()
+      mockAction.mockClear()
+      // Global error event drives retry only — must not log upload_failed.
+      getHandler('error')(new Error('boom'))
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_failed',
+        expect.anything()
+      )
+      // upload-error carries file + response → diagnosable payload.
+      getHandler('upload-error')(
+        { id: 'f1', size: 5900000, type: 'image/jpeg' },
+        new Error('Failed to upload big.jpg'),
+        { status: 413, body: 'Request Entity Too Large' }
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          uploader: 'our',
+          reason: 'Failed to upload big.jpg',
+          status: 413,
+          is_network_error: false,
+          file_size: 5900000,
+          file_type: 'image/jpeg',
+          attempt: 1,
+        })
+      )
+      consoleError.mockRestore()
+    })
+
+    it('flags a network error (no HTTP status) and counts the attempt', async () => {
+      mockIsApp.value = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      await createWrapper()
+      getHandler('upload-retry')('f2')
+      mockAction.mockClear()
+      getHandler('upload-error')(
+        { id: 'f2', size: 120000, type: 'image/jpeg' },
+        new Error('Failed to fetch'),
+        undefined
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          status: null,
+          is_network_error: true,
+          attempt: 2,
+        })
+      )
+      consoleError.mockRestore()
     })
   })
 })

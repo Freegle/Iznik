@@ -1,7 +1,7 @@
 # Rippling Out - A Guide for Moderators
 
-> **Current reference document.** Supersedes the draft at
-> `plans/rippling-out-rollout/CHANGES-FOR-MODERATORS.md`.
+> For the technical detail of how the algorithm works (and the approaches that were
+> rejected), see [RIPPLING-ALGORITHM.md](RIPPLING-ALGORITHM.md).
 
 ---
 
@@ -87,6 +87,33 @@ the post reaches that member's area, or once the post has finished spreading as 
 will go, so no reply is ever held indefinitely. Members are never shown this reason; only
 moderators see it.
 
+### 5. Members' Nearby feed is ordered by relevance, with their own distance preference
+
+The "Nearby" browse feed no longer just shows the newest post first. Posts a member has
+not seen yet are shown ahead of ones they have already seen, and within each of those two
+groups, posts are ordered by a relevance score that balances how close a post is, how
+fresh it is, and how much interest it has already had (views and replies) - the same kind
+of scoring already used to order the rippling digest email. This changes the order a
+member's own browse page shows posts in; it does not change what rippling approves, joins,
+or who a post reaches.
+
+Members also have a distance slider marked "Nearer" and "Further" with no numbers shown,
+in two places: their **browse filters**, and (new) their **Settings**, under a "Feed"
+section above Email Settings. It is a **personal preference each member sets for
+themselves** - by default it is left at "Further" (no extra limit beyond their normal
+rippling reach), and moving it towards "Nearer" narrows how far away posts can be.
+
+Importantly, this preference now applies **both to what they see when browsing and to the
+posts in the emails we send them** (their daily digest and immediate emails). A member who
+sets it "Nearer" will stop seeing - and stop being emailed about - posts from further away,
+including rippled-in ones. It still has **no effect on rippling itself, on what other
+members see, or on moderation**, and their choice is remembered between visits.
+
+A practical consequence worth knowing: a rippled-in post is shown to the members of your
+community who are **closest to the poster and whose own distance preference reaches that
+far - not necessarily everyone**. If a member says a post "isn't showing for them", their
+distance slider being set to "Nearer" is a likely reason.
+
 ---
 
 ## When a poster leaves your community
@@ -157,6 +184,120 @@ because the poster is from out of area.
 
 ---
 
+## Rejecting or removing a post on its home community
+
+This is different from a secondary rejection above. When a post is **rejected, deleted, or
+withdrawn** on the community it was **originally posted to** (its home community), it is no
+longer a live offer there - so:
+
+1. **It is pulled from every community it had rippled into**, automatically. You do not have
+   to chase it around the neighbouring communities; removing it at home cleans it up
+   everywhere it had spread.
+2. **It stops spreading.** Its rippling is halted, so it will not appear on any further
+   communities.
+
+This is exactly what you want when you catch spam or a rule-breaking post on its home
+community: dealing with it once removes it everywhere, instead of leaving live copies
+stranded on the neighbouring communities it had already reached.
+
+The clean-up happens on the next rippling run (within about a minute), not the instant you
+click - so a rippled copy may linger very briefly before it disappears.
+
+(**Back to Pending** now works differently from Delete/Reject: it keeps each community's
+copy for per-group review and does **not** re-ripple on re-approval - see **Reporting a
+post** below.)
+
+The poster is also removed from any community they had been auto-joined to **only** to carry
+that post (i.e. where they have no other posts). They keep their home community and any
+community where they have other activity, and - because this is a tidy-up rather than them
+choosing to leave - a later post of theirs can still ripple into those communities normally.
+
+---
+
+## Reporting a post
+
+There are two different actions here, on two different sites, and it helps to keep them
+straight:
+
+- **Reporting** is a **Freegle-site (FD)** action - the **Report this post** link members
+  (and you) use while browsing the Freegle website.
+- **Approve / Reject / Back to Pending** are **ModTools (MT)** actions - what you do to a
+  post in your moderation queue.
+
+Reporting now has teeth: enough member reports, or a single moderator's report, pull the
+post back into your **Pending** queue in ModTools for review, rather than only sending a
+message to the volunteers.
+
+### When members report (on the Freegle site)
+
+A member's report is a **review vote**. Reports made with **Report this post** on the
+Freegle site and the in-app "Does this look OK?" microvolunteering checks count the same
+way - they are both members saying "something's not right" about a post.
+
+When **two** different members flag the same post, it is moved **back to Pending on every
+community it is on** - its home community *and* every community it had rippled into. From
+that point:
+
+- The post is **hidden from members** and **stops rippling** any further while it is under
+  review.
+- The copies are **not deleted** - each community keeps its own copy in its **Pending**
+  queue.
+- **Each community's moderators decide for themselves** whether to approve or reject their
+  own copy. One community's decision does not affect another's.
+
+> Two members flagging a post is treated as "worth a look everywhere", not "definitely
+> bad". It simply puts the post in front of every affected community's moderators - you
+> still make the call.
+
+### When you (a moderator) report (also on the Freegle site)
+
+When you use **Report this post** on the Freegle site, the report dialog shows **every
+community the post is on** and lets you **choose which ones to report it on** - with an
+**All communities** option to select them all at once.
+
+- Reporting it on a community moves **that community's copy** straight to Pending - your
+  moderator judgement counts on its own, no quorum needed.
+- Choose **All communities** to pull the post everywhere in one go (the same effect as Back
+  to Pending in ModTools) when it is bad for everyone.
+- Communities you **don't** pick are **left alone** - their copy stays live. If a post is
+  fine for one community but not another, report it only where it is a problem.
+
+### Approving or rejecting a reported post (in ModTools)
+
+Once a post is Pending from a report, you handle your community's copy in ModTools exactly
+as normal:
+
+- **Approve** puts it back live on your community. Members are **not** emailed again - it
+  simply reappears; there are no duplicate "new post" notifications, and it does **not**
+  re-ripple out from scratch.
+- **Reject** removes it from your community only (the usual low-stakes secondary rejection;
+  the poster is not told). Other communities are unaffected.
+
+A post being **held** (shown as "held by" a moderator) is **per community**, on that
+community's own Pending copy, and only applies while the copy is Pending. It is
+**independent**: a copy being held on one community has no effect on the same post's copy on
+any other community. You approve or reject your own community's copy regardless of whether
+another community has held, approved, or rejected theirs.
+
+Because each community's copy is independent and stays put, a reported post **cannot
+flip-flop**: one community approving it will never re-create a copy on a community that has
+rejected it.
+
+### Moving a post back to pending in ModTools
+
+You don't have to go via the Freegle site at all. Moving a post from **Approved back to
+Pending** in **ModTools** - the ordinary moderation action - now does the same thing as a
+report: it pulls the post to Pending on **every** community it is on (its home community and
+every rippled copy), not just yours.
+
+So one moderator catching a problem in ModTools takes the post off the board **everywhere**
+for review, instead of leaving live copies stranded on the neighbouring communities you
+cannot see. As with a report, the copies are **kept** (not deleted), each community approves
+or rejects its own, and **re-approving brings a copy back without re-notifying members or
+re-rippling from scratch**.
+
+---
+
 ## TrashNothing posts
 
 TrashNothing posts are currently **not** rippled out into new communities. TrashNothing
@@ -175,6 +316,14 @@ answer is reassuring:
 > *The post has not rippled out to your area yet. It is being shown to people closest
 > to it first. As soon as it reaches you, you will be able to reply - you do not need
 > to do anything.*
+
+Worth knowing: on their default Nearby view, a member only ever sees posts that have
+already reached them, so this question usually only comes up if they have switched to
+"All my communities" or otherwise moved away from the default view. It is fine to say so -
+it should reassure them that what they normally see is always reply-able.
+
+Members may also ask about the order posts appear in, or about the new distance slider in
+the filters - see "Members' Nearby feed is ordered by relevance" above for the mechanism.
 
 Members on **immediate emails** may also notice they get an alert when a post that
 started on a neighbouring community ripples close enough to reach them. That is expected:

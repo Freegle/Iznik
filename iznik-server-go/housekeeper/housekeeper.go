@@ -303,7 +303,10 @@ var cronJobs = []CronJob{
 	{Command: "cleanup:search-duplicates", Name: "Search Dedup", Description: "Deduplicates consecutive searches", Schedule: "Hourly", IntervalMinutes: 60, Category: "Cleanup", Active: true},
 	{Command: "cleanup:chat-duplicates", Name: "Chat Dedup", Description: "Deduplicates consecutive chat messages", Schedule: "Every 2 hours", IntervalMinutes: 120, Category: "Cleanup", Active: true},
 	{Command: "cleanup:sessions", Name: "Session Cleanup", Description: "Cleans up old sessions and login links", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
-	{Command: "cleanup:whatjobs-spam", Name: "WhatJobs Spam", Description: "Deletes spammy WhatJobs postings (same body hash > 50 occurrences)", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Cleanup", Active: true},
+	// NB: the V1 "WhatJobs Spam" cleanup (bodyhash>50 deletion) was deliberately NOT
+	// ported to Laravel. Click analysis (email_tracking_clicks) shows those nationwide
+	// duplicate roles are the top click/revenue driver, so they are deduped to the
+	// nearest copy in the spatial-knn jobs query (jobsDedupKey on bodyhash), not deleted.
 	{Command: "purge:chats", Name: "Purge Chats", Description: "Daily purge of spam chat messages, empty rooms, orphaned chat images", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
 	{Command: "purge:logs", Name: "Purge Logs", Description: "Daily log/bounce/likes purge across 16 log tables", Schedule: "Daily at 3:30am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
 	{Command: "purge:messages", Name: "Purge Messages", Description: "Purges messages_history, pending/draft/non-Freegle/deleted/stranded messages, HTML body, message source, orphans", Schedule: "Daily at 2:30am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},

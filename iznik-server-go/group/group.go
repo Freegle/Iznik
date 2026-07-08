@@ -511,7 +511,7 @@ func ListGroups(c *fiber.Ctx) error {
 			"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby "+
 			"FROM `groups` WHERE type = ?", FREEGLE).Scan(&groups)
 	} else {
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
+		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
 	}
 
 	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
@@ -828,17 +828,36 @@ func PatchGroup(c *fiber.Ctx) error {
 		if req.Licenserequired != nil {
 			db.Exec("UPDATE `groups` SET licenserequired = ? WHERE id = ?", *req.Licenserequired, req.ID)
 		}
+		// poly (DPA) / polyofficial (CGA). An empty string means "clear this area" - it must be
+		// allowed (a moderator removing the DPA), so skip geometry validation and store NULL rather
+		// than feeding "" to validateGeometry (which returns 400). Matches V1 PHP Group::setPrivate.
+		polyChanged := false
 		if req.Poly != nil {
-			if !validateGeometry(*req.Poly) {
-				return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
+			if *req.Poly == "" {
+				db.Exec("UPDATE `groups` SET poly = NULL WHERE id = ?", req.ID)
+			} else {
+				if !validateGeometry(*req.Poly) {
+					return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
+				}
+				db.Exec("UPDATE `groups` SET poly = ? WHERE id = ?", *req.Poly, req.ID)
 			}
-			db.Exec("UPDATE `groups` SET poly = ? WHERE id = ?", *req.Poly, req.ID)
+			polyChanged = true
 		}
 		if req.Polyofficial != nil {
-			if !validateGeometry(*req.Polyofficial) {
-				return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
+			if *req.Polyofficial == "" {
+				db.Exec("UPDATE `groups` SET polyofficial = NULL WHERE id = ?", req.ID)
+			} else {
+				if !validateGeometry(*req.Polyofficial) {
+					return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
+				}
+				db.Exec("UPDATE `groups` SET polyofficial = ? WHERE id = ?", *req.Polyofficial, req.ID)
 			}
-			db.Exec("UPDATE `groups` SET polyofficial = ? WHERE id = ?", *req.Polyofficial, req.ID)
+			polyChanged = true
+		}
+		if polyChanged {
+			// Recompute the spatial index so the poly/polyofficial change takes effect. When the DPA
+			// (poly) is cleared the group falls back to the CGA (polyofficial), then to POINT(0 0).
+			db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d) WHERE id = ?", utils.SRID), req.ID)
 		}
 		if req.Showonyahoo != nil {
 			db.Exec("UPDATE `groups` SET showonyahoo = ? WHERE id = ?", *req.Showonyahoo, req.ID)

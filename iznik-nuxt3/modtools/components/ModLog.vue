@@ -248,6 +248,10 @@
             <ModLogGroup :logid="logid" tag="on" />
             <ModLogStdMsg :logid="logid" />
           </span>
+          <span v-else-if="log.subtype === 'Restored'">
+            Account reinstated (deletion cancelled)
+            <ModLogUser :userid="logUser.id" />
+          </span>
           <span v-else-if="log.subtype === 'Mailed'" class="text-danger">
             Mod sent
             <span v-if="log.text && log.text.length > 0">

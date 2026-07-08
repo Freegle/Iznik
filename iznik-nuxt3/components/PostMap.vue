@@ -61,6 +61,16 @@
                 :size="largeGroupMarkers ? 'rich' : 'poor'"
               />
             </div>
+            <!-- Coverage hull of the posts currently shown. View-agnostic: it adapts to the
+                 distance slider on BOTH the nearby and "all my communities" views, so it is no
+                 longer gated on showIsochrones (which is nearby-only). -->
+            <l-geo-json
+              v-if="coverageGeoJSON"
+              :geojson="coverageGeoJSON"
+              :options="isochroneOptions"
+            />
+            <!-- Explicit WKT overrides (e.g. the fixed Essex boundary) are a nearby/override-only
+                 concept, so they stay gated. -->
             <div v-if="showIsochrones">
               <l-geo-json
                 v-for="g in isochroneGEOJSONs"
@@ -95,13 +105,22 @@ import {
   osmtile,
 } from '~/composables/useMap'
 import { useMiscStore } from '~/stores/misc'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
 import { useAuthorityStore } from '~/stores/authority'
 import { useAuthStore } from '~/stores/auth'
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css'
 import '~/assets/css/gesture-handling.css'
 import { useMe } from '~/composables/useMe'
-import { smoothGeoJSON } from '~/composables/useReachPolygon'
+import {
+  smoothGeoJSON,
+  buildCoverageGeoJSON,
+} from '~/composables/useReachPolygon'
+import {
+  isWithinDistance,
+  filterMessagesByDistance,
+} from '~/composables/useDistance'
+import { distinctGroupIds } from '~/composables/useMessageDedup'
+import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
 
 const props = defineProps({
   showIsochrones: {
@@ -178,6 +197,15 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Personal distance preference (miles). BROWSE_DISTANCE_UNLIMITED (the
+  // default) means "no client-side limit" - show everything the reach feed
+  // returned. Anything smaller filters the map markers (and the coverage hull)
+  // to posts within that distance, so the map tracks the Browse slider.
+  selectedMaxDistance: {
+    type: Number,
+    required: false,
+    default: BROWSE_DISTANCE_UNLIMITED,
+  },
 })
 
 const { myGroups, myGroupsBoundingBox, myGroupIds } = useMe()
@@ -200,7 +228,7 @@ const emit = defineEmits([
 const miscStore = useMiscStore()
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const authorityStore = useAuthorityStore()
 const authStore = useAuthStore()
 const me = authStore.user
@@ -222,8 +250,8 @@ const bounds = ref(null)
 const map = ref(null)
 const mapcont = ref(null)
 
-// Get isochroneBounds from the store
-const { bounds: isochroneBounds } = storeToRefs(useIsochroneStore())
+// The bounding box of the nearby messages we've fetched, so we can fit the map around them.
+const { bounds: nearbyBounds } = storeToRefs(useNearbyStore())
 
 // Computed properties
 const mapHeight = computed(() => {
@@ -260,17 +288,9 @@ const showGroups = computed(() => {
 })
 
 const groups = computed(() => {
-  const ret = []
-
-  if (messageList.value) {
-    messageList.value.forEach((m) => {
-      if (!ret.includes(m.groupid)) {
-        ret.push(m.groupid)
-      }
-    })
-  }
-
-  return ret
+  // Distinct groupids in first-appearance order (O(n) via a Set rather than the previous
+  // includes()-in-loop).
+  return distinctGroupIds(messageList.value)
 })
 
 const largeGroupMarkers = computed(() => {
@@ -338,16 +358,41 @@ const groupsInBounds = computed(() => {
   return sorted
 })
 
+// Posts narrowed by the member's distance slider (selectedMaxDistance).
+// BROWSE_DISTANCE_UNLIMITED = show everything the reach feed returned. This is
+// what the map markers and the coverage hull are drawn from, so the map tracks
+// the slider the same way the list does.
+const distanceFilteredMessages = computed(() => {
+  return filterMessagesByDistance(messageList.value, props.selectedMaxDistance)
+})
+
 const messagesForMap = computed(() => {
-  return mapObject.value && messageList.value && messageList.value.length
-    ? messageList.value
+  return mapObject.value && distanceFilteredMessages.value.length
+    ? distanceFilteredMessages.value
     : []
 })
 
+// A smoothed convex hull enclosing the posts currently shown, as an indication
+// of the area covered. The true reach is travel-time-based (not a simple
+// radius), so this is only an approximation - but it shrinks as the slider is
+// pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
+// this is an outward-rounded hull rather than Chaikin smoothing.
+const coverageGeoJSON = computed(() => {
+  // Drawn for BOTH the nearby and "all my communities" views (not gated on showIsochrones,
+  // which is nearby-only). It is just a hull of the posts currently shown, so it adapts to the
+  // distance slider the same way on either view. Falls back to null (no polygon) when there
+  // aren't enough points, which buildCoverageGeoJSON handles.
+  const points = messagesForMap.value
+    .filter((m) => m.lat != null || m.lng != null)
+    .map((m) => [m.lng, m.lat])
+  return buildCoverageGeoJSON(points)
+})
+
 const isochrones = computed(() => {
-  return props.isochroneOverride
-    ? [props.isochroneOverride]
-    : isochroneStore?.list
+  // There's no longer a per-user isochrone polygon to fall back on - reach is worked
+  // out server-side and just returns nearby posts. The only polygon we can draw is
+  // an explicit override, e.g. the fixed Essex boundary on the Essex landing page.
+  return props.isochroneOverride ? [props.isochroneOverride] : []
 })
 
 const isochroneGEOJSONs = computed(() => {
@@ -375,28 +420,32 @@ const isochroneOptions = computed(() => {
   // Faded fill so post pins remain clearly visible; soft border echoes the
   // rippling explorer's reach polygon style.
   return {
-    fillColor: '#3388cc',
+    fillColor: ISOCHRONE_COLOR,
     fill: true,
     fillOpacity: 0.12,
-    color: '#3388cc',
+    color: ISOCHRONE_COLOR,
     weight: 2,
     opacity: 0.5,
   }
 })
 
 const messageIds = computed(() => {
-  return new Set(messageList.value.map((m) => m.id))
+  return new Set(distanceFilteredMessages.value.map((m) => m.id))
 })
 
 const secondaryMessagesForMap = computed(() => {
+  const withinDistance = (m) =>
+    isWithinDistance(m.distance, props.selectedMaxDistance)
+
   if (secondaryMessageList.value?.length > 200) {
     // So many posts that the precise numbers no longer matter that much.  So return all the ones we have fetched
     // rather than spend CPU on filtering (which is a significant issue on slow browsers).
-    return secondaryMessageList.value
+    return secondaryMessageList.value.filter(withinDistance)
   } else {
     // Return anything relevant we have fetched which is not already in the primary one.
     return secondaryMessageList.value.filter((m) => {
       return (
+        withinDistance(m) &&
         !messageIds.value.has(m.id) &&
         (!props.groupid || m.groupid === props.groupid) &&
         (props.type === 'All' || m.type === props.type)
@@ -425,18 +474,65 @@ watch(zoom, (newVal) => {
   }
 })
 
-watch(isochroneBounds, (newVal) => {
-  if (newVal && mapObject.value) {
-    // Make the map show the isochrone view.
-    try {
-      mapObject.value.fitBounds(newVal)
-    } catch (e) {
-      // This happens when leaflet is destroyed.
-      console.log('Ignore flyToBounds exception', e)
-    }
+// Fit the map to the currently-shown (distance-filtered) markers, with a little
+// padding, so the map frames what's actually visible - and zooms in as the
+// distance slider is pulled in. No-op if the map isn't ready or nothing has
+// coordinates.
+function fitToShownMarkers() {
+  if (!mapObject.value) return
+  const latlngs = messagesForMap.value
+    .filter((m) => m.lat != null || m.lng != null)
+    .map((m) => [m.lat, m.lng])
+  if (!latlngs.length) return
+  try {
+    mapObject.value.fitBounds(new window.L.LatLngBounds(latlngs), {
+      padding: [40, 40],
+      maxZoom: props.postZoom + 3,
+    })
+  } catch (e) {
+    // This happens when leaflet is destroyed.
+    console.log('Ignore fitToShownMarkers exception', e)
   }
+}
+
+watch(nearbyBounds, () => {
+  // Frame the map around the nearby messages we've fetched (with padding).
+  fitToShownMarkers()
   getMessages()
 })
+
+// Re-fit whenever the set of shown posts changes - the distance slider narrowing
+// or widening, or new data arriving - so the map always frames what's on screen.
+// Keyed on the count + bounds of the shown set and debounced, so the map settles
+// once after any churn rather than fighting itself mid-update.
+let fitDebounce = null
+watch(
+  () => {
+    const m = messagesForMap.value
+    if (!m.length) return '0'
+    let latMin = Infinity
+    let latMax = -Infinity
+    let lngMin = Infinity
+    let lngMax = -Infinity
+    for (const p of m) {
+      if (p.lat != null) {
+        latMin = Math.min(latMin, p.lat)
+        latMax = Math.max(latMax, p.lat)
+      }
+      if (p.lng != null) {
+        lngMin = Math.min(lngMin, p.lng)
+        lngMax = Math.max(lngMax, p.lng)
+      }
+    }
+    return `${m.length}:${latMin.toFixed(2)}:${latMax.toFixed(
+      2
+    )}:${lngMin.toFixed(2)}:${lngMax.toFixed(2)}`
+  },
+  () => {
+    if (fitDebounce) clearTimeout(fitDebounce)
+    fitDebounce = setTimeout(fitToShownMarkers, 200)
+  }
+)
 
 watch(
   groups,
@@ -703,6 +799,24 @@ async function getMessages() {
   const nelng = bounds.getNorthEast().lng
   let ret = null
 
+  // Nearby (reach) view: the reachable set is worked out server-side from the member's
+  // location and does NOT change as they pan or zoom the map. So always show exactly that
+  // reach feed and never fetch by map bounds - a bounds fetch would surface posts outside
+  // the member's reach, which they can see but can't reply to. This also means we skip the
+  // "not many showing, zoom out and refetch" padding below, which was the source of far,
+  // unreachable posts leaking into the nearby list. Search within nearby is handled in the
+  // showIsochrones branch further down (it intersects the reach feed with a bounds search).
+  if (props.showIsochrones && !props.search && (me?.lat || me?.lng)) {
+    console.log('GetMessages - nearby reach feed')
+    const nearby = await nearbyStore.fetchMessages()
+    if (nearby && !destroyed.value) {
+      messageList.value = nearby
+      emit('messages', messageList.value)
+    }
+    emit('update:loading', false)
+    return cloneDeep(nearby || [])
+  }
+
   if (moved.value) {
     // The map has been moved.
     if (props.search) {
@@ -754,14 +868,16 @@ async function getMessages() {
 
     // Don't fetch the other messages - this may return so many it's too much load on the client.
   } else if (props.showIsochrones) {
-    // We are trying to show posts nearby.
-    if (isochrones.value?.length) {
-      // We have isochrones.
+    // We are trying to show posts nearby - the reach-based feed the server computes
+    // from the member's location. There's no client-side polygon any more, so the
+    // gate is simply whether we know where the member is.
+    if (me?.lat || me?.lng) {
+      // We know where the member is, so ask the server for their nearby feed.
       if (props.search) {
-        // We don't have a search-within-isochones call.  But we can fetch all the messages in the isochrones,
-        // and also search within the map, and take the intersection.
-        console.log('GetMessages - search in isochrones')
-        const isoret = await isochroneStore.fetchMessages()
+        // We don't have a search-within-nearby-feed call.  But we can fetch all the messages in the
+        // nearby feed, and also search within the map, and take the intersection.
+        console.log('GetMessages - search in nearby feed')
+        const nearbyret = await nearbyStore.fetchMessages()
         const searchret = await messageStore.search({
           messagetype: props.type,
           search: props.search,
@@ -774,7 +890,7 @@ async function getMessages() {
         const ids = {}
 
         ret = searchret.filter((i) => {
-          if (isoret.find((el) => el.id === i.id) && !ids[i.id]) {
+          if (nearbyret.find((el) => el.id === i.id) && !ids[i.id]) {
             ids[i.id] = true
             return true
           } else {
@@ -783,22 +899,11 @@ async function getMessages() {
         })
 
         secondaryMessageList.value = searchret
-      } else {
-        // Fetch the messages in our isochrones.
-        console.log('GetMessages - fetch in isochrones')
-        ret = await isochroneStore.fetchMessages()
-
-        // Fetch the messages in bounds too, so that we can show those as secondary.
-        secondaryMessageList.value = await messageStore.fetchInBounds(
-          swlat,
-          swlng,
-          nelat,
-          nelng
-        )
       }
+      // The non-search nearby case is handled by the early reach-feed return above, so
+      // there's nothing to do here for it - we never fetch by map bounds for nearby.
     } else if (myGroups.value?.length) {
-      // We don't, which will be because we don't have a location.
-      // Use the bounding boxes of the groups we are in.
+      // We don't know where the member is, so use the bounding boxes of the groups we are in.
       const groupbounds = myGroupsBoundingBox.value
 
       if (props.search) {
@@ -834,10 +939,10 @@ async function getMessages() {
         }
       }
     } else if (props.search) {
-      // We have no isochrones and no groups.  Do nothing - we expect code elsewhere to prompt for a location.
+      // We have no location and no groups.  Do nothing - we expect code elsewhere to prompt for a location.
       // Search within the bounds of the map.
       console.log(
-        'GetMessages - no isochrones, no groups, search within map bounds'
+        'GetMessages - no location, no groups, search within map bounds'
       )
       ret = await messageStore.search({
         messagetype: props.type,
@@ -850,7 +955,7 @@ async function getMessages() {
     } else {
       // Just fetch the bounds of the map.
       console.log(
-        'GetMessages - no isochrones, no groups, fetch within map bounds'
+        'GetMessages - no location, no groups, fetch within map bounds'
       )
       ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
     }
@@ -927,10 +1032,13 @@ async function getMessages() {
     !props.search &&
     props.showMany &&
     countInBounds < manyToShow.value &&
-    !shownMany.value
+    !shownMany.value &&
+    mapObject.value
   ) {
     // If we haven't got more than 1 message at this zoom level, zoom out.  That means we'll always show at
-    // least something.  This is useful when we search for a specific place.
+    // least something.  This is useful when we search for a specific place. Guard on mapObject.value:
+    // getMessages() is async and can resolve after the component has been torn down (the map object is
+    // then null), so re-check before dereferencing it here.
     const currzoom = mapObject.value.getZoom()
     if (currzoom > props.minZoom) {
       console.log(

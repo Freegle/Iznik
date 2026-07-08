@@ -298,6 +298,25 @@ describe('StoryOne', () => {
     })
   })
 
+  describe('missing story', () => {
+    it('renders nothing and does not fetch the user when the story is not found', async () => {
+      // A deleted story (or a stale/bad id in a list) makes storyStore.fetch
+      // resolve null. Previously we then read story.userid and threw
+      // "Cannot read properties of undefined (reading 'userid')" during render.
+      mockStoryStore.fetch.mockResolvedValue(null)
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.story-card').exists()).toBe(false)
+      expect(mockUserStore.fetch).not.toHaveBeenCalled()
+      expect(mockUserStore.fetchPublicLocation).not.toHaveBeenCalled()
+    })
+
+    it('renders nothing when the story is undefined', async () => {
+      mockStoryStore.fetch.mockResolvedValue(undefined)
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.story-card').exists()).toBe(false)
+    })
+  })
+
   describe('data fetching', () => {
     it('fetches story on mount', async () => {
       await createWrapper()

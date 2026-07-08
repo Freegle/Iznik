@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/stretchr/testify/assert"
 )
@@ -50,6 +51,33 @@ func TestLostPasswordSuccess(t *testing.T) {
 	var keyCount int64
 	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = 'Link'", userID).Scan(&keyCount)
 	assert.Equal(t, int64(1), keyCount)
+}
+
+func TestLostPasswordSendsToEmailUsedNotPreferred(t *testing.T) {
+	// A user with two emails who triggers a reset using their NON-preferred
+	// address must get the login link at the address they actually used - not
+	// at their preferred address, which may differ and may be the one bouncing.
+	prefix := uniquePrefix("lostpw-used")
+	userID := CreateTestUser(t, prefix, "User")
+	primaryEmail := fmt.Sprintf("%s@test.com", prefix)
+	secondaryEmail := fmt.Sprintf("%s-secondary@test.com", prefix)
+
+	db := database.DBConn
+	// Make the auto-created address the preferred one, and add a non-preferred
+	// secondary address.
+	db.Exec("UPDATE users_emails SET preferred = 1 WHERE userid = ? AND email = ?", userID, primaryEmail)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", userID, secondaryEmail)
+
+	body := fmt.Sprintf(`{"action":"LostPassword","email":"%s"}`, secondaryEmail)
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var queuedEmail string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.email')) FROM background_tasks "+
+		"WHERE task_type = 'email_forgot_password' AND JSON_EXTRACT(data, '$.user_id') = ? "+
+		"ORDER BY id DESC LIMIT 1", userID).Scan(&queuedEmail)
+	assert.Equal(t, secondaryEmail, queuedEmail,
+		"reset link must be queued to the email the user actually used, not their preferred address")
 }
 
 func TestLostPasswordUnknownEmail(t *testing.T) {
@@ -357,6 +385,49 @@ func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	assert.NotContains(t, email, "@users.ilovefreegle.org")
 }
 
+func TestGetSessionEmailsExposeBouncedTimestamp(t *testing.T) {
+	// The session payload must expose which specific address is bouncing so the
+	// website banner can name it. A healthy email has bounced=null; a bounced
+	// one carries a timestamp.
+	prefix := uniquePrefix("sess_bounced")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	healthyEmail := fmt.Sprintf("%s@test.com", prefix)
+	bouncingEmail := fmt.Sprintf("%s-bounce@test.com", prefix)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, bounced) VALUES (?, ?, 0, NOW())",
+		userID, bouncingEmail)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	emails, ok := result["emails"].([]interface{})
+	assert.True(t, ok, "emails should be an array")
+
+	var healthyBounced, bouncingBounced interface{}
+	healthyFound, bouncingFound := false, false
+	for _, e := range emails {
+		em := e.(map[string]interface{})
+		switch em["email"] {
+		case healthyEmail:
+			healthyFound = true
+			healthyBounced = em["bounced"]
+		case bouncingEmail:
+			bouncingFound = true
+			bouncingBounced = em["bounced"]
+		}
+	}
+	assert.True(t, healthyFound, "healthy email should be present")
+	assert.True(t, bouncingFound, "bouncing email should be present")
+	assert.Nil(t, healthyBounced, "healthy email should have bounced=null")
+	assert.NotNil(t, bouncingBounced, "bouncing email should expose a bounced timestamp")
+}
+
 func TestGetSessionReturnsMailFlags(t *testing.T) {
 	// /api/session must return relevantallowed and newslettersallowed in me so the
 	// settings UI toggles ("Suggested posts for you", "Newsletters & stories") reflect
@@ -598,6 +669,33 @@ func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
 			"persistent.id must match the current session (%d), not the other-app session (%d)",
 			idCurrent, idOther)
 	}
+}
+
+// TestGetSessionViaAuth2ReturnsJWT verifies that GET /session with an
+// Authorization2 header carrying the persistent-token JSON object returns
+// HTTP 200, ret=0, and a non-empty jwt.  This is the flow used by
+// helper/run-loop.sh when no JWT is supplied but PERSISTENT_TOKEN is set.
+func TestGetSessionViaAuth2ReturnsJWT(t *testing.T) {
+	prefix := uniquePrefix("sess_auth2_jwt")
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, _ := CreateTestSession(t, userID)
+	db := database.DBConn
+
+	var series uint64
+	var token string
+	db.Raw("SELECT series, token FROM sessions WHERE id = ?", sessionID).Row().Scan(&series, &token)
+
+	persistentJSON := fmt.Sprintf(`{"id":%d,"series":%d,"token":"%s"}`, sessionID, series, token)
+
+	req := httptest.NewRequest("GET", "/api/session", nil)
+	req.Header.Set("Authorization2", persistentJSON)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.NotEmpty(t, result["jwt"], "GET /session with Authorization2 must return a jwt")
 }
 
 // ---------------------------------------------------------------------------
@@ -895,6 +993,50 @@ func TestPatchSessionSettings(t *testing.T) {
 	var settings string
 	db.Raw("SELECT settings FROM users WHERE id = ?", userID).Scan(&settings)
 	assert.Contains(t, settings, `"email":"daily"`)
+}
+
+func TestPatchSessionReinstateLogsRestored(t *testing.T) {
+	prefix := uniquePrefix("patch_restore")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+
+	// Soft-delete the account as self-service deletion does, then create the
+	// session afterwards, mirroring a user logging back in during the grace
+	// period to recover their account.
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", userID)
+	_, token := CreateTestSession(t, userID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"deleted": nil,
+	})
+
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The deleted flag is cleared.
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
+	assert.Nil(t, deleted)
+
+	// The reinstatement is recorded in the audit log, matching the
+	// (User, Deleted) entry written when the account was deleted.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ?",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED).Scan(&count)
+	assert.Equal(t, int64(1), count)
+
+	// A repeat PATCH with deleted:null on an already-live account must not
+	// write another Restored log.
+	req = httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ?",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED).Scan(&count)
+	assert.Equal(t, int64(1), count)
 }
 
 func TestPatchSessionSettingsPostcodeChange(t *testing.T) {

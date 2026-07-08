@@ -218,9 +218,15 @@ class ChatNotificationTest extends TestCase
         );
 
         // Subject should be based on the "interested in" message's referenced item.
-        $this->assertStringStartsWith('Regarding:', $mail->replySubject);
-        $this->assertStringContainsString('[' . $group->namefull . ']', $mail->replySubject);
-        $this->assertStringContainsString('OFFER: Double Bed Frame (London)', $mail->replySubject);
+        // NO group name: with rippling a post sits on many groups and any pick can
+        // mislead (support case: a Bristol post's replies arrived as [Bath Freegle],
+        // [Dursley], [North Cotswolds] as the poster's rippled memberships changed).
+        // The item's own location suffix already says where it is.
+        $this->assertEquals(
+            'Regarding: OFFER: Double Bed Frame (London)',
+            $mail->replySubject
+        );
+        $this->assertStringNotContainsString('[', $mail->replySubject);
     }
 
     public function test_chat_notification_user2mod_subject(): void
@@ -412,9 +418,9 @@ class ChatNotificationTest extends TestCase
             ChatRoom::TYPE_USER2USER
         );
 
-        // Subject should be based on the interested message.
+        // Subject should be based on the interested message - no group name.
         $this->assertStringContainsString('Regarding:', $mail->replySubject);
-        $this->assertStringContainsString('[' . $group->namefull . ']', $mail->replySubject);
+        $this->assertStringNotContainsString($group->namefull, $mail->replySubject);
         $this->assertStringContainsString('OFFER: Test Item', $mail->replySubject);
 
         $mail->build();
@@ -638,8 +644,12 @@ class ChatNotificationTest extends TestCase
         // Verify "Regarding:" is used instead of "Re:".
         $this->assertStringStartsWith('Regarding:', $mail->replySubject);
         $this->assertStringNotContainsString('Re:', $mail->replySubject);
-        // Also verify group name is included.
-        $this->assertStringContainsString('[' . $group->namefull . ']', $mail->replySubject);
+        // And no group name - the subject is just "Regarding: <item subject>".
+        $this->assertStringNotContainsString($group->namefull, $mail->replySubject);
+        $this->assertEquals(
+            'Regarding: OFFER: Test Item (Location)',
+            $mail->replySubject
+        );
     }
 
     public function test_chat_notification_chat_url_contains_room_id(): void

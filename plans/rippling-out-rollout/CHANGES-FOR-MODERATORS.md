@@ -4,8 +4,10 @@ We're rolling out a change called **rippling out**. This page explains, in plain
 language, what you'll see that's different - and one important thing **not** to do.
 
 You don't need to understand any of the technical detail to moderate well. The short
-version is: **posts now become visible to people gradually, starting with those closest
-and spreading outwards over time.** A few things change on your screen as a result.
+version is: **when something is posted, most of the people near the poster see it straight
+away, just as they do now. If it doesn't get taken locally, it then keeps spreading
+outwards over the following days to reach more people further afield.** A few things change
+on your screen as a result.
 
 ---
 
@@ -14,7 +16,7 @@ and spreading outwards over time.** A few things change on your screen as a resu
 > ### Don't reject a post just because it looks "out of area"
 >
 > With rippling out, a post that started on a neighbouring community can now appear on
-> **your** community's pending list, even if the person who posted it lives some distance
+> **your** community, even if the person who posted it lives some distance
 > away. **That is expected and correct** - it's the system deliberately spreading posts
 > which haven't been successful locally outwards so your members get a chance at it and the
 > post has a higher chance of working out.
@@ -44,24 +46,27 @@ out of their area.** That's the system working as intended.
 ## What you'll see that's new
 
 ### 1. Posts arriving from other communities
-Some posts in your pending list will have started life on another community and **rippled
+Some posts on your community will have started life on another community and **rippled
 in** to yours. You can think of it like an automatic and much better crosspost. When that
 happens you'll see a small blue notice on the post:
 
 > *"This post is starting to become available to some of your group members."*
 
 There's a **"Learn more"** link next to it that explains rippling out if you want the
-detail. These posts go through your normal pending list like any other - approve or reject
-them as you normally would (remembering the "please don't" above).
+detail. Because the post was already checked by the community it started on, by default it
+arrives on yours **already approved** rather than waiting in your pending list - but you can
+still reject it for the usual reasons (remembering the "please don't" above), which quietly
+trims it from your area (see "Rejecting a rippled-in post" below).
 
-**One timing difference to know about:** a post that rippled in *and was already approved on
-the community it started in* will **auto-approve on your community after about an hour** if
-nobody rejects it first. It was already vetted where it was posted, so we don't make it sit
-out the full review window again. When we switch to post-moderation rather than
-pre-moderation this will happen too - this is just a bit earlier. You still see it in your
-pending list and can reject it for the usual reasons; just do so reasonably promptly if you
-don't want it to go live locally. (A post that hasn't been approved anywhere yet follows
-your normal pending process, unchanged.)
+**A note on timing:** because a post only ripples out once it's already been approved on the
+community it started on, we don't make it sit out a second review where it ripples in. By
+default it goes live on your community **straight away**, so it won't sit in your pending
+list at all - this keeps the extra moderation load of rippling off the receiving
+communities. You can still reject it at any time for the usual reasons, which removes it from
+your area. If your community would rather eyeball rippled-in posts before they appear, that
+can be switched on for you - they'll then wait in your pending list and auto-approve after a
+short review window if nobody rejects them first. (Posts that originate on your own community
+still follow your normal pending process, exactly as before.)
 
 ### 2. A "Who can see this?" button
 On posts in your moderation screens there's a button (label may be "Who can see this?" or
@@ -83,6 +88,22 @@ When that happens, the chat in **Chat Review / ModTools** will tell you it's bei
 **because of rippling out** - which is different from a chat *you* have chosen to hold. You
 don't need to do anything: the reply is released automatically as soon as the post reaches
 that member's area. (Members are never shown this reason - only you see it.)
+
+### 5. Members' own "Nearby" browse feed is now ordered by relevance, with a distance slider
+This one's on the member side rather than in ModTools, but you may get asked about it. The
+"Nearby" browse feed no longer just lists the newest post first: posts a member hasn't seen
+yet are shown ahead of ones they have, and within each of those groups, posts are ordered by
+a relevance score that balances how close a post is, how fresh it is, and how much interest
+it's already had (views and replies) - the same kind of scoring already used for the
+rippling digest email. It changes the order a member's own feed shows posts in; it doesn't
+change what rippling approves or who a post reaches.
+
+Members also get a new distance slider in their filters, marked "Nearer" and "Further"
+with no numbers. It's a **personal preference each member sets for themselves** - it
+defaults to "Further" (no extra limit beyond their normal rippling reach), and dragging it
+towards "Nearer" just narrows what appears on their own screen. It doesn't affect rippling
+itself, what anyone else sees, or moderation, and - like their other browse filters - it's
+remembered between visits.
 
 ---
 
@@ -107,9 +128,9 @@ because the poster is from out of area.**
 
 Posts that come in through **TrashNothing** behave just like any other post under rippling
 out. A TrashNothing post ripples outwards from the community it started on, and one that
-ripples in to your community turns up in your pending list with the same blue notice -
-approve or reject it exactly as you would any other rippled-in post. Replies from a
-TrashNothing member are held and released the same way too (see point 4 above).
+ripples in to your community turns up with the same blue notice, already approved by default
+just like any other rippled-in post - and you can still reject it in the same way. Replies
+from a TrashNothing member are held and released the same way too (see point 4 above).
 
 TrashNothing often crossposts. There's nothing you need to do differently here from what
 you're used to. In time, TrashNothing posts will go to their main community only and let

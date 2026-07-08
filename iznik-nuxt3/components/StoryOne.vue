@@ -124,10 +124,15 @@ const loggedIn = computed(() => authStore.user !== null)
 const showShare = ref(false)
 const showPhotoModal = ref(false)
 
-// Fetch data
+// Fetch data. The story can come back null/undefined when the id no longer
+// exists (deleted story, or a stale bad id in a list) - guard the follow-on
+// user fetches so we render nothing (template is v-if="story") instead of
+// throwing "Cannot read properties of undefined (reading 'userid')".
 const story = await storyStore.fetch(props.id)
-const user = await userStore.fetch(story.userid)
-const userLocation = await userStore.fetchPublicLocation(story.userid)
+const user = story ? await userStore.fetch(story.userid) : null
+const userLocation = story
+  ? await userStore.fetchPublicLocation(story.userid)
+  : null
 
 // Fetch group data if groupId is provided
 let group = null

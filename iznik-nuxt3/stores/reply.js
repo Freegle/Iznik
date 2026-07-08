@@ -8,17 +8,38 @@ export const useReplyStore = defineStore({
       'replyMsgId',
       'replyMessage',
       'replyingAt',
+      'replySource',
       'machineState',
       'isNewUser',
+      'draftMsgId',
+      'draftMessage',
+      'draftCollect',
+      'draftEmail',
+      'draftAt',
     ],
   },
   state: () => ({
+    // A reply the user has committed to sending (Send clicked). Once these are
+    // set for a logged-in user, useReplyToPost will send it on page load - so
+    // in-progress typing must never be stored here.
     replyMsgId: null,
     replyMessage: null,
     replyingAt: null,
+    // The surface the reply was committed from (browse, search, message_page,
+    // email, ...) - persisted so provenance survives the login/registration
+    // redirect and still reaches the server with the eventual send.
+    replySource: null,
     // State machine state for resume capability
     machineState: null,
     isNewUser: false,
+    // A composing draft (typed but not submitted), restored if the reply pane
+    // is closed and reopened on the same post. Kept separate from the
+    // pending-send fields above so a draft can never auto-send.
+    draftMsgId: null,
+    draftMessage: null,
+    draftCollect: null,
+    draftEmail: null,
+    draftAt: null,
   }),
   actions: {
     init(config) {
@@ -29,13 +50,30 @@ export const useReplyStore = defineStore({
       this.replyMsgId = null
       this.replyMessage = null
       this.replyingAt = null
+      this.replySource = null
       this.machineState = null
       this.isNewUser = false
+      this.clearDraft()
     },
     // Save state machine state for resume
     saveMachineState(state, isNewUser = false) {
       this.machineState = state
       this.isNewUser = isNewUser
+    },
+    // Save a composing draft so close/reopen doesn't lose typed text
+    saveDraft({ msgId, message, collect, email }) {
+      this.draftMsgId = msgId
+      this.draftMessage = message
+      this.draftCollect = collect
+      this.draftEmail = email
+      this.draftAt = Date.now()
+    },
+    clearDraft() {
+      this.draftMsgId = null
+      this.draftMessage = null
+      this.draftCollect = null
+      this.draftEmail = null
+      this.draftAt = null
     },
   },
 })

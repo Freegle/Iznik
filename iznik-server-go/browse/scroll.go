@@ -17,6 +17,10 @@ import (
 const maxScrollPosition = 100000
 
 type RecordScrollDepthRequest struct {
+	// Session is a client-generated per-browse-session id. When present we upsert
+	// one row per session keeping the max, so the debounced client can report
+	// repeatedly as it scrolls (and after re-entry) without double-counting.
+	Session string `json:"session"`
 	// MaxPosition is the furthest 0-based feed item index reached in the session.
 	MaxPosition int `json:"maxposition"`
 	// ItemsAvailable is the feed length when recorded (optional context).
@@ -27,9 +31,11 @@ type RecordScrollDepthRequest struct {
 
 // RecordScrollDepth records how far down the browse feed a session scrolled.
 //
-// POST /api/scrolldepth — one row per browse session (the client sends the max
-// position reached on leave/hide). No login required: logged-out browsing is
-// recorded with a NULL userid. Powers the sysadmin "Scrolling" scroll-depth curve.
+// POST /api/scrolldepth — one row per browse session. The client reports the
+// furthest position reached, debounced as it scrolls; with a session id we upsert
+// (keeping GREATEST(max_position)) so repeat reports collapse to one row. No login
+// required: logged-out browsing is recorded with a NULL userid. Powers the
+// sysadmin "Scrolling" scroll-depth curve.
 func RecordScrollDepth(c *fiber.Ctx) error {
 	var req RecordScrollDepthRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -61,8 +67,21 @@ func RecordScrollDepth(c *fiber.Ctx) error {
 		items = req.ItemsAvailable
 	}
 
-	db.Exec("INSERT INTO browse_scroll_depth (userid, max_position, items_available, context) VALUES (?, ?, ?, ?)",
-		userid, req.MaxPosition, items, ctx)
+	if req.Session != "" {
+		// Upsert keyed on the unique session id: keep the furthest position the
+		// session reached. Idempotent across the debounced client's repeat sends
+		// and any re-entry, so a session is counted exactly once.
+		db.Exec("INSERT INTO browse_scroll_depth (session, userid, max_position, items_available, context) VALUES (?, ?, ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE "+
+			"max_position = GREATEST(max_position, VALUES(max_position)), "+
+			"items_available = COALESCE(VALUES(items_available), items_available), "+
+			"userid = COALESCE(VALUES(userid), userid)",
+			req.Session, userid, req.MaxPosition, items, ctx)
+	} else {
+		// Legacy clients without a session id: a single fire-and-forget insert.
+		db.Exec("INSERT INTO browse_scroll_depth (userid, max_position, items_available, context) VALUES (?, ?, ?, ?)",
+			userid, req.MaxPosition, items, ctx)
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
