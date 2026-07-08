@@ -859,6 +859,8 @@ services:
       - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - SPATIAL_SERVER_URL=http://spatial:8196
+      # Groq API key for the voice-posting endpoint (streaming transcription + tidy-up).
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
     volumes:
       - apiv2_logs:/var/log/freegle
       - embedding_model_cache:/app/model-cache
