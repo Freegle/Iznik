@@ -26,19 +26,24 @@ their reply will be passed on; the "you might see things you can't reply to yet"
 ## Status table
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | Migration: `source` enum (email/tn/web) on rippling_held_replies + idempotent SQL | ⬜ | default 'email' for existing rows |
-| 2 | Go write path: 403→hold (insert held row, source='web', increment 'held' metric) | ⬜ | chatmessage.go; defer insert to after db.Create for chatmsgid |
-| 3 | Go: set heldbyrippling for SENDER's own held messages (pending indicator) | ⬜ | chatmessage.go FetchChatMessages |
-| 4 | PHP hold(): accept + set `source` ('email'/'tn') | ⬜ | RippleReplyService::hold + callers |
-| 5 | Delivery-gate gap fixes (badge inflation + chase-up side-effects) | ⬜ | 3 PHP queries add deliveryGateSql |
-| 6 | Sysadmin metrics: held breakdown by source | ⬜ | rippling/metrics.go HeldReplySummary |
-| 7 | FE: let composer through + pre-send "we'll pass it on" notice | ⬜ | ChatReplyPane, MessageExpanded |
-| 8 | FE state machine: drop proactive block; 403 backstop → held-success not ERROR | ⬜ | useReplyStateMachine.js |
-| 9 | FE: sender-facing "waiting to send" badge | ⬜ | ChatMessage.vue |
-| 10 | Remove "you might see things you can't reply to yet" copy | ⬜ | WhichPostsExplanation.vue + any siblings |
-| 11 | Docs: RIPPLING-OUT-FOR-MEMBERS.md + RIPPLING-OUT-FOR-MODERATORS.md | ⬜ | |
-| 12 | Tests: Go hold-insert+withheld; update FE reach-gate specs; PHP gate tests | ⬜ | |
-| 13 | Run suites (Go/vitest/Laravel), validate live, open PR | ⬜ | |
+| 1 | Migration: `source` enum (email/tn/web) on rippling_held_replies + idempotent SQL | ✅ | default 'email'; verified present in iznik_go_test |
+| 2 | Go write path: 403→hold (insert held row, source='web', increment 'held' metric) | ✅ | chatmessage.go; insert after db.Create for chatmsgid |
+| 3 | Go: set heldbyrippling for SENDER's own held messages (pending indicator) | ✅ | FetchChatMessages: modAccess OR userid==caller |
+| 4 | PHP hold(): accept + set `source` ('email'/'tn') | ✅ | source via isFromTrashNothing() at both callers |
+| 5 | Delivery-gate gap fixes (badge inflation + chase-up side-effects) | ✅ | PushNotification/ChatExpected/ChaseUp gated |
+| 6 | Sysadmin metrics: held breakdown by source | ✅ | held_reply_by_source + friction-panel display |
+| 7 | FE: let composer through + pre-send "we'll pass it on" notice | ✅ | ChatReplyPane, MessageExpanded (both footers + ?reply=) |
+| 8 | FE state machine: drop proactive block; 403 backstop kept | ✅ | useReplyStateMachine.js |
+| 9 | FE: sender-facing "waiting to send" badge | ✅ | ChatMessage.vue (branches on userid==myid) |
+| 10 | Remove "you might see things you can't reply to yet" copy | ✅ | WhichPostsExplanation + ChatFooter 403 copy |
+| 11 | Docs: RIPPLING-OUT-FOR-MEMBERS.md + RIPPLING-OUT-FOR-MODERATORS.md | ✅ | |
+| 12 | Tests: Go hold-insert+withheld; FE reach-gate specs flipped | ✅ | + source column in all 4 test stand-ins |
+| 13 | Run suites (Go/vitest/Laravel), open PR | ✅ | Go 3426✓, vitest 14233✓, Laravel 4769✓ — all green |
+
+## Result
+All suites green (2026-07-08). PR opened off origin/master. Concierge commit sits on local
+master (unpushed). Browser verification of the exact reach-blocked UI not staged (needs an
+out-of-reach post for the test user); vitest covers the component behaviour.
 
 ## Proposed copy
 - Pre-send / held state: "This item hasn't reached your area yet, but we'll pass your reply to
