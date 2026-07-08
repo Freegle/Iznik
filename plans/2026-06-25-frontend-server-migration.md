@@ -86,35 +86,34 @@
 >    symmetry), pin `tusd v2.4.0` (v2.10.0 `.lock`-on-GET broke reads), neg
 >    cache 15m→5m. Steady state 95-96% HIT / 0 500s / 0.3% 404 (= app1
 >    baseline). **uploadcare left on app1** (plan §8).
-> 4. **[LEFT] Legacy `images`/`cdn`/`users`-web** (HAProxy default backend).
->    Verified live on app1 2026-07-08: **no PHP needs to survive** - the
->    earlier "apiv1 container or port the vhosts" framing was wrong.
->    - `users.ilovefreegle.org` web = literally one line
->      (`return 302 https://www.ilovefreegle.org$request_uri`) - a server
->      block on the edge front door.
->    - `cdn.ilovefreegle.org`: DNS still CNAMEs to applb, but **no app1 vhost
->      serves it any more** (no server_name match → falls through to the
->      default server). Decide: formally kill it (DNS + any HAProxy acl), or
->      alias it into the images rewrites if old emails used cdn-hosted
->      `timg_*` links. Check HAProxy stats for residual volume first.
->    - `images.ilovefreegle.org` is the ONLY live V1 PHP left anywhere: the
+> 4. **[CODE DONE 2026-07-08; cutover LEFT] Legacy `images`/`cdn`/`users`-web**
+>    (HAProxy default backend). Verified live on app1: **no PHP needs to
+>    survive** - the earlier "apiv1 container or port the vhosts" framing was
+>    wrong. All replacement code shipped to master (`e24b58833`, Go suite
+>    3439✓); what remains is the human-gated HAProxy cutover + DNS cleanup.
+>    - `images.ilovefreegle.org` was the ONLY live V1 PHP left anywhere: the
 >      vhost rewrites `img_/timg_/uimg_/tuimg_/gimg_/...` forms into V1
 >      `/api/image`, now ~3-5K req/day (the June audit's ~120K/day figure was
->      the shared cache tier, not this vhost alone). Measured today: ~70%
->      are DB-lookup → 302 to the modern delivery form (verified:
->      `Location: delivery/?url=uploads:8080/<externaluid>/`), ~30% serve
->      real bytes (200 image/jpeg - old user-profile thumbs with no
->      externaluid). Replacement without PHP: move the rewrite block onto the
->      edge front door and point it at a **small new apiv2 GET endpoint**
->      (attachment lookup → 301; the Go side already has the attachment
->      models and delivery-URL builder in `misc/imagedelivery.go`; V1's
->      resolution order is externaluid → externalurl → Azure archive →
->      defaultprofile fallback, see `Attachment::canRedirect`). The
->      bytes-serving 30% needs a one-time decision: migrate those legacy
->      blobs to tusd, or accept the defaultprofile fallback (cosmetic loss on
->      ancient profiles). V1 then dies entirely with app1.
->    - `users` mail-alias MX remains a separate workstream (§8).
->      **uploadcare** also still on app1 (could move to its own edge backend,
+>      the shared cache tier, not this vhost alone). Measured: ~70% DB-lookup
+>      → 302 to the modern delivery form, ~30% real bytes (old user-profile
+>      thumbs with no externaluid). **SHIPPED**: apiv2 `GET /image` mirrors
+>      `Attachment::canRedirect` (externaluid → delivery; externalurl →
+>      proxied external; archived → Azure for the five V1-archivable types;
+>      else defaultprofile.png - INCLUDING the pre-tusd byte rows, the
+>      accepted fallback), plus an inert `images.ilovefreegle.org` server
+>      block in frontend-nginx.conf carrying app1's rewrite map verbatim
+>      (zimg_/beacons/sw.js/api → 410, dead with V1). Cutover = HAProxy
+>      default-backend/ACL change for this Host → the edge front door.
+>    - `users.ilovefreegle.org` web: **SHIPPED** - one-line 302 server block
+>      in frontend-nginx.conf. Same cutover step. Mail-alias MX remains a
+>      separate workstream (§8).
+>    - `cdn.ilovefreegle.org`: **verified functionally DEAD 2026-07-08** - no
+>      app1 vhost serves it, HTTPS fails the TLS handshake outright (no SNI
+>      cert on HAProxy), and HTTP just 302s to that broken HTTPS. Every cdn
+>      request has been dead-ending already, so the kill-or-alias question
+>      answers itself: **kill the DNS at leisure** (aliasing would mean
+>      adding a cert for a long-dark domain). No code needed.
+>    - **uploadcare** also still on app1 (could move to its own edge backend,
 >      or leave).
 > 5. **[LEFT] Retire app1** per §9 (after ≥1 week clean, and only after step 4).
 >    **DECIDED 2026-07-08: NO second HAProxy / VIP** - the failover investment
