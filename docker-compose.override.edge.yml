@@ -1,0 +1,44 @@
+# docker-compose.override.edge.yml — PROD-DOCKER-HOST-ONLY override for the
+# `edge` profile (scale-in-place, decided 2026-07-08 — see the REVISION in
+# plans/2026-06-25-frontend-server-migration.md).
+#
+# Opt in ONLY on the existing prod docker/batch host by adding this file to
+# COMPOSE_FILE in its .env, alongside the batch-host slice override:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.batchprod.yml:docker-compose.override.edge.yml
+#   COMPOSE_PROFILES=backend,production,mail,edge
+#   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
+#
+# It is NEVER part of the default COMPOSE_FILE, so local dev and CI are
+# unaffected. It does three things the base file deliberately omits:
+#   1. Publishes the front-door host ports. NOT :80/:8080 — on this host
+#      native nginx owns :80/:443 (certbot TLS for tiles/geocode/wiki) and the
+#      legacy standalone tile container published :8080. HAProxy backends
+#      simply target the new ports instead.
+#   2. Binds tusd's upload dir to the shared-NFS host mount so uploaded image
+#      originals are zero-copy (the same NFS app1 serves today — plan §2/§7).
+#   3. Remaps the osm volumes to the host's EXISTING unprefixed Docker volumes
+#      (used by the standalone confident_curran container) so the compose
+#      tile-server ADOPTS the 56G PostGIS + 44G tile data instead of creating
+#      empty project-scoped volumes (freegledocker_osm-data) and serving
+#      nothing.
+
+services:
+  frontend-nginx:
+    ports:
+      - "8180:80"     # HAProxy reaches this with send-proxy (PROXY protocol)
+      - "8188:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
+
+  tusd:
+    volumes:
+      # /srv/tusd-data on the host is the shared-NFS mount
+      # (nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE), mounted
+      # read-only during prep and flipped to rw only at the human-gated upload
+      # cutover (plan §7/§11). NFS reachability from this host verified
+      # 2026-07-08 (TCP 2049 via the default route).
+      - /srv/tusd-data:/srv/tusd-data
+
+volumes:
+  osm-data:
+    name: osm-data      # adopt the existing volume, do not create freegledocker_osm-data
+  osm-tiles:
+    name: osm-tiles     # adopt the existing volume
