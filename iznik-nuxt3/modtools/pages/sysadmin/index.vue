@@ -97,11 +97,6 @@
             v-if="showRippling"
             :key="'rippling-analytics-' + ripplingBump"
           />
-          <hr class="my-4" />
-          <ModSysAdminRippling
-            v-if="showRippling"
-            :key="'rippling-' + ripplingBump"
-          />
         </b-tab>
       </b-tabs>
     </div>

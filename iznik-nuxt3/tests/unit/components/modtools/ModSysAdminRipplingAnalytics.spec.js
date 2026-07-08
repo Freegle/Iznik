@@ -4,10 +4,14 @@ import { mount, flushPromises } from '@vue/test-utils'
 import ModSysAdminRipplingAnalytics from '~/modtools/components/ModSysAdminRipplingAnalytics.vue'
 
 const mockFetchAnalytics = vi.fn()
+const mockFetchMetrics = vi.fn().mockResolvedValue({})
 
 vi.mock('~/api', () => ({
   default: () => ({
-    rippling: { fetchAnalytics: mockFetchAnalytics },
+    rippling: {
+      fetchAnalytics: mockFetchAnalytics,
+      fetchMetrics: mockFetchMetrics,
+    },
   }),
 }))
 
@@ -20,6 +24,13 @@ function mountComponent() {
     global: {
       stubs: {
         'b-spinner': { template: '<div class="spinner" />' },
+        'b-table-simple': { template: '<table><slot /></table>' },
+        'b-thead': { template: '<thead><slot /></thead>' },
+        'b-tbody': { template: '<tbody><slot /></tbody>' },
+        'b-tr': { template: '<tr><slot /></tr>' },
+        'b-th': { template: '<th><slot /></th>' },
+        'b-td': { template: '<td><slot /></td>' },
+        'b-badge': { template: '<span class="badge"><slot /></span>' },
         ModEmailDateFilter: {
           template: '<div class="date-filter" />',
           emits: ['fetch'],
@@ -178,6 +189,34 @@ describe('ModSysAdminRipplingAnalytics', () => {
     // home vs rippled reply->take comparison
     expect(html).toContain('22.5%')
     expect(html).toContain('11.0%')
+    wrapper.unmount()
+  })
+
+  it('folds in the attribution channels + geographic hotspots from the metrics call', async () => {
+    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchMetrics.mockResolvedValueOnce({
+      reply_source_split: [
+        { day: '2026-06-24', home: 5, ripple_notified: 2, ripple_reach: 1 },
+      ],
+      hotspots: [
+        {
+          area_name: 'Anomaly Town',
+          metric: 'secondary_reject_rate',
+          value: 0.9,
+          baseline: 0.1,
+          deviation: 12.3,
+          severity: 'alert',
+        },
+      ],
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('Where do replies come from?')
+    expect(html).toContain('Where to look')
+    expect(html).toContain('Anomaly Town')
+    expect(html).toContain('secondary_reject_rate')
+    expect(mockFetchMetrics).toHaveBeenCalled()
     wrapper.unmount()
   })
 

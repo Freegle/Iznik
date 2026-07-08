@@ -238,6 +238,68 @@
           fills in once reply-provenance ships to production.
         </span>
       </p>
+
+      <!-- Where do replies come from - attribution channels over time -->
+      <h5 class="section-h">Where do replies come from?</h5>
+      <p class="text-muted small mb-2">
+        Each reply attributed at reply time to the channel that led the replier
+        to the post. Greens are rippling; teal is your own established members;
+        greys couldn't be credited either way.
+      </p>
+      <div class="panel">
+        <div class="panel-body">
+          <GChart
+            v-if="replySourceChart"
+            type="AreaChart"
+            :data="replySourceChart"
+            :options="channelStackOptions()"
+            style="width: 100%; height: 320px"
+          />
+          <p v-else class="sub">
+            No attribution data yet — accrues from reply-time capture.
+          </p>
+        </div>
+      </div>
+
+      <!-- Geographic hotspots -->
+      <h5 class="section-h">Where to look — geographic hotspots</h5>
+      <p class="text-muted small mb-2">
+        Areas behaving unusually vs the rest of the network. Investigate any row
+        flagged <b-badge variant="danger">alert</b-badge>.
+      </p>
+      <b-table-simple hover responsive small>
+        <b-thead>
+          <b-tr>
+            <b-th>Area</b-th>
+            <b-th>Metric</b-th>
+            <b-th>Value</b-th>
+            <b-th>Baseline</b-th>
+            <b-th>Deviation</b-th>
+            <b-th>Severity</b-th>
+          </b-tr>
+        </b-thead>
+        <b-tbody>
+          <b-tr v-for="(h, ix) in hotspots" :key="ix">
+            <b-td>{{ h.area_name || h.area_id }}</b-td>
+            <b-td
+              ><code>{{ h.metric }}</code></b-td
+            >
+            <b-td>{{ h.value }}</b-td>
+            <b-td>{{ h.baseline }}</b-td>
+            <b-td>{{ h.deviation }}</b-td>
+            <b-td>
+              <b-badge :variant="h.severity === 'alert' ? 'danger' : 'warning'">
+                {{ h.severity }}
+              </b-badge>
+            </b-td>
+          </b-tr>
+          <b-tr v-if="!hotspots.length">
+            <b-td colspan="6" class="text-muted">
+              No hotspots flagged — nothing unusual to act on.
+            </b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
     </div>
     <p v-else class="text-muted small">No data yet.</p>
   </div>
@@ -269,10 +331,68 @@ const stratum = ref('all')
 const s1 = ref(null)
 const s2 = ref({ kpis: [], drive_time: [] })
 const s3 = ref(null)
+// Folded in from the retired dashboard: reply-source attribution + geographic hotspots
+// (fetched in parallel from the metrics endpoint, which already computes them).
+const replySource = ref([])
+const hotspots = ref([])
+const attributionCaptureFrom = ref('')
 
 const stratumLabel = computed(() =>
   stratum.value === 'all' ? 'all-density' : stratum.value
 )
+
+const CHANNELS = [
+  { key: 'home', label: 'Home members' },
+  { key: 'organic_local', label: 'Local non-members' },
+  { key: 'unknown', label: 'Unknown' },
+  { key: 'ripple_group', label: 'Rippled into their group' },
+  { key: 'ripple_notified', label: 'Ripple mail' },
+  { key: 'ripple_reach', label: 'Reach-fed browse' },
+]
+const replySourceChart = computed(() => {
+  if (!startDate.value || !endDate.value || !replySource.value.length)
+    return null
+  const byDay = new Map(replySource.value.map((r) => [r.day, r]))
+  const start = new Date(startDate.value)
+  const end = new Date(endDate.value)
+  if (isNaN(start) || isNaN(end) || end < start) return null
+  const rows = []
+  const days = Math.round((end - start) / 86400000)
+  for (let i = 0; i <= days; i++) {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
+    const key = d.toISOString().slice(0, 10)
+    const r = byDay.get(key)
+    const marker =
+      attributionCaptureFrom.value && key === attributionCaptureFrom.value
+        ? 'Live capture from here'
+        : null
+    rows.push([d, marker, ...CHANNELS.map((c) => (r ? r[c.key] || 0 : 0))])
+  }
+  return [
+    ['Date', { role: 'annotation' }, ...CHANNELS.map((c) => c.label)],
+    ...rows,
+  ]
+})
+function channelStackOptions() {
+  return {
+    isStacked: 'percent',
+    legend: { position: 'bottom' },
+    chartArea: { width: '85%', height: '62%' },
+    vAxis: { format: 'percent', textStyle: { fontSize: 10 } },
+    hAxis: { format: 'dd MMM', textStyle: { fontSize: 10 } },
+    annotations: { style: 'line' },
+    areaOpacity: 0.85,
+    series: {
+      0: { color: '#1592a6' },
+      1: { color: '#6c757d' },
+      2: { color: '#98a2ab' },
+      3: { color: '#28a745' },
+      4: { color: '#146c43' },
+      5: { color: '#45b463' },
+    },
+  }
+}
 
 function pct(v) {
   return (v || 0).toFixed(1) + '%'
@@ -384,14 +504,20 @@ async function fetchAnalytics() {
   loading.value = true
   error.value = null
   try {
-    const result = await apiInstance.rippling.fetchAnalytics(
-      stratum.value,
-      startDate.value,
-      endDate.value
-    )
+    const [result, metrics] = await Promise.all([
+      apiInstance.rippling.fetchAnalytics(
+        stratum.value,
+        startDate.value,
+        endDate.value
+      ),
+      apiInstance.rippling.fetchMetrics(0, startDate.value, endDate.value),
+    ])
     s1.value = result?.section1 || null
     s2.value = result?.section2 || { kpis: [], drive_time: [] }
     s3.value = result?.section3 || null
+    replySource.value = metrics?.reply_source_split || []
+    hotspots.value = metrics?.hotspots || []
+    attributionCaptureFrom.value = metrics?.attribution_capture_from || ''
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
