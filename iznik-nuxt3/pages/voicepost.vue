@@ -1,15 +1,43 @@
 <template>
-  <div class="voicepost">
+  <div class="voicepost" :class="{ 'has-sticky-ad': stickyAdRendered }">
     <div class="voicepost__card">
-      <!-- STEP 0 - choose voice or keyboard -->
-      <div v-if="phase === 'choose'" class="voicepost__stage">
-        <h1 class="voicepost__title">How do you want to add your item?</h1>
+      <!-- STEP 1 - PHOTO first (PhotoUploader has its own Skip) -->
+      <div v-if="phase === 'photo'" class="voicepost__stage">
+        <h1 class="voicepost__title">Add a photo</h1>
+        <p class="voicepost__lead">
+          Show your item - a clear photo helps it get snapped up.
+        </p>
+        <div class="photo-wrap">
+          <PhotoUploader
+            v-model="attachments"
+            type="Message"
+            :recognise="false"
+            @skip="advanceFromPhoto"
+          />
+        </div>
+        <b-button
+          v-if="hasPhotos"
+          variant="primary"
+          size="lg"
+          class="w-100"
+          @click="advanceFromPhoto"
+        >
+          Next <v-icon icon="arrow-right" />
+        </b-button>
+      </div>
+
+      <!-- STEP 2 - choose voice or keyboard -->
+      <div v-else-if="phase === 'choose'" class="voicepost__stage">
+        <img
+          v-if="primaryPhoto"
+          :src="primaryPhoto"
+          class="idle-photo"
+          alt="Your item"
+        />
+        <h1 class="voicepost__title">How do you want to describe it?</h1>
         <p class="voicepost__lead">Talk to us, or type it in - whatever's easier.</p>
         <div class="choice-grid">
-          <button
-            class="choice-btn choice-btn--voice"
-            @click="chooseVoice"
-          >
+          <button class="choice-btn choice-btn--voice" @click="chooseVoice">
             <svg viewBox="0 0 24 24" class="choice-btn__icon" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -36,33 +64,7 @@
         </div>
       </div>
 
-      <!-- STEP 1 - PHOTO first -->
-      <div v-else-if="phase === 'photo'" class="voicepost__stage">
-        <h1 class="voicepost__title">Add a photo</h1>
-        <p class="voicepost__lead">
-          Show your item - a clear photo helps it get snapped up. Then you'll
-          describe it out loud.
-        </p>
-        <div class="photo-wrap">
-          <PhotoUploader
-            v-model="attachments"
-            type="Message"
-            :recognise="false"
-            @skip="goToVoice"
-          />
-        </div>
-        <b-button
-          variant="primary"
-          size="lg"
-          class="w-100"
-          @click="goToVoice"
-        >
-          {{ attachments.length ? 'Next: describe it' : 'Skip photo - just talk' }}
-          <v-icon icon="arrow-right" />
-        </b-button>
-      </div>
-
-      <!-- STEP 2 - the big mic button -->
+      <!-- VOICE: the big mic button -->
       <div v-else-if="phase === 'idle'" class="voicepost__stage">
         <img
           v-if="primaryPhoto"
@@ -201,7 +203,7 @@
       <!-- ERROR -->
       <div v-else-if="phase === 'error'" class="voicepost__stage">
         <p class="voicepost__lead voicepost__error">{{ errorMessage }}</p>
-        <b-button variant="primary" size="lg" class="w-100" @click="goToVoice">
+        <b-button variant="primary" size="lg" class="w-100" @click="chooseVoice">
           Try again
         </b-button>
       </div>
@@ -212,22 +214,52 @@
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { useNuxtApp, useRouter } from '#imports'
+import { useComposeStore } from '~/stores/compose'
+import { useAuthStore } from '~/stores/auth'
+import { useMiscStore } from '~/stores/misc'
 import { useComposeChoice } from '~/composables/useComposeChoice'
 
-// Standalone route. Flow: choose voice or keyboard; for voice, add a photo,
-// describe the item aloud (audio streams to the server as you talk), then review
-// the tidied title/description. Transcription happens once, on stop - see
-// iznik-server-go/voicepost.
+// Standalone route. Flow: add a photo, then choose voice or keyboard. For voice,
+// describe the item aloud (audio streams up while you talk) and review the tidied
+// title/description. The photo lives in the compose store, so choosing "Type it"
+// carries it into the existing typed form. Transcription happens once, on stop.
 
 const { $api } = useNuxtApp()
 const router = useRouter()
-const { recordConversion } = useComposeChoice()
+const composeStore = useComposeStore()
+const authStore = useAuthStore()
+const miscStore = useMiscStore()
+const { recordConversion, recordMethodShown, recordMethodChosen } =
+  useComposeChoice()
 
-const phase = ref('choose') // choose | photo | idle | recording | finishing | review | done | error
+const phase = ref('photo') // photo | choose | idle | recording | finishing | review | done | error
 const errorMessage = ref('')
+const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
-// Photo
-const attachments = ref([])
+// Photo, held in the compose store (shared with the typed flow), mirroring
+// pages/give/mobile/photos.vue so either branch continues the same draft.
+function getOrCreateMessageId() {
+  const myid = authStore.user?.id
+  const existing = composeStore.all.filter(
+    (m) =>
+      m.type === 'Offer' &&
+      (!m.savedBy || m.savedBy === myid) &&
+      composeStore.messages[m.id]
+  )
+  const id = existing.length > 0 ? existing[0].id : composeStore.add()
+  composeStore.setType({ id, type: 'Offer' })
+  return id
+}
+const messageId = ref(getOrCreateMessageId())
+const attachments = computed({
+  get() {
+    return composeStore.attachments(messageId.value) || []
+  },
+  set(v) {
+    composeStore.setAttachmentsForMessage(messageId.value, v)
+  },
+})
+const hasPhotos = computed(() => attachments.value.length > 0)
 const primaryPhoto = computed(() => {
   const a = attachments.value?.[0]
   return a ? a.preview || a.path || a.paththumb || null : null
@@ -263,17 +295,20 @@ const formattedElapsed = computed(() => {
   return `${m}:${s.toString().padStart(2, '0')}`
 })
 
+function advanceFromPhoto() {
+  phase.value = 'choose'
+  recordMethodShown()
+}
+
 function chooseVoice() {
-  phase.value = 'photo'
+  recordMethodChosen('voice')
+  phase.value = 'idle'
 }
 
 function chooseType() {
-  // Keyboard branch: hand off to the existing typed compose form.
-  router.push('/give/mobile/photos')
-}
-
-function goToVoice() {
-  phase.value = 'idle'
+  // Keyboard branch: continue in the existing typed form (photo already added).
+  recordMethodChosen('keyboard')
+  router.push('/give/mobile/details')
 }
 
 function pickMimeType() {
@@ -346,7 +381,7 @@ async function startRecording() {
 }
 
 // Serialise chunk uploads so the server appends them to the buffer in order.
-// (The response only carries the session id now - transcription is deferred.)
+// (The response only carries the session id - transcription is deferred.)
 function enqueueChunk(blob) {
   sendQueue = sendQueue.then(async () => {
     try {
@@ -392,7 +427,7 @@ async function finalise() {
     }
     phase.value = 'review'
   } catch (e) {
-    fail("Something went wrong writing your post. Please try again.")
+    fail('Something went wrong writing your post. Please try again.')
   }
 }
 
@@ -470,15 +505,29 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/sticky-banner.scss';
 
 .voicepost {
   min-height: 100vh;
   background: $color-gray--lighter;
   display: flex;
   justify-content: center;
-  // Extra bottom room so a fixed sticky-ad banner never covers the review
-  // buttons or consent toggle on short screens.
-  padding: 1rem 1rem 96px;
+  align-items: flex-start;
+  // Reserve room at the bottom so the fixed sticky-ad banner never covers the
+  // buttons or consent toggle (the banner is 73-273px depending on screen).
+  padding: 1rem 1rem 40px;
+
+  &.has-sticky-ad {
+    padding-bottom: calc(40px + $sticky-banner-height-mobile);
+
+    @media (min-height: $mobile-tall) {
+      padding-bottom: calc(40px + $sticky-banner-height-mobile-tall);
+    }
+
+    @media (min-height: $desktop-tall) {
+      padding-bottom: calc(40px + $sticky-banner-height-desktop-tall);
+    }
+  }
 }
 
 .voicepost__card {
@@ -488,7 +537,6 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
   padding: 1.5rem;
-  margin: auto 0;
 }
 
 .voicepost__stage {

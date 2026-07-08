@@ -10,7 +10,10 @@ import { useNuxtApp, useRoute } from '#imports'
 // completion are still recorded through the existing bandit endpoints
 // (uid = COMPOSE_CHOICE_UID) so the abtest table accumulates shown/action rates
 // per variant that we can compare.
-export const COMPOSE_CHOICE_UID = 'mobile-compose-voice'
+// Exposure experiment: did we show the choice variant, and did they complete a post?
+export const COMPOSE_CHOICE_UID = 'mobile-compose-variant'
+// Method measurement: of those offered the choice, did they pick voice or keyboard?
+export const COMPOSE_METHOD_UID = 'mobile-compose-method'
 
 // Percentage of eligible (mobile) users shown the voice option. Start at 0 and
 // raise to roll the experiment out to a slice of traffic. Per-visit override:
@@ -65,5 +68,34 @@ export function useComposeChoice() {
     }
   }
 
-  return { COMPOSE_CHOICE_UID, isMobile, assign, recordShown, recordConversion }
+  // Record that the voice/keyboard choice was presented (both methods) so the
+  // pick-rate per method is comparable.
+  function recordMethodShown() {
+    try {
+      $api.bandit.shown({ uid: COMPOSE_METHOD_UID, variant: 'voice' })
+      $api.bandit.shown({ uid: COMPOSE_METHOD_UID, variant: 'keyboard' })
+    } catch (e) {
+      // Tracking must never block the compose flow.
+    }
+  }
+
+  // Record which method they picked ('voice' or 'keyboard').
+  function recordMethodChosen(method) {
+    try {
+      $api.bandit.chosen({ uid: COMPOSE_METHOD_UID, variant: method })
+    } catch (e) {
+      // Tracking must never block the compose flow.
+    }
+  }
+
+  return {
+    COMPOSE_CHOICE_UID,
+    COMPOSE_METHOD_UID,
+    isMobile,
+    assign,
+    recordShown,
+    recordConversion,
+    recordMethodShown,
+    recordMethodChosen,
+  }
 }

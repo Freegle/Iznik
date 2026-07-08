@@ -9,20 +9,26 @@ Demo route: **`/voicepost`**.
 ## Flow
 
 ```
- /give/mobile  ── A/B assign (mobile only) ──▶  voice cohort → /voicepost
-      │                                          control      → /give/mobile/photos (typed form)
+ /give/mobile ── A/B assign (mobile only) ──▶ variant cohort → /voicepost
+      │                                        control        → /give/mobile/photos (typed form)
       ▼
- /voicepost:  [ Say it ]   [ Type it ] ── Type it ─▶ /give/mobile/photos (existing form)
+ /voicepost:  photo (PhotoUploader, has its own Skip)
+      │
+      ▼
+   choose:  [ Say it ]        [ Type it ] ──▶ /give/mobile/details (typed form; photo kept)
       │ Say it
       ▼
-   photo  ──▶  record (audio streams up while talking)  ──▶  Stop
-                                                              │
-                       POST /voicepost/chunk (buffer only)    │
-                       POST /voicepost/finish ──▶ transcribe ONCE + copy-edit (Groq)
-                                                              ▼
-                                              review (editable title/desc, playback,
-                                              consent) ──▶ post
+   record (audio streams up while talking) ──▶ Stop
+        POST /voicepost/chunk  (buffer only)
+        POST /voicepost/finish (transcribe ONCE + copy-edit, Groq)
+      ▼
+   review (editable title/desc, playback, consent) ──▶ post
 ```
+
+Photo first, then the choice. The photo lives in the compose store, so "Type it"
+carries it straight into the existing typed form (`/give/mobile/details`).
+`/voicepost` always shows the choice; the experiment only controls whether the
+real give flow routes users here at all.
 
 ## Design decisions
 
@@ -54,13 +60,18 @@ Demo route: **`/voicepost`**.
 
 ## A/B experiment (mobile)
 
-`composables/useComposeChoice.js` assigns each mobile user to `voice` or `control`
-by a fixed per-user % bucket (`ROLLOUT_PCT`, default 0 = off; `?voice=1`/`?voice=0`
-overrides for demos). `pages/give/mobile/index.vue` routes the `voice` cohort to
-`/voicepost` and everyone else to the existing form. Exposure and completion are
-recorded through the existing bandit endpoints (`$api.bandit.shown/chosen`, uid
-`mobile-compose-voice`) so the `abtest` table accumulates comparable shown/action
-rates per variant. To run the test, raise `ROLLOUT_PCT`.
+Two things are measured, both through the existing bandit endpoints
+(`$api.bandit.shown/chosen`, so the `abtest` table accumulates comparable rates):
+
+1. **Exposure** (uid `mobile-compose-variant`): whether we showed the choice
+   variant vs the existing form, and whether they completed a post.
+   `composables/useComposeChoice.js` assigns each mobile user to `variant` or
+   `control` by a fixed per-user % bucket (`ROLLOUT_PCT`, default 0 = off;
+   `?voice=1`/`?voice=0` overrides for demos), and `pages/give/mobile/index.vue`
+   routes the `variant` cohort to `/voicepost`, everyone else to the typed form.
+   To run the test, raise `ROLLOUT_PCT`.
+2. **Method** (uid `mobile-compose-method`): of those shown the choice, whether
+   they picked `voice` or `keyboard` (recorded on the choice screen).
 
 ## Files
 
