@@ -25,12 +25,12 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
-	"github.com/freegle/iznik-server-go/browse"
-	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
+	"github.com/freegle/iznik-server-go/avatar"
+	"github.com/freegle/iznik-server-go/browse"
 	"github.com/freegle/iznik-server-go/changes"
 	"github.com/freegle/iznik-server-go/charity"
 	"github.com/freegle/iznik-server-go/chat"
@@ -56,18 +56,18 @@ import (
 	"github.com/freegle/iznik-server-go/message"
 
 	"github.com/freegle/iznik-server-go/microvolunteering"
-	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
-	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/simulation"
 	"github.com/freegle/iznik-server-go/spammers"
 	"github.com/freegle/iznik-server-go/src"
+	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/status"
 	"github.com/freegle/iznik-server-go/stdmsg"
 	"github.com/freegle/iznik-server-go/story"
@@ -730,6 +730,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/image", image.Post)
+
+		// Legacy image URL resolution
+		// @Router /image [get]
+		// @Summary Resolve a legacy image URL to a redirect
+		// @Description Replaces V1 GET /api/image, which the images.ilovefreegle.org vhost rewrites the old *img_N.jpg URL forms into. Redirects to the delivery CDN (externaluid/externalurl/Azure-archived rows) or the default profile image.
+		// @Tags image
+		// @Param id query int true "Attachment id"
+		// @Param w query int false "Thumbnail width (honoured for archived rows only, matching V1)"
+		// @Param h query int false "Thumbnail height (honoured for archived rows only, matching V1)"
+		// @Success 302
+		rg.Get("/image", image.Get)
 
 		// Jobs
 		// @Router /job [get]
@@ -1441,7 +1452,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Success 200
 		rg.Post("/stripeipn", donations.StripeIPN)
-
 
 		// Gift Aid
 		// @Router /giftaid [get]
