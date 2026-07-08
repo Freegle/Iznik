@@ -10,7 +10,7 @@
       "Taken" is an underestimate — much reuse is never marked.
     </p>
 
-    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+    <div class="filter-row mb-3">
       <ModEmailDateFilter
         :loading="loading"
         fetch-label="Fetch"
@@ -422,18 +422,35 @@ $line: #e4e8e3;
   --card-bg: #ffffff;
 }
 
-/* Segmented density control - clear active highlight */
+/* Toolbar: keep the (card-based) date filter and the density control on one line,
+   vertically centred. The date filter is a bordered b-card with its own mb-3 - neutralise
+   that here so it doesn't throw the centring off. */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.filter-row :deep(.filter-card) {
+  margin-bottom: 0 !important;
+}
+
+/* Segmented density control - clear active highlight, height matched to the filter controls */
 .seg {
   display: inline-flex;
+  align-items: stretch;
+  height: 38px;
   border: 1px solid $line;
   border-radius: 10px;
   overflow: hidden;
   background: #f6f7f4;
 }
 .seg-btn {
+  display: inline-flex;
+  align-items: center;
   border: 0;
   background: transparent;
-  padding: 6px 16px;
+  padding: 0 18px;
   font-size: 0.85rem;
   font-weight: 600;
   color: $muted;
