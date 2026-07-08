@@ -397,14 +397,68 @@ services:
       - default
     command: run
     environment:
-      # Emit NO CORS here — frontend-nginx adds exactly one ACAO (plan §2
-      # double-CORS fix). Tiles need a real osm-data import before they render
-      # (plan §7); the service definition exists so the front door can be wired.
+      # Emit NO CORS here — the front door adds exactly one ACAO (plan §2
+      # double-CORS fix). In Stage 1 the front door is the host's native nginx
+      # `maps` vhost, which already adds one ACAO and proxies to :8080; keeping
+      # the container silent makes it exactly one header (and fixes today's
+      # confident_curran ALLOW_CORS=enabled double-CORS). frontend-nginx takes
+      # over the same single-ACAO role in a later stage.
       - ALLOW_CORS=disabled
+      # Operational config carried over verbatim from the standalone prod tile
+      # container (confident_curran) so the swap is behaviour-for-behaviour:
+      # keep serving the already-imported osm-data AND keep applying minutely
+      # OSM replication so tiles don't go stale after adoption. (The merged
+      # def, written for a fresh VM import, omitted these — adopting without
+      # them would silently freeze tile updates.)
+      - UPDATES=enabled
+      - REPLICATION_URL=https://planet.openstreetmap.org/replication/minute/
+      - MAX_INTERVAL_SECONDS=60
+      - THREADS=100
+      - OSM2PGSQL_EXTRA_ARGS=-C 4096
+      - AUTOVACUUM=on
+      - TZ=UTC
     shm_size: 256m
     volumes:
       - osm-data:/data/database
       - osm-tiles:/data/tiles
+
+  # --- wiki (wiki.ilovefreegle.org) — adopted in place from the standalone
+  # wiki-media + wiki-mysql containers (scale-in-place, plan §2 step 2). Same
+  # host, same data: the /var/wiki host binds and the :8088 publish live in the
+  # host-only docker-compose.override.edge.yml. MediaWiki reaches its DB by the
+  # hostname `wiki-mysql` ($wgDBserver in the bind-mounted LocalSettings.php),
+  # which the compose service name provides on the private `wikinet` network —
+  # mirroring the standalone containers. Native nginx keeps fronting the vhost
+  # via 127.0.0.1:8088, so this is a same-port container swap.
+  wiki-mysql:
+    image: wiki-mysql:v02   # local-only custom image (not in any registry); already on the host
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-mysql
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    command: mysqld
+    # No MYSQL_* env on purpose: the /var/wiki/db datadir (bound in the edge
+    # override) is already initialised, so the entrypoint skips first-init and
+    # ignores those vars. This keeps the DB root/user passwords OUT of the repo;
+    # MediaWiki authenticates with the creds already in LocalSettings.php.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  wiki-media:
+    image: mediawiki:1.39
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-media
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    depends_on:
+      wiki-mysql:
+        condition: service_healthy
 
   # Old status container - replaced by status-nuxt (2026-01-18)
   # Keeping commented out for reference during transition
@@ -2032,6 +2086,11 @@ volumes:
 
 networks:
   default:
+    driver: bridge
+  # Private network for the adopted wiki pair (edge profile), isolating
+  # wiki-media <-> wiki-mysql exactly as the standalone `wikinet` did. Native
+  # nginx reaches wiki-media via its published host port, not this network.
+  wikinet:
     driver: bridge
 
 secrets:

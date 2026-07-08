@@ -3,38 +3,76 @@
 # plans/2026-06-25-frontend-server-migration.md).
 #
 # Opt in ONLY on the existing prod docker/batch host by adding this file to
-# COMPOSE_FILE in its .env, alongside the batch-host slice override:
-#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.batchprod.yml:docker-compose.override.edge.yml
+# COMPOSE_FILE in its .env, alongside the auto-loaded batch-prod override:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.override.edge.yml
 #   COMPOSE_PROFILES=backend,production,mail,edge
-#   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
 #
 # It is NEVER part of the default COMPOSE_FILE, so local dev and CI are
-# unaffected. It does three things the base file deliberately omits:
-#   1. Publishes the front-door host ports. NOT :80/:8080 — on this host
-#      native nginx owns :80/:443 (certbot TLS for tiles/geocode/wiki) and the
-#      legacy standalone tile container published :8080. HAProxy backends
-#      simply target the new ports instead.
-#   2. Binds tusd's upload dir to the shared-NFS host mount so uploaded image
-#      originals are zero-copy (the same NFS app1 serves today — plan §2/§7).
-#   3. Remaps the osm volumes to the host's EXISTING unprefixed Docker volumes
-#      (used by the standalone confident_curran container) so the compose
-#      tile-server ADOPTS the 56G PostGIS + 44G tile data instead of creating
-#      empty project-scoped volumes (freegledocker_osm-data) and serving
-#      nothing.
+# unaffected.
+#
+# STAGE 1 (adopt-now — plan §2 step 2): bring the standalone tile + wiki
+# containers under Compose in place (same host, same data, zero copy) and drop
+# ors-app + the stale discourse vhost. The host-specific bits the base file
+# deliberately omits live here:
+#   1. tile-server / wiki-media republish the SAME host ports the standalone
+#      containers used (:8080 / :8088) so the native nginx vhosts that front
+#      tiles/wiki are untouched — a same-port container swap. (Native nginx
+#      keeps :80/:443 with its certbot TLS for tiles/geocode/wiki.)
+#   2. tile-server / wiki-* adopt the host's EXISTING data (the unprefixed osm
+#      volumes used by confident_curran + the /var/wiki binds) instead of
+#      creating empty project-scoped volumes and serving nothing.
+#   3. The not-yet-migrated images tier (frontend-nginx / delivery / tusd —
+#      plan §3) is held at replicas:0 so activating the edge profile does NOT
+#      start it. The ports/NFS bind are retained so step 3 is just a flip to
+#      replicas:1 (plus TUSD_COMMAND + the NFS mount at /srv/tusd-data).
 
 services:
+  # --- Stage 1: adopted services, come UP on this host ----------------------
+  tile-server:
+    # Native nginx `maps` vhost fronts tiles.ilovefreegle.org via 127.0.0.1:8080
+    # (unchanged), so the adopted container republishes :8080 exactly like the
+    # standalone confident_curran did. Swap: free :8080 (stop confident_curran)
+    # then start this.
+    ports:
+      - "8080:80"
+
+  wiki-mysql:
+    # Adopt the already-initialised DB datadir in place (zero copy).
+    volumes:
+      - /var/wiki/db:/var/lib/mysql
+      - /var/wiki/sharemysql:/var/sharemysql
+
+  wiki-media:
+    # Native nginx fronts wiki.ilovefreegle.org via 127.0.0.1:8088 (unchanged).
+    ports:
+      - "8088:80"
+    volumes:
+      - /var/wiki/html:/var/www/html
+      - /var/wiki/sharewiki:/var/www/share
+
+  # --- Not-yet-migrated images tier: kept in the `edge` profile but held DOWN
+  # on this host until its own stage (plan §3). replicas:0 means a bare
+  # `docker compose up -d` or a reboot auto-start never brings the images tier
+  # up prematurely.
   frontend-nginx:
+    deploy:
+      replicas: 0
     ports:
       - "8180:80"     # HAProxy reaches this with send-proxy (PROXY protocol)
       - "8188:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
 
+  delivery:
+    deploy:
+      replicas: 0
+
   tusd:
+    deploy:
+      replicas: 0
     volumes:
       # /srv/tusd-data on the host is the shared-NFS mount
       # (nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE), mounted
       # read-only during prep and flipped to rw only at the human-gated upload
-      # cutover (plan §7/§11). NFS reachability from this host verified
-      # 2026-07-08 (TCP 2049 via the default route).
+      # cutover (plan §7/§11). Inert while replicas:0.
       - /srv/tusd-data:/srv/tusd-data
 
 volumes:
