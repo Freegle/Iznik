@@ -346,8 +346,17 @@ const newUserModal = ref(null)
 const replyToPostChatButton = ref(null)
 const emailValidatorRef = ref(null)
 
-// Fetch the message data
-await messageStore.fetch(props.messageId)
+// Fetch the message data. Guarded: this is a top-level await in async setup
+// under <Suspense>, so an unhandled rejection (e.g. a transient connectivity
+// blip) would mean the overlay never mounts and the Reply click is a silent
+// no-op. The message is almost always already in the store from the page
+// that opened this pane, so on failure render with cached data instead of
+// nothing; the composer gates itself if data is genuinely missing.
+try {
+  await messageStore.fetch(props.messageId)
+} catch (e) {
+  action('chatreplypane_fetch_failed', { message_id: props.messageId })
+}
 
 const message = computed(() => {
   return messageStore?.byId(props.messageId)

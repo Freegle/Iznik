@@ -171,6 +171,7 @@ Browser → Traefik → freegle-dev-local → apiv1/apiv2 → percona
 |------|---------|-----------|
 | `docker-compose.yml` | Main compose configuration | Yes |
 | `docker-compose.override.yml` | Local overrides | No (gitignored) |
+| `docker-compose.override.edge.yml` | Prod-docker-host-only: user-facing `edge` services (tiles/wiki now; images tier later) | Yes |
 | `docker-compose.override.yesterday.yml` | Template for Yesterday server | Yes |
 | `.env` | Compose profiles, infrastructure IPs | No (gitignored) |
 | `.env.background` | Production secrets for batch-prod | No (gitignored) |
@@ -184,6 +185,7 @@ Browser → Traefik → freegle-dev-local → apiv1/apiv2 → percona
 | `production` | Production background services | batch-prod |
 | `monitoring` | Monitoring stack | (reserved for future use) |
 | `backup` | On-demand backup jobs | loki-backup |
+| `edge` | User-facing front-end services on the prod docker host (scale-in-place — see `plans/2026-06-25-frontend-server-migration.md`). In NO default profile set, so dev/CI never start these. | tile-server, wiki-media, wiki-mysql (adopted); frontend-nginx, delivery, tusd (images tier, held at `replicas:0` until their stage) |
 
 To enable profiles, set `COMPOSE_PROFILES` in `.env`:
 ```bash
