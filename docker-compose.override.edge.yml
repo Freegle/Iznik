@@ -57,29 +57,54 @@ services:
       - /var/wiki/html:/var/www/html
       - /var/wiki/sharewiki:/var/www/share
 
-  # --- Not-yet-migrated images tier: kept in the `edge` profile but held DOWN
-  # on this host until its own stage (plan §3). replicas:0 means a bare
-  # `docker compose up -d` or a reboot auto-start never brings the images tier
-  # up prematurely.
+  # --- Images tier (plan §3) — brought UP 2026-07-08 for validation + cache
+  # warming on the new ports (:8180/:8188). NOT yet fronting live traffic: the
+  # HAProxy cutover on ha-internal (repoint tusd_backend, add delivery_backend)
+  # is the separate human-gated step. Until then these serve only Host-header
+  # test curls and the low-priority cache rsync; no user reaches them.
+  #
+  # cgroup_parent: interactive.slice — latency-sensitive user serving, same
+  # priority tier as embedding-sidecar (CPUWeight=800). Requires the slice
+  # units from PR #1006 installed (they are). The digest job (07:00-12:00,
+  # batch.slice weight 25) *causes* the edge image peak, so this weighting is
+  # what lets image serving win under that exact contention.
   frontend-nginx:
     deploy:
-      replicas: 0
+      replicas: 1
+    cgroup_parent: interactive.slice
     ports:
       - "8180:80"     # HAProxy reaches this with send-proxy (PROXY protocol)
       - "8188:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
 
   delivery:
     deploy:
-      replicas: 0
+      replicas: 1
+    cgroup_parent: interactive.slice
 
   tusd:
     deploy:
-      replicas: 0
+      replicas: 1
+    cgroup_parent: interactive.slice
+    # Prod flags, replicating app1 EXACTLY: -upload-dir on the shared NFS,
+    # -behind-proxy, -base-path /, -disable-cors (all tus CORS comes from
+    # HAProxy). NO -hooks-http — app1 prod runs without hooks (plan §3/§5).
+    command: -upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
+    # Base healthcheck probes /tus/ (the dev base-path); prod base-path is /,
+    # where tusd returns 405 for GET and 404 at /tus/. Probe / and accept 405.
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/ 2>&1 | grep -E '(200|405)' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     volumes:
-      # /srv/tusd-data on the host is the shared-NFS mount
+      # /srv/tusd-data is the shared-NFS mount
       # (nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE), mounted
-      # read-only during prep and flipped to rw only at the human-gated upload
-      # cutover (plan §7/§11). Inert while replicas:0.
+      # READ-WRITE (decided 2026-07-08: uploads migrate here, so provision rw
+      # now — a second rw NFS client is the intended shared-store design, and
+      # pre-cutover this tusd gets no traffic so it writes nothing until the
+      # HAProxy upload cutover routes uploads here). app1 and this host use
+      # unique tusd IDs, so they never collide on the shared store.
       - /srv/tusd-data:/srv/tusd-data
 
 volumes:
