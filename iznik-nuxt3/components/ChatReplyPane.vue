@@ -104,23 +104,24 @@
         </NoticeMessage>
       </div>
 
-      <!-- Rippling-out reply gate (#5): the reach hasn't reached this viewer yet, so the post
-           is view-only. Show why instead of a composer whose send the server would reject —
-           covers every entry path (Reply button, ?reply= deep link, stale client). -->
+      <!-- Rippling-out reply hold (#5): the reach hasn't reached this viewer yet. We no longer
+           hide the composer — the reply is accepted and HELD, then delivered when the post
+           ripples to them (the server records a rippling_held_replies row). Tell them what
+           will happen so the send isn't a surprise. -->
       <NoticeMessage
-        v-if="reachBlocked"
+        v-if="reachBlocked && !me?.deleted"
         variant="info"
         class="reply-card__reach-blocked"
       >
-        We're showing this to people closest to it first — you'll be able to
-        reply once it reaches your area.
+        This hasn't reached your area yet — but go ahead and reply. We'll pass
+        it on to the owner as soon as it does.
       </NoticeMessage>
 
       <!-- Composer: matches the real chat footer. The fields scroll inside
            composer-scrollable; the error notice and Send row stay pinned
            below so the primary action is never scrolled out of view, even
            in very short windows. -->
-      <div v-else-if="!me?.deleted" class="reply-card__composer">
+      <div v-if="!me?.deleted" class="reply-card__composer">
         <div class="composer-scrollable">
           <!-- Email for logged-out users -->
           <div v-if="!me" class="composer-field">
