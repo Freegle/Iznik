@@ -536,6 +536,17 @@ commands:
           name: Build containers
           no_output_timeout: 25m
           command: |
+            # Authenticate with Docker Hub to avoid unauthenticated pull rate limits.
+            # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN are set in CircleCI project settings.
+            # Authenticated users get 200 pulls/6h vs 100/6h for unauthenticated.
+            if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin \
+                && echo "✅ Docker Hub authentication successful" \
+                || echo "⚠️  Docker Hub login failed — proceeding with unauthenticated pulls"
+            else
+              echo "ℹ️  DOCKERHUB credentials not set — skipping Docker Hub login"
+            fi
+
             # Pre-pull shared base images once before any parallel builds start.
             # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.
             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.

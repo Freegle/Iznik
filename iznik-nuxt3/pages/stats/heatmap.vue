@@ -113,7 +113,10 @@ const heatMapData = computed(() => {
 
   if (heatmapData?.forEach) {
     heatmapData.forEach((loc) => {
-      data.push([loc.lat, loc.lng, loc.count])
+      // Default the weight to 1 when the API doesn't send a count. Without this a
+      // missing/undefined count makes `currentMax` NaN below, which turns every
+      // weighted value into NaN, empties weightedData, and the heatmap never renders.
+      data.push([loc.lat, loc.lng, Number(loc.count) || 1])
     })
   }
 
@@ -157,15 +160,6 @@ const weightedData = computed(() => {
         }
       }
     })
-
-    console.log(
-      'Weighted',
-      currentMax,
-      minlog,
-      maxlog,
-      weighted,
-      heatMapData.value
-    )
   }
 
   return weighted

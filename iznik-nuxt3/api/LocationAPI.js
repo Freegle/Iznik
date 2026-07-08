@@ -5,6 +5,12 @@ export default class LocationAPI extends BaseAPI {
     return this.$getv2('/location/typeahead?q=' + encodeURIComponent(query))
   }
 
+  resolve(name) {
+    // logError=false: a 404 (the name isn't a known place) is an expected,
+    // non-error outcome used to decide whether to offer "search near <place>".
+    return this.$getv2('/location/resolve', { name }, false)
+  }
+
   latlng(lat, lng) {
     return this.$getv2('/location/latlng', {
       lat,

@@ -3,6 +3,7 @@ import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
+import { trackConversion } from '~/composables/useTrackConversion'
 
 // Module-level globals
 const postType = ref(null)
@@ -363,6 +364,15 @@ export async function freegleIt(type, router, options = {}) {
         }
       })
     )
+
+    // The post has genuinely been submitted (and any inline signup handled),
+    // so record success-point conversion events for Google Ads.
+    trackConversion(type === 'Offer' ? 'Give an Item' : 'Find an Item')
+
+    if (params.newuser) {
+      // Posting anonymously just created an account - that's a registration.
+      trackConversion('Register with Website')
+    }
 
     const promises = []
 

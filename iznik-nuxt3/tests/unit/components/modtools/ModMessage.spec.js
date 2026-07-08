@@ -343,6 +343,10 @@ describe('ModMessage', () => {
             template: '<div class="mod-message-email-modal"><slot /></div>',
             props: ['id'],
           },
+          ModBulkPreviewModal: {
+            template: '<div class="mod-bulk-preview-modal"><slot /></div>',
+            props: ['messageid'],
+          },
           ModSpammerReport: {
             template: '<div class="mod-spammer-report"><slot /></div>',
             props: ['userid', 'safelist'],
@@ -1323,8 +1327,18 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
-            { groupid: 789, namedisplay: 'Context', collection: 'Pending', arrival: rippleLater },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              arrival: rippleLater,
+            },
           ],
         }
       )
@@ -1337,13 +1351,77 @@ describe('ModMessage', () => {
       expect(warning.text()).toContain('out of area')
     })
 
-    it('does not warn when the post has not rippled in', () => {
+    // Task #23: the P/Q "quicker to get to" note. Wording (fixed by product spec) is
+    // "...in {P} than {P} is to {Q}" — P (nearest in-group point to the offer) appears twice,
+    // Q (furthest in-group point from P) once. This test locks that exact structure so the
+    // repeated {P} can't be "corrected" to {Q} and the note can't silently regress.
+    it('renders the ripple proximity note with P and Q in the specified positions', () => {
+      const p = 'DN14 8HH (Whitgift)'
+      const q = 'HU12 0UH (Kilnsea)'
       const wrapper = mountComponent(
         { contextGroupid: 789 },
         {
           groups: [
             { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
-            { groupid: 789, namedisplay: 'Context', collection: 'Pending', arrival: rippleEarlier },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              arrival: rippleLater,
+              ripple_proximity_p: p,
+              ripple_proximity_q: q,
+            },
+          ],
+        }
+      )
+      const note = wrapper.find('[data-test="ripple-proximity-note"]')
+      expect(note.exists()).toBe(true)
+      const text = note.text().replace(/\s+/g, ' ').trim()
+      expect(text).toBe(
+        `This post is quicker to get to for Freeglers in ${p} than ${p} is to ${q}.`
+      )
+    })
+
+    it('omits the ripple proximity note when only one endpoint is present', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              arrival: rippleLater,
+              ripple_proximity_p: 'DN14 8HH (Whitgift)',
+              // ripple_proximity_q intentionally absent → note must not render
+            },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(
+        wrapper.find('[data-test="ripple-proximity-note"]').exists()
+      ).toBe(false)
+    })
+
+    it('does not warn when the post has not rippled in', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              arrival: rippleEarlier,
+            },
           ],
         }
       )
@@ -1358,8 +1436,18 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
-            { groupid: 789, namedisplay: 'Context', collection: 'Approved', arrival: rippleLater },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Approved',
+              arrival: rippleLater,
+            },
           ],
         }
       )
@@ -1411,7 +1499,7 @@ describe('ModMessage', () => {
       expect(wrapper.vm.otherGroups[0].groupid).toBe(999)
     })
 
-    it('shows "Also on" indicator for multi-group messages', async () => {
+    it('shows the multi-group ("may also be shown") indicator for multi-group messages', async () => {
       const wrapper = mountComponent(
         { contextGroupid: 789 },
         {
@@ -1422,10 +1510,10 @@ describe('ModMessage', () => {
         }
       )
       await flushPromises()
-      expect(wrapper.text()).toContain('Also on')
+      expect(wrapper.text()).toContain('May also be shown to some members in')
     })
 
-    it('does not show "Also on" for single-group messages', async () => {
+    it('does not show the multi-group indicator for single-group messages', async () => {
       const wrapper = mountComponent(
         { contextGroupid: 789 },
         {
@@ -1435,7 +1523,9 @@ describe('ModMessage', () => {
         }
       )
       await flushPromises()
-      expect(wrapper.text()).not.toContain('Also on')
+      expect(wrapper.text()).not.toContain(
+        'May also be shown to some members in'
+      )
     })
   })
 
@@ -1449,7 +1539,9 @@ describe('ModMessage', () => {
       const wrapper = mountComponent({ summary: true })
       const usernameEl = wrapper.find('.text-truncate.d-inline-block')
       expect(usernameEl.exists()).toBe(true)
-      expect(usernameEl.text()).toContain('AVeryLongUsernameThatWouldSqueezeEditFields')
+      expect(usernameEl.text()).toContain(
+        'AVeryLongUsernameThatWouldSqueezeEditFields'
+      )
       expect(usernameEl.attributes('style')).toContain('max-width: 8rem')
     })
 

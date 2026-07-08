@@ -2,13 +2,75 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+// Cross-post dedup parity with the real digest send
+// (iznik-batch UnifiedDigestService::getDeduplicationKey / normalizeSubject /
+// normalizeBody / bodiesMatch). The /rippling preview must collapse the same
+// items the send collapses — TrashNothing cross-posts (different msgids, same
+// tnpostid or fromuser+subject+location) and rippled copies — so it shows the
+// same deduped, capped-at-65 set the member actually receives.
+var (
+	digestSubjPrefixRe = regexp.MustCompile(`(?i)^(OFFER|WANTED)\s*:\s*`)
+	digestSubjLocRe    = regexp.MustCompile(`\s*\([^)]+\)\s*$`)
+	digestWsRe         = regexp.MustCompile(`\s+`)
+)
+
+// normalizeDigestSubject mirrors UnifiedDigestService::normalizeSubject.
+func normalizeDigestSubject(s string) string {
+	s = digestSubjPrefixRe.ReplaceAllString(s, "")
+	s = digestSubjLocRe.ReplaceAllString(s, "")
+	s = digestWsRe.ReplaceAllString(strings.TrimSpace(s), " ")
+	return strings.ToLower(s)
+}
+
+// normalizeDigestBody mirrors UnifiedDigestService::normalizeBody.
+func normalizeDigestBody(s string) string {
+	return digestWsRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), " ")
+}
+
+// digestDedupKey mirrors UnifiedDigestService::getDeduplicationKey: key on
+// CONTENT (fromuser|normalizedSubject|locationid), never tnpostid — a re-posted
+// TN item gets a new tnpostid each time, so a tn-based key fails to collapse the
+// repeats (Discourse 9808/#233). tnpostid is still used by bodiesMatch for a
+// definitive match.
+func digestDedupKey(fromuser int64, subject string, locationid int64) string {
+	loc := "unknown"
+	if locationid != 0 {
+		loc = strconv.FormatInt(locationid, 10)
+	}
+	return fmt.Sprintf("%d|%s|%s", fromuser, normalizeDigestSubject(subject), loc)
+}
+
+func appendUniqueInt64(s []int64, v int64) []int64 {
+	for _, x := range s {
+		if x == v {
+			return s
+		}
+	}
+	return append(s, v)
+}
+
+func appendUniqueStr(s []string, v string) []string {
+	if v == "" {
+		return s
+	}
+	for _, x := range s {
+		if x == v {
+			return s
+		}
+	}
+	return append(s, v)
+}
 
 // handleDigestSimulator models the Problem-2 selection algorithm.
 // Given a member at (lat, lng) and a set of weight knobs, it computes
@@ -58,7 +120,9 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		wFresh := parseFloatQuery(c, "w_freshness", 0.5, 0, 10)
 		wBudget := parseFloatQuery(c, "w_budget", 1.0, 0, 10)
 		wAnchor := parseFloatQuery(c, "w_anchor", 0, 0, 10)
-		cap := int(parseFloatQuery(c, "cap", 50, 1, 1000))
+		// Default to the send's DIGEST_POST_CAP (65); the topCap clamp below also
+		// hard-limits to 65 so the preview never shows more than the member receives.
+		cap := int(parseFloatQuery(c, "cap", 65, 1, 1000))
 		groupByPoster := c.Query("group_by_poster") == "true"
 		windowH := parseFloatQuery(c, "window_hours", 24, 1, 168)
 		budgetDecay := parseFloatQuery(c, "budget_decay", 25, 1, 1000)
@@ -73,7 +137,7 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 				"deferred":  []any{},
 			})
 		}
-		res := AutoResolution(maxSecs, Drive)
+		res := NetworkResolution(g, iso.ReachedNodes, Drive)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		ring := poly.Geometry.Coordinates
 		if len(ring) == 0 || len(ring[0]) < 4 {
@@ -154,7 +218,15 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			         (SELECT a.externaluid FROM messages_attachments a
 			           WHERE a.msgid = ms.msgid AND a.externaluid IS NOT NULL
 			           ORDER BY a.`+"`primary`"+` DESC, a.id ASC LIMIT 1),
-			         '')                              AS thumb_externaluid
+			         '')                              AS thumb_externaluid,
+			       EXISTS(SELECT 1 FROM messages_outcomes mo
+			               WHERE mo.msgid = ms.msgid)        AS has_outcome,
+			       EXISTS(SELECT 1 FROM messages_outcomes mo
+			               WHERE mo.msgid = ms.msgid
+			                 AND mo.outcome IN ('Taken','Received')) AS has_success,
+			       COALESCE(m.tnpostid, 0)            AS tnpostid,
+			       COALESCE(m.locationid, 0)          AS locationid,
+			       COALESCE(m.textbody, '')           AS textbody
 			  FROM messages_spatial ms
 			  LEFT JOIN messages m ON m.id = ms.msgid
 			  LEFT JOIN `+"`groups`"+` g ON g.id = ms.groupid
@@ -194,24 +266,37 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			ScoreBudg        float64   `json:"score_budget"`
 			ScoreAnch        float64   `json:"score_anchor"`
 			Score            float64   `json:"score"`
+			HasOutcome       bool      `json:"has_outcome"`
+			HasSuccess       bool      `json:"has_success"`
+			TnPostID         int64     `json:"tnpostid"`
+			LocationID       int64     `json:"-"`
+			TextBody         string    `json:"-"`
+			// Cross-post merge (dedup): the representative carries every group the
+			// item was posted to, mirroring the send's "Posted to: A, B, C".
+			PostedToGroups []int64  `json:"posted_to_groups,omitempty"`
+			PostedToNames  []string `json:"posted_to_names,omitempty"`
 		}
-		pool := make([]scored, 0, 128)
+		pool := make([]scored, 0, 128)      // available (!has_outcome) -> Top picks
+		completed := make([]scored, 0, 16)  // has_success -> "came and went"
 		now := time.Now()
 		for rows.Next() {
 			var p scored
 			if err := rows.Scan(&p.MsgID, &p.Lng, &p.Lat, &p.MsgType,
 				&p.Arrival, &p.Successful, &p.Promised, &p.GroupID,
 				&p.GroupName, &p.FromUser, &p.Subject, &p.Views, &p.Replies,
-				&p.ThumbAttachID, &p.ThumbExternalUID); err != nil {
+				&p.ThumbAttachID, &p.ThumbExternalUID,
+				&p.HasOutcome, &p.HasSuccess, &p.TnPostID, &p.LocationID, &p.TextBody); err != nil {
 				continue
 			}
 			_, isHome := homeGroups[p.GroupID]
-			// Promised/completed cross-group posts shouldn't be shown — the
-			// member would never have known about them via their own group
-			// and they're already gone, so no point either listing them or
-			// nudging them to switch to immediate mode.  Keep promised /
-			// completed only when they're from a home group.
-			if (p.Successful || p.Promised) && !isHome {
+			// Section exactly like the real send (UnifiedDigestService::getPostsForUser):
+			//   available (!has_outcome)              -> Top picks (scored, deduped, capped 65)
+			//   has_success (Taken/Received)          -> "came and went" (deduped)
+			//   has_outcome && !has_success (withdrawn/expired) -> neither.
+			// The send's came-and-went is drawn from the member's own groups, so for
+			// the preview we keep only home-group completed posts (a cross-group
+			// completed post the member never saw is noise).
+			if p.HasOutcome && !(p.HasSuccess && isHome) {
 				continue
 			}
 			// Drive-time to this post via nearest reached node.
@@ -236,78 +321,67 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			p.ScoreBudg = s.Budget
 			p.ScoreAnch = s.Anchor
 			p.Score = s.Total
-			pool = append(pool, p)
+			if p.HasSuccess {
+				completed = append(completed, p)
+			} else {
+				pool = append(pool, p)
+			}
 		}
 
-		// Sort by score descending.
+		// Sort available + completed by score desc; the dedup keeps the
+		// top-scoring representative of each cross-posted item.
 		sort.Slice(pool, func(i, j int) bool { return pool[i].Score > pool[j].Score })
+		sort.Slice(completed, func(i, j int) bool { return completed[i].Score > completed[j].Score })
 
-		// Optional same-poster grouping: for each fromuser keep only
-		// their highest-scoring post in the selected list; the rest go
-		// to a per-poster cluster bucket.
-		type cluster struct {
-			FromUser    int64   `json:"fromuser"`
-			Count       int     `json:"count"`
-			TopMsgID    int64   `json:"top_msgid"`
-			TopMsgType  string  `json:"top_msgtype"`
-			TopLat      float64 `json:"top_lat"`
-			TopLng      float64 `json:"top_lng"`
-			ExtraMsgIDs []int64 `json:"extra_msgids"`
+		// bodiesMatch parity (UnifiedDigestService::bodiesMatch).
+		bodiesMatch := func(a, b *scored) bool {
+			if a.TnPostID != 0 && b.TnPostID != 0 && a.TnPostID == b.TnPostID {
+				return true
+			}
+			return normalizeDigestBody(a.TextBody) == normalizeDigestBody(b.TextBody)
 		}
-		clusters := []cluster{}
-		var selected []scored
-		var deferred []scored
-
-		if groupByPoster {
-			byPoster := map[int64]*cluster{}
-			seen := map[int64]bool{}
-			for _, p := range pool {
-				if p.FromUser == 0 {
-					if len(selected) < cap {
-						selected = append(selected, p)
-					} else {
-						deferred = append(deferred, p)
-					}
+		// Collapse cross-posts (TN cross-posts + rippled copies) exactly like the
+		// real send (deduplicatePosts): same dedup key + matching body merges into
+		// the top-scoring representative, carrying every group ("Posted to: A,B,C").
+		dedupCrossPosts := func(in []scored) []scored {
+			out := make([]scored, 0, len(in))
+			idx := map[string]int{}
+			for _, p := range in {
+				key := digestDedupKey(p.FromUser, p.Subject, p.LocationID)
+				if ei, ok := idx[key]; ok && bodiesMatch(&out[ei], &p) {
+					out[ei].PostedToGroups = appendUniqueInt64(out[ei].PostedToGroups, p.GroupID)
+					out[ei].PostedToNames = appendUniqueStr(out[ei].PostedToNames, p.GroupName)
 					continue
 				}
-				if _, dup := seen[p.FromUser]; dup {
-					cl := byPoster[p.FromUser]
-					cl.Count++
-					cl.ExtraMsgIDs = append(cl.ExtraMsgIDs, p.MsgID)
-					deferred = append(deferred, p)
-					continue
-				}
-				seen[p.FromUser] = true
-				cl := &cluster{
-					FromUser: p.FromUser, Count: 1, TopMsgID: p.MsgID,
-					TopMsgType: p.MsgType, TopLat: p.Lat, TopLng: p.Lng,
-				}
-				byPoster[p.FromUser] = cl
-				if len(selected) < cap {
-					selected = append(selected, p)
-				} else {
-					deferred = append(deferred, p)
+				p.PostedToGroups = appendUniqueInt64(nil, p.GroupID)
+				p.PostedToNames = appendUniqueStr(nil, p.GroupName)
+				out = append(out, p)
+				if _, ok := idx[key]; !ok {
+					idx[key] = len(out) - 1
 				}
 			}
-			for _, cl := range byPoster {
-				if cl.Count > 1 {
-					clusters = append(clusters, *cl)
-				}
-			}
-			sort.Slice(clusters, func(i, j int) bool { return clusters[i].Count > clusters[j].Count })
-		} else {
-			for i, p := range pool {
-				if i < cap {
-					selected = append(selected, p)
-				} else {
-					deferred = append(deferred, p)
-				}
-			}
+			return out
 		}
+
+		dedupedAvailable := dedupCrossPosts(pool)
+		cameAndWent := dedupCrossPosts(completed)
+
+		// Cap "Top picks" at the send's hard DIGEST_POST_CAP (65); the cap query
+		// param can lower it but never raise it above 65, so the preview matches.
+		const digestPostCap = 65
+		topCap := cap
+		if topCap > digestPostCap {
+			topCap = digestPostCap
+		}
+		if topCap > len(dedupedAvailable) {
+			topCap = len(dedupedAvailable)
+		}
+		selected := dedupedAvailable[:topCap]
+		deferred := dedupedAvailable[topCap:]
 
 		homeSelected := 0
 		homePool := 0
-		for _, p := range pool {
+		for _, p := range dedupedAvailable {
 			if p.HomeGroup {
 				homePool++
 			}
@@ -319,27 +393,30 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		}
 
 		return c.JSON(fiber.Map{
-			"max_drive_min":  maxMinutes,
-			"window_hours":   windowH,
-			"pool_size":      len(pool),
-			"selected_count": len(selected),
-			"deferred_count": len(deferred),
-			"home_groups":    homeGroupList,
-			"home_selected":  homeSelected,
-			"home_pool":      homePool,
-			"selected":       selected,
-			"deferred":       deferred,
-			"poster_groups":  clusters,
-			"isochrone":      poly,
+			"max_drive_min":       maxMinutes,
+			"window_hours":        windowH,
+			"pool_size":           len(pool),             // raw available before dedup
+			"deduped_count":       len(dedupedAvailable), // full Top-picks total (display capped at selected_count)
+			"selected_count":      len(selected),
+			"deferred_count":      len(deferred),
+			"came_and_went_count": len(cameAndWent),
+			"home_groups":         homeGroupList,
+			"home_selected":       homeSelected,
+			"home_pool":           homePool,
+			"top_picks":           selected,
+			"selected":            selected, // back-compat alias
+			"deferred":            deferred,
+			"came_and_went":       cameAndWent,
+			"isochrone":           poly,
 			"weights": fiber.Map{
-				"closeness":     wClose,
-				"freshness":     wFresh,
-				"budget":        wBudget,
-				"anchor":        wAnchor,
-				"cap":           cap,
-				"group_poster":  groupByPoster,
-				"window_hours":  windowH,
-				"budget_decay":  budgetDecay,
+				"closeness":    wClose,
+				"freshness":    wFresh,
+				"budget":       wBudget,
+				"anchor":       wAnchor,
+				"cap":          digestPostCap,
+				"group_poster": groupByPoster,
+				"window_hours": windowH,
+				"budget_decay": budgetDecay,
 			},
 		})
 	}

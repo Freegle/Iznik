@@ -116,77 +116,88 @@
         reply once it reaches your area.
       </NoticeMessage>
 
-      <!-- Composer: matches the real chat footer -->
+      <!-- Composer: matches the real chat footer. The fields scroll inside
+           composer-scrollable; the error notice and Send row stay pinned
+           below so the primary action is never scrolled out of view, even
+           in very short windows. -->
       <div v-else-if="!me?.deleted" class="reply-card__composer">
-        <!-- Email for logged-out users -->
-        <div v-if="!me" class="composer-field">
-          <EmailValidator
-            ref="emailValidatorRef"
-            v-model:email="stateMachine.email.value"
-            v-model:valid="stateMachine.emailValid.value"
-            size="lg"
-            label="Your email address"
-            class="test-email-reply-validator"
-          />
+        <div class="composer-scrollable">
+          <!-- Email for logged-out users -->
+          <div v-if="!me" class="composer-field">
+            <EmailValidator
+              ref="emailValidatorRef"
+              v-model:email="stateMachine.email.value"
+              v-model:valid="stateMachine.emailValid.value"
+              size="lg"
+              label="Your email address"
+              class="test-email-reply-validator"
+            />
+          </div>
+
+          <VeeForm ref="form" class="composer-form">
+            <!-- Reply text -->
+            <div class="composer-field">
+              <label
+                :for="'replytomessage-' + messageId"
+                class="composer-label"
+              >
+                Your message
+              </label>
+              <Field
+                :id="'replytomessage-' + messageId"
+                v-model="stateMachine.replyText.value"
+                name="reply"
+                :rules="validateReply"
+                :validate-on-mount="false"
+                :validate-on-model-update="false"
+                as="textarea"
+                rows="3"
+                class="composer-input"
+                :placeholder="
+                  message?.type === 'Offer'
+                    ? 'Explain why you\'d like it…'
+                    : 'Can you help? Let them know…'
+                "
+                @input="stateMachine.startTyping"
+              />
+              <ErrorMessage name="reply" class="composer-error" />
+            </div>
+
+            <!-- Collection time (Offers only) -->
+            <div
+              v-if="message?.type === 'Offer'"
+              class="composer-field composer-field--collect"
+            >
+              <label
+                :for="'replytomessage2-' + messageId"
+                class="composer-label"
+              >
+                <v-icon icon="calendar-alt" class="composer-label-icon" />
+                When could you collect?
+              </label>
+              <Field
+                :id="'replytomessage2-' + messageId"
+                v-model="stateMachine.collectText.value"
+                name="collect"
+                :rules="validateCollect"
+                :validate-on-mount="false"
+                :validate-on-model-update="false"
+                as="textarea"
+                rows="2"
+                class="composer-input"
+                placeholder="e.g. weekday evenings or this weekend"
+              />
+              <ErrorMessage name="collect" class="composer-error" />
+            </div>
+          </VeeForm>
+
+          <p v-if="me && !alreadyAMember" class="composer-hint">
+            You're not yet a member of this community; we'll join you. Change
+            emails or leave communities from <em>Settings</em>.
+          </p>
+
+          <NewFreegler v-if="!me" class="composer-hint" />
         </div>
-
-        <VeeForm ref="form" class="composer-form">
-          <!-- Reply text -->
-          <div class="composer-field">
-            <label :for="'replytomessage-' + messageId" class="composer-label">
-              Your message
-            </label>
-            <Field
-              :id="'replytomessage-' + messageId"
-              v-model="stateMachine.replyText.value"
-              name="reply"
-              :rules="validateReply"
-              :validate-on-mount="false"
-              :validate-on-model-update="false"
-              as="textarea"
-              rows="3"
-              class="composer-input"
-              :placeholder="
-                message?.type === 'Offer'
-                  ? 'Explain why you\'d like it…'
-                  : 'Can you help? Let them know…'
-              "
-              @input="stateMachine.startTyping"
-            />
-            <ErrorMessage name="reply" class="composer-error" />
-          </div>
-
-          <!-- Collection time (Offers only) -->
-          <div
-            v-if="message?.type === 'Offer'"
-            class="composer-field composer-field--collect"
-          >
-            <label :for="'replytomessage2-' + messageId" class="composer-label">
-              <v-icon icon="calendar-alt" class="composer-label-icon" />
-              When could you collect?
-            </label>
-            <Field
-              :id="'replytomessage2-' + messageId"
-              v-model="stateMachine.collectText.value"
-              name="collect"
-              :rules="validateCollect"
-              :validate-on-mount="false"
-              :validate-on-model-update="false"
-              as="textarea"
-              rows="2"
-              class="composer-input"
-              placeholder="e.g. weekday evenings or this weekend"
-            />
-            <ErrorMessage name="collect" class="composer-error" />
-          </div>
-        </VeeForm>
-
-        <p v-if="me && !alreadyAMember" class="composer-hint">
-          You're not yet a member of this community; we'll join you. Change
-          emails or leave communities from <em>Settings</em>.
-        </p>
-
-        <NewFreegler v-if="!me" class="composer-hint" />
 
         <!-- Error message -->
         <NoticeMessage
@@ -277,7 +288,9 @@ import {
   useReplyStateMachine,
   ReplyState,
 } from '~/composables/useReplyStateMachine'
+import { useRoute } from '#imports'
 import { action } from '~/composables/useClientLog'
+import { replySurfaceForRoute } from '~/composables/useReplySurface'
 import EmailValidator from '~/components/EmailValidator'
 import NewUserInfo from '~/components/NewUserInfo'
 import ChatButton from '~/components/ChatButton'
@@ -314,6 +327,9 @@ const faraway = FAR_AWAY
 
 const messageStore = useMessageStore()
 const userStore = useUserStore()
+// Captured at setup (useRoute needs the component context); read at send time -
+// the route object is reactive so it reflects wherever the user actually is then.
+const route = useRoute()
 const miscStore = useMiscStore()
 const authStore = useAuthStore()
 const forceLogin = computed(() => authStore.forceLogin)
@@ -330,8 +346,17 @@ const newUserModal = ref(null)
 const replyToPostChatButton = ref(null)
 const emailValidatorRef = ref(null)
 
-// Fetch the message data
-await messageStore.fetch(props.messageId)
+// Fetch the message data. Guarded: this is a top-level await in async setup
+// under <Suspense>, so an unhandled rejection (e.g. a transient connectivity
+// blip) would mean the overlay never mounts and the Reply click is a silent
+// no-op. The message is almost always already in the store from the page
+// that opened this pane, so on failure render with cached data instead of
+// nothing; the composer gates itself if data is genuinely missing.
+try {
+  await messageStore.fetch(props.messageId)
+} catch (e) {
+  action('chatreplypane_fetch_failed', { message_id: props.messageId })
+}
 
 const message = computed(() => {
   return messageStore?.byId(props.messageId)
@@ -467,7 +492,7 @@ onMounted(() => {
 
   action('chat_reply_pane_viewed', {
     message_id: props.messageId,
-    reply_source: 'chat_reply_pane',
+    reply_source: replySurfaceForRoute(route),
     message_type: message.value?.type,
     is_logged_in: !!me.value,
   })
@@ -534,7 +559,10 @@ async function handleSend(callback) {
     emailValidator: emailValidatorRef.value,
   })
 
-  stateMachine.setReplySource('chat_reply_pane')
+  // The surface the user is committing the reply from (browse, search, message_page,
+  // email deep link, ...) - sent to the server as advisory provenance for the rippling
+  // reply attribution, and logged with the Loki reply_* events.
+  stateMachine.setReplySource(replySurfaceForRoute(route))
   await stateMachine.submit(callback)
 }
 
@@ -713,12 +741,21 @@ $reply-border: #cdcdcd;
 
 /* ---- Composer (chat footer) ---- */
 .reply-card__composer {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
   max-height: 62%;
-  overflow-y: auto;
   padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
   background: $color-white;
   border-top: 1px solid $reply-border;
+}
+
+/* The fields scroll; the error notice and Send row below stay pinned so the
+   primary action can't end up below the fold in short windows (e.g. 820x420,
+   an email client's embedded browser). */
+.composer-scrollable {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .composer-form {
@@ -794,6 +831,7 @@ $reply-border: #cdcdcd;
 .composer-send {
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
   margin-top: 12px;
 }
 

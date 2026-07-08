@@ -160,7 +160,7 @@
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
             <div v-if="otherGroups.length > 0" class="small text-muted">
-              Also on:
+              May also be shown to some members in
               <ShowMore
                 :items="otherGroups"
                 :limit="3"
@@ -206,6 +206,15 @@
                   keep moderation load low. You don't need to do anything; you
                   can still reject it for the usual reasons (spam, breaks the
                   rules), just not for being "out of area".
+                </span>
+                <span
+                  v-if="rippleProximity"
+                  class="d-block mt-1"
+                  data-test="ripple-proximity-note"
+                >
+                  This post is quicker to get to for Freeglers in
+                  {{ rippleProximity.p }} than {{ rippleProximity.p }} is to
+                  {{ rippleProximity.q }}.
                 </span>
                 <a href="#" @click.prevent="ripplingExplanationModal?.show()">
                   Learn more
@@ -430,7 +439,12 @@
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
-              <b-form-textarea v-if="editing" v-model="editmessage.textbody" rows="8" class="mb-3" />
+              <b-form-textarea
+                v-if="editing"
+                v-model="editmessage.textbody"
+                rows="8"
+                class="mb-3"
+              />
               <div v-else-if="editreview">
                 <template v-if="oldBody || newBody">
                   <h4>Differences:</h4>
@@ -478,6 +492,30 @@
                   {{ eBody }}
                 </span>
               </div>
+              <b-alert
+                v-if="isBulk"
+                :model-value="true"
+                variant="info"
+                class="mb-3"
+              >
+                <strong>
+                  <v-icon icon="boxes-stacked" /> Bulk clearance —
+                  {{ message.bulkcount }} item{{
+                    message.bulkcount === 1 ? '' : 's'
+                  }}.
+                </strong>
+                This is a single post on the group, but when a member opens it
+                they can see each item and turn on the ones they'd like (and how
+                many).
+                <b-button
+                  variant="link"
+                  class="p-0 ms-1 align-baseline"
+                  data-testid="bulk-preview-btn"
+                  @click="showBulkPreview = true"
+                >
+                  See how members see it
+                </b-button>
+              </b-alert>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -740,6 +778,11 @@
       :lng="position?.lng"
       :arrival="reachArrival"
     />
+    <ModBulkPreviewModal
+      v-if="showBulkPreview"
+      :messageid="message.id"
+      @hidden="showBulkPreview = false"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -767,7 +810,10 @@ import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 import { useModGroupStore } from '@/stores/modgroup'
 
 import { twem } from '~/composables/useTwem'
-import { isRippledInToContextGroup as isRippledIn } from '~/composables/rippleStatus'
+import {
+  isRippledInToContextGroup as isRippledIn,
+  earliestArrivalGroupId,
+} from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -877,6 +923,14 @@ const saving = ref(false)
 const saved = ref(false)
 const showEmailSourceModal = ref(false)
 const showSpamModal = ref(false)
+const showBulkPreview = ref(false)
+
+// A bulk "clearance" offer carries a structured catalogue of items.
+const isBulk = computed(
+  () =>
+    (message.value?.bulkcount || 0) > 0 ||
+    (message.value?.bulkitems?.length || 0) > 0
+)
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)
@@ -902,10 +956,6 @@ const groupid = computed(() => {
   return 0
 })
 
-const messageGroup = computed(() => {
-  return groupid.value || null
-})
-
 // The group this copy is being administered on. In a specific group's queue that's the
 // explicit context group; in the all-communities view we pick the group I moderate that
 // most needs attention - a Pending one first, then the most-recent arrival - so a Reject
@@ -914,6 +964,15 @@ const currentGroupid = computed(() => {
   if (props.contextGroupid) return parseInt(props.contextGroupid)
   const mine = moderatedGroupsOnPost.value
   if (mine.length) {
+    // An edit under review belongs to the post's ORIGIN group, not to a copy that
+    // rippled in later. Anchor to the origin-most group I moderate (earliest arrival)
+    // so the "moderating for X" banner and the Approve/Reject target the origin group
+    // - otherwise a post that originated on a group I'm active on but rippled into a
+    // group I only back up gets shown as "moderating for <backup group>" (Discourse 9518).
+    if (props.editreview) {
+      const originPick = earliestArrivalGroupId(mine)
+      if (originPick != null) return originPick
+    }
     const pending = mine.filter((g) =>
       ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
     )
@@ -943,7 +1002,7 @@ const contextGroup = computed(() => {
 })
 
 // The origin group: the earliest arrival across the post's groups (shown as "First
-// posted on ..."). Excluded from "Also on" so it isn't listed twice.
+// posted on ..."). Excluded from the "may also be shown" list so it isn't listed twice.
 const originGroupid = computed(() => {
   const groups = message.value?.groups || []
   let earliest = null
@@ -955,8 +1014,9 @@ const originGroupid = computed(() => {
   return earliest ? parseInt(earliest.groupid) : null
 })
 
-// Other groups this message is on (for the "Also on" indicator): everything except the
-// group being administered (context) and the origin/first-posted group.
+// Other groups this message is on (for the "may also be shown to some members in"
+// indicator): everything except the group being administered (context) and the
+// origin/first-posted group.
 const otherGroups = computed(() => {
   if (!message.value?.groups) return []
   const gid = currentGroupid.value
@@ -1029,18 +1089,29 @@ const isRippledInToContextGroup = computed(() =>
   isRippledIn(message.value?.groups, currentGroupid.value)
 )
 
+// Task #23: the P/Q "quicker to get to" note for the copy on currentGroupid - only present
+// (both fields non-null) when the routing server said quicker=true at ripple-in time.
+const rippleProximity = computed(() => {
+  const gid = currentGroupid.value
+  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
+    return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
+  }
+  return null
+})
+
 const messageHistory = computed(() => {
   return fromUser.value?.messagehistory || []
 })
 
 const group = computed(() => {
-  let ret = null
-
-  if (messageGroup.value) {
-    ret = myModGroups.value.find((g) => parseInt(g.id) === messageGroup.value)
-  }
-
-  return ret
+  // Use currentGroupid (the group this copy is being administered on) rather than
+  // groupid/groups[0]. For a rippled post the first/unordered group may be the origin
+  // group, which would draw the wrong community's boundary on the map and centre it on
+  // the wrong place (Discourse 9808/305).
+  const gid = currentGroupid.value
+  if (!gid) return null
+  return myModGroups.value.find((g) => parseInt(g.id) === gid) || null
 })
 
 const position = computed(() => {
@@ -1432,9 +1503,13 @@ function startEdit() {
   editmessage.value = JSON.parse(JSON.stringify(message.value))
   editing.value = true
   miscStore.modtoolsediting = true
-  editmessage.value.groups.forEach((grp) => {
-    editgroup.value = grp.groupid
-  })
+  // Anchor the edit target to the group this copy is administered on (currentGroupid - a
+  // group the mod definitely moderates). Taking the last row of the unordered groups array
+  // could pick the origin group the mod does NOT moderate; ModGroupSelect (modonly) then
+  // resets the selection to 0, and save()'s move() fires with groupid 0 -> 400 (the title
+  // PATCH having already saved). With the right group, move() is skipped entirely. (9808/303)
+  editgroup.value =
+    currentGroupid.value || editmessage.value.groups[0]?.groupid || null
 }
 
 async function save() {

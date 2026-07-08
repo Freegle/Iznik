@@ -89,6 +89,22 @@ When that happens, the chat in **Chat Review / ModTools** will tell you it's bei
 don't need to do anything: the reply is released automatically as soon as the post reaches
 that member's area. (Members are never shown this reason - only you see it.)
 
+### 5. Members' own "Nearby" browse feed is now ordered by relevance, with a distance slider
+This one's on the member side rather than in ModTools, but you may get asked about it. The
+"Nearby" browse feed no longer just lists the newest post first: posts a member hasn't seen
+yet are shown ahead of ones they have, and within each of those groups, posts are ordered by
+a relevance score that balances how close a post is, how fresh it is, and how much interest
+it's already had (views and replies) - the same kind of scoring already used for the
+rippling digest email. It changes the order a member's own feed shows posts in; it doesn't
+change what rippling approves or who a post reaches.
+
+Members also get a new distance slider in their filters, marked "Nearer" and "Further"
+with no numbers. It's a **personal preference each member sets for themselves** - it
+defaults to "Further" (no extra limit beyond their normal rippling reach), and dragging it
+towards "Nearer" just narrows what appears on their own screen. It doesn't affect rippling
+itself, what anyone else sees, or moderation, and - like their other browse filters - it's
+remembered between visits.
+
 ---
 
 ## Rejecting a rippled-in post

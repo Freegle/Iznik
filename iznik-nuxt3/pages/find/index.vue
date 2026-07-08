@@ -121,14 +121,9 @@ const { me, ids, messageValid, uploadingPhoto, notblank } = await setup(
   'Wanted'
 )
 
-onMounted(() => {
-  if (globalThis.$gtm?.enabled()) {
-    globalThis.$gtm.trackEvent({
-      event: 'Find an Item',
-      label: 'QxhuCP7av7kZELy618UD',
-    })
-  }
-})
+// The 'Find an Item' conversion event fires on actual post completion in
+// freegleIt() (composables/useCompose.js), not on page mount - mounting the
+// wizard is not a conversion.
 </script>
 
 <style scoped lang="scss">

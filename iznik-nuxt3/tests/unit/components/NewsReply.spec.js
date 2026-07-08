@@ -11,6 +11,7 @@ const mockNewsfeedUnlove = vi.fn()
 const mockNewsfeedHide = vi.fn()
 const mockNewsfeedUnhide = vi.fn()
 const mockNewsfeedDelete = vi.fn()
+let mockSeenBeforeVisit = null
 
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => ({
@@ -22,6 +23,9 @@ vi.mock('~/stores/newsfeed', () => ({
     unhide: mockNewsfeedUnhide,
     delete: mockNewsfeedDelete,
     tagusers: [{ displayname: 'Alice' }, { displayname: 'Bob' }],
+    get seenBeforeVisit() {
+      return mockSeenBeforeVisit
+    },
   }),
 }))
 
@@ -55,6 +59,15 @@ vi.mock('~/composables/useTwem', () => ({
 vi.mock('~/composables/useTimeFormat', () => ({
   timeago: (date) => '2 hours ago',
   timeagoShort: (date) => '2h',
+}))
+
+const mockScrollToAndPin = vi.fn(() => vi.fn())
+vi.mock('~/composables/useScrollAnchor', () => ({
+  scrollToAndPin: (...args) => mockScrollToAndPin(...args),
+  fixedHeaderOffset: () => 74,
+  imagesComplete: () => true,
+  whenImagesComplete: () => Promise.resolve(),
+  whenAllSettled: () => Promise.resolve(),
 }))
 
 vi.mock('pluralize', () => ({
@@ -208,6 +221,7 @@ describe('NewsReply', () => {
           NewsReplies: {
             template: '<div class="news-replies"></div>',
             props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth'],
+            emits: ['rendered', 'subtree-rendered'],
           },
           OurUploader: {
             template: '<div class="our-uploader"></div>',
@@ -234,6 +248,7 @@ describe('NewsReply', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSeenBeforeVisit = null
     mockAuthUser.value = {
       id: 1,
       displayname: 'Current User',
@@ -512,6 +527,33 @@ describe('NewsReply', () => {
       const wrapper = createWrapper({ scrollTo: '200' })
       expect(wrapper.find('.bg-info').exists()).toBe(false)
     })
+
+    it('does not start a pin itself - NewsThread owns the deep-link pin', async () => {
+      const wrapper = createWrapper({ scrollTo: '' })
+      await wrapper.setProps({ scrollTo: '100' })
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('subtree rendered', () => {
+    it('a reply without children reports its subtree on mount', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
+    })
+
+    it('a reply with children waits for the nested list to report', async () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({}, withNested)
+      expect(wrapper.emitted('subtree-rendered')).toBeFalsy()
+
+      const nested = wrapper.findComponent('.news-replies')
+      nested.vm.$emit('subtree-rendered', 100)
+      await flushPromises()
+
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
+    })
   })
 
   describe('props', () => {
@@ -534,6 +576,63 @@ describe('NewsReply', () => {
       const wrapper = createWrapper()
       expect(wrapper.emitted('rendered')).toBeTruthy()
       expect(wrapper.emitted('rendered')[0]).toEqual([100])
+    })
+
+    it('forwards rendered events from nested replies (depth 2+)', async () => {
+      // A reply with sub-replies renders a nested <NewsReplies>. Its
+      // rendered events must bubble through this component, otherwise
+      // NewsThread never hears about depth 2+ replies mounting and the
+      // notification deep-link scroll can't target them.
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({}, withNested)
+      const nested = wrapper.findComponent('.news-replies')
+      expect(nested.exists()).toBe(true)
+      nested.vm.$emit('rendered', 456)
+      await flushPromises()
+      const events = wrapper.emitted('rendered')
+      expect(events.some(([id]) => id === 456)).toBe(true)
+    })
+  })
+
+  describe('new pill', () => {
+    it('does not show new pill when seenBeforeVisit is null', () => {
+      mockSeenBeforeVisit = null
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when seenBeforeVisit is 0', () => {
+      mockSeenBeforeVisit = 0
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when reply id is below cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 200 means 100 <= 200 = not new
+      mockSeenBeforeVisit = 200
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when reply id equals cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 100 means 100 > 100 is false
+      mockSeenBeforeVisit = 100
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('shows new pill when reply id is above cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 50 means 100 > 50 = new
+      mockSeenBeforeVisit = 50
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(true)
+    })
+
+    it('new pill has accessible label', () => {
+      mockSeenBeforeVisit = 50
+      const wrapper = createWrapper()
+      const pill = wrapper.find('.reply-new-pill')
+      expect(pill.attributes('aria-label')).toBeTruthy()
     })
   })
 })

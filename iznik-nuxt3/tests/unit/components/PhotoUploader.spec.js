@@ -91,6 +91,14 @@ vi.mock('@uppy/compressor', () => ({
   default: vi.fn(),
 }))
 
+// Spy on the Loki action() logger so we can assert the upload/compression
+// telemetry payloads. Keep the module's other exports real.
+const mockAction = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useClientLog', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, action: (...args) => mockAction(...args) }
+})
+
 // Mock image store
 const mockImageStore = {
   post: vi.fn().mockResolvedValue({
@@ -1367,6 +1375,34 @@ describe('PhotoUploader', () => {
     })
   })
 
+  describe('compact mode', () => {
+    it('shows only the compact add button and no gallery when compact', () => {
+      createWrapper({ compact: true, modelValue: [] })
+      expect(wrapper.find('.compact-add').exists()).toBe(true)
+      expect(wrapper.find('.empty-state').exists()).toBe(false)
+    })
+
+    it('hides the featured photo, carousel and add-more even with photos', () => {
+      createWrapper({
+        compact: true,
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      expect(wrapper.find('.featured-photo').exists()).toBe(false)
+      expect(wrapper.find('.thumbnail-carousel').exists()).toBe(false)
+      expect(wrapper.find('.add-more-section').exists()).toBe(false)
+      expect(wrapper.find('.compact-add').exists()).toBe(true)
+    })
+
+    it('is not compact by default — the gallery still shows', () => {
+      createWrapper({ modelValue: [{ id: 1, ouruid: 'uid1' }] })
+      expect(wrapper.find('.compact-add').exists()).toBe(false)
+      expect(wrapper.find('.featured-photo').exists()).toBe(true)
+    })
+  })
+
   // AssertFlip test — Step 1: documents the buggy behaviour (PASSES on current code).
   // Step 2 (inverted) is below and FAILS until the fix lands.
   describe('AI image pruning via Uppy upload (web mode) — bug: handleUppySuccess does not remove AI photos', () => {
@@ -1409,6 +1445,159 @@ describe('PhotoUploader', () => {
       expect(aiPhotos.length).toBe(0)
       expect(wrapper.vm.photos).toHaveLength(1)
       expect(wrapper.vm.photos[0].id).toBe(1)
+    })
+  })
+
+  describe('compression telemetry', () => {
+    function getHandler(name) {
+      return mockUppyInstance.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('registers the upload funnel and compression bracket listeners', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      const names = mockUppyInstance.on.mock.calls.map((c) => c[0])
+      expect(names).toContain('file-added')
+      expect(names).toContain('preprocess-progress')
+      expect(names).toContain('compressor:complete')
+      expect(names).toContain('preprocess-complete')
+      expect(names).toContain('upload-success')
+    })
+
+    it('logs upload_file_selected tagged uploader=photo', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('file-added')({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_file_selected',
+        expect.objectContaining({ uploader: 'photo', file_size: 5000 })
+      )
+    })
+
+    it('logs upload_compress_started on preprocess-progress', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith('upload_compress_started', {
+        uploader: 'photo',
+        file_size: 5000,
+      })
+    })
+
+    it('logs upload_compress_finished with compressed=true after a successful compress', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      getHandler('compressor:complete')([{ id: 'f1' }])
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 1000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({
+          uploader: 'photo',
+          original_size: 5000,
+          compressed_size: 1000,
+          elapsed_ms: expect.any(Number),
+          compressed: true,
+          shrunk: true,
+        })
+      )
+    })
+
+    it('records a silent compression failure when compressor:complete omits the file', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({ compressed: false, shrunk: false })
+      )
+    })
+
+    it('logs upload_succeeded tagged uploader=photo', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('upload-success')({ id: 'f1', size: 1000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_succeeded',
+        expect.objectContaining({ uploader: 'photo' })
+      )
+    })
+
+    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', async () => {
+      mockMobileStore.isApp = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      createWrapper()
+      mockAction.mockClear()
+      // The global error event now only drives retry — it must NOT log.
+      getHandler('error')(new Error('boom'))
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_failed',
+        expect.anything()
+      )
+      // The per-file upload-error event logs the diagnosable detail.
+      const file = { id: 'f1', size: 5900000, type: 'image/jpeg' }
+      const err = new Error('Failed to upload big.jpg')
+      const response = { status: 413, body: 'Request Entity Too Large' }
+      getHandler('upload-error')(file, err, response)
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          uploader: 'photo',
+          reason: 'Failed to upload big.jpg',
+          status: 413,
+          is_network_error: false,
+          file_size: 5900000,
+          file_type: 'image/jpeg',
+          attempt: 1,
+        })
+      )
+      consoleError.mockRestore()
+    })
+
+    it('counts retries so upload_failed reports the attempt number', async () => {
+      mockMobileStore.isApp = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      createWrapper()
+      const file = { id: 'f9', size: 100, type: 'image/png' }
+      getHandler('upload-retry')('f9')
+      getHandler('upload-retry')('f9')
+      mockAction.mockClear()
+      getHandler('upload-error')(file, new Error('nope'), undefined)
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({ attempt: 3 })
+      )
+      consoleError.mockRestore()
     })
   })
 })

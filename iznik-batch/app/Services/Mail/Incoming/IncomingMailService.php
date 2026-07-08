@@ -1522,6 +1522,18 @@ class IncomingMailService
             return $this->handleBounce($email);
         }
 
+        // Drop auto-replies (out-of-office, vacation responders etc.). These are
+        // machine responses to our digest/notification mails; delivering them would
+        // open a chat with the poster containing someone's OOO text.
+        if ($email->isAutoReply()) {
+            Log::info('Dropping auto-reply to replyto address', [
+                'envelope_to' => $email->envelopeTo,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Auto-reply to replyto address");
+        }
+
         // Parse replyto-{msgid}-{fromid}
         $parts = explode('-', $localPart);
         if (count($parts) < 3) {
@@ -1800,6 +1812,26 @@ class IncomingMailService
             ]);
 
             return $this->dropped("Reply to non-existent chat");
+        }
+
+        // Drop auto-replies (out-of-office, vacation responders etc.) - delivering
+        // them as chat messages sends one member's OOO text to other freeglers.
+        // An Auto-Submitted header (RFC 3834) is definitive, so always drop on it.
+        // The subject/body patterns can false-positive on genuine human wording, so
+        // (matching legacy MailRouter::replyToChatNotification) only trust them when
+        // the chat had a message within the last 5 hours: real auto-responders fire
+        // rapidly after our notification, late replies are usually human.
+        $recentMessage = $chat->latestmessage
+            && $chat->latestmessage->gt(now()->subHours(5));
+
+        if ($email->isAutoSubmitted() || ($recentMessage && $email->isAutoReply())) {
+            Log::info('Dropping auto-reply to chat notification', [
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Auto-reply to chat notification");
         }
 
         // Check if chat is stale and sender email is unfamiliar
@@ -2298,8 +2330,6 @@ class IncomingMailService
             'Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User',
             'UnknownMessage', 'SameImage', 'DodgyImage',
             'CountryBlocked',
-            'IPUsedForDifferentUsers',
-            'IPUsedForDifferentGroups',
             'SubjectUsedForDifferentGroups',
             'SpamAssassin',
             'Greetings spam',
@@ -2786,6 +2816,10 @@ class IncomingMailService
                 'fromaddr' => $email->fromAddress,
                 'replyto' => $email->getHeader('Reply-To'),
                 'fromip' => $email->senderIp,
+                // Geolocate the sender IP so ModTools can flag posts from
+                // outside the UK (MessageHistory.vue). V1 (Message.php/Spam.php)
+                // stored the ISO code here; store NULL when it can't be resolved.
+                'fromcountry' => $email->senderIp ? $this->spamCheck->lookupIPCountryCode($email->senderIp) : null,
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,
@@ -3156,7 +3190,7 @@ class IncomingMailService
 
         // Use TYPE_INTERESTED only when we found the post being replied to.
         // Without a refmsgid, use TYPE_DEFAULT since we can't link to a specific post.
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $senderUser->id,
             $email,
@@ -3165,6 +3199,14 @@ class IncomingMailService
             spamScore: $spamScore,
             prependSubject: $prependSubject
         );
+
+        // Rippling-out (#3): a direct-email reply to a SPECIFIC post (refmsgid resolved via the
+        // x-fd-msgid header or subject match) must be held when the replier's area isn't covered
+        // by the post's reach yet - the same gate as the digest reply path - so the poster isn't
+        // notified out-of-reach via this route. Only when we linked the reply to a post.
+        if ($refMsgId !== null && $chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser);
+        }
 
         // Track email reply in email_tracking for AMP comparison stats.
         $this->trackEmailReply($chat->id, $senderUser->id);

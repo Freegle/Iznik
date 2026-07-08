@@ -138,7 +138,12 @@
                   <div class="group-row">
                     <ShowMore :items="messageGroups" :limit="3" inline>
                       <template #item="{ item }"
-                        ><nuxt-link
+                        ><v-icon
+                          v-if="item.isHome"
+                          icon="home"
+                          class="me-1 text-muted"
+                          title="Home community (where this was originally posted)"
+                        /><nuxt-link
                           :to="'/explore/' + item.nameshort"
                           class="group-link"
                           @click.stop
@@ -199,7 +204,12 @@
                       <span v-if="message.area" class="desktop-sep">·</span>
                       <ShowMore :items="messageGroups" :limit="3" inline>
                         <template #item="{ item }"
-                          ><nuxt-link
+                          ><v-icon
+                            v-if="item.isHome"
+                            icon="home"
+                            class="me-1 text-muted"
+                            title="Home community (where this was originally posted)"
+                          /><nuxt-link
                             :to="'/explore/' + item.nameshort"
                             class="desktop-group-link"
                             @click.stop
@@ -520,6 +530,7 @@ import { milesAway } from '~/composables/useDistance'
 import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
@@ -794,9 +805,15 @@ const canrepostatago = computed(() => {
 })
 
 const messageGroups = computed(() => {
-  if (message.value?.groups?.length) {
-    return message.value.groups
-      .map((g) => groupStore?.get(g.groupid))
+  const raw = message.value?.groups
+  if (raw?.length) {
+    // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+    // the home group could be hidden behind "more". Flag it for the home icon.
+    return homeGroupFirst(raw)
+      .map((g) => {
+        const grp = groupStore?.get(g.groupid)
+        return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
+      })
       .filter(Boolean)
   }
   return []

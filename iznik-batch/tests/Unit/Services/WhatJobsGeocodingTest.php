@@ -49,7 +49,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 $bbox = ($this->geocodeLookup)($addr);
                 if ($bbox === null) {
@@ -158,7 +159,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 $this->log[] = $addr;
                 if ($addr === 'Leeds') {
@@ -231,7 +233,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 if ($addr === 'Cornwall') {
                     // State bbox — Cornwall
@@ -267,7 +270,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 return null; // Photon knows nothing
             }
@@ -286,18 +290,19 @@ class WhatJobsGeocodingTest extends TestCase
         $this->assertNotNull($result, 'Should geocode via outward postcode when Photon fails');
     }
 
-    public function test_postcode_not_used_when_city_geocodes_fine(): void
+    public function test_postcode_used_first_when_present(): void
     {
-        // City geocodes fine; postcode should not be consulted
-        $postcodeCalled = false;
-        $svc = new class($postcodeCalled) extends WhatJobsService {
-            public function __construct(private bool &$flag) {}
+        // POSTCODE-FIRST: a usable outward code is authoritative, so its result
+        // is returned even when the city would also geocode. The returned bbox
+        // must be the POSTCODE one, not the city one.
+        $svc = new class extends WhatJobsService {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 if ($addr === 'Leeds') {
                     return [53.8, -1.6, 53.9, -1.5, WhatJobsService::boxPoly(53.8, -1.6, 53.9, -1.5)];
@@ -306,15 +311,119 @@ class WhatJobsGeocodingTest extends TestCase
             }
             protected function geocodePostcode(string $outward): ?array
             {
-                $this->flag = true;
-                return [53.8, -1.55, 53.82, -1.52, WhatJobsService::boxPoly(53.8, -1.55, 53.82, -1.52)];
+                if ($outward === 'LS1') {
+                    return [53.79, -1.55, 53.81, -1.53, WhatJobsService::boxPoly(53.79, -1.55, 53.81, -1.53)];
+                }
+                return null;
             }
         };
 
         $cache  = [];
         $result = $svc->geocodeCityState('Leeds', 'West Yorkshire', 'United Kingdom', $cache, 'LS1 1AA');
         $this->assertNotNull($result);
-        $this->assertFalse($postcodeCalled, 'geocodePostcode should not be called when city geocodes successfully');
+        // Centre must be the postcode bbox centre (~53.80), not the city bbox centre (~53.85).
+        $clat = ($result[0] + $result[2]) / 2;
+        $this->assertEqualsWithDelta(53.80, $clat, 0.02, 'Postcode result should take priority over city');
+    }
+
+    // ------------------------------------------------------------------
+    // 9. Conington regression (Discourse #9692/#24): postcode-first places a
+    //    job in the correct region even when the city/state lookup is wrong.
+    // ------------------------------------------------------------------
+
+    public function test_conington_postcode_geocodes_to_cambridgeshire_not_london(): void
+    {
+        // "Conington" is a Cambridgeshire village (state "East of England") but
+        // the ambiguous city/state lookup geocoded it to ~POINT(-0.090, 51.515)
+        // = East London. With postcode-first, PE29 3TN resolves to Cambridgeshire.
+        $svc = new class extends WhatJobsService {
+            protected function geocodeAddress(
+                string $addr, bool $allowPoint, bool $exact,
+                float $bbswlat = WhatJobsService::UK_SWLAT,
+                float $bbswlng = WhatJobsService::UK_SWLNG,
+                float $bbnelat = WhatJobsService::UK_NELAT,
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
+            ): ?array {
+                // Simulate the bad behaviour: "Conington" matches a London point.
+                if (stripos($addr, 'Conington') !== false) {
+                    return [51.510, -0.095, 51.520, -0.085,
+                        WhatJobsService::boxPoly(51.510, -0.095, 51.520, -0.085)];
+                }
+                // "East of England" does not resolve to a usable bbox.
+                return null;
+            }
+            protected function geocodePostcode(string $outward): ?array
+            {
+                // PE29 = Huntingdon, Cambridgeshire.
+                if ($outward === 'PE29') {
+                    return [52.30, -0.20, 52.34, -0.16,
+                        WhatJobsService::boxPoly(52.30, -0.20, 52.34, -0.16)];
+                }
+                return null;
+            }
+        };
+
+        $cache  = [];
+        $result = $svc->geocodeCityState('Conington', 'East of England', 'United Kingdom', $cache, 'PE29 3TN');
+        $this->assertNotNull($result, 'Conington with PE29 3TN should geocode');
+
+        [$swlat, $swlng, $nelat, $nelng] = $result;
+        $clat = ($swlat + $nelat) / 2;
+        $clng = ($swlng + $nelng) / 2;
+
+        // Must be Cambridgeshire (~52.3, ~-0.18), not London.
+        $this->assertGreaterThan(52.2, $clat, 'latitude should be Cambridgeshire (~52.3)');
+        $this->assertLessThan(52.5, $clat);
+        $this->assertGreaterThan(-0.30, $clng);
+        $this->assertLessThan(-0.05, $clng);
+
+        // Explicit anti-London assertion.
+        $isLondon = $clat > 51.45 && $clat < 51.60 && $clng > -0.20 && $clng < 0.05;
+        $this->assertFalse($isLondon, 'must NOT be geocoded to London');
+    }
+
+    public function test_zip_job_does_not_inherit_non_zip_cached_geocode(): void
+    {
+        // A no-zip job caches a (wrong, London) geocode for the tuple. A later
+        // job with the same city/state/country but a real postcode must NOT get
+        // that cached value — the postcode keys a distinct cache entry and is
+        // resolved first.
+        $svc = new class extends WhatJobsService {
+            protected function geocodeAddress(
+                string $addr, bool $allowPoint, bool $exact,
+                float $bbswlat = WhatJobsService::UK_SWLAT,
+                float $bbswlng = WhatJobsService::UK_SWLNG,
+                float $bbnelat = WhatJobsService::UK_NELAT,
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
+            ): ?array {
+                if (stripos($addr, 'Conington') !== false) {
+                    return [51.510, -0.095, 51.520, -0.085,
+                        WhatJobsService::boxPoly(51.510, -0.095, 51.520, -0.085)];
+                }
+                return null;
+            }
+            protected function geocodePostcode(string $outward): ?array
+            {
+                if ($outward === 'PE29') {
+                    return [52.30, -0.20, 52.34, -0.16,
+                        WhatJobsService::boxPoly(52.30, -0.20, 52.34, -0.16)];
+                }
+                return null;
+            }
+        };
+
+        $cache = [];
+        // First the no-zip job poisons the cache with the London match.
+        $bad = $svc->geocodeCityState('Conington', 'East of England', 'United Kingdom', $cache);
+        $this->assertNotNull($bad);
+        $this->assertEqualsWithDelta(51.515, ($bad[0] + $bad[2]) / 2, 0.05, 'no-zip path returns London here');
+
+        // Now the zip job must resolve to Cambridgeshire, not the cached London.
+        $good = $svc->geocodeCityState('Conington', 'East of England', 'United Kingdom', $cache, 'PE29 3TN');
+        $this->assertNotNull($good);
+        $this->assertGreaterThan(52.2, ($good[0] + $good[2]) / 2, 'zip job must not inherit the non-zip London cache');
     }
 
     // ------------------------------------------------------------------
@@ -383,7 +492,8 @@ class WhatJobsGeocodingTest extends TestCase
                 float $bbswlat = WhatJobsService::UK_SWLAT,
                 float $bbswlng = WhatJobsService::UK_SWLNG,
                 float $bbnelat = WhatJobsService::UK_NELAT,
-                float $bbnelng = WhatJobsService::UK_NELNG
+                float $bbnelng = WhatJobsService::UK_NELNG,
+                array $layers = []
             ): ?array {
                 // Huge bbox (e.g. entire England)
                 return [-7.5, 49.9, 1.7, 58.6, WhatJobsService::boxPoly(-7.5, 49.9, 1.7, 58.6)];

@@ -141,6 +141,57 @@ class VerifyEmailIntegrationTest extends TestCase
     }
 
     /**
+     * REGRESSION: when the address being verified is ALREADY one of the user's emails but UNVALIDATED
+     * (validated IS NULL), the verification mail must still be (re)sent. handleEmailVerify previously
+     * short-circuited on ANY existing address - it made it primary and returned WITHOUT sending - so a
+     * user whose address was attached to the account but never confirmed could never receive a
+     * verification mail and was stuck re-clicking "verify" with nothing arriving. The fix only
+     * short-circuits when the existing row is already validated.
+     */
+    public function test_email_verify_resends_for_existing_unvalidated_email(): void
+    {
+        if (!$this->isMailpitAvailable()) {
+            $this->markTestSkipped('Mailpit is not available.');
+        }
+
+        $user = $this->createTestUser();
+        $email = $this->uniqueEmail('verify_existing');
+
+        // Pre-seed the address as one of the user's emails, but UNVALIDATED - the stuck state.
+        DB::table('users_emails')->insert([
+            'userid' => $user->id,
+            'email' => $email,
+            'canon' => strtolower(trim($email)),
+            'backwards' => strrev(strtolower(trim($email))),
+            'validated' => NULL,
+            'preferred' => 0,
+        ]);
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type' => 'email_verify',
+            'data' => json_encode(['user_id' => $user->id, 'email' => $email]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be marked as processed');
+        $this->assertNull($task->failed_at, 'Task should not have failed');
+
+        // The verification mail must have gone out DESPITE the address already being on the account.
+        $message = $this->mailpit->assertMessageSentTo($email, 20);
+        $this->assertStringContainsString('Please verify your email', $this->mailpit->getSubject($message));
+
+        // And a fresh validatekey must have been written so the confirm link actually works.
+        $emailRow = DB::table('users_emails')->where('email', $email)->first();
+        $this->assertNotNull($emailRow->validatekey, 'validatekey should be set for the re-sent verification');
+
+        DB::table('users_emails')->where('email', $email)->delete();
+    }
+
+    /**
      * Extract the confirm URL from email HTML or text body.
      */
     protected function extractConfirmUrl(string $body): ?string

@@ -8,6 +8,7 @@ use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
@@ -306,13 +307,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      * Static + public so it can be used in both instance and static contexts,
      * including from UnifiedDigestService when scoping a per-post group.
      */
-    public static function selectPreferredGroup(array $groups, array $userGroupIds): ?int
+    public static function selectPreferredGroup(array $groups, array $userGroupIds, array $priorityGroupIds = []): ?int
     {
         if (empty($groups)) {
             return null;
         }
         if (count($groups) === 1) {
             return $groups[0];
+        }
+
+        // First prefer a group whose membership actually DRIVES this email — for
+        // an immediate/reach mail, a group the recipient is set to receive
+        // immediately on (emailfrequency=-1). A rippled-in post can reach a member
+        // via one immediate group while another posted-to group they happen to be
+        // a (muted) member of sorts first; labelling it with the muted group misled
+        // mods into turning off a group that wasn't sending the mail (Discourse
+        // #9808: turned off Blaby, but delivery came via the member's Charnwood
+        // immediate membership). Empty priority list = unchanged behaviour.
+        foreach ($groups as $groupId) {
+            if (in_array($groupId, $priorityGroupIds, true)) {
+                return $groupId;
+            }
         }
 
         foreach ($groups as $groupId) {
@@ -337,7 +352,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     {
         $groups = $post['postedToGroups'] ?? [];
         $myGroupIds = $this->user->memberships->pluck('groupid')->all();
-        return self::selectPreferredGroup($groups, $myGroupIds);
+        return self::selectPreferredGroup($groups, $myGroupIds, $this->immediatePriorityGroupIds());
+    }
+
+    /**
+     * Group ids whose membership drives an immediate email for this recipient —
+     * the groups they are set to receive immediately on (emailfrequency=-1).
+     * Used so a post is labelled with the group that actually controls its
+     * delivery, and muting that group's email stops the mail. Empty for the
+     * daily roll-up, which spans all the recipient's groups rather than one.
+     */
+    protected function immediatePriorityGroupIds(): array
+    {
+        if ($this->mode !== UnifiedDigestService::MODE_IMMEDIATE) {
+            return [];
+        }
+
+        return $this->user->memberships
+            ->where('emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->pluck('groupid')
+            ->map(fn ($g) => (int) $g)
+            ->all();
     }
 
     /**
@@ -540,10 +575,17 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         });
 
-        // Render AMP variant if enabled. (Rendered for all recipients; whether
-        // it's COUNTED as usable AMP is gated on provider support - see
-        // ampForRecipient()/has_amp tracking.)
-        if ($this->isAmpEnabled()) {
+        // Render the AMP variant only for recipients whose provider can actually
+        // display AMP for Email (Gmail/Yahoo/AOL/Mail.ru/Yandex — see
+        // AmpEmailSupport::isSupported via ampForRecipient()). Rendering it for
+        // everyone was ~130ms of wasted Blade CPU per non-supporting recipient
+        // (~43% of daily recipients) whose AMP part is never usable, and it also
+        // attached a dead text/x-amp-html part to their email. has_amp tracking is
+        // computed separately from ampForRecipient() (see getTracking()), so gating
+        // the render here does not change what has_amp records; and applyAmpToMessage
+        // already no-ops when ampHtml is null, so unsupported recipients simply get
+        // the HTML/text parts they always used.
+        if ($this->ampForRecipient()) {
             $ampPosts = $this->prepareAmpPosts();
 
             // AMP-ONLY post cap. AMP for Email hard-limits the AMP document to
@@ -838,7 +880,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $groupUrl = null;
         $primaryGroupId = self::selectPreferredGroup(
             $postedToGroups,
-            $this->user->memberships->pluck('groupid')->all()
+            $this->user->memberships->pluck('groupid')->all(),
+            $this->immediatePriorityGroupIds()
         );
         if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
             $g = $this->groupLookup[$primaryGroupId];
@@ -1008,6 +1051,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->values();
         $postedToText = $groupNames->count() > 1 ? $groupNames->implode(', ') : null;
 
+        $bulkItems = $this->prepareBulkItems($message);
+
         return [
             'message' => $message,
             // True when this post is the recipient's own — used by both the
@@ -1047,7 +1092,112 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // went cards override this to "Taken/Received · <date>" (see
             // prepareCompletedPosts()). Defaulted here so every card carries it.
             'metaText' => null,
+            'bulkItems' => $bulkItems,
+            // Short one-line summary for the compact daily cards, precomputed so the
+            // templates stay logic-free (avoids fragile inline blade loops).
+            'bulkSummary' => $this->bulkSummaryLine($bulkItems),
         ];
+    }
+
+    /**
+     * One-line clearance summary for compact (daily) digest cards, e.g.
+     * "12 items to choose from: 2× Desk; 1× Chair; 4× Lamp and 9 more". Null for
+     * ordinary single-item posts.
+     */
+    protected function bulkSummaryLine(array $items): ?string
+    {
+        if (empty($items)) {
+            return null;
+        }
+        $count = count($items);
+        $parts = array_map(
+            fn ($bi) => $bi['quantity'] . "\u{00d7} " . $bi['name'],
+            array_slice($items, 0, 3)
+        );
+        $line = $count . ' items to choose from: ' . implode('; ', $parts);
+        if ($count > 3) {
+            $line .= ' and ' . ($count - 3) . ' more';
+        }
+
+        return $line;
+    }
+
+    /**
+     * Build the catalogue for a bulk offer ("clearance") for rendering in the
+     * digest. Returns [] for ordinary single-item posts. Each entry has a name,
+     * quantity, human-readable condition and (where available) a thumbnail URL.
+     */
+    protected function prepareBulkItems($message): array
+    {
+        $rows = \Illuminate\Support\Facades\DB::table('messages_bulk_items')
+            ->where('msgid', $message->id)
+            ->orderBy('position')
+            ->orderBy('id')
+            ->get(['id', 'name', 'quantity', 'condition', 'dimensions', 'photourl', 'description']);
+
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        // First photo per item. Item photos are linked via the separate
+        // messages_bulk_item_attachments table (the bulk-offer feature adds no
+        // column to the core messages_attachments table).
+        $firstByItem = [];
+        $atts = \Illuminate\Support\Facades\DB::table('messages_attachments as ma')
+            ->join('messages_bulk_item_attachments as bia', 'bia.attachmentid', '=', 'ma.id')
+            ->where('ma.msgid', $message->id)
+            ->orderBy('ma.id')
+            ->get(['ma.id', 'bia.bulkitemid', 'ma.externaluid', 'ma.externalurl', 'ma.archived']);
+        foreach ($atts as $a) {
+            if (!isset($firstByItem[$a->bulkitemid])) {
+                $firstByItem[$a->bulkitemid] = $a;
+            }
+        }
+
+        $items = [];
+        foreach ($rows as $row) {
+            $thumb = isset($firstByItem[$row->id])
+                ? $this->getAttachmentImageUrl($firstByItem[$row->id], 80, 80)
+                : null;
+            // Fall back to a spreadsheet-supplied photo link (run through the
+            // delivery proxy for sizing, like other email images).
+            if (!$thumb && !empty($row->photourl)) {
+                $thumb = $this->getDeliveryUrl($row->photourl, 80, 80);
+            }
+            $condition = $row->condition && $row->condition !== 'Unknown'
+                ? ($row->condition === 'LikeNew' ? 'Like new' : $row->condition)
+                : null;
+            $items[] = [
+                'name' => $row->name,
+                'quantity' => (int) $row->quantity,
+                'condition' => $condition,
+                'dimensions' => $row->dimensions,
+                'description' => $row->description ?? null,
+                'thumbUrl' => $thumb,
+            ];
+        }
+
+        return $items;
+    }
+
+    /**
+     * Build a delivery URL for a specific attachment row (mirrors
+     * getMessageImageUrl but for an arbitrary attachment).
+     */
+    protected function getAttachmentImageUrl($attachment, int $width = 80, ?int $height = null): ?string
+    {
+        if (!$attachment) {
+            return null;
+        }
+        if (!empty($attachment->externalurl)) {
+            return $this->getDeliveryUrl($attachment->externalurl, $width, $height);
+        }
+        if (!empty($attachment->externaluid) || (int) ($attachment->archived ?? 0) === 1) {
+            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+            return $this->getDeliveryUrl("{$imagesDomain}/timg_{$attachment->id}.jpg", $width, $height);
+        }
+
+        return null;
     }
 
     /**

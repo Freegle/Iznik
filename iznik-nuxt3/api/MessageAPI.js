@@ -1,4 +1,5 @@
 import BaseAPI from '@/api/BaseAPI'
+import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
@@ -108,6 +109,46 @@ export default class MessageAPI extends BaseAPI {
       body.source = source
     }
     return this.$postv2('/message', body)
+  }
+
+  // Register interest in one or more items of a bulk offer. `items` is an array
+  // of { bulkitemid, quantity, cancollect }. A quantity of 0 withdraws interest
+  // in that item.
+  // interestuserid lets the offerer record a replier's interest on their behalf;
+  // omit it (or pass falsy) to express your own.
+  bulkInterest(id, items, interestuserid, comment) {
+    return this.$postv2('/message', {
+      action: 'BulkInterest',
+      id,
+      bulkinterest: items,
+      ...(interestuserid ? { interestuserid } : {}),
+      ...(comment ? { comment } : {}),
+    })
+  }
+
+  // Offerer/mod transition of one interest row (Interested → Reserved →
+  // Collected, or Rejected/Withdrawn).
+  bulkInterestState(id, bulkitemid, userid, state) {
+    return this.$postv2('/message', {
+      action: 'BulkInterestState',
+      id,
+      bulkitemid,
+      userid,
+      state,
+    })
+  }
+
+  // Freegle Helper (AI concierge) state for a bulk offer: batch, per-replier FSM
+  // knowledge records with per-item state/score, queued proposals, and the ids of
+  // Helper-sent chat messages. Offerer/mod only.
+  getHelper(msgid, logError = true) {
+    return this.$getv2('/helper/' + msgid, {}, logError)
+  }
+
+  // Helper actions. The page uses SetStatus (pause/resume/stop) and
+  // ResolveProposal (confirm/edit/send or dismiss); the driver uses the rest.
+  helper(payload) {
+    return this.$postv2('/helper', payload)
   }
 
   async getIllustration(item) {
@@ -235,14 +276,19 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, log) {
-    return await this.$getv2(
-      '/message/count',
-      {
-        browseView,
-      },
-      log
-    )
+  async count(browseView, maxDistance, log) {
+    const params = {
+      browseView,
+    }
+
+    // Only send a distance limit when it's a real limit - the sentinel (or absent)
+    // means "no limit", and omitting it lets the server fall back to its own fast,
+    // unfiltered count rather than doing extra work for a limit that doesn't apply.
+    if (maxDistance != null && maxDistance < BROWSE_DISTANCE_UNLIMITED) {
+      params.maxDistance = maxDistance
+    }
+
+    return await this.$getv2('/message/count', params, log)
   }
 
   async markSeen(ids) {
@@ -253,5 +299,31 @@ export default class MessageAPI extends BaseAPI {
       },
       false
     )
+  }
+
+  // --- Bulk-offer ("clearance") logged-out update link ---------------------
+
+  // Mint (or fetch the existing) secret link that lets an external owner update
+  // this bulk offer's item availability/counts without logging in. Owner/mod only.
+  async bulkEditLink(id) {
+    return await this.$postv2('/message', { id, action: 'BulkEditLink' })
+  }
+
+  // Load a bulk offer's catalogue from a secret update-link token (logged out).
+  // logError defaults to false so a stale/typo'd link doesn't spam Sentry.
+  async fetchBulkEditOffer(token, logError = false) {
+    return await this.$getv2(
+      '/bulkoffer/update/' + encodeURIComponent(token),
+      {},
+      logError
+    )
+  }
+
+  // Update one item's availability and/or count from the logged-out page.
+  async updateBulkEditItem(token, itemid, changes) {
+    return await this.$postv2('/bulkoffer/update/' + encodeURIComponent(token), {
+      itemid,
+      ...changes,
+    })
   }
 }

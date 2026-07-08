@@ -103,6 +103,23 @@ class DailyPostsPushTest extends TestCase
         $this->assertSame('2', $payload['badge'], 'badge reflects unread items, not the post count');
     }
 
+    public function test_bulk_offer_shows_item_count(): void
+    {
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Office clearance (Brighton)');
+        foreach (['Desk', 'Chair', 'Lamp'] as $i => $name) {
+            \Illuminate\Support\Facades\DB::table('messages_bulk_items')->insert([
+                'msgid' => $msg->id, 'position' => $i, 'name' => $name, 'quantity' => 1, 'condition' => 'Good',
+            ]);
+        }
+
+        $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $this->buildPostsArray([$msg]));
+
+        // The single-post title makes clear it's a multi-item clearance.
+        $this->assertSame('Office clearance — 3 items', $payload['title']);
+    }
+
     public function test_multi_post_title_is_count_new_things(): void
     {
         $user  = $this->createTestUser();

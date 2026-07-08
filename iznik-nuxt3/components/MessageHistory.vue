@@ -11,6 +11,12 @@
           <span v-if="showSummaryDetails">on </span>
         </span>
       </client-only>
+      <v-icon
+        v-if="showSummaryDetails && parseInt(group.groupid) === postHomeGroupId"
+        icon="home"
+        class="me-1 text-muted"
+        title="Home community (where this was originally posted)"
+      />
       <nuxt-link
         v-if="group.groupid in groups && showSummaryDetails"
         no-prefetch
@@ -26,7 +32,9 @@
           :to="
             modinfo && group.groupid
               ? '/messages/' +
-                (['Pending', 'PendingOther', 'Spam'].includes(group.collection) ? 'pending' : 'approved') +
+                (['Pending', 'PendingOther', 'Spam'].includes(group.collection)
+                  ? 'pending'
+                  : 'approved') +
                 '/' +
                 group.groupid +
                 '/' +
@@ -90,6 +98,7 @@ import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
+import { homeGroupFirst, homeGroupId } from '~/composables/rippleStatus'
 
 const props = defineProps({
   id: {
@@ -128,8 +137,12 @@ const displayGroups = computed(() => {
   if (props.onlyGroupid) {
     return groups.filter((g) => parseInt(g.groupid) === props.onlyGroupid)
   }
-  return groups
+  // Home/origin group first, so it leads the list of communities the post appears on.
+  return homeGroupFirst(groups)
 })
+
+// The post's home/origin group id, used to mark it with a home icon in the list.
+const postHomeGroupId = computed(() => homeGroupId(message.value?.groups || []))
 
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()

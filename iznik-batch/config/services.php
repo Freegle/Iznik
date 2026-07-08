@@ -51,4 +51,27 @@ return [
         'http_timeout' => env('MJML_HTTP_TIMEOUT', 30),
     ],
 
+    // Community-reuse outreach mailbox (Gmail API, domain-wide delegation).
+    // Used by App\Services\Gmail\GmailService for the outreach sender and the
+    // concierge mailbox transport. Sends/reads as a real Workspace mailbox.
+    'gmail_outreach' => [
+        // The real mailbox the service account impersonates and reads/sends as.
+        'mailbox' => env('GMAIL_OUTREACH_MAILBOX', 'natalie-wagg@ilovefreegle.org'),
+
+        // From display name on outreach mail.
+        'from_name' => env('GMAIL_OUTREACH_FROM_NAME', 'Natalie @ Freegle'),
+
+        // Path (inside the container) to the service-account JSON key. Mounted
+        // read-only via a host-path volume; never committed. Leave unset to
+        // force dry-run.
+        'credentials_path' => env('GMAIL_OUTREACH_CREDENTIALS_PATH'),
+
+        // Sub-address that receives unsubscribe requests (mailbox-native opt-out).
+        'unsub_address' => env('GMAIL_OUTREACH_UNSUB_ADDRESS', 'natalie-wagg+unsub@ilovefreegle.org'),
+
+        // DRY_RUN writes the rendered .eml to storage/app/outreach/dryrun/ instead
+        // of sending. Default TRUE: live sending must be explicitly enabled.
+        'dry_run' => env('GMAIL_OUTREACH_DRY_RUN', true),
+    ],
+
 ];

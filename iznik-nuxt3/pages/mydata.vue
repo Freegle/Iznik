@@ -325,23 +325,25 @@
                       {{ s.item.namedisplay }}
                     </b-col>
                     <b-col cols="4">
-                      <span v-if="s.item.mysettings.emailfrequency === -1"
+                      <span v-if="s.item.mysettings?.emailfrequency === -1"
                         >Immediately</span
                       >
-                      <span v-else-if="s.item.mysettings.emailfrequency === 0"
+                      <span v-else-if="s.item.mysettings?.emailfrequency === 0"
                         >Never</span
                       >
-                      <span v-else>
+                      <span
+                        v-else-if="s.item.mysettings?.emailfrequency != null"
+                      >
                         {{ periodPlural(s.item.mysettings.emailfrequency) }}
                       </span>
                     </b-col>
                     <b-col cols="4">
                       Community Event mails
-                      <span v-if="s.item.mysettings.eventsallowed">On</span>
+                      <span v-if="s.item.mysettings?.eventsallowed">On</span>
                       <span v-else>Off</span>
                       <br />
                       Volunteering mails
-                      <span v-if="s.item.mysettings.volunteeringallowed"
+                      <span v-if="s.item.mysettings?.volunteeringallowed"
                         >On</span
                       >
                       <span v-else>Off</span>

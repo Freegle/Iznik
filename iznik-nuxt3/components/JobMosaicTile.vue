@@ -41,6 +41,14 @@ const props = defineProps({
     required: false,
     default: 'dark green',
   },
+  // Placement slot, mirrors JobOne's `context` prop so a click logs which slot
+  // it came from. This component is not currently mounted anywhere, but keeping
+  // attribution complete means it logs correctly if it is ever wired in.
+  context: {
+    type: String,
+    required: false,
+    default: 'mosaic',
+  },
 })
 
 const router = useRouter()
@@ -77,9 +85,14 @@ const imageStyle = computed(() => {
 })
 
 function clicked() {
+  // Full attribution parity with JobOne: placement (slot), source, and page
+  // (route name, low cardinality, fallback 'unknown').
   jobStore.log({
     id: job.value.id,
     link: job.value.url,
+    placement: props.context,
+    source: 'website',
+    page: router?.currentRoute?.value?.name ?? 'unknown',
   })
 
   if (router?.currentRoute?.value?.path !== '/jobs') {

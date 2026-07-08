@@ -998,3 +998,91 @@ func TestIsochroneMyGroupsView(t *testing.T) {
 	json2.Unmarshal(rsp(resp), &cres)
 	assert.GreaterOrEqual(t, cres["count"].(float64), float64(1), "mygroups count includes the unseen member-group post")
 }
+
+// TestMyGroupsCountsRippledInPost verifies the rippling-out count fix: a post whose single
+// messages_spatial.groupid points at a NON-member origin group, but which has an Approved
+// messages_groups row in one of the viewer's groups (i.e. it rippled in), is counted in the
+// mygroups badge and shown in the feed. The old spatial.groupid-based count missed it because
+// spatial stores only one group per post.
+func TestMyGroupsCountsRippledInPost(t *testing.T) {
+	prefix := uniquePrefix("myggrippledin")
+	userID := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, userID)
+	posterID := CreateTestUser(t, prefix+"_p", "User")
+	db := database.DBConn
+
+	memberGroup := CreateTestGroup(t, prefix+"_member")
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, memberGroup)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, memberGroup)
+
+	// Post originates in a group the viewer is NOT in: spatial.groupid = originGroup.
+	msg := CreateTestMessage(t, posterID, originGroup, prefix+" rippledpost", 55.9533, -3.1883)
+	// It rippled INTO the viewer's member group: an Approved messages_groups row there, while the
+	// spatial row keeps pointing at the origin (rippling stores only one group per spatial row).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0)", msg, memberGroup)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msg)
+
+	// Feed includes the rippled-in post.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?browseView=mygroups&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+	got := map[uint64]bool{}
+	for _, m := range msgs {
+		got[m.ID] = true
+	}
+	assert.True(t, got[msg], "post rippled into a member group appears in the mygroups feed even though spatial.groupid is the non-member origin")
+
+	// Count includes it too, so badge == feed and Mark seen can drain it.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/message/count?browseView=mygroups&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var cres map[string]interface{}
+	json2.Unmarshal(rsp(resp), &cres)
+	assert.GreaterOrEqual(t, cres["count"].(float64), float64(1), "mygroups count includes the rippled-in post")
+}
+
+// TestMyGroupsCountExcludesStaleSpatialRow verifies a messages_spatial row still pointing at a
+// member group after the post was removed/retracted there (no Approved, undeleted messages_groups
+// row in any of the viewer's groups) is NOT counted and NOT in the feed — the residual the old
+// spatial.groupid count left stuck so Mark seen could never clear the badge.
+func TestMyGroupsCountExcludesStaleSpatialRow(t *testing.T) {
+	prefix := uniquePrefix("myggstale")
+	userID := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, userID)
+	posterID := CreateTestUser(t, prefix+"_p", "User")
+	db := database.DBConn
+
+	memberGroup := CreateTestGroup(t, prefix+"_member")
+	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, memberGroup)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, memberGroup)
+
+	// Post was in the member group (spatial.groupid = memberGroup) ...
+	msg := CreateTestMessage(t, posterID, memberGroup, prefix+" stalepost", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", msg)
+	// ... but has since been removed/retracted there: the messages_groups row is deleted, while the
+	// spatial row is left behind still pointing at the member group.
+	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid = ?", msg, memberGroup)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msg)
+
+	// Feed excludes the stale post.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?browseView=mygroups&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+	for _, m := range msgs {
+		assert.NotEqual(t, msg, m.ID, "stale spatial row (no Approved messages_groups in a member group) is excluded from the feed")
+	}
+
+	// The viewer's only group has no live member-group post, so the badge is 0 — not stuck on the
+	// retracted one.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/message/count?browseView=mygroups&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var cres map[string]interface{}
+	json2.Unmarshal(rsp(resp), &cres)
+	assert.Equal(t, float64(0), cres["count"].(float64), "mygroups count excludes the stale/retracted spatial row (no stuck residual)")
+}

@@ -14,13 +14,19 @@ import {
 const {
   mockClearReply,
   mockMessageFetch,
+  mockMessageById,
   mockFetchMeFn,
   mockReplyToPostFn,
+  mockSaveDraft,
+  mockClearDraft,
 } = vi.hoisted(() => ({
   mockClearReply: vi.fn(),
   mockMessageFetch: vi.fn(),
+  mockMessageById: vi.fn(),
   mockFetchMeFn: vi.fn(),
   mockReplyToPostFn: vi.fn(),
+  mockSaveDraft: vi.fn(),
+  mockClearDraft: vi.fn(),
 }))
 
 // ============================================================
@@ -32,6 +38,11 @@ let mockReplyMessage = null
 let mockReplyingAt = null
 let mockMachineState = null
 let mockReplyIsNewUser = false
+let mockDraftMsgId = null
+let mockDraftMessage = null
+let mockDraftCollect = null
+let mockDraftEmail = null
+let mockDraftAt = null
 
 vi.mock('~/stores/reply', () => ({
   useReplyStore: () => ({
@@ -65,7 +76,24 @@ vi.mock('~/stores/reply', () => ({
     set isNewUser(v) {
       mockReplyIsNewUser = v
     },
+    get draftMsgId() {
+      return mockDraftMsgId
+    },
+    get draftMessage() {
+      return mockDraftMessage
+    },
+    get draftCollect() {
+      return mockDraftCollect
+    },
+    get draftEmail() {
+      return mockDraftEmail
+    },
+    get draftAt() {
+      return mockDraftAt
+    },
     clearReply: mockClearReply,
+    saveDraft: mockSaveDraft,
+    clearDraft: mockClearDraft,
   }),
 }))
 
@@ -76,7 +104,7 @@ vi.mock('~/stores/reply', () => ({
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetch: mockMessageFetch,
-    byId: vi.fn().mockReturnValue(null),
+    byId: mockMessageById,
   }),
 }))
 
@@ -167,11 +195,11 @@ function mountComposable(messageId = MSG_ID, userAddImpl) {
     },
   })
 
-  mount(Wrapper, {
+  const wrapper = mount(Wrapper, {
     global: { mocks: { $api: { user: { add: mockUserAdd } } } },
   })
 
-  return { result, mockUserAdd }
+  return { result, mockUserAdd, wrapper }
 }
 
 // ============================================================
@@ -201,6 +229,25 @@ beforeEach(() => {
   mockReplyingAt = null
   mockMachineState = null
   mockReplyIsNewUser = false
+  mockDraftMsgId = null
+  mockDraftMessage = null
+  mockDraftCollect = null
+  mockDraftEmail = null
+  mockDraftAt = null
+  mockSaveDraft.mockImplementation(({ msgId, message, collect, email }) => {
+    mockDraftMsgId = msgId
+    mockDraftMessage = message
+    mockDraftCollect = collect
+    mockDraftEmail = email
+    mockDraftAt = Date.now()
+  })
+  mockClearDraft.mockImplementation(() => {
+    mockDraftMsgId = null
+    mockDraftMessage = null
+    mockDraftCollect = null
+    mockDraftEmail = null
+    mockDraftAt = null
+  })
 
   // useMe
   mockMeValue = null
@@ -213,6 +260,8 @@ beforeEach(() => {
     id: MSG_ID,
     groups: [{ groupid: 100 }],
   })
+  // Default: the post is reply-eligible (no reach block) unless a test overrides byId.
+  mockMessageById.mockReturnValue(null)
   mockReplyToPostFn.mockResolvedValue(MSG_ID)
 })
 
@@ -623,12 +672,168 @@ describe('initialize', () => {
   })
 })
 
+describe('draft persistence (typing survives close/reopen)', () => {
+  it('persists the draft shortly after typing', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+
+    result.replyText.value = 'I have one you can have'
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+
+    expect(mockSaveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        msgId: MSG_ID,
+        message: 'I have one you can have',
+      })
+    )
+  })
+
+  it('debounces rapid typing into a single save', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+
+    result.replyText.value = 'I hav'
+    await flushPromises()
+    vi.advanceTimersByTime(200)
+    result.replyText.value = 'I have one'
+    await flushPromises()
+    vi.advanceTimersByTime(200)
+    expect(mockSaveDraft).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(200)
+    expect(mockSaveDraft).toHaveBeenCalledTimes(1)
+    expect(mockSaveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'I have one' })
+    )
+  })
+
+  it('persists collection time and email alongside the message', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+
+    result.replyText.value = 'Yes please'
+    result.collectText.value = 'Weekday evenings'
+    result.email.value = 'someone@example.com'
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+
+    expect(mockSaveDraft).toHaveBeenCalledWith({
+      msgId: MSG_ID,
+      message: 'Yes please',
+      collect: 'Weekday evenings',
+      email: 'someone@example.com',
+    })
+  })
+
+  it('clears the draft when the user empties every field', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+
+    result.replyText.value = 'Changed my mind'
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+    expect(mockSaveDraft).toHaveBeenCalled()
+
+    result.replyText.value = ''
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+    expect(mockClearDraft).toHaveBeenCalled()
+  })
+
+  it('flushes a pending draft when the pane unmounts', async () => {
+    const { result, wrapper } = mountComposable()
+    result.initialize()
+
+    result.replyText.value = 'about to close the pane'
+    await flushPromises()
+    wrapper.unmount()
+
+    expect(mockSaveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'about to close the pane' })
+    )
+  })
+
+  it('does not persist a draft while the reply is being sent', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+    result.state.value = ReplyState.SENDING
+
+    result.replyText.value = 'mid-send edit'
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+
+    expect(mockSaveDraft).not.toHaveBeenCalled()
+  })
+
+  it('restores a draft on reopen as COMPOSING without sending anything', () => {
+    mockDraftMsgId = MSG_ID
+    mockDraftMessage = 'Half written'
+    mockDraftCollect = 'Saturday morning'
+    mockDraftEmail = 'me@example.com'
+    mockDraftAt = Date.now() - 60 * 1000
+
+    const { result } = mountComposable()
+    result.initialize()
+
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyText.value).toBe('Half written')
+    expect(result.collectText.value).toBe('Saturday morning')
+    expect(result.email.value).toBe('me@example.com')
+    expect(mockReplyToPostFn).not.toHaveBeenCalled()
+  })
+
+  it('discards a stale draft (>24h) and starts IDLE', () => {
+    mockDraftMsgId = MSG_ID
+    mockDraftMessage = 'Ancient draft'
+    mockDraftAt = Date.now() - 25 * 60 * 60 * 1000
+
+    const { result } = mountComposable()
+    result.initialize()
+
+    expect(result.state.value).toBe(ReplyState.IDLE)
+    expect(result.replyText.value).toBe('')
+    expect(mockClearDraft).toHaveBeenCalled()
+  })
+
+  it('ignores a draft belonging to a different message', () => {
+    mockDraftMsgId = 999
+    mockDraftMessage = 'Draft for another post'
+    mockDraftAt = Date.now() - 60 * 1000
+
+    const { result } = mountComposable(MSG_ID)
+    result.initialize()
+
+    expect(result.state.value).toBe(ReplyState.IDLE)
+    expect(result.replyText.value).toBe('')
+  })
+
+  it('prefers a pending-send reply over a draft when both exist', () => {
+    mockReplyMsgId = MSG_ID
+    mockReplyMessage = 'Committed at submit time'
+    mockReplyingAt = Date.now() - 60 * 1000
+    mockMachineState = ReplyState.COMPOSING
+    mockDraftMsgId = MSG_ID
+    mockDraftMessage = 'Older draft'
+    mockDraftAt = Date.now() - 120 * 1000
+
+    const { result } = mountComposable()
+    result.initialize()
+
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyText.value).toBe('Committed at submit time')
+  })
+})
+
 describe('onLoginSuccess', () => {
   it('from AUTHENTICATING with reply text: resumes to join-group → completed', async () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
     mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -749,7 +954,9 @@ describe('submit', () => {
     const { result } = mountComposable()
     result.startTyping()
     result.setRefs({
-      form: { validate: vi.fn().mockRejectedValue(new Error('Validate error')) },
+      form: {
+        validate: vi.fn().mockRejectedValue(new Error('Validate error')),
+      },
     })
     const callback = vi.fn()
     await result.submit(callback)
@@ -773,7 +980,10 @@ describe('submit', () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
     mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -793,7 +1003,10 @@ describe('submit', () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
     mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -834,12 +1047,15 @@ describe('submit', () => {
     }
     const mockUserAdd = vi.fn().mockResolvedValue(newUserApiResponse)
 
-    mockFetchMeFn.mockImplementation(async () => {
+    mockFetchMeFn.mockImplementation(() => {
       mockMeValue = { id: 99 }
       mockMyidValue = 99
     })
     mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable(MSG_ID, mockUserAdd)
@@ -880,7 +1096,9 @@ describe('submit', () => {
 
   it('not-logged-in, registration error: forces login as fallback', async () => {
     mockMeValue = null
-    const mockUserAdd = vi.fn().mockRejectedValue(new Error('Registration failed'))
+    const mockUserAdd = vi
+      .fn()
+      .mockRejectedValue(new Error('Registration failed'))
 
     const { result } = mountComposable(MSG_ID, mockUserAdd)
     result.startTyping()
@@ -929,7 +1147,10 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
     mockMyGroupsValue = {} // no memberships
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 200 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 200 }],
+    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -944,7 +1165,10 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
     mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -1008,11 +1232,14 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
 })
 
 describe('handleCreateChat (via submit with logged-in user)', () => {
-  async function setupLoggedIn() {
+  function setupLoggedIn() {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
     mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [{ groupid: 100 }] })
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
   }
 
   it('transitions to ERROR when replyToPost returns falsy', async () => {
@@ -1101,5 +1328,106 @@ describe('processing timeout', () => {
     await vi.advanceTimersByTimeAsync(31000)
 
     expect(result.state.value).toBe(ReplyState.COMPOSING)
+  })
+})
+
+// ============================================================
+// Rippling-out reach gate — a post rippled to the member's community but whose reach
+// polygon has not yet reached their location: replyeligible=false (read path) and a 403
+// "not_in_reach" (write path). Must show the graceful "closest first" message and NEVER
+// force a re-login. Regression: Marc Ashby, 2026-07-04 (Henley post rippled into Reading).
+// ============================================================
+describe('reach gate (rippling-out reply eligibility)', () => {
+  function setupLoggedIn() {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 100 }],
+    })
+  }
+
+  const CLOSEST = 'closest to it first'
+
+  it('proactively blocks the reply when the message is replyeligible=false, without sending', async () => {
+    await setupLoggedIn()
+    // The message the member is replying to is flagged not-yet-reachable by the server.
+    mockMessageById.mockReturnValue({ id: MSG_ID, replyeligible: false })
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    expect(result.error.value).toContain(CLOSEST)
+    // Never attempts the send, and never bounces the member to a login.
+    expect(mockReplyToPostFn).not.toHaveBeenCalled()
+    expect(mockForceLogin.value).toBe(false)
+  })
+
+  it('does NOT block when replyeligible is true / absent (normal reply proceeds)', async () => {
+    await setupLoggedIn()
+    mockMessageById.mockReturnValue({ id: MSG_ID }) // no replyeligible => eligible
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(mockReplyToPostFn).toHaveBeenCalled()
+    expect(
+      result.error.value === null || !result.error.value.includes(CLOSEST)
+    ).toBe(true)
+  })
+
+  it('reactively shows the reach message (not a login) on a 403 not_in_reach from the send', async () => {
+    await setupLoggedIn()
+    // Server body is { error: 403, message: "not_in_reach" } (see main.go ErrorHandler).
+    const reachErr = Object.assign(new Error('Request failed'), {
+      status: 403,
+      response: { status: 403, data: { error: 403, message: 'not_in_reach' } },
+    })
+    mockReplyToPostFn.mockRejectedValue(reachErr)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    expect(result.error.value).toContain(CLOSEST)
+    // The bug being fixed: a reach 403 must NOT force a re-login.
+    expect(mockForceLogin.value).toBe(false)
+  })
+
+  it('does NOT treat other 403s (e.g. banned) as a reach block', async () => {
+    await setupLoggedIn()
+    const bannedErr = Object.assign(new Error('Request failed'), {
+      status: 403,
+      response: {
+        status: 403,
+        data: { error: 403, message: 'User banned from group' },
+      },
+    })
+    mockReplyToPostFn.mockRejectedValue(bannedErr)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    // Not the reach message — a different 403 must not be mislabelled as "closest first".
+    expect(result.error.value).not.toContain(CLOSEST)
   })
 })

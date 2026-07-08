@@ -73,6 +73,13 @@
                   <button class="mark-read-btn" @click="markAllRead">
                     <v-icon icon="check-double" />
                     <span class="d-none d-sm-inline">Mark all read</span>
+                    <b-badge
+                      v-if="chatStore.unreadCount > 0"
+                      variant="danger"
+                      class="mark-all-read-badge"
+                    >
+                      {{ chatStore.unreadCount }}
+                    </b-badge>
                   </button>
                 </div>
                 <div
@@ -109,8 +116,11 @@
                       >
                         {{ closedCount }}
                       </b-badge>
-                      <span v-if="showClosed">Return to chats that are not hidden</span>
-                      <span v-else>Show {{ closedChats.length }} hidden/blocked chat<span
+                      <span v-if="showClosed"
+                        >Return to chats that are not hidden</span
+                      >
+                      <span v-else
+                        >Show {{ closedChats.length }} hidden/blocked chat<span
                           v-if="closedChats.length > 1"
                           >s</span
                         ></span
@@ -198,6 +208,7 @@
                   max-width="300px"
                   div-id="div-gpt-ad-1691925773522-0"
                   class="mt-2"
+                  placement="chat_list"
                 />
               </VisibleWhen>
             </div>
@@ -739,15 +750,19 @@ async function searchMore() {
   }
 }
 
+/* Red outline + count badge, consistent with the individual chat's mark-read button
+ * (.navbar-mark-read in ChatMobileNavbar.vue) so the "mark read" affordance looks the
+ * same in the list and in a conversation. */
 .mark-read-btn {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  background: transparent;
-  border: 1px solid $color-gray--light;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid $color-red;
   border-radius: var(--radius-xl, 1.25rem);
-  color: var(--color-gray-600);
+  color: $color-red;
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
@@ -755,10 +770,21 @@ async function searchMore() {
   white-space: nowrap;
 
   &:hover {
-    background: $color-green-background;
-    border-color: $color-green-background;
+    background: $color-red;
+    border-color: $color-red;
     color: white;
   }
+}
+
+.mark-all-read-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 0.6rem;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  line-height: 18px;
 }
 
 /* Empty state styling */

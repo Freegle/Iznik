@@ -23,19 +23,6 @@ package main
 //
 //	200: routingGenericResponse
 
-// swagger:route GET /demo demo getDemoPage
-//
-// Demo page
-//
-// Returns an interactive HTML demo page for the routing service.
-//
-// Produces:
-// - text/html
-//
-// Responses:
-//
-//	200: routingGenericResponse
-
 // swagger:route GET /v1/isochrone routing getIsochrone
 //
 // Compute isochrone
@@ -187,6 +174,11 @@ package main
 //   + name: mode
 //     in: query
 //     description: Travel mode (walk, cycle, drive; default drive)
+//     required: false
+//     type: string
+//   + name: polygons
+//     in: query
+//     description: Set to 0 to omit the per-tick polygon geometry (slim form for the batch; each tick keeps drive_min, cumulative_users and reachable_group_ids)
 //     required: false
 //     type: string
 //

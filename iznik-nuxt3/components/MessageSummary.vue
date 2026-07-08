@@ -85,6 +85,12 @@
         />
       </div>
 
+      <!-- Pinned (paid bulk-offer clearance) indicator. On the photo so it shows in every
+           layout - mobile portrait, tablet/desktop and mobile-landscape. -->
+      <div v-if="isPinned" class="pinned-badge">
+        <v-icon icon="thumbtack" class="pinned-icon" />Pinned
+      </div>
+
       <!-- Title/info overlay at bottom of photo (mobile only) -->
       <div class="title-overlay title-overlay-mobile">
         <div class="info-row">
@@ -100,6 +106,9 @@
         </div>
         <div class="title-row">
           <span class="title-subject">{{ strippedSubject }}</span>
+          <b-badge v-if="bulkCount" variant="info" class="ms-1 bulk-badge"
+            >{{ bulkAvailable }} available</b-badge
+          >
         </div>
       </div>
     </div>
@@ -110,6 +119,9 @@
         <MessageTag :id="id" :inline="true" class="content-tag" />
         <div class="content-title-location">
           <span class="content-subject">{{ subjectItemName }}</span>
+          <b-badge v-if="bulkCount" variant="info" class="ms-1 bulk-badge"
+            >{{ bulkAvailable }} available</b-badge
+          >
           <span v-if="subjectLocation" class="content-location">
             {{ subjectLocation }}
           </span>
@@ -172,12 +184,28 @@ const {
   timeAgoExpanded,
   distanceText,
   distanceTextExpanded,
+  isPinned,
   isOffer,
   isWanted,
   successfulText,
   placeholderClass,
   categoryIcon,
 } = useMessageDisplay(idRef)
+
+// Bulk offer ("clearance") indicator. bulkCount only gates the badge (is this a
+// bulk offer?); the badge itself shows the TOTAL quantity available, matching the
+// post's "N available" (message.availablenow), not the number of catalogue rows.
+const bulkCount = computed(() => message.value?.bulkitems?.length || 0)
+const bulkAvailable = computed(() => {
+  const m = message.value
+  if (!m?.bulkitems?.length) return 0
+  // Prefer availablenow (sum of quantities across items still available); fall
+  // back to summing the catalogue quantities if the list payload omits it.
+  return (
+    m.availablenow ||
+    m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
+  )
+})
 
 const miscStore = useMiscStore()
 const { isLandscape } = useOrientation()
@@ -373,6 +401,36 @@ function expand(e) {
   border-radius: var(--radius-sm, 0.375rem);
   z-index: 5;
   height: auto;
+}
+
+/* Pinned (paid clearance) badge - top-left of the photo, above the image but below the
+   "freegled"/"promised" stamp. Solid gold reads as "featured" and stays distinct from
+   the green OFFER / blue WANTED tags. Deliberately uses only background/shadow (no
+   filters or transforms) so it renders identically with GPU acceleration disabled. */
+.pinned-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: $color-white;
+  background: $color-gold;
+  border-radius: var(--radius-sm, 0.375rem);
+  box-shadow: 0 1px 3px $color-black-opacity-50;
+  text-shadow: 0 1px 1px $color-black-opacity-30;
+  pointer-events: none;
+
+  .pinned-icon {
+    font-size: 0.72rem;
+  }
 }
 
 .status-overlay-image {
@@ -597,6 +655,13 @@ function expand(e) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Bulk-offer count pill. Uses the standard "N available" pill styling
+   (variant="info", as on the post); the only layout fix is align-self so it hugs
+   its own text instead of stretching to the flex-column's full width. */
+.bulk-badge {
+  align-self: flex-start;
 }
 
 .content-description {

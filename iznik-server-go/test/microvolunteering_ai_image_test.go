@@ -91,10 +91,11 @@ func TestAIImageReview_GetChallenge(t *testing.T) {
 	assert.NotNil(t, result.AIImage)
 	assert.Equal(t, imgID, result.AIImage.ID)
 	assert.Equal(t, "test-sofa-"+prefix, result.AIImage.Name)
-	// URL uses the delivery service with the freegletusd- prefix stripped.
+	// URL uses the delivery service with the freegletusd- prefix stripped, built
+	// against the isolated test uploads host (pinned in TestMain), not production.
 	assert.Contains(t, result.AIImage.URL, "test-sofa-"+prefix)
 	assert.NotContains(t, result.AIImage.URL, "freegletusd-")
-	assert.Contains(t, result.AIImage.URL, "uploads.ilovefreegle.org")
+	assert.Contains(t, result.AIImage.URL, "uploads.test")
 	assert.Equal(t, uint64(100), result.AIImage.UsageCount)
 
 	// Cleanup microactions created by the challenge (invite placeholder won't be created since we blocked it).

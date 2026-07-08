@@ -100,6 +100,16 @@ vi.mock('~/constants', () => ({
   FAR_AWAY: 20,
 }))
 
+// ChatReplyPane captures the current route at setup to derive the reply surface
+// (provenance) at send time.
+vi.mock('#imports', async () => {
+  const actual = await vi.importActual('#imports')
+  return {
+    ...actual,
+    useRoute: () => ({ path: '/browse', query: {}, params: {} }),
+  }
+})
+
 vi.hoisted(() => {
   vi.resetModules()
 })
@@ -246,6 +256,20 @@ describe('ChatReplyPane', () => {
     return wrapper
   }
 
+  describe('resilience', () => {
+    it('still renders the overlay when the message fetch rejects', async () => {
+      // Regression: the fetch is a top-level await under <Suspense>; an
+      // unhandled rejection meant the overlay never mounted and the Reply
+      // click was a silent no-op (seen in CI when the API blipped offline).
+      // The pane must render with whatever is cached in the store instead.
+      mockMessageStore.fetch.mockRejectedValueOnce(new Error('Failed to fetch'))
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.reply-overlay').exists()).toBe(true)
+      expect(wrapper.find('.reply-card').exists()).toBe(true)
+    })
+  })
+
   describe('post photo zoom', () => {
     it('opens the photo carousel modal when a multi-photo post is tapped', async () => {
       // Multiple photos → the modal is the swipeable carousel (it shows all
@@ -332,6 +356,31 @@ describe('ChatReplyPane', () => {
     it('shows the poster name in the header', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.reply-card__name').text()).toContain('Jane Doe')
+    })
+
+    it('pins the Send row outside the scrollable fields', async () => {
+      // In very short windows (e.g. 820x420, an email client's embedded
+      // browser) the composer's fields scroll internally - but Send must
+      // never scroll out of view, or the form looks like it has no submit
+      // button (audit finding 2.5).
+      const wrapper = await createWrapper()
+      const scrollable = wrapper.find('.composer-scrollable')
+      expect(scrollable.exists()).toBe(true)
+      expect(scrollable.find('.composer-form').exists()).toBe(true)
+      expect(scrollable.find('.composer-send').exists()).toBe(false)
+      expect(
+        wrapper.find('.reply-card__composer .composer-send').exists()
+      ).toBe(true)
+    })
+
+    it('keeps the error notice pinned with the Send row, not scrolled away', async () => {
+      mockReplyStateMachine.error.value = 'Something went wrong'
+      const wrapper = await createWrapper()
+      const scrollable = wrapper.find('.composer-scrollable')
+      expect(scrollable.find('.notice-message.danger').exists()).toBe(false)
+      expect(
+        wrapper.find('.reply-card__composer .notice-message.danger').exists()
+      ).toBe(true)
     })
   })
 

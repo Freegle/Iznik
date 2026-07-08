@@ -36,6 +36,13 @@ var validTransports = map[string]bool{
 	"Drive": true,
 }
 
+// ListIsochrones handles GET /isochrone.
+//
+// Deprecated: the per-user isochrone editor was removed in the rippling-out
+// "Nearby = reach" flip (PR #921). No current client calls this; retained only for
+// backward compatibility with older deployed clients. See stores/nearby.js.
+//
+// @Deprecated
 func ListIsochrones(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
@@ -200,11 +207,16 @@ const maxMinutes = 45
 
 // CreateIsochrone handles PUT /isochrone to create or link an isochrone for the user.
 //
+// Deprecated: no current client calls this - the isochrone editor was removed in the
+// rippling-out reach flip (PR #921). Retained for backward compatibility only.
+//
 // @Summary Create isochrone
+// @Description [DEPRECATED - no current client calls this; see PR #921]
 // @Tags isochrone
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Deprecated
 // @Router /api/isochrone [put]
 func CreateIsochrone(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
@@ -287,11 +299,16 @@ func CreateIsochrone(c *fiber.Ctx) error {
 
 // EditIsochrone handles PATCH /isochrone to update transport/minutes.
 //
+// Deprecated: no current client calls this - the isochrone editor was removed in the
+// rippling-out reach flip (PR #921). Retained for backward compatibility only.
+//
 // @Summary Edit isochrone
+// @Description [DEPRECATED - no current client calls this; see PR #921]
 // @Tags isochrone
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Deprecated
 // @Router /api/isochrone [patch]
 func EditIsochrone(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
@@ -387,11 +404,16 @@ func EditIsochrone(c *fiber.Ctx) error {
 
 // DeleteIsochrone handles DELETE /isochrone to remove user's isochrone link.
 //
+// Deprecated: no current client calls this - the isochrone editor was removed in the
+// rippling-out reach flip (PR #921). Retained for backward compatibility only.
+//
 // @Summary Delete isochrone
+// @Description [DEPRECATED - no current client calls this; see PR #921]
 // @Tags isochrone
 // @Produce json
 // @Param id query integer true "Isochrone user link ID"
 // @Security BearerAuth
+// @Deprecated
 // @Router /api/isochrone [delete]
 func DeleteIsochrone(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)

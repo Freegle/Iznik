@@ -684,11 +684,21 @@ func SetupRoutes(app *fiber.App) {
 		rg.Delete("/noticeboard/:id", noticeboard.DeleteNoticeboard)
 
 		// Isochrones
+		//
+		// DEPRECATED: the per-user isochrone editor was removed in the rippling-out
+		// "Nearby = reach" flip (PR #921). No current client (Freegle or ModTools) calls
+		// these four CRUD endpoints - the isochrone store/editor that used them was
+		// deleted (stores/isochrone.js -> stores/nearby.js; components/IsoChrone.vue
+		// removed). Kept only for backward compatibility with any older deployed clients;
+		// safe to remove once those have aged out. NOTE: /isochrone/message and
+		// /message/count below are NOT deprecated - they still back the Nearby feed and
+		// its unseen count.
 		// @Router /isochrone [get]
 		// @Summary List isochrones
-		// @Description Returns all isochrones
+		// @Description [DEPRECATED - no current client calls this; see PR #921] Returns all isochrones
 		// @Tags isochrone
 		// @Produce json
+		// @Deprecated
 		// @Success 200 {array} isochrone.Isochrone
 		rg.Get("/isochrone", isochrone.ListIsochrones)
 		rg.Put("/isochrone", isochrone.CreateIsochrone)
@@ -772,6 +782,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Param term query string true "Search term"
 		// @Success 200 {array} location.Location
 		rg.Get("/location/typeahead", location.Typeahead)
+
+		// Location Resolve (exact place name -> best matching location)
+		// @Router /location/resolve [get]
+		// @Summary Resolve an exact place name to a location
+		// @Description Returns the single best location for an exact place name (county/town/postcode),
+		// @Description used to offer "search near <place>" when an item search returns nothing. 404 if unknown.
+		// @Tags location
+		// @Produce json
+		// @Param name query string true "Exact place name"
+		// @Success 200 {object} location.Location
+		rg.Get("/location/resolve", location.Resolve)
 
 		// Location Addresses
 		// @Router /location/{id}/addresses [get]
@@ -913,6 +934,37 @@ func SetupRoutes(app *fiber.App) {
 		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
+
+		// Bulk-offer ("clearance") logged-out update page: an external item-owner
+		// toggles item available/taken and edits counts via an unguessable secret
+		// token in the URL. No JWT - the token is the sole credential and grants
+		// only availability/count edits to that one offer (see message/bulkEdit.go).
+		rg.Get("/bulkoffer/update/:token", message.GetBulkEditOffer)
+		rg.Post("/bulkoffer/update/:token", message.PostBulkEditOffer)
+
+		// Freegle Helper — cross-clearance escalated queue (ModTools). Registered
+		// before /helper/:msgid so the literal "escalated" isn't parsed as a msgid.
+		rg.Get("/helper/escalated", message.GetHelperEscalated)
+
+		// Freegle Helper — AI concierge state + proposals for a bulk offer.
+		// @Router /helper/{msgid} [get]
+		// @Summary Get Helper state for a bulk offer
+		// @Description Offerer/mod only. Returns the Helper batch, per-replier FSM knowledge records with per-item state and score, queued proposals, and Helper-sent message ids.
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Get("/helper/:msgid", message.GetHelper)
+
+		// @Router /helper [post]
+		// @Summary Helper actions
+		// @Description Offerer/mod only. Actions: EnsureBatch, SetStatus (pause/resume/stop), UpsertReplier, SetItemState, Proposal, ResolveProposal (confirm/edit/send or dismiss), Send (auto-send a conversational message).
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/helper", message.PostHelper)
 
 		// User
 		// @Router /user/{id} [get]

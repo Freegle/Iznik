@@ -7,6 +7,7 @@
       :div-id="adDivId"
       class="mt-2 w-100"
       list-only
+      placement="sidebar_left"
       @rendered="onAdRendered"
     />
     <CommunityEventSidebar

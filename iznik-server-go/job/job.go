@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"regexp"
@@ -221,14 +222,45 @@ func RecordJobClick(c *fiber.Ctx) error {
 		link = c.FormValue("link")
 	}
 
+	// placement = which ad slot the click came from (sticky_footer_mobile/desktop,
+	// sidebar_left/right, jobs_page, email_redirect, modal_more_jobs); source =
+	// website|email. Both optional and nullable, so legacy callers still work.
+	placement := c.Query("placement")
+	if placement == "" {
+		placement = c.FormValue("placement")
+	}
+	source := c.Query("source")
+	if source == "" {
+		source = c.FormValue("source")
+	}
+	// page = the Nuxt route name the click came from (jobs, browse-term, message-id, ...),
+	// orthogonal to placement: the same slot appears on every page, so this is what lets
+	// us tell which page earns the most. Optional/nullable like placement and source.
+	page := c.Query("page")
+	if page == "" {
+		page = c.FormValue("page")
+	}
+
 	if jobID == "" && link == "" {
 		var body struct {
-			ID   json.Number `json:"id"`
-			Link string      `json:"link"`
+			ID        json.Number `json:"id"`
+			Link      string      `json:"link"`
+			Placement string      `json:"placement"`
+			Source    string      `json:"source"`
+			Page      string      `json:"page"`
 		}
 		if err := c.BodyParser(&body); err == nil {
 			jobID = body.ID.String()
 			link = body.Link
+			if placement == "" {
+				placement = body.Placement
+			}
+			if source == "" {
+				source = body.Source
+			}
+			if page == "" {
+				page = body.Page
+			}
 		}
 	}
 
@@ -243,29 +275,40 @@ func RecordJobClick(c *fiber.Ctx) error {
 		})
 	}
 
-	// Get user ID from context if authenticated (optional)
+	// Get the user ID from the JWT / persistent token if the caller is logged in (optional).
+	// The web app and digest-email links both authenticate via the standard Authorization
+	// headers, so user.WhoAmI resolves the click to a user, returning 0 when anonymous.
+	// The previous c.Locals("session") lookup read a context key that nothing in this
+	// codebase ever sets, so every click was silently logged with userid=NULL.
 	var userID *uint64
-	if c.Locals("session") != nil {
-		if session, ok := c.Locals("session").(map[string]interface{}); ok {
-			if id, exists := session["id"]; exists {
-				if idUint, ok := id.(uint64); ok {
-					userID = &idUint
-				}
-			}
-		}
+	if myid := user.WhoAmI(c); myid > 0 {
+		userID = &myid
 	}
 
 	// Don't require ID, just record what we have.
 	// The INSERT IGNORE handles missing/invalid IDs gracefully
 	db := database.DBConn
 
+	// Store NULL (not '') for an absent placement/source/page so legacy rows and bot
+	// hits stay distinguishable from genuinely-tagged clicks.
+	var placementVal, sourceVal, pageVal interface{}
+	if placement != "" {
+		placementVal = placement
+	}
+	if source != "" {
+		sourceVal = source
+	}
+	if page != "" {
+		pageVal = page
+	}
+
 	// Use IGNORE to handle clicks for purged jobs gracefully
 	if userID != nil {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link) VALUES (?, ?, ?)",
-			*userID, jobID, link)
+		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link, placement, source, page) VALUES (?, ?, ?, ?, ?, ?)",
+			*userID, jobID, link, placementVal, sourceVal, pageVal)
 	} else {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link) VALUES (NULL, ?, ?)",
-			jobID, link)
+		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link, placement, source, page) VALUES (NULL, ?, ?, ?, ?, ?)",
+			jobID, link, placementVal, sourceVal, pageVal)
 	}
 
 	return c.JSON(fiber.Map{

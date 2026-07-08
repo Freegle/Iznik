@@ -29,6 +29,12 @@ const mockAuthStore = {
   groups: [{ groupid: 100 }, { groupid: 200 }],
 }
 
+const mockMe = ref({ systemrole: 'User' })
+
+const mockGroupStore = {
+  get: vi.fn((id) => ({ namedisplay: 'Community ' + id })),
+}
+
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
@@ -39,6 +45,14 @@ vi.mock('~/stores/chat', () => ({
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => mockGroupStore,
+}))
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ me: mockMe }),
 }))
 
 vi.mock('~/composables/useOurModal', () => ({
@@ -60,6 +74,12 @@ describe('MessageReportModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMessageStore.byId.mockReturnValue(mockMessage)
+    mockMe.value = { systemrole: 'User' }
+    mockGroupStore.get.mockImplementation((id) => ({
+      namedisplay: 'Community ' + id,
+    }))
+    mockChatStore.openChatToMods.mockResolvedValue(123)
+    mockChatStore.send.mockResolvedValue({})
   })
 
   function createWrapper(props = {}) {
@@ -101,6 +121,17 @@ describe('MessageReportModal', () => {
           'b-spinner': {
             template: '<span class="b-spinner" />',
             props: ['small'],
+          },
+          'b-form-checkbox': {
+            template:
+              '<label class="b-form-checkbox"><input type="checkbox" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>',
+            props: ['modelValue', 'value', 'indeterminate'],
+            emits: ['update:modelValue'],
+          },
+          'b-form-checkbox-group': {
+            template: '<div class="b-form-checkbox-group"><slot /></div>',
+            props: ['modelValue', 'stacked'],
+            emits: ['update:modelValue'],
           },
           'v-icon': {
             template: '<span class="v-icon" :data-icon="icon" />',
@@ -280,6 +311,149 @@ describe('MessageReportModal', () => {
     it('does not show success state initially', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.report-success').exists()).toBe(false)
+    })
+  })
+
+  describe('mod multi-community reporting', () => {
+    function modWrapperOnGroups(groups, role = 'Moderator') {
+      mockMe.value = { systemrole: role }
+      mockMessageStore.byId.mockReturnValue({ ...mockMessage, groups })
+      return createWrapper()
+    }
+
+    it('hides the community selector for non-mods', () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [{ groupid: 100 }, { groupid: 300 }],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.showGroupSelector).toBe(false)
+      expect(wrapper.find('.report-groups').exists()).toBe(false)
+    })
+
+    it('hides the community selector for a mod on a single-group post', () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }])
+      expect(wrapper.vm.showGroupSelector).toBe(false)
+      expect(wrapper.find('.report-groups').exists()).toBe(false)
+    })
+
+    it('shows the community selector for a mod on a multi-group post', () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      expect(wrapper.vm.showGroupSelector).toBe(true)
+      expect(wrapper.find('.report-groups').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Community 100')
+      expect(wrapper.text()).toContain('Community 300')
+    })
+
+    it('shows the selector for Support and Admin too', () => {
+      expect(
+        modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }], 'Support').vm
+          .showGroupSelector
+      ).toBe(true)
+      expect(
+        modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }], 'Admin').vm
+          .showGroupSelector
+      ).toBe(true)
+    })
+
+    it('lists the default group first', () => {
+      // User shares group 300; it should be the default and sort first.
+      mockMe.value = { systemrole: 'Moderator' }
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [
+          { groupid: 100, arrival: '2024-01-01T00:00:00Z' },
+          { groupid: 300, arrival: '2024-01-02T00:00:00Z' },
+        ],
+      })
+      mockAuthStore.groups = [{ groupid: 300 }]
+      const wrapper = createWrapper()
+      expect(wrapper.vm.reportableGroups[0].groupid).toBe(300)
+      mockAuthStore.groups = [{ groupid: 100 }, { groupid: 200 }]
+    })
+
+    it('de-duplicates repeated group ids', () => {
+      const wrapper = modWrapperOnGroups([
+        { groupid: 100 },
+        { groupid: 100 },
+        { groupid: 300 },
+      ])
+      expect(wrapper.vm.reportableGroups.length).toBe(2)
+    })
+
+    it('seeds the selection with the default single group', () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      expect(wrapper.vm.selectedGroupIds).toEqual([100])
+    })
+
+    it('all-communities toggle selects and clears every group', () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      wrapper.vm.allSelected = true
+      expect(wrapper.vm.selectedGroupIds).toEqual([100, 300])
+      wrapper.vm.allSelected = false
+      expect(wrapper.vm.selectedGroupIds).toEqual([])
+    })
+
+    it('reports to every selected community', async () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      wrapper.vm.selectedReason = 'spam'
+      wrapper.vm.selectedGroupIds = [100, 300]
+      await wrapper.vm.report()
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledTimes(2)
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledWith(100)
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledWith(300)
+      expect(mockChatStore.send).toHaveBeenCalledTimes(2)
+      expect(wrapper.vm.submitted).toBe(true)
+      expect(wrapper.vm.failedGroups).toEqual([])
+    })
+
+    it('reports to a single group for a non-mod', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [{ groupid: 100 }, { groupid: 300 }],
+      })
+      const wrapper = createWrapper()
+      wrapper.vm.selectedReason = 'spam'
+      await wrapper.vm.report()
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledTimes(1)
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledWith(100)
+      expect(wrapper.vm.submitted).toBe(true)
+    })
+
+    it('continues after one group fails and reports the failure', async () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      mockChatStore.openChatToMods.mockImplementation((groupid) => {
+        if (groupid === 300) return Promise.reject(new Error('boom'))
+        return Promise.resolve(123)
+      })
+      wrapper.vm.selectedReason = 'spam'
+      wrapper.vm.selectedGroupIds = [100, 300]
+      await wrapper.vm.report()
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledTimes(2)
+      expect(wrapper.vm.submitted).toBe(true)
+      expect(wrapper.vm.failedGroups).toEqual(['Community 300'])
+      expect(wrapper.vm.submitError).toBe(false)
+    })
+
+    it('shows an error and stays on the form when all groups fail', async () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      mockChatStore.openChatToMods.mockRejectedValue(new Error('boom'))
+      wrapper.vm.selectedReason = 'spam'
+      wrapper.vm.selectedGroupIds = [100, 300]
+      await wrapper.vm.report()
+      expect(wrapper.vm.submitted).toBe(false)
+      expect(wrapper.vm.submitError).toBe(true)
+      expect(wrapper.vm.failedGroups).toEqual([
+        'Community 100',
+        'Community 300',
+      ])
+    })
+
+    it('blocks submit when a mod deselects every community', () => {
+      const wrapper = modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }])
+      wrapper.vm.selectedReason = 'spam'
+      wrapper.vm.selectedGroupIds = []
+      expect(wrapper.vm.canSubmit).toBe(false)
     })
   })
 })

@@ -132,7 +132,12 @@ export function prefetchSwaggerDocs() {
  * Converts routes like "/give" to "Opened Give page".
  */
 function formatPageName(pageName) {
-  if (!pageName || pageName === '/') {
+  if (!pageName) {
+    // No route info at all: say so honestly rather than guessing "home"
+    // (and never the old nonsense "Opened Page page" from a literal fallback).
+    return 'Opened a page'
+  }
+  if (pageName === '/') {
     return 'Opened home page'
   }
 
@@ -333,7 +338,7 @@ const LOG_FORMATTERS = {
   client: {
     page_view: (log) => {
       const raw = log.raw || {}
-      const pageName = raw.page_name || raw.url || 'page'
+      const pageName = raw.page_name || raw.url
       return formatPageName(pageName)
     },
     session_start: () => 'Opened Freegle',

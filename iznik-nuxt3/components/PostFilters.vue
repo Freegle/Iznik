@@ -22,6 +22,20 @@
             :options="typeOptions"
           />
         </div>
+        <div v-if="showDistanceSlider" class="distance">
+          <label for="distanceSlider">How far away:</label>
+          <RangeSlider
+            id="distanceSlider"
+            v-model="sliderValue"
+            :min="0.5"
+            :max="feedMax"
+            :step="0.5"
+            left-label="Nearer"
+            right-label="Further"
+            aria-label="Maximum distance"
+            @change="onSliderChange"
+          />
+        </div>
         <div class="sort mb-2">
           <label for="sortOptions">Sort by:</label>
           <b-form-select
@@ -43,13 +57,14 @@
         </div>
       </div>
       <!-- Rippling-out (#1): the catchment is worked out automatically and ripples
-           out over time, so there's no manual travel-time slider. -->
-      <div v-if="browseView === 'nearby'" class="isochrones">
+           out over time. The distance slider above only narrows which of those
+           already-reaching posts are shown - it isn't a manual travel-time control. -->
+      <div v-if="browseView === 'nearby'" class="nearby-help">
         <p class="help-text d-none d-md-block mt-0">
           We show posts near you first, then gradually further away.
-          <nuxt-link no-prefetch to="/help?topic=which-posts">
+          <a href="#" @click.prevent="whichPostsModal?.show()">
             How does this work?
-          </nuxt-link>
+          </a>
           ·
           <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
         </p>
@@ -91,27 +106,40 @@
           </b-button>
         </slot>
       </b-input-group>
-      <b-button
-        variant="white"
-        title="Show map and post filters"
-        class="ms-2"
-        @click="showFilters = true"
-      >
-        <div class="d-flex">
-          <div class="d-none d-md-block">Map & Filters</div>
-          <v-icon icon="sliders" class="ms-md-2 align-self-center" />
-          <v-icon icon="map" class="ms-1 align-self-center" />
-        </div>
-      </b-button>
+      <div class="position-relative d-inline-block ms-2">
+        <b-button
+          variant="white"
+          size="lg"
+          title="Show post filters"
+          class="filters-button"
+          @click="showFilters = true"
+        >
+          <div class="d-flex align-items-center">
+            <v-icon icon="sliders" class="align-self-center" />
+            <span class="ms-2">Filters</span>
+          </div>
+        </b-button>
+        <b-badge
+          v-if="hasNonDefaultFilters"
+          variant="danger"
+          class="filters-active-badge"
+          title="Filters are active"
+        />
+      </div>
     </div>
+    <WhichPostsModal ref="whichPostsModal" />
   </div>
 </template>
 <script setup>
 import { useMiscStore } from '~/stores/misc'
 import { useMessageStore } from '~/stores/message'
+import { useNearbyStore } from '~/stores/nearby'
 import { ref, watch } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
+import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
+import RangeSlider from '~/components/RangeSlider.vue'
+import WhichPostsModal from '~/components/WhichPostsModal.vue'
 
 const props = defineProps({
   selectedGroup: {
@@ -126,6 +154,10 @@ const props = defineProps({
     type: String,
     default: 'Unseen',
   },
+  selectedMaxDistance: {
+    type: Number,
+    default: BROWSE_DISTANCE_UNLIMITED,
+  },
   forceShowFilters: {
     type: Boolean,
     default: false,
@@ -137,6 +169,7 @@ const emit = defineEmits([
   'update:selectedGroup',
   'update:selectedType',
   'update:selectedSort',
+  'update:selectedMaxDistance',
 ])
 
 // Filters should always start closed - users can expand them if needed
@@ -172,6 +205,25 @@ watch(
 
 // User
 const { me } = useMe()
+const authStore = useAuthStore()
+const messageStore = useMessageStore()
+const nearbyStore = useNearbyStore()
+
+// Modal for the shared "which posts do I see?" explainer (#K). Always mounted (not
+// v-if-gated) so its ref is available as soon as the button is clicked, matching the
+// pattern used for RipplingExplanationModal elsewhere.
+const whichPostsModal = ref(null)
+
+// Refetch the unseen-count badge so it tracks whatever the feed is currently showing.
+function refetchCount() {
+  if (me.value) {
+    messageStore.fetchCount(
+      me.value.settings?.browseView,
+      me.value.settings?.browseMaxDistance,
+      false
+    )
+  }
+}
 
 // Search
 const search = ref('')
@@ -201,9 +253,7 @@ watch(
 )
 
 watch(group, async (newVal) => {
-  const authStore = useAuthStore()
   const settings = me.value?.settings
-  const messageStore = useMessageStore()
 
   if (newVal === -1) {
     // Special case for nearby.
@@ -215,23 +265,18 @@ watch(group, async (newVal) => {
 
     emit('update:selectedGroup', 0)
 
-    if (me.value) {
-      // We do this so that UpToDate doesn't show an old count.
-      messageStore.fetchCount(me.value.settings?.browseView, false)
-    }
+    // We do this so that UpToDate doesn't show an old count.
+    refetchCount()
   } else if (newVal === 0) {
     // Special case for all my groups.
-    const settings = me.value?.settings
     settings.browseView = 'mygroups'
 
     await authStore.saveAndGet({
       settings,
     })
 
-    if (me.value) {
-      // We do this so that UpToDate doesn't show an old count.
-      messageStore.fetchCount(me.value.settings?.browseView, false)
-    }
+    // We do this so that UpToDate doesn't show an old count.
+    refetchCount()
 
     emit('update:selectedGroup', 0)
   } else {
@@ -256,7 +301,9 @@ const typeOptions = [
   },
 ]
 
-const type = ref('All')
+// Rippling-out relevance ordering + distance slider (#I): post type is now sticky,
+// mirroring sort/browseView below - stored in settings.browseType (default 'All').
+const type = ref(me.value?.settings?.browseType || 'All')
 
 watch(
   () => props.selectedType,
@@ -265,21 +312,31 @@ watch(
   }
 )
 
-watch(type, (newVal) => {
+watch(type, async (newVal) => {
+  const settings = me.value?.settings
+
+  if (settings) {
+    settings.browseType = newVal
+
+    await authStore.saveAndGet({
+      settings,
+    })
+  }
+
   emit('update:selectedType', newVal)
 })
 
 // Sort
 
 // Rippling-out (#1): "New to you" (unseen and newly-visible first, then the rippling
-// order) is the default, plus a "Nearby" nearest-first option.
+// relevance order) is the default, plus "Newest posted" and "Closest" (nearest-first,
+// internal value 'Nearby' for backwards compatibility with sortMessages) options.
 const sortOptions = [
   { value: 'Unseen', text: 'New to you', selected: true },
   { value: 'Newest', text: 'Newest posted' },
-  { value: 'Nearby', text: 'Nearby' },
+  { value: 'Nearby', text: 'Closest' },
 ]
 
-const authStore = useAuthStore()
 const sort = computed({
   get() {
     return me.value?.settings?.browseSort || 'Unseen'
@@ -294,6 +351,106 @@ const sort = computed({
 
     emit('update:selectedSort', val)
   },
+})
+
+// Distance slider (#D)
+//
+// No fixed cap: the slider's right end is scaled to the farthest post distance in the
+// currently-loaded feed (with a floor so it's still usable on a tiny/empty feed). The
+// far-right ("Further") position stores BROWSE_DISTANCE_UNLIMITED rather than that
+// feed max, so the server's own reach limit keeps governing and newly-arriving distant
+// posts keep showing without the client capping them out.
+const FEED_MAX_FLOOR = 2
+
+const feedMax = computed(() => {
+  // Scale the slider's right end to the farthest post in the CURRENTLY-SHOWN feed. Which feed
+  // that is depends on the view: the nearby (reach) view is in nearbyStore, the "all my
+  // communities" view is in messageStore.myGroupsList. Reading the wrong one (nearbyStore is
+  // empty on mygroups) collapsed the slider max to its floor and mis-scaled the slider there.
+  //
+  // It depends ONLY on the feed (not on the saved browseMaxDistance), so it stays STABLE while
+  // the member drags: coupling it to browseMaxDistance made feedMax grow on every change, which
+  // moved the slider's right edge mid-interaction and, via the [maxDistance, feedMax] watch
+  // below, kept yanking the thumb back - a janky "clicking back" drag.
+  const feed =
+    browseView.value === 'mygroups'
+      ? messageStore.myGroupsList
+      : nearbyStore.messageList
+  const distances = (feed || [])
+    .map((m) => m.distance)
+    .filter((d) => typeof d === 'number' && isFinite(d))
+
+  if (!distances.length) {
+    return FEED_MAX_FLOOR
+  }
+
+  return Math.max(FEED_MAX_FLOOR, Math.ceil(Math.max(...distances)))
+})
+
+// Distance is meaningless without a known location.
+const hasLocation = computed(() => {
+  return !!(me.value && (me.value.lat || me.value.lng))
+})
+
+// Shown in every "Show posts from" view (nearby, all-my-groups, a single group), not just
+// Nearby: the mygroups feed now carries a per-post distance server-side too, so the slider
+// narrows whichever view is active. It only needs a known location to measure from.
+const showDistanceSlider = computed(() => {
+  return hasLocation.value
+})
+
+const maxDistance = computed({
+  get() {
+    return me.value?.settings?.browseMaxDistance ?? BROWSE_DISTANCE_UNLIMITED
+  },
+  async set(val) {
+    const settings = me.value?.settings
+    settings.browseMaxDistance = val
+
+    await authStore.saveAndGet({
+      settings,
+    })
+
+    emit('update:selectedMaxDistance', val)
+
+    // Keep the unseen-count badge in step with the filtered feed.
+    refetchCount()
+  },
+})
+
+// Where the thumb should sit for a given stored distance/feed-max pair: at the far
+// right when unlimited (or when the stored value is no longer less than the current
+// feed max, e.g. the feed has shrunk since it was saved).
+function sliderPositionFor(distance, max) {
+  return distance === BROWSE_DISTANCE_UNLIMITED || distance >= max
+    ? max
+    : distance
+}
+
+// Local slider position, separate from `maxDistance`. RangeSlider emits
+// update:modelValue (bound here) on every drag tick for an instant visual, and a
+// separate `change` event only on release/keyup - so we only save + refetch the count
+// once the member has settled on a value, not on every tick of the drag.
+const sliderValue = ref(sliderPositionFor(maxDistance.value, feedMax.value))
+
+watch([maxDistance, feedMax], ([newDistance, newMax]) => {
+  sliderValue.value = sliderPositionFor(newDistance, newMax)
+})
+
+function onSliderChange(val) {
+  maxDistance.value = val >= feedMax.value ? BROWSE_DISTANCE_UNLIMITED : val
+}
+
+// "Filters active" badge (#G): lights for ANY control that differs from its default -
+// not just narrowing ones - so members always have a quick visual cue that the feed
+// isn't showing the plain default view.
+const hasNonDefaultFilters = computed(() => {
+  return (
+    group.value !== -1 ||
+    sort.value !== 'Unseen' ||
+    type.value !== 'All' ||
+    maxDistance.value !== BROWSE_DISTANCE_UNLIMITED
+  )
 })
 </script>
 <style scoped lang="scss">
@@ -332,6 +489,16 @@ const sort = computed({
   color: $color-gray--darker;
 }
 
+/* "Show posts from:" is rendered as GroupSelect's own <label> in a child
+   component, which the scoped `.filters label` rule above can't reach - so it
+   showed in the default (larger) font. Match it to the other filter labels. */
+.group :deep(label) {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: $color-gray--darker;
+}
+
 .filters {
   display: grid;
 
@@ -352,7 +519,7 @@ const sort = computed({
 
   .type {
     grid-column: 1 / 2;
-    grid-row: 2 / 3;
+    grid-row: 3 / 4;
 
     @include media-breakpoint-up(md) {
       grid-column: 2 / 3;
@@ -360,12 +527,24 @@ const sort = computed({
     }
   }
 
-  .sort {
+  /* Distance slider sits to the left of Sort on desktop; on mobile it sits ABOVE
+     the Offer/Wanted (type) filter, so the "how far away" control reads first. */
+  .distance {
     grid-column: 1 / 2;
-    grid-row: 3 / 4;
+    grid-row: 2 / 3;
 
     @include media-breakpoint-up(md) {
       grid-column: 1 / 2;
+      grid-row: 3 / 4;
+    }
+  }
+
+  .sort {
+    grid-column: 1 / 2;
+    grid-row: 4 / 5;
+
+    @include media-breakpoint-up(md) {
+      grid-column: 2 / 3;
       grid-row: 3 / 4;
     }
   }
@@ -380,7 +559,7 @@ const sort = computed({
     }
   }
 
-  .isochrones {
+  .nearby-help {
     grid-column: 1 / 3;
     grid-row: 4 / 5;
 
@@ -397,5 +576,18 @@ const sort = computed({
   color: var(--color-gray-600);
   margin-top: 0.5rem;
   margin-bottom: 0;
+}
+
+/* "Filters active" indicator on the collapsed "Map & Filters" button - a small red
+   dot, styled consistently with the navbar's count badges. */
+.filters-active-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  padding: 0;
+  border-radius: 50%;
 }
 </style>

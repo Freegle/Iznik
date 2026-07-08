@@ -77,11 +77,21 @@ RUN cp install/iznik.conf.php /etc/iznik.conf \
     && echo "password=$SQLPASSWORD" >> ~/.my.cnf \
     && echo "redis" > /etc/iznikredis
 
-# Install composer dependencies
+# Install composer dependencies.
+# Retry composer install: codeload.github.com (composer's `dist` source)
+# intermittently returns HTTP 400 for a random subset of packages, which would
+# otherwise fail the whole build. Composer caches packages it already fetched,
+# so each retry only re-downloads the ones that failed previously. Mirrors the
+# --fetch-retries convention used for npm installs elsewhere in this repo.
 RUN wget https://getcomposer.org/composer-2.phar -O composer.phar \
     && php composer.phar self-update \
     && cd composer \
-    && echo Y | php ../composer.phar install \
+    && { n=0; until echo Y | php ../composer.phar install; do \
+           n=$((n+1)); \
+           [ "$n" -ge 5 ] && { echo "composer install failed after $n attempts" >&2; exit 1; }; \
+           echo "composer install attempt $n hit a transient network error; retrying in 15s..."; \
+           sleep 15; \
+         done; } \
     && cd ..
 
 # Cron jobs for background scripts (excluding messages_spatial)

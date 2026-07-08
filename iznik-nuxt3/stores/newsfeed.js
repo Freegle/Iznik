@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
+import { useAuthStore } from '~/stores/auth'
 
 export const useNewsfeedStore = defineStore({
   id: 'newsfeed',
@@ -204,6 +205,36 @@ export const useNewsfeedStore = defineStore({
         await this.fetchFeed()
       } else {
         await this.fetch(threadhead, true)
+
+        // Read-your-own-writes guarantee: the refetch above can miss the reply
+        // we just posted (replica lag on a degraded cluster, caches). The
+        // poster must ALWAYS see their own reply immediately, so if it is not
+        // in the store after the refetch, add an optimistic copy - a later
+        // fetch of the real row simply overwrites it by id.
+        if (id && replyto && !this.list[id]) {
+          const me = useAuthStore(this.config).user
+          this.addItems([
+            {
+              id,
+              userid: me?.id,
+              displayname: me?.displayname,
+              profile: me?.profile,
+              message,
+              replyto,
+              threadhead,
+              type: 'Message',
+              timestamp: new Date().toISOString(),
+              replies: [],
+              loves: 0,
+              optimistic: true,
+            },
+          ])
+
+          const parent = this.list[replyto]
+          if (parent && !parent.replies.includes(id)) {
+            parent.replies.push(id)
+          }
+        }
       }
 
       return id

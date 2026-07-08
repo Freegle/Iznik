@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -283,13 +286,15 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
-	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reply_attribution (
-		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
-		replied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, was_home_member TINYINT(1) NOT NULL,
-		PRIMARY KEY (msgid, userid), KEY rra_replied_at (replied_at))`)
-	// Two replies on an isolated day (5 days ago): one established member (home), one via rippling.
-	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES " +
-		"(900000091, 900000091, NOW() - INTERVAL 5 DAY, 1), (900000091, 900000092, NOW() - INTERVAL 5 DAY, 0)")
+	// Four replies on an isolated day (5 days ago), one per interesting bucket: a home
+	// member, a graded ripple_notified capture, a graded ripple_reach capture, and a
+	// legacy pre-migration row (attribution NULL, was_home_member=0) which must fold into
+	// unknown - NOT be credited to rippling as the old replies-minus-home number did.
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, attribution) VALUES " +
+		"(900000091, 900000091, NOW() - INTERVAL 5 DAY, 1, 'home'), " +
+		"(900000091, 900000092, NOW() - INTERVAL 5 DAY, 0, 'ripple_notified'), " +
+		"(900000091, 900000093, NOW() - INTERVAL 5 DAY, 0, 'ripple_reach'), " +
+		"(900000091, 900000094, NOW() - INTERVAL 5 DAY, 0, NULL)")
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = 900000091")
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
@@ -298,24 +303,31 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
 
-	// All three reply-KPI keys are present (arrays).
+	// All three reply-KPI keys are present (arrays), and the graded columns are flagged live.
 	_, hasRate := result["reply_rate_36h"].([]interface{})
 	_, hasDist := result["reply_distance_median"].([]interface{})
 	split, hasSplit := result["reply_source_split"].([]interface{})
 	assert.True(t, hasRate, "reply_rate_36h present")
 	assert.True(t, hasDist, "reply_distance_median present")
 	assert.True(t, hasSplit, "reply_source_split present")
+	assert.Equal(t, true, result["attribution_channels_available"],
+		"graded columns exist on the migrated test DB")
 
-	// The seeded day's split row: 2 replies, 1 home, 1 ripple -> 50% rippling.
+	// The seeded day's split row: 4 replies -> 1 home, 1 notified, 1 reach, 1 unknown;
+	// ripple share counts only the definite ripple channels (2/4 = 50%).
 	found := false
 	for _, r := range split {
-		if m, ok := r.(map[string]interface{}); ok && m["replies"] == float64(2) && m["home"] == float64(1) {
+		if m, ok := r.(map[string]interface{}); ok && m["replies"] == float64(4) && m["home"] == float64(1) {
 			found = true
-			assert.Equal(t, float64(1), m["ripple"], "one rippling reply")
-			assert.Equal(t, float64(50), m["ripple_pct"], "50% of replies via rippling")
+			assert.Equal(t, float64(1), m["ripple_notified"], "one notified-ledger reply")
+			assert.Equal(t, float64(1), m["ripple_reach"], "one reach-fed browse reply")
+			assert.Equal(t, float64(1), m["unknown"],
+				"a legacy un-evidenced row folds into unknown, not ripple")
+			assert.Equal(t, float64(2), m["ripple"], "ripple = notified + group + reach only")
+			assert.Equal(t, float64(50), m["ripple_pct"])
 		}
 	}
-	assert.True(t, found, "the seeded rippling/home split is surfaced")
+	assert.True(t, found, "the seeded channel split is surfaced")
 }
 
 // The ?start= / ?end= range bounds every headline KPI so a treatment group's before-vs-after can
@@ -328,10 +340,6 @@ func TestRipplingMetricsDateRange(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
-	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reply_attribution (
-		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
-		replied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, was_home_member TINYINT(1) NOT NULL,
-		PRIMARY KEY (msgid, userid), KEY rra_replied_at (replied_at))`)
 	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES " +
 		"(900000291, 900000291, '2020-01-15 12:00:00', 0)")
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = 900000291")
@@ -582,36 +590,191 @@ func TestRipplingMetricsDistanceCohorts(t *testing.T) {
 	assert.Greater(t, row["ripple_median_km"].(float64), row["home_median_km"].(float64), "rippled replies are further away")
 }
 
-// ?trialOnly=1 scopes the metrics to the RIPPLE_WITHIN_GROUPS trial set, which Laravel mirrors
-// into config['ripple.within_groups'] (the Go API runs on a different server and can't read that
-// batch env var). The endpoint echoes the resolved set so the dashboard can show it. Without the
-// param there is no trial scope and the set is empty.
-func TestRipplingMetricsTrialScope(t *testing.T) {
+// The trial is over - rippling is fully live - so the trial scoping is retired: the endpoint
+// ignores a stale ?trialOnly=1 from a cached client (no filtering, no trial keys in the
+// response) instead of scoping to the old RIPPLE_WITHIN_GROUPS set.
+func TestRipplingMetricsTrialScopeRetired(t *testing.T) {
 	prefix := uniquePrefix("rippletrial")
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	db := database.DBConn
-	db.Exec("INSERT INTO config (`key`, value) VALUES ('ripple.within_groups', '99000001,99000002') " +
-		"ON DUPLICATE KEY UPDATE value = VALUES(value)")
-	defer db.Exec("DELETE FROM config WHERE `key` = 'ripple.within_groups'")
-
-	// With the param: trial_only flagged and trial_group_ids echoes the config-mirrored set.
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?trialOnly=1&jwt=%s", token), nil))
 	assert.Equal(t, 200, resp.StatusCode)
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, true, result["trial_only"], "trial_only flagged when ?trialOnly=1")
-	ids, _ := result["trial_group_ids"].([]interface{})
-	assert.ElementsMatch(t, []interface{}{float64(99000001), float64(99000002)}, ids,
-		"trial_group_ids echoes RIPPLE_WITHIN_GROUPS mirrored via config")
+	_, hasTrialOnly := result["trial_only"]
+	_, hasTrialIDs := result["trial_group_ids"]
+	assert.False(t, hasTrialOnly, "trial_only no longer in the response")
+	assert.False(t, hasTrialIDs, "trial_group_ids no longer in the response")
+}
 
-	// Without the param: no trial scope, empty set (even though the config row exists).
-	resp2, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp2.StatusCode)
-	var result2 map[string]interface{}
-	json.Unmarshal(rsp(resp2), &result2)
-	assert.Equal(t, false, result2["trial_only"], "trial_only false without the param")
-	ids2, _ := result2["trial_group_ids"].([]interface{})
-	assert.Empty(t, ids2, "trial_group_ids empty without the param")
+// The client-reported reply surfaces (advisory cross-check of the attribution channels) are
+// summarised over the same window, with NULL reported as '(not reported)'.
+func TestRipplingMetricsClientSourceSummary(t *testing.T) {
+	prefix := uniquePrefix("ripplesrc")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, attribution, client_source) VALUES " +
+		"(900000391, 900000391, NOW() - INTERVAL 3 DAY, 0, 'ripple_notified', 'browse'), " +
+		"(900000391, 900000392, NOW() - INTERVAL 3 DAY, 0, 'ripple_notified', 'browse'), " +
+		"(900000391, 900000393, NOW() - INTERVAL 3 DAY, 1, 'home', NULL)")
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = 900000391")
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	summary, has := result["client_source_summary"].([]interface{})
+	assert.True(t, has, "client_source_summary present")
+	// The seeded rows carry client_source - evidence only live capture writes - so the
+	// live-capture boundary date must be surfaced for the dashboard's chart marker.
+	assert.NotEmpty(t, result["attribution_capture_from"],
+		"attribution_capture_from set once live-captured evidence exists")
+	counts := map[string]float64{}
+	for _, r := range summary {
+		if m, ok := r.(map[string]interface{}); ok {
+			counts[m["source"].(string)] += m["count"].(float64)
+		}
+	}
+	assert.GreaterOrEqual(t, counts["browse"], float64(2), "browse surfaces counted")
+	assert.GreaterOrEqual(t, counts["(not reported)"], float64(1), "NULL surfaces reported honestly")
+}
+
+// The legacy reply-source variant - what runs against a production DB that predates the
+// graded-attribution migration - must derive the durable channels live: a notified-ledger hit
+// outranks a rippled-group membership, home wins over both, and everything else is unknown
+// (never silently credited to rippling). Runs the legacy SQL directly against the migrated
+// test DB: the variant reads none of the graded columns, so its behaviour is identical there.
+func TestReplySourceSplitLegacyVariant(t *testing.T) {
+	prefix := uniquePrefix("legacysplit")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy split test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach_notified (
+		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (msgid, userid), KEY rrn_userid (userid))`)
+
+	// A rippled-in copy of the post, and a replier who was an established member of that
+	// group before it arrived.
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW() - INTERVAL 1 DAY, 'Approved', 0, 1)", msgID, rippledGroup)
+	groupMemberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, groupMemberID, rippledGroup, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 2 DAY, collection = 'Approved' WHERE userid = ? AND groupid = ?",
+		groupMemberID, rippledGroup)
+
+	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
+	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 DAY)",
+		msgID, notifiedID)
+
+	unknownID := CreateTestUser(t, prefix+"_unknown", "User")
+
+	// Legacy rows: was_home_member only, graded columns untouched (as an unmigrated DB would have).
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+
+		"(?, ?, NOW() - INTERVAL 2 HOUR, 1), "+ // home member
+		"(?, ?, NOW() - INTERVAL 2 HOUR, 0), "+ // notified
+		"(?, ?, NOW() - INTERVAL 2 HOUR, 0), "+ // rippled-group member
+		"(?, ?, NOW() - INTERVAL 2 HOUR, 0)", // no evidence -> unknown
+		msgID, posterID, msgID, notifiedID, msgID, groupMemberID, msgID, unknownID)
+
+	rows := []rippling.ReplySourceRow{}
+	start := time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05")
+	end := time.Now().Format("2006-01-02 15:04:05")
+	err := db.Raw(rippling.ReplySourceSplitSQL(false, ""), start, end).Scan(&rows).Error
+	assert.NoError(t, err)
+
+	var row *rippling.ReplySourceRow
+	for i := range rows {
+		if rows[i].Replies >= 4 && rows[i].Home >= 1 {
+			row = &rows[i]
+			break
+		}
+	}
+	if assert.NotNil(t, row, "the seeded day is present") {
+		assert.GreaterOrEqual(t, row.RippleNotified, 1, "notified-ledger reply derived live")
+		assert.GreaterOrEqual(t, row.RippleGroup, 1, "rippled-group membership derived live")
+		assert.Equal(t, 0, row.RippleReach, "location channels are not derivable retrospectively")
+		assert.Equal(t, 0, row.OrganicLocal, "location channels are not derivable retrospectively")
+		assert.GreaterOrEqual(t, row.Unknown, 1, "un-evidenced replies sit in unknown")
+	}
+
+	// The WIDE variant must derive these same attribution-NULL rows per row, not fold them
+	// into home/unknown - otherwise the window between the migration landing on production
+	// and the backfill running reads as a misleading zero-ripple chart (seen live 2026-07-07).
+	wideRows := []rippling.ReplySourceRow{}
+	err = db.Raw(rippling.ReplySourceSplitSQL(true, ""), start, end).Scan(&wideRows).Error
+	assert.NoError(t, err)
+	var wideRow *rippling.ReplySourceRow
+	for i := range wideRows {
+		if wideRows[i].Replies >= 4 && wideRows[i].Home >= 1 {
+			wideRow = &wideRows[i]
+			break
+		}
+	}
+	if assert.NotNil(t, wideRow, "the seeded day is present in the wide variant") {
+		assert.GreaterOrEqual(t, wideRow.RippleNotified, 1, "NULL-attribution notified reply derived per row")
+		assert.GreaterOrEqual(t, wideRow.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
+	}
+}
+
+// Anchor regression (Discourse #9808): a RIPPLED post's reply-rate day/window must key on its
+// FIRST-RIPPLE date (MIN rippled_in arrival) — when rippling actually started — not on
+// messages.arrival (frozen at first-ever post) nor even its home appearance. A home-only post
+// stays anchored on its appearance (origin messages_groups.arrival). This dates rippled posts by
+// when the treatment began, and keeps the rippled cohort empty before go-live.
+func TestRipplingMetricsAnchorsRippledCohortOnFirstRippleDate(t *testing.T) {
+	prefix := uniquePrefix("ripanchor")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	db := database.DBConn
+
+	poster := CreateTestUser(t, prefix, "Poster")
+	group := CreateTestGroup(t, prefix)
+	other := CreateTestGroup(t, prefix+"b")
+	mid := CreateTestMessage(t, poster, group, "OFFER: anchor "+prefix, 51.5, -0.1)
+
+	// Three distinct dates: stale original post (30d ago), home appearance (3d ago), and the
+	// FIRST ripple (2d ago). The rippled cohort must be dated on the ripple date (2d ago).
+	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 30 DAY WHERE id = ?", mid)
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ? AND rippled_in = 0", mid)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW() - INTERVAL 2 DAY, 'Approved', 0, 1)", mid, other)
+
+	start := time.Now().AddDate(0, 0, -5).Format("2006-01-02 15:04:05")
+	end := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s&start=%s&end=%s",
+		token, url.QueryEscape(start), url.QueryEscape(end)), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	rows, ok := result["reply_rate_36h"].([]interface{})
+	assert.True(t, ok, "reply_rate_36h present")
+
+	// The post's home appearance (3d ago) and stale original arrival (30d ago) both differ from
+	// its first-ripple date (2d ago); the rippled cohort must land on the first-ripple date.
+	rippleDay := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
+	foundOnRippleDay := false
+	for _, r := range rows {
+		m, _ := r.(map[string]interface{})
+		if m["day"] == rippleDay {
+			foundOnRippleDay = true
+			assert.GreaterOrEqual(t, m["ripple_posts"].(float64), float64(1),
+				"rippled post is in the rippled cohort on its first-ripple day")
+		}
+	}
+	assert.True(t, foundOnRippleDay,
+		"rippled post appears on its first-ripple day, proving the cohort anchors on the ripple date")
 }

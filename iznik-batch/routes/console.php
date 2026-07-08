@@ -24,6 +24,13 @@ if (!function_exists('cronLog')) {
     }
 }
 
+// Point the withoutOverlapping() mutexes below at the configured store. Under the
+// default LOCK_STORE=flock this is a no-op (FlockEventMutex handles locking); under
+// LOCK_STORE=redis it backs overlap protection with a redis TTL lock that survives
+// across the per-tick schedule:run processes and is independent of the primary DB —
+// the resilient path for our all-runInBackground jobs. See App\Console\SchedulerMutex.
+\App\Console\SchedulerMutex::apply(app(\Illuminate\Console\Scheduling\Schedule::class));
+
 // =============================================================================
 // ACTIVE SCHEDULED COMMANDS
 // =============================================================================
@@ -51,7 +58,7 @@ Schedule::command('mail:welcome:send --limit=100 --spool')
 // disabled and deploy:refresh is too heavy to schedule.
 Schedule::command('deploy:record-commit')
     ->everyFifteenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('deploy:record-commit'))
     ->runInBackground();
 
@@ -81,7 +88,7 @@ Schedule::command('mail:chat:user2mod --max-iterations=60 --spool')
 // Sends alert email to GeekAlerts if fetch fails.
 Schedule::command('data:update-cpi')
     ->monthly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('data:update-cpi'))
     ->runInBackground();
 
@@ -89,7 +96,7 @@ Schedule::command('data:update-cpi')
 // CGNAT shared-egress IPs stay exempt from the IP-abuse check (Discourse #9768).
 Schedule::command('spam:refresh-mobile-cidrs')
     ->monthly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('spam:refresh-mobile-cidrs'))
     ->runInBackground();
 
@@ -98,7 +105,7 @@ Schedule::command('spam:refresh-mobile-cidrs')
 // in Pending with failure reasons stored, then notifies group mods.
 Schedule::command('messages:contentcheck')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
@@ -110,9 +117,14 @@ Schedule::command('messages:contentcheck')
 // all, so no reach is computed, nothing is rippled into new groups, and every reach consumer stays
 // inert. This lets the whole feature ship dark and be turned on later with just RIPPLE_ENABLED=true.
 if (config('freegle.ripple.enabled')) {
-    Schedule::command('ripple:expand')
+    // --limit=500: the ExpandCommand default is 50 (a conservative memory-pressure floor). Running
+    // network-wide the reach population reaches ~11k expanding rows generating ~185 due-advances per
+    // tick; initialiseNew and advanceDue each take the full limit, so 500 clears steady-state advances
+    // with headroom and drains any initialisation backlog quickly, while staying well under the
+    // routing-server load the rollout sustained. Tune via historical due-rate if the routing host strains.
+    Schedule::command('ripple:expand', ['--limit' => 500])
         ->everyMinute()
-        ->withoutOverlapping()
+        ->withoutOverlapping(15)
         ->sendOutputTo(cronLog('ripple:expand'))
         ->runInBackground();
 }
@@ -123,9 +135,13 @@ if (config('freegle.ripple.enabled')) {
 // run with RIPPLE_ENABLED=false and RIPPLE_WITHIN_GROUPS set, so only this scoped cron is active.
 $rippleWithinGroups = (array) config('freegle.ripple.within_groups', []);
 if (!empty($rippleWithinGroups)) {
-    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups)])
+    // --limit=200: at scoped-experiment scale the reach population is ~3.6k expanding rows generating
+    // ~60 due-advances per tick, so the default 50 budget is fully consumed advancing and starves new
+    // initialisation (the new-group backlog stops draining). 200 leaves headroom for both advances and
+    // new inits without over-driving the routing server. Tune up if due-advances approach the limit.
+    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups), '--limit' => 200])
         ->everyMinute()
-        ->withoutOverlapping()
+        ->withoutOverlapping(15)
         ->sendOutputTo(cronLog('ripple:expand-experiment'))
         ->runInBackground();
 }
@@ -134,8 +150,17 @@ if (!empty($rippleWithinGroups)) {
 // Inert until the reach engine is live -- nothing to release until a reply is held.
 Schedule::command('ripple:release-replies')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('ripple:release-replies'))
+    ->runInBackground();
+
+// Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot
+// ripple:expand cron so its routing/KNN calls can't slow rippling (freegle.ripple.proximity_notes
+// gates it; withoutOverlapping keeps a slow run from stacking).
+Schedule::command('ripple:proximity-notes')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(15)
+    ->sendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
 // Update UK spatial data - runs monthly.
@@ -143,7 +168,7 @@ Schedule::command('ripple:release-replies')
 // Signals Go spatial server to reload after update.
 Schedule::command('spatial:update-data')
     ->monthlyOn(1, '03:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('spatial:update-data'))
     ->runInBackground();
 
@@ -151,7 +176,7 @@ Schedule::command('spatial:update-data')
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('messages:auto-approve'))
     ->runInBackground();
 
@@ -159,7 +184,7 @@ Schedule::command('messages:auto-approve')
 // V1: cron/autorepost.php
 Schedule::command('messages:auto-repost')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('messages:auto-repost'))
     ->runInBackground();
 
@@ -167,7 +192,7 @@ Schedule::command('messages:auto-repost')
 // V1: cron/chaseup.php
 Schedule::command('messages:chase-up')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('messages:chase-up'))
     ->runInBackground();
 
@@ -175,7 +200,7 @@ Schedule::command('messages:chase-up')
 // V1: cron/searchdups.php
 Schedule::command('cleanup:search-duplicates')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('cleanup:search-duplicates'))
     ->runInBackground();
 
@@ -183,7 +208,7 @@ Schedule::command('cleanup:search-duplicates')
 // V1: cron/chatdups.php
 Schedule::command('cleanup:chat-duplicates')
     ->everyTwoHours()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('cleanup:chat-duplicates'))
     ->runInBackground();
 
@@ -191,7 +216,7 @@ Schedule::command('cleanup:chat-duplicates')
 // V1: cron/archive_attachments.php — disabled pending sign-off
 Schedule::command('cleanup:archive-profile-images')
     ->dailyAt('22:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('cleanup:archive-profile-images'))
     ->runInBackground();
 
@@ -199,7 +224,7 @@ Schedule::command('cleanup:archive-profile-images')
 // V1: cron/purge_sessions.php
 Schedule::command('cleanup:sessions')
     ->dailyAt('03:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('cleanup:sessions'))
     ->runInBackground();
 
@@ -209,7 +234,7 @@ Schedule::command('cleanup:sessions')
 // not Monolog-managed at all - this keeps storage/logs bounded.
 Schedule::command('logs:rotate')
     ->dailyAt('00:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('logs:rotate'))
     ->runInBackground();
 
@@ -217,7 +242,7 @@ Schedule::command('logs:rotate')
 // V1: cron/check_spammers.php (every 5 minutes)
 Schedule::command('users:remove-spammers')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('users:remove-spammers'))
     ->runInBackground();
 
@@ -225,7 +250,7 @@ Schedule::command('users:remove-spammers')
 // V1: cron/bounce.php + bounce_users.php
 Schedule::command('mail:bounced')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('mail:bounced'))
     ->runInBackground();
 
@@ -233,7 +258,7 @@ Schedule::command('mail:bounced')
 // charities table (which would otherwise sit Pending, unwatched).
 Schedule::command('charity:notify-signups')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('charity:notify-signups'))
     ->runInBackground();
 
@@ -242,7 +267,7 @@ Schedule::command('charity:notify-signups')
 // V1: cron/mod_notifs.php (hourly)
 Schedule::command('mail:mod-notifs')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('mail:mod-notifs'))
     ->runInBackground();
 
@@ -254,7 +279,7 @@ Schedule::command('mail:mod-notifs')
 // in the bulk3-internal crontab at the same time to avoid double-sending.
 Schedule::command('mail:alerts:send')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('mail:alerts:send'))
     ->runInBackground();
 
@@ -270,6 +295,15 @@ Schedule::command('mail:alerts:send')
 // missed, and failureIssueThreshold=2 means a single sporadic miss won't raise
 // an issue — it takes two consecutive misses — with recoveryThreshold=1
 // clearing it on the next good check-in.
+// Do NOT add ->sentryMonitor() to windowed (->between()) or ->withoutOverlapping() jobs.
+// sentryMonitor() derives its expected check-in cadence from the *raw* cron expression, so
+// e.g. everyThirtyMinutes()->between('7:00','12:00') reports '*/30 * * * *' to Sentry — a
+// full-day cadence — and Sentry then raises a missed-check-in issue for every tick outside
+// the window. withoutOverlapping() skips are likewise invisible to Sentry and look like
+// missed check-ins. For those jobs use outcome-based monitoring (monitor:scheduled-outcomes
+// + ScheduledOutcomeRegistry), which asserts on the job's side effects regardless of when it
+// ran. ->sentryMonitor() is only safe on fixed-cadence, always-running tasks — currently just
+// this heartbeat and the outcome monitor itself.
 Schedule::call(fn () => null)
     ->everyFiveMinutes()
     ->name('scheduler-heartbeat')
@@ -280,7 +314,7 @@ Schedule::call(fn () => null)
 // configurable thresholds during daytime hours.
 Schedule::command('monitor:email-health')
     ->everyFifteenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('monitor:email-health'))
     ->runInBackground();
 
@@ -296,7 +330,7 @@ Schedule::command('monitor:email-health')
 Schedule::command('monitor:scheduled-outcomes')
     ->everyTenMinutes()
     ->name('scheduled-outcomes-monitor')
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     // sentryMonitor(slug, checkInMargin, maxRuntime, updateMonitorConfig, failureIssueThreshold, recoveryThreshold)
     ->sentryMonitor('scheduled-outcomes-monitor', 20, null, true, 2, 1)
     ->sendOutputTo(cronLog('monitor:scheduled-outcomes'));
@@ -305,7 +339,7 @@ Schedule::command('monitor:scheduled-outcomes')
 // V1: cron/notification_chaseup.php (every 5 minutes)
 Schedule::command('mail:notifications:chaseup')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('mail:notifications:chaseup'))
     ->runInBackground();
 
@@ -313,7 +347,7 @@ Schedule::command('mail:notifications:chaseup')
 // V1: cron/purge_chats.php
 Schedule::command('purge:chats')
     ->dailyAt('02:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('purge:chats'))
     ->runInBackground();
 
@@ -321,7 +355,7 @@ Schedule::command('purge:chats')
 // V1: cron/purge_logs.php
 Schedule::command('purge:logs')
     ->dailyAt('03:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('purge:logs'))
     ->runInBackground();
 
@@ -329,7 +363,7 @@ Schedule::command('purge:logs')
 // V1: cron/email_validate.php
 Schedule::command('emails:validate')
     ->dailyAt('04:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
 
@@ -337,7 +371,7 @@ Schedule::command('emails:validate')
 // V1: cron/membercounts.php
 Schedule::command('groups:update-counts')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('groups:update-counts'))
     ->runInBackground();
 
@@ -346,7 +380,7 @@ Schedule::command('groups:update-counts')
 // V1: cron/chat_latestmessage.php
 Schedule::command('chats:update-counts')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('chats:update-counts'))
     ->runInBackground();
 
@@ -354,7 +388,7 @@ Schedule::command('chats:update-counts')
 // V1: cron/users_modmails.php (every 5 minutes)
 Schedule::command('users:update-modmails')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('users:update-modmails'))
     ->runInBackground();
 
@@ -362,7 +396,7 @@ Schedule::command('users:update-modmails')
 // V1: cron/lastaccess.php
 Schedule::command('users:update-lastaccess')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:update-lastaccess'))
     ->runInBackground();
 
@@ -370,7 +404,7 @@ Schedule::command('users:update-lastaccess')
 // V1: cron/chat_expected.php (every 5 minutes)
 Schedule::command('chats:update-expected')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:update-expected'))
     ->runInBackground();
 
@@ -378,7 +412,7 @@ Schedule::command('chats:update-expected')
 // V1: cron/tryst.php (every 1 minute)
 Schedule::command('chats:send-tryst-reminders')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
     ->runInBackground();
 
@@ -386,7 +420,7 @@ Schedule::command('chats:send-tryst-reminders')
 // V1: cron/chat_chaseupmods.php (daily 15:30)
 Schedule::command('chats:chaseup-mods')
     ->dailyAt('15:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('chats:chaseup-mods'))
     ->runInBackground();
 
@@ -394,7 +428,7 @@ Schedule::command('chats:chaseup-mods')
 // V1: cron/chat_spam.php (every 5 minutes)
 Schedule::command('chats:process-spam')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:process-spam'))
     ->runInBackground();
 
@@ -403,7 +437,7 @@ Schedule::command('chats:process-spam')
 // e.g. to reduce latency by requesting an immediate sync after sending a chat message.
 Schedule::command('tn:sync')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->runInBackground();
 
 // =============================================================================
@@ -430,30 +464,83 @@ Schedule::command('tn:sync')
 // guard turns every later tick into a no-op, and withoutOverlapping stops a
 // second start while the multi-hour run is still going. A missed 07:00 thus
 // self-heals at 07:30/08:00/… instead of being lost for the day.
-Schedule::command('mail:digest:unified --mode=daily')
-    ->timezone(config('freegle.timezone'))
-    ->everyThirtyMinutes()
-    ->between('7:00', '12:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:digest:unified.daily'))
-    ->runInBackground();
+// Sharded (full cutover, allowlist '*'). A single worker reaches only a fraction of the
+// ~78k daily members inside the 5-hour 07:00-12:00 window, so the rest perpetually
+// backlog. Partition users across parallel workers by CRC32(users.id) % shards — a HASH,
+// not MOD(id): under Galera the auto-increment stride equals the cluster size so raw ids
+// skew a MOD-based split (see UnifiedDigestService). Same disjoint-partition model
+// immediate mode uses, sharded by user instead of group. Each shard has its own flock via
+// lockKeySuffix() (mode+shard keyed), so a still-running multi-hour shard self-bounces the
+// next 30-min tick and shards never block each other or the immediate/reach shards.
+// Per-shard memory is bounded by DIGEST_LOAD_CAP. Profiling the workers (2026-07-03, 8-core
+// box) showed each shard runs at only ~42% of a core — the per-user cost is PHP compute +
+// several REMOTE-prod-DB round trips (getPostsForUser/reach-gate/scoring), so a worker spends
+// ~58% of its time waiting on the DB, not on any shared local service (it does NOT call the
+// routing server; MJML is the in-process mrml engine). That makes it embarrassingly parallel:
+// extra shards mostly overlap DB latency for near-free, and the box sits ~60% idle with 4.
+// So 8 (matches immediate) to drain the catch-up ~2x faster; safe to raise further while CPU
+// idle stays high. (The earlier load-40 "saturation" at 8 was the post-reboot boot storm —
+// spatial graph rebuild + immediate backlog — not steady state.)
+$dailyShardCount = 8;
+foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
+    Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
+        ->timezone(config('freegle.timezone'))
+        // everyMinute (not everyThirtyMinutes): a daily sweep of a shard's eligible
+        // users takes as long as it takes; when it finishes, the very next tick
+        // relaunches it so residual backlog / newly-due users drain within ~60s
+        // instead of idling up to 30 minutes. Overlap is prevented by the command's
+        // own flock (PreventsOverlapping, keyed per mode+shard) — a tick that fires
+        // while the previous sweep is still running just logs "Already running,
+        // exiting." (verified live 2026-07-03). The once-per-London-day guard makes
+        // every post-send tick a cheap no-op, so this is safe to run continuously.
+        ->everyMinute()
+        // 07:00–12:00 UK local time (Europe/London, so BST-correct). This is the intended
+        // member-facing window — digests arrive in the morning. The daily population (~79k,
+        // ~tripled by rippling) can't fully clear in 4h at current throughput, so the run is
+        // ordered MOST-OVERDUE-FIRST (see streamDailyOverdueFirst): the window sends as many
+        // of the most-lagged recipients as it can each morning and the lag rotates fairly
+        // across everyone — no one is permanently starved, and as throughput rises the window
+        // reaches further until it completes daily. A 13:00 "still lagging" check
+        // (mail:digest:daily-lag-check below) alerts if a large backlog remains after the window.
+        ->between('7:00', '12:00')
+        ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
+        ->runInBackground();
+}
 
-// Daily sharding (commented until the full cutover): once the allowlist is
-// '*' the single worker above won't keep up with the whole userbase, so
-// partition users by MOD(users.id, shards) across N parallel workers — the
-// same disjoint-partition model immediate mode uses below, but sharded by
-// user instead of group. Replace the single entry above with this loop:
-//
-// $dailyShardCount = 4;
-// foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
-//     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
-//         ->timezone(config('freegle.timezone'))
-//         ->everyThirtyMinutes()
-//         ->between('7:00', '12:00')
-//         ->withoutOverlapping()
-//         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
-//         ->runInBackground();
-// }
+// "Still lagging" alert — one hour after the 07:00-12:00 daily window closes, check whether the
+// morning run kept up. Counts recently-active daily recipients (sent within the last 7 days, so
+// this excludes the permanently-inactive who never get a digest and the never-sent) who did NOT
+// get today's digest. In steady state the morning window clears them and this is ~0; a large
+// count means we're under capacity and the lag is rotating (see streamDailyOverdueFirst) — the
+// signal to add throughput/hardware. Logged at error level so it reaches Sentry; fires daily
+// until capacity catches up, which is the intended KPI, not noise.
+Schedule::call(function () {
+    $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
+    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(7)->setTimezone('UTC')->toDateTimeString();
+
+    $lagging = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->where('mode', 'daily')
+        ->where('lastsent', '>=', $activeSinceUtc)
+        ->where('lastsent', '<', $londonDayStartUtc)
+        ->count();
+
+    $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
+    if ($lagging > $threshold) {
+        \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 07:00-12:00 window', [
+            'lagging_active_recipients' => $lagging,
+            'threshold' => $threshold,
+            'checked_at' => 'London 13:00',
+        ]);
+    } else {
+        \Illuminate\Support\Facades\Log::info('Daily digest kept up with the morning window', [
+            'lagging_active_recipients' => $lagging,
+        ]);
+    }
+})
+    ->name('mail:digest:daily-lag-check')
+    ->timezone(config('freegle.timezone'))
+    ->dailyAt('13:00')
+    ->withoutOverlapping(60);
 
 // Daily new-posts push notification (push:daily-posts).
 //
@@ -466,7 +553,7 @@ Schedule::command('push:daily-posts')
     ->timezone(config('freegle.timezone'))
     ->everyThirtyMinutes()
     ->between('7:30', '12:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('push:daily-posts'))
     ->runInBackground();
 
@@ -525,13 +612,13 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:donations:thank'))
     ->runInBackground();
 
 Schedule::command('mail:donations:ask')
     ->dailyAt('17:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:donations:ask'))
     ->runInBackground();
 
@@ -545,7 +632,7 @@ Schedule::command('mail:donations:ask')
 Schedule::command('mail:donations:summary')
     ->hourly()
     ->between('06:00', '22:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('mail:donations:summary'))
     ->runInBackground();
 
@@ -558,7 +645,7 @@ Schedule::command('mail:donations:summary')
 // last status mail; recipient is freegle.mail.thanks_addr.
 Schedule::command('mail:donations:thank-prep')
     ->dailyAt('20:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:donations:thank-prep'))
     ->runInBackground();
 
@@ -583,14 +670,14 @@ Schedule::command('queue:background-tasks --max-iterations=60 --spool')
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
     ->dailyAt('04:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:spool:process'))
     ->runInBackground();
 
 // Clean up incoming email archives older than 48 hours.
 Schedule::command('mail:cleanup-archive')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('mail:cleanup-archive'))
     ->runInBackground();
 
@@ -598,7 +685,7 @@ Schedule::command('mail:cleanup-archive')
 // V1: cron/birthday.php (daily 12:00)
 Schedule::command('birthday:send-emails')
     ->dailyAt('12:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('birthday:send-emails'))
     ->runInBackground();
 
@@ -606,7 +693,7 @@ Schedule::command('birthday:send-emails')
 // V1: cron/mod_active.php (Monday 15:00)
 Schedule::command('groups:check-mod-welfare')
     ->weeklyOn(1, '15:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('groups:check-mod-welfare'))
     ->runInBackground();
 
@@ -618,7 +705,7 @@ Schedule::command('groups:check-mod-welfare')
 // on the same day.
 Schedule::command('groups:welcome-review')
     ->dailyAt('15:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('groups:welcome-review'))
     ->runInBackground();
 
@@ -626,7 +713,7 @@ Schedule::command('groups:welcome-review')
 // V1: cron/lovejunk_tn_invoice.php (1st of month at 15:00)
 Schedule::command('lovejunk:send-tn-invoice')
     ->monthlyOn(1, '15:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('lovejunk:send-tn-invoice'))
     ->runInBackground();
 
@@ -635,7 +722,7 @@ Schedule::command('lovejunk:send-tn-invoice')
 // engagement='Inactive' and runs per-user eligibility queries.
 Schedule::command('mail:engage')
     ->dailyAt('16:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:engage'))
     ->runInBackground();
 
@@ -643,7 +730,7 @@ Schedule::command('mail:engage')
 // V1: cron/stories.php (weekly Saturday 11:00)
 Schedule::command('stories:ask')
     ->weeklyOn(6, '11:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('stories:ask'))
     ->runInBackground();
 
@@ -656,7 +743,7 @@ Schedule::command('stories:ask')
 // then marks the suggested admin as complete.
 Schedule::command('mail:admin:copy')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('mail:admin:copy'))
     ->runInBackground();
 
@@ -664,7 +751,7 @@ Schedule::command('mail:admin:copy')
 // Only processes admins that are approved (pending=0) and not yet complete.
 Schedule::command('mail:admin:send --spool')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('mail:admin:send'))
     ->runInBackground();
 
@@ -672,7 +759,7 @@ Schedule::command('mail:admin:send --spool')
 // Sends reminder emails after 48h, once per day, up to 7 days.
 Schedule::command('mail:admin:chase')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('mail:admin:chase'))
     ->runInBackground();
 
@@ -686,7 +773,7 @@ Schedule::command('mail:admin:chase')
 // IncomingMailService creates messages with processingrequired=1; this makes them visible to notifications.
 Schedule::command('chats:process-incoming')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:process-incoming'))
     ->runInBackground();
 
@@ -695,7 +782,7 @@ Schedule::command('chats:process-incoming')
 // Go API creates memberships_history with processingrequired=1; this sends welcome emails + review flags.
 Schedule::command('memberships:process')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('memberships:process'))
     ->runInBackground();
 
@@ -703,7 +790,7 @@ Schedule::command('memberships:process')
 // V1: cron/exports.php (every 1 minute)
 Schedule::command('users:process-exports')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('users:process-exports'))
     ->runInBackground();
 
@@ -711,7 +798,7 @@ Schedule::command('users:process-exports')
 // V1: cron/engage_update.php (daily at 03:00)
 Schedule::command('users:update-engagement')
     ->dailyAt('03:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('users:update-engagement'))
     ->runInBackground();
 
@@ -719,7 +806,7 @@ Schedule::command('users:update-engagement')
 // V1: cron/message_deindex.php (daily at 01:00)
 Schedule::command('messages:deindex')
     ->dailyAt('01:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('messages:deindex'))
     ->runInBackground();
 
@@ -730,7 +817,7 @@ Schedule::command('messages:deindex')
 // run after migration may bulk-promote backlog (catch-up).
 Schedule::command('microvolunteering:score')
     ->dailyAt('23:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('microvolunteering:score'))
     ->runInBackground();
 
@@ -739,7 +826,7 @@ Schedule::command('microvolunteering:score')
 // V1: cron/microvolunteering.php (every 5 minutes).
 Schedule::command('microvolunteering:notify')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('microvolunteering:notify'))
     ->runInBackground();
 
@@ -749,7 +836,7 @@ Schedule::command('microvolunteering:notify')
 // V1: cron/user_exhort.php (every minute).
 Schedule::command('notifications:exhort')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('notifications:exhort'))
     ->runInBackground();
 
@@ -757,7 +844,7 @@ Schedule::command('notifications:exhort')
 // Downloads + unzips the CSV itself. V1: cron/doogal wrapper (daily at 03:00).
 Schedule::command('locations:update-postcodes')
     ->dailyAt('03:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('locations:update-postcodes'))
     ->runInBackground();
 
@@ -765,7 +852,7 @@ Schedule::command('locations:update-postcodes')
 // V1: cron/paypal_download.php (every 4 hours at :30). Skips if PayPal creds unset.
 Schedule::command('donations:paypal-download')
     ->cron('30 */4 * * *')
-    ->withoutOverlapping()
+    ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('donations:paypal-download'))
     ->runInBackground();
 
@@ -773,7 +860,7 @@ Schedule::command('donations:paypal-download')
 // signed up. V1: cron/discourse_not_signed_up.php (daily at 03:23). Skips if key unset.
 Schedule::command('discourse:not-signed-up')
     ->dailyAt('03:23')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('discourse:not-signed-up'))
     ->runInBackground();
 
@@ -781,14 +868,14 @@ Schedule::command('discourse:not-signed-up')
 // V1: cron/users_remap.php (daily at 05:00)
 Schedule::command('users:remap-locations')
     ->dailyAt('05:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('users:remap-locations'))
     ->runInBackground();
 
 // V1: cron/tn_names.php — fix display names for TN users whose email encodes their name.
 Schedule::command('users:fix-tn-names')
     ->dailyAt('06:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('users:fix-tn-names'))
     ->runInBackground();
 
@@ -796,7 +883,7 @@ Schedule::command('users:fix-tn-names')
 // V1: cron/messages_remap.php (every 5 minutes)
 Schedule::command('messages:remap-subjects')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('messages:remap-subjects'))
     ->runInBackground();
 
@@ -806,7 +893,7 @@ Schedule::command('messages:remap-subjects')
 //       since it involved external HTTP calls and is unrelated to the visualise insert.
 Schedule::command('messages:update-visualise')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('messages:update-visualise'))
     ->runInBackground();
 
@@ -815,7 +902,7 @@ Schedule::command('messages:update-visualise')
 // Note: V1 also pushed freebie-alert jobs to Pheanstalk — that mechanism is retired in the new stack.
 Schedule::command('messages:update-spatial-index')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('messages:update-spatial-index'))
     ->runInBackground();
 
@@ -823,7 +910,7 @@ Schedule::command('messages:update-spatial-index')
 // V1: cron/domains_common.php (weekly, Friday 07:00)
 Schedule::command('domains:update-common')
     ->weeklyOn(5, '07:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('domains:update-common'))
     ->runInBackground();
 
@@ -831,7 +918,7 @@ Schedule::command('domains:update-common')
 // V1: cron/messages_illustrations.php (every 1 minute) — V1 cron already disabled on bulk3.
 Schedule::command('messages:generate-illustrations')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('messages:generate-illustrations'))
     ->runInBackground();
 
@@ -839,7 +926,7 @@ Schedule::command('messages:generate-illustrations')
 // V1: cron/jobs_illustrations.php (every 30 minutes) — V1 cron already disabled on bulk3.
 Schedule::command('jobs:generate-illustrations')
     ->everyThirtyMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('jobs:generate-illustrations'))
     ->runInBackground();
 
@@ -847,7 +934,7 @@ Schedule::command('jobs:generate-illustrations')
 // V1: cron/get_app_release_versions.php
 Schedule::command('data:fetch-app-versions')
     ->everySixHours()
-    ->withoutOverlapping()
+    ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('data:fetch-app-versions'))
     ->runInBackground();
 
@@ -882,7 +969,7 @@ Schedule::command('integrations:sync-whatjobs')
 // V1: cron/lovejunk.php
 Schedule::command('integrations:sync-lovejunk')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('integrations:sync-lovejunk'))
     ->runInBackground();
 
@@ -890,7 +977,7 @@ Schedule::command('integrations:sync-lovejunk')
 // V1: cron/restartproject.php (23:00 daily)
 Schedule::command('integrations:sync-restartproject')
     ->dailyAt('23:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('integrations:sync-restartproject'))
     ->runInBackground();
 
@@ -898,7 +985,7 @@ Schedule::command('integrations:sync-restartproject')
 // V1: cron/repaircafewales.php (23:00 daily)
 Schedule::command('integrations:sync-repaircafewales')
     ->dailyAt('23:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('integrations:sync-repaircafewales'))
     ->runInBackground();
 
@@ -908,7 +995,7 @@ Schedule::command('integrations:sync-repaircafewales')
 // Spatial pass mirrors V1 Message::processExpiry(): only acts on messages already marked OUTCOME_EXPIRED.
 Schedule::command('messages:process-expired --spatial')
     ->dailyAt('03:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('messages:process-expired'))
     ->runInBackground();
 
@@ -916,14 +1003,14 @@ Schedule::command('messages:process-expired --spatial')
 // Fixed: messages_history default corrected to 31 days (matches V1 MessageCollection::RECENTPOSTS).
 Schedule::command('purge:messages')
     ->dailyAt('02:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('purge:messages'))
     ->runInBackground();
 
 // V1: cron/locations_skewwhiff.php
 Schedule::command('locations:fix-skewed')
     ->dailyAt('05:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('locations:fix-skewed'))
     ->runInBackground();
 
@@ -932,14 +1019,14 @@ Schedule::command('locations:fix-skewed')
 // postcodes rely on this pass to be mapped onto group areas.
 Schedule::command('locations:remap-postcodes')
     ->dailyAt('01:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('locations:remap-postcodes'))
     ->runInBackground();
 
 // V1: cron/user_ratings.php
 Schedule::command('users:update-ratings')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('users:update-ratings'))
     ->runInBackground();
 
@@ -947,7 +1034,7 @@ Schedule::command('users:update-ratings')
 // Note: safer than V1 — never downgrades Admin users, only Support.
 Schedule::command('users:update-support-roles')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:update-support-roles'))
     ->runInBackground();
 
@@ -955,7 +1042,7 @@ Schedule::command('users:update-support-roles')
 // V1: cron/check_cgas.php (every 5 minutes) — disabled pending sign-off
 Schedule::command('groups:check-boundaries')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('groups:check-boundaries'))
     ->runInBackground();
 
@@ -965,7 +1052,7 @@ Schedule::command('groups:check-boundaries')
 // TrashNothing group sync is intentionally not migrated (V1 keyed off TNKEY constant).
 Schedule::command('groups:update-stats')
     ->dailyAt('02:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('groups:update-stats'))
     ->runInBackground();
 
@@ -975,14 +1062,14 @@ Schedule::command('groups:update-stats')
 // rows on the NEXT day's run (V1 had the same one-day-stale property).
 Schedule::command('stats:generate-daily')
     ->dailyAt('02:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('stats:generate-daily'))
     ->runInBackground();
 
 // V1: cron/groups_closed.php
 Schedule::command('groups:remind-closed')
     ->weeklyOn(1, '09:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
@@ -1007,7 +1094,7 @@ Schedule::command('groups:remind-closed')
 // V1: cron/donations_ads_target.php
 Schedule::command('donations:update-ads-target')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('donations:update-ads-target'))
     ->runInBackground();
 
@@ -1018,7 +1105,7 @@ Schedule::command('donations:update-ads-target')
 // Update usage counts for AI images (how many posts use each image).
 Schedule::command('ai:usage-counts:update')
     ->hourly()
-    ->withoutOverlapping()
+    ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('ai:usage-counts:update'))
     ->runInBackground();
 
@@ -1032,7 +1119,7 @@ Schedule::command('ai:usage-counts:update')
 // V1: cron/donations_giftaid.php (every 10 minutes)
 Schedule::command('donations:update-giftaid')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('donations:update-giftaid'))
     ->runInBackground();
 
@@ -1043,7 +1130,7 @@ Schedule::command('donations:update-giftaid')
 // Generate vector embeddings for new messages (for semantic search).
 Schedule::command('embeddings:generate')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('embeddings:generate'))
     ->runInBackground();
 
@@ -1053,7 +1140,7 @@ Schedule::command('embeddings:generate')
 // V1: cron/message_unindexed.php (every 30 min)
 Schedule::command('messages:update-index')
     ->everyThirtyMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('messages:update-index'))
     ->runInBackground();
 // Remove confirmed spammers from groups.
@@ -1100,7 +1187,7 @@ Schedule::command('messages:update-index')
 // now stamps askedtorenew and won't re-ask within a renewal cycle.
 Schedule::command('volunteering:maintain')
     ->dailyAt('22:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('volunteering:maintain'))
     ->runInBackground();
 
@@ -1112,7 +1199,7 @@ Schedule::command('volunteering:maintain')
 // disabled there 2026-05-12 when this Laravel command took over).
 Schedule::command('mail:volunteering-digest')
     ->weeklyOn(1, '23:00')  // Monday at 11pm
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:volunteering-digest'))
     ->runInBackground();
 
@@ -1126,7 +1213,7 @@ Schedule::command('mail:volunteering-digest')
 // activity-filtered query keeps the working set well below V1's count.
 Schedule::command('mail:events-digest')
     ->weeklyOn(4, '23:00')  // Thursday at 11pm
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:events-digest'))
     ->runInBackground();
 
@@ -1134,7 +1221,7 @@ Schedule::command('mail:events-digest')
 // V1: cron/newsfeed_modnotif.php (daily 13:30)
 Schedule::command('mail:newsfeed-mod-notif')
     ->dailyAt('13:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
     ->runInBackground();
 
@@ -1146,7 +1233,7 @@ Schedule::command('mail:newsfeed-mod-notif')
 // V1: cron/newsfeed_link_previews.php (every 1 minute)
 Schedule::command('newsfeed:generate-link-previews')
     ->everyMinute()
-    ->withoutOverlapping()
+    ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
     ->runInBackground();
 
@@ -1158,7 +1245,7 @@ Schedule::command('newsfeed:generate-link-previews')
 // V1: cron/noticeboards.php (daily at 15:30)
 Schedule::command('noticeboards:thank-users')
     ->dailyAt('15:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('noticeboards:thank-users'))
     ->runInBackground();
 
@@ -1170,7 +1257,7 @@ Schedule::command('noticeboards:thank-users')
 // V1: cron/stories_tocentral.php (weekly, Friday 14:00)
 Schedule::command('stories:send-to-central')
     ->weeklyOn(5, '14:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('stories:send-to-central'))
     ->runInBackground();
 
@@ -1178,7 +1265,7 @@ Schedule::command('stories:send-to-central')
 // V1: cron/stories_newsletter.php (monthly, 12th 23:00)
 Schedule::command('stories:newsletter')
     ->monthlyOn(12, '23:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('stories:newsletter'))
     ->runInBackground();
 
@@ -1190,7 +1277,7 @@ Schedule::command('stories:newsletter')
 // Sends AI-powered summary of code changes to Discourse.
 Schedule::command('data:git-summary')
     ->weeklyOn(3, '18:00')  // Wednesday at 6pm UTC
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('data:git-summary'))
     ->runInBackground();
 
@@ -1204,7 +1291,7 @@ Schedule::command('data:git-summary')
 // V1: cron/chat_review.php (daily)
 Schedule::command('chats:review-pending')
     ->dailyAt('09:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('chats:review-pending'))
     ->runInBackground();
 
@@ -1213,7 +1300,7 @@ Schedule::command('chats:review-pending')
 // crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
 Schedule::command('groups:alert-no-messages')
     ->dailyAt('07:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('groups:alert-no-messages'))
     ->runInBackground();
 
@@ -1221,7 +1308,7 @@ Schedule::command('groups:alert-no-messages')
 // V1: cron/reachvolunteering.php (daily at 21:00)
 Schedule::command('integrations:sync-reachvolunteering')
     ->dailyAt('21:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('integrations:sync-reachvolunteering'))
     ->runInBackground();
 
@@ -1230,7 +1317,7 @@ Schedule::command('integrations:sync-reachvolunteering')
 // (upserts) and uses an incremental cursor, so frequent runs are safe.
 Schedule::command('eee:sync-mv-labels')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('eee:sync-mv-labels'))
     ->runInBackground();
 

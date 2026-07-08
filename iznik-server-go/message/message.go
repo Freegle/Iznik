@@ -244,6 +244,17 @@ type Message struct {
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
 	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
+	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
+	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
+	// exposed so list/summary views can flag a bulk offer cheaply.
+	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
+	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
+	// Bulkslots are the offerer-defined collection windows a replier picks from.
+	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
+	// Accessinstructions is the offerer's private note (address / gate code /
+	// intercom). Only returned to the offerer or a moderator — never to general
+	// viewers — and sent to a replier only once they're promised an item.
+	Accessinstructions *string `json:"accessinstructions,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -399,6 +410,19 @@ func rippleEnabled() bool {
 	return v == "true" || v == "1"
 }
 
+// defaultSearchMode returns the searchmode used when the caller doesn't specify
+// one. Vector-hybrid is the default for every caller (public site, ModTools,
+// apps). VECTOR_SEARCH_DEFAULT=keyword is the no-deploy rollback lever that
+// reverts the whole site to the legacy keyword cascade. Both this env var and
+// the ?searchmode param are scheduled for removal once the keyword machinery is
+// retired.
+func defaultSearchMode() string {
+	if os.Getenv("VECTOR_SEARCH_DEFAULT") == "keyword" {
+		return "keyword"
+	}
+	return "vector"
+}
+
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
@@ -460,7 +484,30 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Both APPROVED and PENDING messages are visible to all users. This is not a privacy
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
-				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+
+				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
+				// table (off the hot messages_groups path). Best-effort: only for mods, and a
+				// missing table / query error just means no note — so apiv2 can ship before the
+				// table exists without affecting message loading.
+				if isMod && len(messageGroups) > 0 {
+					var notes []struct {
+						Groupid uint64
+						P       string
+						Q       string
+					}
+					if err := db.Raw("SELECT groupid, p, q FROM rippling_proximity WHERE msgid = ?", id).Scan(&notes).Error; err == nil {
+						for _, nt := range notes {
+							for i := range messageGroups {
+								if messageGroups[i].Groupid == nt.Groupid {
+									p, q := nt.P, nt.Q
+									messageGroups[i].RippleProximityP = &p
+									messageGroups[i].RippleProximityQ = &q
+								}
+							}
+						}
+					}
+				}
 			}()
 
 			var messageAttachments []MessageAttachment
@@ -471,11 +518,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
 			// that is no longer active, return an empty externaluid so the frontend shows
 			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
+			db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
 				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')
+				LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id
 				WHERE ma.msgid = ?
 				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
 			}()
@@ -790,6 +838,23 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Location = loc
 				}
 
+				// Bulk-offer catalogue: group the (now path-resolved) attachments by
+				// item and attach per-item interest. The full per-user interest list
+				// is only visible to the offerer or a moderator.
+				canSeeInterest := message.Fromuser == myid || isGroupMod
+				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
+				message.Bulkcount = len(message.BulkItems)
+				if message.Bulkcount > 0 {
+					message.Bulkslots = LoadBulkSlots(db, message.ID)
+					// Access instructions are private — only the offerer/mod sees them.
+					if canSeeInterest {
+						ai := loadAccessInstructions(db, message.ID)
+						if ai != "" {
+							message.Accessinstructions = &ai
+						}
+					}
+				}
+
 				mu.Lock()
 				messages = append(messages, message)
 				mu.Unlock()
@@ -819,10 +884,28 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	// only run when there's something to find (a known location / an actual ban), keeping
 	// them off the hot path for the common case.
 	//
-	// Gated by the master activation switch: while rippling is off this whole section is skipped,
-	// so ReplyEligible is never set and the response matches pre-rippling exactly (no reach query,
-	// no ban-eligibility query, no metrics write).
-	if rippleEnabled() && myid > 0 && len(messages) > 0 {
+	// Activation is DATA-DRIVEN, mirroring the write-path reach gate in
+	// chat.CreateChatMessage: the section runs when EITHER the RIPPLE_ENABLED master switch
+	// is on, OR at least one fetched post is actually rippling (it has a rippling_reach row).
+	// The per-group trial (RIPPLE_WITHIN_GROUPS) ripples posts WITHOUT the master switch, and
+	// the write gate is not switch-gated either — so keying the read path on the master switch
+	// alone left the UI offering a Reply button on trial posts that the write path then
+	// rejected with 403 not_in_reach (Discourse: dejavu / msg 120820564). The EXISTS probe
+	// runs only when the switch is off, so the fully-disabled case stays a single cheap
+	// indexed lookup and otherwise matches pre-rippling exactly.
+	active := rippleEnabled()
+	if !active && myid > 0 && len(messages) > 0 {
+		probeIDs := make([]uint64, 0, len(messages))
+		for _, m := range messages {
+			probeIDs = append(probeIDs, m.ID)
+		}
+		var anyReach int
+		// rippling_reach may not exist until the reach engine (PR A) ships → treat as inactive.
+		_ = db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach WHERE msgid IN (?))", probeIDs).Scan(&anyReach).Error
+		active = anyReach == 1
+	}
+
+	if active && myid > 0 && len(messages) > 0 {
 		ids := make([]uint64, 0, len(messages))
 		for _, m := range messages {
 			ids = append(ids, m.ID)
@@ -850,7 +933,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				if n := len(reachBlocked); n > 0 {
 					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
 					// can't reply to yet). Best-effort — errors ignored so it never affects the
-					// response, and it is inert until the reach engine populates rippling_reach.
+					// response.
 					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
 						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
 				}
@@ -1301,6 +1384,17 @@ func filterExpiredMessages(db *gorm.DB, msgs []MessageSummary) []MessageSummary 
 	return result
 }
 
+// FilterExpiredSummaries applies the same age-based expiry the My Posts endpoint
+// uses (filterExpiredMessages/applyExpiry) and returns only the still-active
+// summaries. The browse feeds' "own posts" arms — which query the messages table
+// directly and so bypass the messages_spatial pruning that removes expired posts
+// for everyone else — use this so a poster's own post drops off the feed at the
+// same moment it drops off My Posts, instead of lingering (within the 90-day
+// window) until the daily batch inserts an outcome row.
+func FilterExpiredSummaries(db *gorm.DB, msgs []MessageSummary) []MessageSummary {
+	return filterExpiredMessages(db, msgs)
+}
+
 // markExpiredMessages sets Hasoutcome=true on expired messages in-place (for active=false).
 // Also marks messages without spatial entries (and not Pending/Rejected) as having outcomes,
 // matching the active=true HAVING clause so navbar count and page count stay consistent.
@@ -1397,7 +1491,7 @@ func Search(c *fiber.Ctx) error {
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
 	swlng, _ := strconv.ParseFloat(c.Query("swlng", "0"), 32)
 
-	searchmode := c.Query("searchmode", "keyword")
+	searchmode := c.Query("searchmode", defaultSearchMode())
 
 	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
 	// array is resized.  So as a workaround we create slices with capacity, then filter out the empty ones at
@@ -1921,10 +2015,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
+	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
+	// would pin messages.heldby forever, leaving the message stuck showing "Held".
 	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
 	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -1965,9 +2062,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Notify freebiealerts.app about newly approved Offer posts.
+	// Clearance/bulk-offer posts are excluded — the concierge manages their
+	// fulfilment directly and freebiealerts.app is not the right channel for them.
 	var approvedMsgType string
 	db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&approvedMsgType)
-	if approvedMsgType == "Offer" {
+	var isClearance int64
+	db.Raw("SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?", req.ID).Scan(&isClearance)
+	if approvedMsgType == "Offer" && isClearance == 0 {
 		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
 			"msgid": req.ID,
 		}); err != nil {
@@ -2324,9 +2425,20 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Also update messages.heldby for backwards compatibility.
 	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
-	// Move from Approved back to Pending for authorized groups.
-	db.Exec("UPDATE messages_groups SET collection = ?, approvedby = NULL, approvedat = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
-		utils.COLLECTION_PENDING, req.ID, authorizedGroups, utils.COLLECTION_APPROVED)
+	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
+	// any copy back to pending takes the post off the board on EVERY community it is on
+	// (home + rippled-out copies), so it is never left stranded and still visible on the
+	// neighbouring communities. Each community then approves or rejects its own copy
+	// independently. Clear approvedby/approvedat on every live copy first, then flip to
+	// Pending.
+	db.Exec("UPDATE messages_groups SET approvedby = NULL, approvedat = NULL WHERE msgid = ? AND collection = ?",
+		req.ID, utils.COLLECTION_APPROVED)
+	microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.")
+
+	// Freeze the ripple once the origin is Pending: the copies persist for per-group
+	// moderation and a later re-approval brings a copy back without re-rippling or
+	// re-notifying members.
+	microvolunteering.FreezeReachIfOriginPending(db, req.ID)
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2359,10 +2471,13 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
 	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
+	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
+	// would pin messages.heldby forever, leaving the message stuck showing "Held".
 	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
 	// read the source rather than a possibly-lagging replica.
 	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
@@ -2509,8 +2624,14 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		ctx.Groupid = *req.Groupid
 	}
 
-	// Queue email+log via background task.
-	// The batch processor will also create the mod log entry.
+	// Write the mod log entry synchronously, exactly once, like the other mod actions
+	// (hold/release/repost/edit). Previously the log was written by the batch processor,
+	// but that INSERT is unconditional and runs again whenever the task is retried (e.g.
+	// after a transient email-spool failure), producing duplicate "Replied" rows in the
+	// mod history (Discourse 9672/6). The batch now skips the log for this action.
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Groupid, ctx.Fromuser, myid, req.ID, stdmsgid, subject)
+
+	// Queue the email via background task (the log is already written above).
 	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
 		"email_message_reply", req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message")
 
@@ -2806,22 +2927,25 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 
 // patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
 type patchMessageRequest struct {
-	ID           uint64   `json:"id"`
-	Subject      *string  `json:"subject"`
-	Textbody     *string  `json:"textbody"`
-	Type         *string  `json:"type"`
-	Msgtype      *string  `json:"msgtype"`
-	Messagetype  *string  `json:"messagetype"`
-	Item         *string  `json:"item"`
-	Availablenow *int     `json:"availablenow"`
-	Lat          *float64 `json:"lat"`
-	Lng          *float64 `json:"lng"`
-	Location     *string  `json:"location"`
-	Locationid   *uint64  `json:"locationid"`
-	Groupid      *uint64  `json:"groupid"`
-	Attachments  AttachmentIDs `json:"attachments"`
-	BadAIImages  []uint64      `json:"badAIImages"`
-	Deadline     *string  `json:"deadline"`
+	ID                 uint64          `json:"id"`
+	Subject            *string         `json:"subject"`
+	Textbody           *string         `json:"textbody"`
+	Type               *string         `json:"type"`
+	Msgtype            *string         `json:"msgtype"`
+	Messagetype        *string         `json:"messagetype"`
+	Item               *string         `json:"item"`
+	Availablenow       *int            `json:"availablenow"`
+	Lat                *float64        `json:"lat"`
+	Lng                *float64        `json:"lng"`
+	Location           *string         `json:"location"`
+	Locationid         *uint64         `json:"locationid"`
+	Groupid            *uint64         `json:"groupid"`
+	Attachments        AttachmentIDs   `json:"attachments"`
+	BadAIImages        []uint64        `json:"badAIImages"`
+	Deadline           *string         `json:"deadline"`
+	Bulkitems          []BulkItemInput `json:"bulkitems"`
+	Bulkslots          []string        `json:"bulkslots"`
+	Accessinstructions *string         `json:"accessinstructions"`
 }
 
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
@@ -2860,6 +2984,11 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 // Returns non-nil on failure. Callers are responsible for writing the success response.
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	db := database.DBConn
+
+	// Editing a clearance (bulk offer) is gated on the Clearance permission.
+	if req.Bulkitems != nil && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to edit a clearance")
+	}
 
 	// Check ownership or mod permission.
 	var fromuser uint64
@@ -3257,6 +3386,29 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
+	// Bulk offer: rebuild the structured catalogue (attachments are already
+	// relinked above) and keep availableinitially/availablenow in sync with the
+	// total quantity. A nil slice leaves the catalogue untouched; an explicit
+	// (possibly empty) slice rebuilds it, including resetting availability to 0
+	// when all items are removed. The textbody summary is rebuilt too unless the
+	// caller supplied their own textbody.
+	if req.Bulkitems != nil {
+		total := upsertBulkItems(db, req.ID, req.Bulkitems)
+		db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
+		if req.Textbody == nil {
+			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
+			}
+		}
+		go ingestBulkItemPhotos(db, req.ID)
+	}
+	if req.Bulkslots != nil {
+		upsertBulkSlots(db, req.ID, req.Bulkslots)
+	}
+	if req.Accessinstructions != nil {
+		saveAccessInstructions(db, req.ID, *req.Accessinstructions)
+	}
+
 	return nil
 }
 
@@ -3570,23 +3722,31 @@ func PutMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
 	type PutMessageRequest struct {
-		Groupid            uint64   `json:"groupid"`
-		Type               string   `json:"type"`
-		Messagetype        string   `json:"messagetype"` // Client sends this; alias for Type.
-		Subject            string   `json:"subject"`
-		Item               string   `json:"item"`
-		Textbody           string   `json:"textbody"`
-		Collection         string   `json:"collection"` // Draft (default) or Pending.
-		Locationid         *uint64  `json:"locationid"`
-		Availableinitially *int     `json:"availableinitially"`
-		Availablenow       *int     `json:"availablenow"`
-		Attachments        AttachmentIDs `json:"attachments"`
-		Email              string        `json:"email"`
+		Groupid            uint64          `json:"groupid"`
+		Type               string          `json:"type"`
+		Messagetype        string          `json:"messagetype"` // Client sends this; alias for Type.
+		Subject            string          `json:"subject"`
+		Item               string          `json:"item"`
+		Textbody           string          `json:"textbody"`
+		Collection         string          `json:"collection"` // Draft (default) or Pending.
+		Locationid         *uint64         `json:"locationid"`
+		Availableinitially *int            `json:"availableinitially"`
+		Availablenow       *int            `json:"availablenow"`
+		Attachments        AttachmentIDs   `json:"attachments"`
+		Email              string          `json:"email"`
+		Bulkitems          []BulkItemInput `json:"bulkitems"`
+		Bulkslots          []string        `json:"bulkslots"`
+		Accessinstructions string          `json:"accessinstructions"`
 	}
 
 	var req PutMessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	// Posting a clearance (bulk offer) is gated on the Clearance permission.
+	if len(req.Bulkitems) > 0 && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to post a clearance")
 	}
 
 	// Handle messagetype alias from client.
@@ -3664,6 +3824,14 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create message.
 	fromip := c.IP()
+	// Geolocate the IP to a country so ModTools can flag posts from outside the
+	// UK (MessageHistory.vue). V1 (Message.php) did this at receive time; the
+	// web submit path lost it when it moved to Go. Store the ISO code (NULL when
+	// unknown); the read path expands it to a full name for display.
+	var fromcountry *string
+	if cc := utils.CountryCodeForIP(fromip); cc != "" {
+		fromcountry = &cc
+	}
 	// V1 parity (Message.php:2708/2717): invent a unique messageid because
 	// downstream dedupe/cross-reference joins assume it's populated.
 	messageid := fmt.Sprintf("%.6f@%s", float64(time.Now().UnixNano())/1e9, utils.USER_DOMAIN)
@@ -3680,8 +3848,8 @@ func PutMessage(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
+	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, fromcountry, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?, ?)",
+		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, fromcountry, messageid)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}
@@ -3738,6 +3906,29 @@ func PutMessage(c *fiber.Ctx) error {
 		if itemID > 0 {
 			db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", newMsgID, itemID)
 		}
+	}
+
+	// Bulk offer: create the structured catalogue. Total quantity drives
+	// availableinitially/availablenow, and the textbody falls back to a
+	// readable summary so non-bulk-aware consumers still show the items.
+	if len(req.Bulkitems) > 0 {
+		total := upsertBulkItems(db, newMsgID, req.Bulkitems)
+		if total > 0 {
+			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, newMsgID)
+		}
+		if strings.TrimSpace(req.Textbody) == "" {
+			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
+			}
+		}
+		// Download any spreadsheet-supplied photo URLs into real attachments.
+		go ingestBulkItemPhotos(db, newMsgID)
+	}
+	if req.Bulkslots != nil {
+		upsertBulkSlots(db, newMsgID, req.Bulkslots)
+	}
+	if strings.TrimSpace(req.Accessinstructions) != "" {
+		saveAccessInstructions(db, newMsgID, req.Accessinstructions)
 	}
 
 	// Add spatial data if locationid is provided, and update the user's last known location
@@ -3806,6 +3997,22 @@ type PostMessageRequest struct {
 	ForcePending     *bool   `json:"forcepending"`
 	Tnpostid         *string `json:"tnpostid"`
 	Source           *string `json:"source"`
+	// Bulk-offer interest (action "BulkInterest").
+	BulkInterest []BulkInterestInput `json:"bulkinterest"`
+	// Whose interest to record/edit (action "BulkInterest"). Nil = the caller.
+	// Only the offerer may pass another user's id — e.g. to record a replier's
+	// verbally-expressed interest against the structured catalogue.
+	Interestuserid *uint64 `json:"interestuserid"`
+	// Bulk-offer interest state change (action "BulkInterestState").
+	Bulkitemid *uint64 `json:"bulkitemid"`
+	State      *string `json:"state"`
+}
+
+// BulkInterestInput is one item the caller is expressing interest in.
+type BulkInterestInput struct {
+	Bulkitemid uint64  `json:"bulkitemid"`
+	Quantity   int     `json:"quantity"`
+	Cancollect *string `json:"cancollect"`
 }
 
 // PostMessage dispatches POST /message actions.
@@ -3958,6 +4165,12 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBackToPending(c, myid, req)
 	case "RejectToDraft", "BackToDraft":
 		return handleRejectToDraft(c, myid, req)
+	case "BulkInterest":
+		return handleBulkInterest(c, myid, req)
+	case "BulkInterestState":
+		return handleBulkInterestState(c, myid, req)
+	case "BulkEditLink":
+		return handleBulkEditLink(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}

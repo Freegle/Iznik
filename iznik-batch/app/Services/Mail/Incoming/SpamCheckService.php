@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Log;
  * Implements all spam checks from legacy iznik-server Spam.php and MailRouter.php:
  * - Keyword matching (spam_keywords table)
  * - IP country blocking (spam_countries + GeoIP)
- * - IP reputation (too many users/groups from same IP)
  * - IP whitelist (spam_whitelist_ips)
  * - Subject reuse detection across groups
  * - Bulk volunteer mail detection
@@ -26,21 +25,14 @@ use Illuminate\Support\Facades\Log;
 class SpamCheckService
 {
     // Thresholds matching legacy Spam.php constants
-    public const USER_THRESHOLD = 5;
-
     public const GROUP_THRESHOLD = 20;
 
     public const SUBJECT_THRESHOLD = 30;
 
-    // Distinct groups a SINGLE poster may reach from one IP (within HISTORY_WINDOW_DAYS) before being
-    // flagged. Under rippling-out + single-group posting a legitimate poster reaches their own area's
-    // group(s) only, so one account hitting many groups from one IP is the location-hopping signal.
-    public const USER_GROUP_THRESHOLD = 10;
-
-    // The IP/subject reputation checks below count history over this trailing window rather than for
-    // all time. Without it they accumulate years of legitimate shared-NAT and subject reuse, which
-    // under single-group posting (where a high distinct-group count is a much weaker signal) turns
-    // them into false-positive factories. 90 days keeps a meaningful spam window without that drift.
+    // The subject reputation check below counts history over this trailing window rather than for
+    // all time. Without it it accumulates years of legitimate subject reuse, which under
+    // single-group posting (where a high distinct-group count is a much weaker signal) turns
+    // it into a false-positive factory. 90 days keeps a meaningful spam window without that drift.
     public const HISTORY_WINDOW_DAYS = 90;
 
     public const IMAGE_THRESHOLD = 5;
@@ -53,10 +45,6 @@ class SpamCheckService
     public const REASON_NOT_SPAM = 'NotSpam';
 
     public const REASON_COUNTRY_BLOCKED = 'CountryBlocked';
-
-    public const REASON_IP_USED_FOR_DIFFERENT_USERS = 'IPUsedForDifferentUsers';
-
-    public const REASON_IP_USED_FOR_DIFFERENT_GROUPS = 'IPUsedForDifferentGroups';
 
     public const REASON_SUBJECT_USED_FOR_DIFFERENT_GROUPS = 'SubjectUsedForDifferentGroups';
 
@@ -172,18 +160,6 @@ class SpamCheckService
             $countryResult = $this->checkIPCountry($ip);
             if ($countryResult !== null) {
                 return $countryResult;
-            }
-
-            // Check IP reputation - too many users
-            $userResult = $this->checkIPUsers($ip);
-            if ($userResult !== null) {
-                return $userResult;
-            }
-
-            // Check IP reputation - too many groups
-            $groupResult = $this->checkIPGroups($ip);
-            if ($groupResult !== null) {
-                return $groupResult;
             }
         }
 
@@ -426,11 +402,36 @@ class SpamCheckService
     }
 
     /**
-     * Look up the country for an IP address using GeoIP.
+     * Look up the country NAME for an IP address using GeoIP (used for the
+     * country blocklist, which stores full names).
      *
      * This method can be overridden in tests to avoid requiring the GeoIP database.
      */
     protected function lookupIPCountry(string $ip): ?string
+    {
+        return $this->readGeoIPCountry($ip)?->name;
+    }
+
+    /**
+     * Look up the ISO 3166-1 alpha-2 country CODE for an IP (e.g. "GB").
+     *
+     * Stored in messages.fromcountry so ModTools can flag posts from outside
+     * the UK (MessageHistory.vue). The 2-letter code is expanded to a full
+     * country name on read. Returns null when the country can't be determined,
+     * matching V1's skip-on-error behaviour (Message.php / Spam.php).
+     */
+    public function lookupIPCountryCode(string $ip): ?string
+    {
+        return $this->readGeoIPCountry($ip)?->isoCode;
+    }
+
+    /**
+     * Open the GeoIP database and resolve an IP to its country record, or null
+     * on any failure (database absent, unresolvable IP). Shared by the name and
+     * code lookups above. The name lookup stays overridable in tests, so the
+     * existing country-block tests keep working without a database.
+     */
+    protected function readGeoIPCountry(string $ip): ?\GeoIp2\Record\Country
     {
         try {
             $mmdbPath = config('freegle.geoip.mmdb_path', '/usr/share/GeoIP/GeoLite2-Country.mmdb');
@@ -439,76 +440,16 @@ class SpamCheckService
             }
 
             $reader = new \GeoIp2\Database\Reader($mmdbPath);
-            $record = $reader->country($ip);
 
-            return $record->country->name;
-        } catch (\Exception $e) {
+            return $reader->country($ip)->country;
+        } catch (\Throwable $e) {
+            // \Throwable (not just \Exception) so a missing geoip2 package
+            // (class-not-found is an \Error) degrades to "unknown" rather than
+            // fataling the mail pipeline - e.g. if vendor lags a deploy.
             Log::debug('GeoIP lookup failed', ['ip' => $ip, 'error' => $e->getMessage()]);
 
             return null;
         }
-    }
-
-    /**
-     * Check if IP has been used by too many different users (matching legacy).
-     *
-     * @return array{bool, string, string}|null
-     */
-    public function checkIPUsers(string $ip): ?array
-    {
-        $users = DB::table('messages_history')
-            ->select('fromname')
-            ->where('fromip', $ip)
-            ->where('arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
-            ->whereNotNull('groupid')
-            ->groupBy('fromuser')
-            ->orderBy('arrival', 'desc')
-            ->get();
-
-        $numUsers = $users->count();
-
-        if ($numUsers > self::USER_THRESHOLD) {
-            $list = $users->pluck('fromname')->implode(', ');
-
-            return [true, self::REASON_IP_USED_FOR_DIFFERENT_USERS,
-                "IP {$ip} recently used for {$numUsers} different users ({$list})"];
-        }
-
-        return null;
-    }
-
-    /**
-     * Check if a SINGLE poster has reached too many different groups from one IP.
-     *
-     * Originally this counted distinct groups across ALL posters on an IP, which under rippling-out +
-     * single-group posting is just a "many users behind one NAT" artefact (each posts to their own
-     * area's group). The real signal is now ONE account reaching many groups from one IP - the
-     * location-hopping vector - so we decompose by fromuser and flag the worst single poster. Bounded
-     * to the trailing history window so long-lived shared IPs do not accumulate a false positive.
-     *
-     * @return array{bool, string, string}|null
-     */
-    public function checkIPGroups(string $ip): ?array
-    {
-        $worst = DB::table('messages_history')
-            ->join('groups', 'groups.id', '=', 'messages_history.groupid')
-            ->select('messages_history.fromuser')
-            ->selectRaw('COUNT(DISTINCT messages_history.groupid) as numgroups')
-            ->selectRaw('GROUP_CONCAT(DISTINCT groups.nameshort) as grouplist')
-            ->where('messages_history.fromip', $ip)
-            ->where('messages_history.arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
-            ->whereNotNull('messages_history.fromuser')
-            ->groupBy('messages_history.fromuser')
-            ->havingRaw('COUNT(DISTINCT messages_history.groupid) >= ?', [self::USER_GROUP_THRESHOLD])
-            ->orderByDesc('numgroups')
-            ->first();
-
-        if ($worst !== null) {
-            return [true, self::REASON_IP_USED_FOR_DIFFERENT_GROUPS,
-                "IP {$ip} poster {$worst->fromuser} recently posted to {$worst->numgroups} different groups ({$worst->grouplist})"];
-        }
-
-        return null;
     }
 
     /**

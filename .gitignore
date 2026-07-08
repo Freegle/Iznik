@@ -14,6 +14,12 @@
 /ssl/
 /.env
 /.env.background
+# Timestamped backups of the secret env files (created before prod deploys) are
+# themselves PRODUCTION SECRETS - keep every variant untrackable so a stray
+# `git add -A` can never stage them into this public repo.
+/.env.bak*
+/.env.background.bak*
+/.env.*.bak*
 /firebase.json
 /rebuild-monitor.log
 yesterday/.env

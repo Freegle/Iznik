@@ -276,10 +276,46 @@ describe('MyPostsDonationAsk', () => {
     })
   })
 
+  describe('dismiss', () => {
+    it('renders a dismiss control', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.find('.donation-dismiss').exists()).toBe(true)
+    })
+
+    it('hides the donation ask when dismissed', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('.donation-dismiss').trigger('click')
+      expect(wrapper.find('.donation-ask-container').exists()).toBe(false)
+    })
+
+    it('emits dismissed when dismiss control is clicked', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('.donation-dismiss').trigger('click')
+      expect(wrapper.emitted('dismissed')).toBeTruthy()
+    })
+
+    it('logs donation_ask_dismissed when dismissed', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('.donation-dismiss').trigger('click')
+      expect(mockAction).toHaveBeenCalledWith('donation_ask_dismissed', {
+        variant: 'minimal-friction',
+        context: 'myposts_inline',
+      })
+    })
+  })
+
   describe('emits', () => {
     it('defines donation-made emit', () => {
       const emits = MyPostsDonationAsk.emits || []
       expect(emits).toContain('donation-made')
+    })
+
+    it('defines dismissed emit', () => {
+      const emits = MyPostsDonationAsk.emits || []
+      expect(emits).toContain('dismissed')
     })
   })
 })

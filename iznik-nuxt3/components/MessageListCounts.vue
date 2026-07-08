@@ -28,7 +28,7 @@ const browseCount = computed(() => {
 })
 
 const browseCountPlural = computed(() => {
-  return pluralize('unread post', props.count, true)
+  return pluralize('new post', props.count, true)
 })
 
 function markSeen() {

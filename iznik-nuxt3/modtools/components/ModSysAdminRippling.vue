@@ -21,25 +21,8 @@
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else>
-      <b-form-checkbox
-        v-model="trialOnly"
-        switch
-        size="sm"
-        class="mb-2"
-        @change="onTrialChange"
-      >
-        Trial groups only<span
-          v-if="trialOnly && trialGroupIds.length"
-          class="text-muted small"
-        >
-          ({{ trialGroupIds.length }} in RIPPLE_WITHIN_GROUPS)</span>
-      </b-form-checkbox>
-      <p v-if="trialOnly && !trialGroupIds.length" class="text-warning small mb-2">
-        No trial groups configured (RIPPLE_WITHIN_GROUPS is empty) - nothing to show.
-      </p>
-
       <b-form-group
-        v-if="groupOptions.length && !trialOnly"
+        v-if="groupOptions.length"
         label="Group:"
         label-cols="auto"
         label-class="small fw-bold"
@@ -77,7 +60,8 @@
           style="width: 100%; height: 300px"
         />
         <p v-if="replyRateChart" class="text-muted small fst-italic mt-1 mb-0">
-          The dashed tail is still settling - the most recent posts haven't had a full 36h to get a reply yet.
+          The dashed tail is still settling - the most recent posts haven't had
+          a full 36h to get a reply yet.
         </p>
         <p v-if="!replyRateChart" class="text-muted small">No data yet.</p>
       </div>
@@ -108,25 +92,64 @@
       </div>
 
       <div class="mb-3">
-        <strong class="small">Share of replies from rippling</strong>
+        <strong class="small">Where do replies come from?</strong>
         <p class="text-muted small mb-1">
-          Share of replies that came via rippling vs your own members.
-          <span class="text-success fw-bold">Good:</span> a real share - the
-          lift is coming from reach.
-          <span class="text-danger fw-bold">Bad:</span> ~0% - reach isn't
-          producing replies.
+          Each reply is attributed at reply time to the channel that led the
+          replier to the post. <span class="fw-bold">Greens are rippling</span>
+          (we mailed them / it rippled into their group / reach-fed browse);
+          teal is your own established members; greys couldn't be credited
+          either way (local non-members, search, deep links).
+          <span class="text-success fw-bold">Good:</span> a real green share -
+          the lift is coming from reach, and the split says which ripple channel
+          earns it.
+          <span v-if="attributionCaptureFrom">
+            Left of the "Live capture" line the history is derived after the
+            fact, so only the mail and group ripple channels can be credited -
+            reach-fed browse and local non-members sit in Unknown there.
+          </span>
+        </p>
+        <p v-if="!attributionChannelsAvailable" class="text-warning small mb-1">
+          This database doesn't have the graded-attribution columns yet
+          (migration pending), so only the durable channels are derived here:
+          location-based channels (reach-fed browse, local non-members) show as
+          unknown.
         </p>
         <GChart
           v-if="replySourceChart"
-          type="LineChart"
+          type="AreaChart"
           :data="replySourceChart"
-          :options="pctChartOptions('Share of replies (%)', '#007bff')"
-          style="width: 100%; height: 300px"
+          :options="channelStackOptions()"
+          style="width: 100%; height: 340px"
         />
         <p v-else class="text-muted small">
           No data yet — accrues from reply-time capture
           (<code>rippling_reply_attribution</code>).
         </p>
+
+        <div v-if="clientSourceSummary.length" class="mt-2">
+          <strong class="small">What the app says (cross-check)</strong>
+          <p class="text-muted small mb-1">
+            The surface the replier's own app reported sending the reply from.
+            Client-supplied, so it never feeds the attribution above - but the
+            two should broadly agree.
+          </p>
+          <b-table-simple hover responsive small class="w-auto">
+            <b-thead>
+              <b-tr>
+                <b-th>Surface</b-th>
+                <b-th>Replies</b-th>
+              </b-tr>
+            </b-thead>
+            <b-tbody>
+              <b-tr v-for="(s, ix) in clientSourceSummary" :key="ix">
+                <b-td>
+                  <code>{{ s.source }}</code>
+                </b-td>
+                <b-td>{{ s.count }}</b-td>
+              </b-tr>
+            </b-tbody>
+          </b-table-simple>
+        </div>
       </div>
 
       <div class="mb-3">
@@ -162,7 +185,8 @@
           style="width: 100%; height: 300px"
         />
         <p v-if="takenRateChart" class="text-muted small fst-italic mt-1 mb-0">
-          The dashed tail is still settling - recent posts haven't had time to be collected yet.
+          The dashed tail is still settling - recent posts haven't had time to
+          be collected yet.
         </p>
         <p v-if="!takenRateChart" class="text-muted small">No data yet.</p>
       </div>
@@ -269,11 +293,14 @@ const takenRate = ref([])
 // Per-group KPI filter (results differ a lot by place; 0 = all groups).
 const groupOptions = ref([])
 const groupFilter = ref(0)
-// Trial scope: limit every KPI to the RIPPLE_WITHIN_GROUPS trial set so the trial
-// signal isn't masked by the majority of groups that aren't rippling. trialGroupIds
-// echoes the resolved set back from the server (drives the count + empty warning).
-const trialOnly = ref(false)
-const trialGroupIds = ref([])
+// Client-reported reply surfaces (advisory cross-check of the attribution chart) and
+// whether this DB has the graded-attribution columns yet (location channels pending).
+const clientSourceSummary = ref([])
+const attributionChannelsAvailable = ref(true)
+// First day with reply-time-captured evidence: before this the location channels are
+// structurally zero (derived history can only see mail/group evidence), so the chart marks
+// the boundary rather than letting it read as reach-browse suddenly springing to life.
+const attributionCaptureFrom = ref('')
 
 const COHORT_HEADER = (allLabel) => [
   'Date',
@@ -289,7 +316,15 @@ const replyRateChart = computed(() => {
   if (!replyRate.value.length) return null
   const rows = [...replyRate.value].reverse().map((r) => {
     const certain = !r.provisional
-    return [new Date(r.day), r.reply_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+    return [
+      new Date(r.day),
+      r.reply_pct,
+      certain,
+      r.home_pct,
+      certain,
+      r.ripple_pct,
+      certain,
+    ]
   })
   return [COHORT_HEADER('All offers'), ...rows]
 })
@@ -309,29 +344,61 @@ const repliesPerPostChart = computed(() => {
   })
   return [COHORT_HEADER('All offers'), ...rows]
 })
+// Attribution channels in stack order (bottom -> top): non-ripple first, then the
+// ripple family as one block of greens so its share reads at a glance.
+const CHANNELS = [
+  { key: 'home', label: 'Home members' },
+  { key: 'organic_local', label: 'Local non-members' },
+  { key: 'unknown', label: 'Unknown' },
+  { key: 'ripple_group', label: 'Rippled into their group' },
+  { key: 'ripple_notified', label: 'Ripple mail' },
+  { key: 'ripple_reach', label: 'Reach-fed browse' },
+]
+
 const replySourceChart = computed(() => {
   if (!startDate.value || !endDate.value) return null
-  // Zero-fill the whole filter range. The backend only returns days that had a
-  // rippling-attributed reply, so early in the rollout this was a single lone
-  // point. A day with no rippling reply genuinely has a 0% rippling share, so
-  // filling the gaps draws a continuous line across the same range as the other
-  // charts instead of one dot floating on a one-day axis.
-  const byDay = new Map(replySource.value.map((r) => [r.day, r.ripple_pct]))
+  if (!replySource.value.length) return null
+  // Zero-fill the whole filter range so the composition spans the same axis as the
+  // other charts; a day with no replies stacks to nothing (a gap), which is honest.
+  const byDay = new Map(replySource.value.map((r) => [r.day, r]))
   const start = new Date(startDate.value)
   const end = new Date(endDate.value)
   if (isNaN(start) || isNaN(end) || end < start) return null
   const rows = []
-  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+  const days = Math.round((end - start) / 86400000)
+  for (let i = 0; i <= days; i++) {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
     const key = d.toISOString().slice(0, 10)
-    rows.push([new Date(d), byDay.has(key) ? byDay.get(key) : 0])
+    const r = byDay.get(key)
+    // A domain annotation draws a vertical marker where live reply-time capture began:
+    // to its left the history is derived (mail/group channels only, the rest in
+    // Unknown), to its right the full six-way split applies. One chart, two eras,
+    // boundary explicit.
+    const marker =
+      attributionCaptureFrom.value && key === attributionCaptureFrom.value
+        ? 'Live capture from here'
+        : null
+    rows.push([d, marker, ...CHANNELS.map((c) => (r ? r[c.key] || 0 : 0))])
   }
-  return [['Date', '% of replies via rippling'], ...rows]
+  return [
+    ['Date', { role: 'annotation' }, ...CHANNELS.map((c) => c.label)],
+    ...rows,
+  ]
 })
 const replyDistanceChart = computed(() => {
   if (!replyDistance.value.length) return null
-  const rows = [...replyDistance.value].reverse().map((r) => [
-    new Date(r.day), r.median_km, true, r.home_median_km, true, r.ripple_median_km, true,
-  ])
+  const rows = [...replyDistance.value]
+    .reverse()
+    .map((r) => [
+      new Date(r.day),
+      r.median_km,
+      true,
+      r.home_median_km,
+      true,
+      r.ripple_median_km,
+      true,
+    ])
   // Distance is a median over replies, not a count of offers, so label the "all" line accordingly.
   return [COHORT_HEADER('All replies'), ...rows]
 })
@@ -339,7 +406,15 @@ const takenRateChart = computed(() => {
   if (!takenRate.value.length) return null
   const rows = [...takenRate.value].reverse().map((r) => {
     const certain = !r.provisional
-    return [new Date(r.day), r.taken_pct, certain, r.home_pct, certain, r.ripple_pct, certain]
+    return [
+      new Date(r.day),
+      r.taken_pct,
+      certain,
+      r.home_pct,
+      certain,
+      r.ripple_pct,
+      certain,
+    ]
   })
   return [COHORT_HEADER('All offers'), ...rows]
 })
@@ -357,8 +432,10 @@ function dateTicks() {
   const days = Math.round((end - start) / 86400000)
   const step = Math.max(1, Math.ceil((days + 1) / 8))
   const ticks = []
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + step)) {
-    ticks.push(new Date(d))
+  for (let i = 0; i <= days; i += step) {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
+    ticks.push(d)
   }
   return ticks
 }
@@ -376,14 +453,30 @@ function dateHAxis() {
   return h
 }
 
-function pctChartOptions(vTitle, color) {
+// Percent-stacked area of the attribution channels. Colors validated (dataviz six
+// checks, light surface): the two greys are DELIBERATELY low-chroma - they are the
+// "couldn't credit either way" buckets - and the ripple family is one green hue,
+// lightness-stepped, so the total green band = the ripple share. Legend + tooltips
+// carry exact identities/values (the greys/light green sit below the 3:1 fill
+// contrast line, which is acceptable for large stacked fills with those two reliefs).
+function channelStackOptions() {
   return {
-    curveType: 'function',
-    legend: { position: 'none' },
-    chartArea: { width: '85%', height: '70%' },
-    vAxis: { title: vTitle, viewWindow: { min: 0 }, format: '#.#' },
+    isStacked: 'percent',
+    legend: { position: 'bottom' },
+    chartArea: { width: '85%', height: '65%' },
+    vAxis: { title: 'Share of replies', format: 'percent' },
     hAxis: dateHAxis(),
-    series: { 0: { color } },
+    // The domain annotation marking where live capture began renders as a vertical line.
+    annotations: { style: 'line' },
+    areaOpacity: 0.85,
+    series: {
+      0: { color: '#1592a6' }, // Home members — teal (matches the cohort charts)
+      1: { color: '#6c757d' }, // Local non-members — grey (deliberately neutral)
+      2: { color: '#98a2ab' }, // Unknown — light grey (deliberately neutral)
+      3: { color: '#28a745' }, // Rippled into their group — green
+      4: { color: '#146c43' }, // Ripple mail — dark green
+      5: { color: '#45b463' }, // Reach-fed browse — light green
+    },
     animation: { startup: true, duration: 400, easing: 'out' },
   }
 }
@@ -426,18 +519,20 @@ async function fetchMetrics() {
     const result = await apiInstance.rippling.fetchMetrics(
       groupFilter.value,
       startDate.value,
-      endDate.value,
-      trialOnly.value
+      endDate.value
     )
     hotspots.value = result?.hotspots || []
     heldReplySummary.value = result?.held_reply_summary || []
     replyRate.value = result?.reply_rate_36h || []
     repliesPerPost.value = result?.replies_per_post || []
     replySource.value = result?.reply_source_split || []
+    clientSourceSummary.value = result?.client_source_summary || []
+    attributionChannelsAvailable.value =
+      result?.attribution_channels_available !== false
+    attributionCaptureFrom.value = result?.attribution_capture_from || ''
     replyDistance.value = result?.reply_distance_median || []
     takenRate.value = result?.taken_rate || []
     groupOptions.value = result?.groups || []
-    trialGroupIds.value = result?.trial_group_ids || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
@@ -446,13 +541,6 @@ async function fetchMetrics() {
 }
 
 function onGroupChange() {
-  fetchMetrics()
-}
-
-function onTrialChange() {
-  // Trial scope and a single-group filter are mutually exclusive (the server lets
-  // groupid win), so clear the group filter when switching to trial-only.
-  groupFilter.value = 0
   fetchMetrics()
 }
 
@@ -469,8 +557,5 @@ defineExpose({
   groupFilter,
   onGroupChange,
   onFilterFetch,
-  trialOnly,
-  trialGroupIds,
-  onTrialChange,
 })
 </script>

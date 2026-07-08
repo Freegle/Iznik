@@ -215,9 +215,12 @@ return [
         'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
-    // GeoIP database for IP country lookups
+    // GeoIP database for IP country lookups. Defaults to the copy bundled in
+    // the repo (resources/geoip) so the lookup works out of the box wherever
+    // the app is deployed - no separately-provisioned mmdb file required.
+    // GEOIP_MMDB_PATH can point at a system-managed/fresher database.
     'geoip' => [
-        'mmdb_path' => env('GEOIP_MMDB_PATH', '/usr/share/GeoIP/GeoLite2-Country.mmdb'),
+        'mmdb_path' => env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
     ],
 
     // TUS uploader for AI-generated images
@@ -315,9 +318,31 @@ return [
         // host's core count; exceeding it just queues on the routing server. DB writes stay
         // serial regardless. 1 = sequential (the old behaviour).
         'compute_concurrency' => (int) env('RIPPLE_COMPUTE_CONCURRENCY', 8),
+        // Reuse an already-computed reach when another live post shares the SAME blurred origin,
+        // instead of hitting the routing server again. The reach schedule is a deterministic
+        // function of the blurred origin (4dp) + the ripple config here, so this is exact and it
+        // removes the bulk of routing calls on the recompute drain (co-located posts, repeat posters
+        // from home). Set false for one full recompute after changing curve/max_minutes/extent so
+        // reaches computed under the OLD config are not reused. true = on.
+        'reuse_reach' => filter_var(env('RIPPLE_REUSE_REACH', true), FILTER_VALIDATE_BOOLEAN),
         // Per-request timeout (seconds) for a /v1/ripple-schedule call. A dense-origin post can
         // take tens of seconds; the pool path uses this so one slow post does not abort the chunk.
         'request_timeout' => (int) env('RIPPLE_REQUEST_TIMEOUT', 60),
+        // ripple:proximity-notes (moderator "quicker to get to" note) — computed out of the hot
+        // ripple:expand cron, so a slacker timeout is fine. Slow calls (> proximity_slow_ms) and
+        // failures are reported to Sentry. proximity_notes gates the whole feature (kill switch
+        // independent of RIPPLE_ENABLED).
+        'proximity_notes' => filter_var(env('RIPPLE_PROXIMITY_NOTES', true), FILTER_VALIDATE_BOOLEAN),
+        'proximity_timeout' => (int) env('RIPPLE_PROXIMITY_TIMEOUT', 15),
+        // reachable_gate: ripple targeting is gated on the routing server's
+        // reachable-group signal - a group is targeted only when an active member
+        // living inside the group's own polygon has a road-reachable street node,
+        // so a post never crosses an uncrossable barrier. Default ON; set
+        // RIPPLE_REACHABLE_GATE=false as the killswitch (reverts targeting and
+        // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
+        // empty/absent list falls back to polygon-only for that post.
+        'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
+        'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
         // chat_messages.refmsgid = msgid) stops expanding - it already has plenty of interest, so
@@ -341,6 +366,20 @@ return [
         // exclusive end. Outside this window, due expansions wait.
         'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
         'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+        // Audience-budget extent governor — Stage A (feed-forward). Caps reach at
+        // the ~target_users NEAREST freeglers instead of letting a fixed drive-time
+        // sweep density-blind: in dense areas (London) the cap binds at a small
+        // radius; where the reachable pool is already below target_users it never
+        // binds (rural unchanged). The cap is applied in the routing server
+        // (/v1/ripple-schedule target_users), so ExpandService is untouched. Ships
+        // DARK: with enabled=false ReachService sends no target_users and reach is
+        // identical to before. See plans/2026-06-28-ripple-extent-governor-mvp.md.
+        // (Per-RU-class stratification — target_by_ru — is the planned Stage-A
+        // refinement and is not yet wired; this first cut is a single global cap.)
+        'extent' => [
+            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', false),
+            'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
+        ],
         // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
         // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
         'score' => [
@@ -356,6 +395,21 @@ return [
             // rippling_reach row (the dominant case while rippling is dark, and for
             // all backlog posts after go-live).
             'default_reach_metres' => (float) env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000),
+        ],
+
+        // Email distance-preference filter (Nearby browse's distance slider, extended
+        // to member-facing emails) — see App\Services\Ripple\DistancePreferenceFilter and
+        // docs/superpowers/specs/2026-07-01-distance-preference-email-filtering-design.md.
+        // Narrows the daily digest / immediate cursor / reach-mail pipelines to posts
+        // within a member's settings.browseMaxDistance (miles); absent or the sentinel
+        // (Number.MAX_SAFE_INTEGER) means "no limit" — the default for every member who
+        // has never touched the slider, so the feature is inherently opt-in and safe on
+        // its own. This flag is an EXTRA emergency kill-switch on top of that: default
+        // true (filtering active for members who set a limit); set to false to fall back
+        // to today's fully-unfiltered behaviour for EVERY member (including those with a
+        // configured limit) with no deploy, if a bug is ever found in the filter itself.
+        'distance_filter' => [
+            'enabled' => filter_var(env('RIPPLE_DISTANCE_FILTER_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         ],
     ],
 

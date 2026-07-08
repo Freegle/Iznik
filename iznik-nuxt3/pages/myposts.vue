@@ -35,6 +35,8 @@
               @donation-made="donationMade"
             />
 
+            <MyPostsClearances :posts="posts" />
+
             <MyPostsPostsList
               :posts="posts"
               :loading="loading"
@@ -84,6 +86,7 @@ import SidebarLeft from '~/components/SidebarLeft'
 import SidebarRight from '~/components/SidebarRight'
 import ExpectedRepliesWarning from '~/components/ExpectedRepliesWarning'
 import MyPostsPostsList from '~/components/MyPostsPostsList.vue'
+import MyPostsClearances from '~/components/MyPostsClearances.vue'
 import MyPostsSearchesList from '~/components/MyPostsSearchesList.vue'
 import MyPostsDonationAsk from '~/components/MyPostsDonationAsk.vue'
 import NewUserInfo from '~/components/NewUserInfo.vue'

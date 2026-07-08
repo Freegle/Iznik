@@ -314,6 +314,7 @@
                 </div>
               </div>
               <div
+                v-if="!hideGeneratedBulkBody"
                 class="description-content"
                 :class="{
                   'description-content--promised':
@@ -323,6 +324,17 @@
                 <MessageTextBody :id="id" />
               </div>
             </div>
+
+            <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
+            <BulkItemsInterest
+              v-if="isBulk"
+              :id="id"
+              ref="bulkInterestRef"
+              @can-register="bulkCanRegister = $event"
+              @submitted="bulkSubmitted = $event"
+              @had-interest="bulkHadInterest = $event"
+              @validation="bulkPickError = $event"
+            />
 
             <!-- Posted by divider and section (shown on taller screens, after description) -->
             <client-only>
@@ -392,7 +404,12 @@
                 On:
                 <ShowMore :items="messageGroups" :limit="3" inline>
                   <template #item="{ item }"
-                    ><NuxtLink
+                    ><v-icon
+                      v-if="item.isHome"
+                      icon="home"
+                      class="me-1 text-muted"
+                      title="Home community (where this was originally posted)"
+                    /><NuxtLink
                       no-prefetch
                       :to="'/explore/' + item.nameshort"
                       class="posted-on-group-link"
@@ -434,6 +451,23 @@
                 v-else-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
+                <NoticeMessage
+                  v-if="isBulk && bulkSubmitted"
+                  variant="success"
+                  class="mb-0"
+                  data-testid="bulk-submitted"
+                >
+                  Thanks! We've let the giver know which items you're interested
+                  in.
+                </NoticeMessage>
+                <NoticeMessage
+                  v-if="isBulk && bulkTriedRegister && bulkPickError"
+                  variant="danger"
+                  class="register-error mb-0"
+                  data-testid="register-error"
+                >
+                  {{ bulkPickError }}
+                </NoticeMessage>
                 <b-button
                   v-if="inModal || fullscreenOverlay"
                   variant="secondary"
@@ -448,9 +482,16 @@
                   variant="primary"
                   size="lg"
                   class="reply-button"
-                  @click="expandReply"
+                  :data-testid="isBulk ? 'register-interest' : undefined"
+                  @click="isBulk ? registerBulkInterest() : expandReply()"
                 >
-                  Reply
+                  {{
+                    isBulk
+                      ? bulkHadInterest
+                        ? 'Update my interest'
+                        : 'Register interest'
+                      : 'Reply'
+                  }}
                 </b-button>
               </div>
               <b-alert
@@ -494,6 +535,22 @@
           v-else-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
+          <NoticeMessage
+            v-if="isBulk && bulkSubmitted"
+            variant="success"
+            class="mb-0"
+            data-testid="bulk-submitted"
+          >
+            Thanks! We've let the giver know which items you're interested in.
+          </NoticeMessage>
+          <NoticeMessage
+            v-if="isBulk && bulkTriedRegister && bulkPickError"
+            variant="danger"
+            class="register-error mb-0"
+            data-testid="register-error"
+          >
+            {{ bulkPickError }}
+          </NoticeMessage>
           <b-button
             v-if="inModal || fullscreenOverlay"
             variant="secondary"
@@ -508,9 +565,16 @@
             variant="primary"
             size="lg"
             class="reply-button"
-            @click="expandReply"
+            :data-testid="isBulk ? 'register-interest' : undefined"
+            @click="isBulk ? registerBulkInterest() : expandReply()"
           >
-            Reply
+            {{
+              isBulk
+                ? bulkHadInterest
+                  ? 'Update my interest'
+                  : 'Register interest'
+                : 'Reply'
+            }}
           </b-button>
         </div>
         <b-alert
@@ -604,10 +668,12 @@ import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
+import BulkItemsInterest from '~/components/BulkItemsInterest'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -683,9 +749,16 @@ const {
 // out or been cross-posted). Resolve each to the group record for its display
 // name + explore link; drop any not yet in the group store.
 const messageGroups = computed(() => {
-  if (!message.value?.groups?.length) return []
-  return message.value.groups
-    .map((g) => groupStore.get(g.groupid))
+  const raw = message.value?.groups
+  if (!raw?.length) return []
+  // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+  // the home group could be hidden behind "more". Flag it so the template can show a
+  // home icon next to it.
+  return homeGroupFirst(raw)
+    .map((g) => {
+      const grp = groupStore.get(g.groupid)
+      return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
+    })
     .filter(Boolean)
 })
 
@@ -699,6 +772,44 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
 )
+
+// For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
+// collection times structurally. The server also stores a plain-text summary as
+// the body (so digests/search/non-bulk clients still have something), but on the
+// web page that just duplicates the catalogue — so suppress it. A giver's own
+// free-text description doesn't start with this generated marker, so it still
+// shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
+const isBulk = computed(
+  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
+)
+const hideGeneratedBulkBody = computed(() => {
+  const body = message.value?.textbody || ''
+  return isBulk.value && body.startsWith('Items available in this offer:')
+})
+
+// A bulk offer is replied to by registering per-item interest, not by opening a
+// reply box — so the main reply button becomes "Register interest". These mirror
+// the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+const bulkInterestRef = ref(null)
+const bulkCanRegister = ref(false)
+const bulkSubmitted = ref(false)
+// Interest already existed when the page loaded — drives the "Update my interest"
+// button label. A fresh reply this visit sets bulkSubmitted (thanks note) but NOT
+// this, so we don't flip the button to "Update my interest" right after replying.
+const bulkHadInterest = ref(false)
+// Red error shown above the reply button when a "Register interest" click can't
+// go through yet (e.g. no item chosen) — otherwise the click silently no-ops.
+// The child's live "why you can't register yet" message ('' once ready), and
+// whether the user has actually pressed the button. We only show the red error
+// after a try, so an empty "Register interest" click gives feedback instead of
+// silently no-opping — and it clears itself the moment the reply becomes valid.
+const bulkPickError = ref('')
+const bulkTriedRegister = ref(false)
+function registerBulkInterest() {
+  bulkTriedRegister.value = true
+  if (bulkPickError.value) return
+  bulkInterestRef.value?.submit()
+}
 
 // State
 const replied = ref(false)
@@ -2180,7 +2291,12 @@ onUnmounted(() => {
     }
   }
 
-  /* Sticky ad adjustment - add bottom padding instead of positioning */
+  /* Sticky ad adjustment - add bottom padding instead of positioning.
+     Mirrors the width+height matrix used by .navbar-bottom and .modal-content:
+     from md up the desktop ad creative renders ($sticky-banner-height-desktop,
+     -tall), so branching on height alone under-reserved by 40px in short-but-
+     wide windows (e.g. ~820x420, an email client's embedded browser) and the
+     fixed ad zone swallowed real clicks on Cancel/Reply. */
   &.stickyAdRendered {
     padding-bottom: calc(1rem + $sticky-banner-height-mobile);
 
@@ -2188,8 +2304,12 @@ onUnmounted(() => {
       padding-bottom: calc(1rem + $sticky-banner-height-mobile-tall);
     }
 
-    @media (min-height: $desktop-tall) {
-      padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
+    @include media-breakpoint-up(md) {
+      padding-bottom: calc(1rem + $sticky-banner-height-desktop);
+
+      @media (min-height: $desktop-tall) {
+        padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
+      }
     }
   }
 
@@ -2205,14 +2325,71 @@ onUnmounted(() => {
       padding-bottom: 1rem;
     }
   }
+
+  /* On the standalone message page (wrapper has neither .in-modal nor
+     .fullscreen-overlay) the footer used to scroll with the page, so below xl
+     the Reply button could start hidden under the fixed bottom nav, the
+     sticky ad zone or the floating New Post button - a natural tap silently
+     hit those instead, or nothing. Pin the footer sticky above that fixed
+     chrome so the page's primary action is always visible and clickable.
+     The bottom nav is d-xl-none (67px, 76px from md), and the ad zone adds
+     the same height matrix as .navbar-bottom's --ad-offset. When pinned, the
+     ad-clearance padding above is unnecessary - reset to normal padding. */
+  @media (max-width: 1199.98px) {
+    .message-expanded-wrapper:not(.in-modal):not(.fullscreen-overlay) & {
+      position: sticky;
+      z-index: 1031;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.15);
+      bottom: calc(67px + env(safe-area-inset-bottom, 0px));
+
+      @include media-breakpoint-up(md) {
+        bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+      }
+    }
+
+    .message-expanded-wrapper:not(.in-modal):not(.fullscreen-overlay)
+      &.stickyAdRendered {
+      padding-bottom: 1rem;
+      bottom: calc(
+        67px + $sticky-banner-height-mobile + env(safe-area-inset-bottom, 0px)
+      );
+
+      @media (min-height: $mobile-tall) {
+        bottom: calc(
+          67px + $sticky-banner-height-mobile-tall +
+            env(safe-area-inset-bottom, 0px)
+        );
+      }
+
+      @include media-breakpoint-up(md) {
+        bottom: calc(
+          76px + $sticky-banner-height-desktop +
+            env(safe-area-inset-bottom, 0px)
+        );
+
+        @media (min-height: $desktop-tall) {
+          bottom: calc(
+            76px + $sticky-banner-height-desktop-tall +
+              env(safe-area-inset-bottom, 0px)
+          );
+        }
+      }
+    }
+  }
 }
 
 .footer-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   width: 100%;
   max-width: 600px;
   margin: 0 auto;
+
+  /* The empty-submit error spans the full width and sits above the buttons. */
+  .register-error {
+    flex: 0 0 100%;
+  }
 
   .cancel-button,
   .reply-button {

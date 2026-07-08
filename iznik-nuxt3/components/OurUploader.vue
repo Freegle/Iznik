@@ -65,6 +65,8 @@ import { useMobileStore } from '@/stores/mobile' // APP...
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMiscStore } from '~/stores/misc'
+import { action } from '~/composables/useClientLog'
+import { describeUploadError } from '~/composables/useUploadErrorDetail'
 
 const runtimeConfig = useRuntimeConfig()
 
@@ -375,6 +377,17 @@ async function choosePhoto() {
 }
 
 let uppyTimer = null
+// Per-file compression telemetry. Keyed by file.id; an entry lives from
+// preprocess-progress (compress start) to preprocess-complete (compress end),
+// so it self-cleans. Lets us measure the client-side compress step directly
+// instead of inferring it from the selected->started gap (which, with
+// autoProceed, happens BEFORE compression — @uppy/core emits `upload` in
+// createUpload, before runUpload executes the Compressor pre-processor).
+const compressTimers = new Map()
+// Per-file retry counter (keyed by file.id) so upload_failed can report which
+// attempt failed — a file that fails on attempt 5 exhausted the retry ladder
+// (a genuine stop), vs attempt 1 that later recovered.
+const uploadRetries = new Map()
 const scheduleRetry = createRetryCoalescer(() => uppy)
 
 onMounted(() => {
@@ -410,6 +423,13 @@ onMounted(() => {
     .use(Compressor)
   uppy.on('file-added', (file) => {
     console.log('Added file', file)
+    // Ships to Loki (event_type=action) so we can distinguish "opened the picker but
+    // never selected a photo" from "selected a photo, upload then failed/stalled".
+    action('upload_file_selected', {
+      uploader: 'our',
+      file_size: file?.size,
+      file_type: file?.type,
+    })
   })
   uppy.on('files-added', (files) => {
     console.log('Added files', files)
@@ -421,9 +441,58 @@ onMounted(() => {
     // progress: integer (total progress percentage)
     console.log('Progress', progress)
   })
-  uppy.on('preprocess-progress', (progress) => {
-    // progress: integer (total progress percentage)
-    console.log('Preprocess progress', progress)
+  uppy.on('preprocess-progress', (file, progress) => {
+    // @uppy/compressor emits this per file (file, {mode,message}) at the START of
+    // compression, before it has run — so file.size here is the ORIGINAL size.
+    console.log('Preprocess progress', file?.id, progress)
+    if (!file || compressTimers.has(file.id)) return
+    const originalSize = file?.size ?? file?.data?.size ?? null
+    compressTimers.set(file.id, {
+      startedAt: Date.now(),
+      originalSize,
+      // Set true by compressor:complete if this file was actually compressed.
+      // Compressor swallows its own errors (logs a warning, no rethrow) and the
+      // file then uploads UNCOMPRESSED, so absence here = silent compress failure.
+      compressed: false,
+    })
+    action('upload_compress_started', {
+      uploader: 'our',
+      file_size: originalSize,
+    })
+  })
+  uppy.on('compressor:complete', (files) => {
+    // Fires once per batch, carrying ONLY the files Compressor successfully
+    // compressed. Anything attempted (preprocess-progress) but missing here failed
+    // or was skipped. Emitted before the per-file preprocess-complete loop, so the
+    // flag is set before preprocess-complete reads it.
+    console.log('Compressor complete', files?.length)
+    for (const file of files || []) {
+      const entry = compressTimers.get(file?.id)
+      if (entry) entry.compressed = true
+    }
+  })
+  uppy.on('preprocess-complete', (file) => {
+    // Per-file, at the END of compression. file.size is now the COMPRESSED size
+    // (or the original if compression failed/was skipped). Close the bracket.
+    console.log('Preprocess complete', file?.id)
+    const entry = file && compressTimers.get(file.id)
+    if (!entry) return
+    const compressedSize = file?.size ?? file?.data?.size ?? null
+    action('upload_compress_finished', {
+      uploader: 'our',
+      file_type: file?.type,
+      original_size: entry.originalSize,
+      compressed_size: compressedSize,
+      elapsed_ms: Date.now() - entry.startedAt,
+      // Did Compressor actually process it (vs silently fall through uncompressed)?
+      compressed: entry.compressed,
+      // Independent of the flag: did the bytes actually shrink?
+      shrunk:
+        entry.originalSize != null &&
+        compressedSize != null &&
+        compressedSize < entry.originalSize,
+    })
+    compressTimers.delete(file.id)
   })
   uppy.on('upload-progress', (file, progress) => {
     // file: { id, name, type, ... }
@@ -442,6 +511,7 @@ onMounted(() => {
   })
   uppy.on('upload', (uploadID, files) => {
     console.log('Upload started', uploadID, files)
+    action('upload_started', { uploader: 'our', file_count: files?.length })
   })
   uppy.on('complete', (result) => {
     if (uppyTimer) {
@@ -456,6 +526,8 @@ onMounted(() => {
       uppyTimer = setTimeout(() => {
         console.log('Uppy timed out')
         Sentry.captureMessage('Uppy timed out')
+        // NB this only means the modal has been open >30s, NOT that an upload failed.
+        action('upload_modal_open_30s', { uploader: 'our' })
       }, 30000)
     }
   })
@@ -465,7 +537,24 @@ onMounted(() => {
   })
   uppy.on('upload-success', (file, response) => {
     console.log('Upload success', file, response)
+    action('upload_succeeded', {
+      uploader: 'our',
+      file_size: file?.size,
+      file_type: file?.type,
+    })
   })
+  // Per-FILE upload failure carries the file + server response, so this is where
+  // we log the diagnosable detail (HTTP status, network-vs-server, cause, size).
+  uppy.on('upload-error', (file, error, response) => {
+    console.error('Upload error', file?.id, error, response)
+    action('upload_failed', {
+      uploader: 'our',
+      attempt: (uploadRetries.get(file?.id) ?? 0) + 1,
+      ...describeUploadError(error, file, response),
+    })
+  })
+  // The global error event drives the retry (unchanged behaviour); logging now
+  // lives in upload-error above to avoid double-counting.
   uppy.on('error', (error) => {
     console.error('Upload error, retry', error)
     if (uppyTimer) {
@@ -476,15 +565,27 @@ onMounted(() => {
   })
   uppy.on('upload-retry', (fileID) => {
     console.log('upload retried:', fileID)
+    uploadRetries.set(fileID, (uploadRetries.get(fileID) ?? 0) + 1)
   })
   uppy.on('upload-stalled', (error, files) => {
     console.log('upload seems stalled', error, files)
+    action('upload_stalled', {
+      uploader: 'our',
+      reason: error?.message,
+      file_count: files?.length,
+    })
   })
   uppy.on('retry-all', (fileIDs) => {
     console.log('upload retried:', fileIDs)
   })
   uppy.on('restriction-failed', (file, error) => {
     console.log('Restriction failed', file, error)
+    action('upload_rejected', {
+      uploader: 'our',
+      reason: error?.message,
+      file_type: file?.type,
+      file_size: file?.size,
+    })
   })
   uppy.on('dashboard:modal-closed', () => {
     console.log('Uploader modal is closed')
@@ -492,6 +593,9 @@ onMounted(() => {
       clearTimeout(uppyTimer)
       uppyTimer = null
     }
+    // Drop any files still mid-compress (closed before preprocess-complete).
+    compressTimers.clear()
+    uploadRetries.clear()
     emit('closed')
   })
   uppy.on('thumbnail:generated', (file, preview) => {
@@ -505,6 +609,8 @@ onBeforeUnmount(() => {
     clearTimeout(uppyTimer)
     uppyTimer = null
   }
+  compressTimers.clear()
+  uploadRetries.clear()
 })
 
 async function uploadSuccess(result) {

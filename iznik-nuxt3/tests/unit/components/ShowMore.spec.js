@@ -30,6 +30,34 @@ describe('ShowMore', () => {
       expect(wrapper.find('div').exists()).toBe(true)
     })
 
+    // Callers bind data that is still loading (e.g. mydata.vue's status.data.memberships before
+    // the GDPR export arrives), which is undefined/non-array. ShowMore must not crash - it used
+    // to throw "reading 'length'" and "items.slice is not a function", flooding Sentry.
+    it('renders without error when items is undefined', () => {
+      const wrapper = mount(ShowMore, {
+        props: { items: undefined },
+        global: {
+          stubs: { 'b-button': { template: '<button><slot /></button>' } },
+        },
+      })
+      expect(wrapper.find('.show-more').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('more')
+    })
+
+    it('renders without error when items is null', () => {
+      // null is a realistic still-loading value (an optional prop is not replaced by its default
+      // when explicitly null). The Array.isArray guard treats it as an empty list.
+      const wrapper = mount(ShowMore, {
+        props: { items: null },
+        global: {
+          stubs: { 'b-button': { template: '<button><slot /></button>' } },
+        },
+      })
+      expect(wrapper.find('.show-more').exists()).toBe(true)
+      // No items rendered and no "+N more" toggle.
+      expect(wrapper.find('.show-more__item').exists()).toBe(false)
+    })
+
     it('renders items using slot', () => {
       const items = [{ id: 1 }, { id: 2 }]
       const wrapper = mount(ShowMore, {

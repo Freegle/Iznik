@@ -12,10 +12,13 @@ use App\Services\Ripple\ReachService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 class ExpandServiceTest extends TestCase
 {
+    use SeedsSpatialIndex;
+
     private const WKT = 'POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))';
 
     protected function setUp(): void
@@ -87,6 +90,84 @@ class ExpandServiceTest extends TestCase
         ], 200)]);
     }
 
+    /** Like fakeRouting(), but the schedule response also carries reachable_group_ids. */
+    private function fakeRoutingWithReachable(array $reachableIds, int $ticks = 3): void
+    {
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $schedule = [];
+        for ($k = 1; $k <= $ticks; $k++) {
+            $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
+        }
+        Http::fake(['*ripple-schedule*' => Http::response([
+            'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
+            'reachable_group_ids' => array_values($reachableIds),
+        ], 200)]);
+    }
+
+    /**
+     * Fakes the routing server's /v1/group-proximity response used by
+     * ReachService::groupProximity(). Layers on top of any Http::fake() already
+     * registered (e.g. fakeRouting()'s '*ripple-schedule*' stub) rather than
+     * replacing it.
+     */
+    private function fakeGroupProximity(
+        bool $reachable,
+        bool $quicker = true,
+        float $pLat = 0,
+        float $pLng = 0,
+        float $qLat = 0,
+        float $qLng = 0,
+        int $status = 200
+    ): void {
+        if ($status !== 200) {
+            Http::fake(['*group-proximity*' => Http::response('', $status)]);
+            return;
+        }
+        if (!$reachable) {
+            Http::fake(['*group-proximity*' => Http::response(['reachable' => false], 200)]);
+            return;
+        }
+        Http::fake(['*group-proximity*' => Http::response([
+            'reachable' => true,
+            'closest' => ['lat' => $pLat, 'lng' => $pLng, 'drive_min' => 4.0],
+            'furthest' => ['lat' => $qLat, 'lng' => $qLng, 'drive_min' => 22.0],
+            'quicker' => $quicker,
+        ], 200)]);
+    }
+
+    /**
+     * Seeds a postcode location (with an associated area location it points to via
+     * areaid) into both the test DB (for Location::describeNearest's by-id enrich)
+     * and the spatial server's live "postcodes" KNN index — mirrors
+     * LocationTest::seedPostcode, extended with an area row so describeNearest()'s
+     * "POSTCODE (Area)" branch is exercised.
+     */
+    private function seedPostcodeWithArea(int $id, string $name, float $lat, float $lng, int $areaId, string $areaName): void
+    {
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $areaId], [
+            'name' => $areaName,
+            'type' => 'Point',
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+        DB::table('locations')->updateOrInsert(['id' => $id], [
+            'name' => $name,
+            'type' => 'Postcode',
+            'areaid' => $areaId,
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+        $this->seedSpatialPoint('postcodes', $id, $lat, $lng);
+    }
+
     /** Master switch off: process() is inert - no reach computed, nothing rippled in (ships dark). */
     public function test_process_is_inert_when_rippling_is_disabled(): void
     {
@@ -145,6 +226,53 @@ class ExpandServiceTest extends TestCase
             'POLYGON',
             DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
         );
+    }
+
+    /**
+     * BUG FIX: blurOrigin can snap a post's origin onto a DISCONNECTED routing node (a driveway
+     * stub / isolated segment) whose drive-isochrone reaches almost nothing, so the blurred origin
+     * returns an EMPTY schedule and the post is skipped on EVERY run. Because the blur is
+     * deterministic this is permanent - ~16% of live candidates were stranded this way. initialiseNew
+     * must fall back to the post's RAW origin (geocoded onto the connected network) so it still ripples.
+     */
+    public function test_blurred_origin_off_graph_falls_back_to_raw_origin(): void
+    {
+        $rawLat = 51.5;
+        $rawLng = -0.1;
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30), $rawLat, $rawLng);
+
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $validSchedule = [['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 30, 'polygon' => $polygon]];
+
+        // Routing returns an EMPTY schedule for the (off-graph) blurred origin but a valid one for
+        // the raw coordinates. initialiseNew hits the blurred origin first, gets nothing, and must
+        // retry with the raw origin (which differs by ~0.0006 lat / ~0.006 lng for this point).
+        Http::fake(function ($request) use ($rawLat, $rawLng, $validSchedule) {
+            if (! str_contains($request->url(), 'ripple-schedule')) {
+                return Http::response([], 200);
+            }
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
+            $isRaw = abs((float) ($q['lat'] ?? 0) - $rawLat) < 3e-4 && abs((float) ($q['lng'] ?? 0) - $rawLng) < 3e-4;
+
+            return Http::response($isRaw
+                ? ['total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $validSchedule]
+                : ['total_freeglers' => 0, 'max_drive_min' => 30, 'schedule' => []], 200);
+        });
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'post ripples via raw-origin fallback when the blurred origin is off-graph');
+        $this->assertSame(0, $stats['skipped'], 'not skipped once the raw origin is tried');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row, 'a reach row is written');
+        // The stored origin is the RAW location (the fallback path), not the off-graph blurred point.
+        $this->assertEqualsWithDelta($rawLat, (float) $row->lat, 3e-4);
+        $this->assertEqualsWithDelta($rawLng, (float) $row->lng, 3e-4);
     }
 
     public function test_enabled_at_cutoff_excludes_posts_that_arrived_before_it(): void
@@ -397,6 +525,73 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count());
     }
 
+    public function test_held_reach_persists_pending_copies_and_reach_row(): void
+    {
+        // A report / microvolunteering quorum (or a moderator Back to Pending) pulls a post to
+        // Pending on all its groups and FREEZES the reach (status='held'). The Pending
+        // rippled-in copies must persist for per-group moderation and the reach row must NOT be
+        // removed - so a later per-group re-approval brings a copy back without re-rippling.
+        Http::fake();
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: held', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        // Frozen reach. The post is Pending → not in messages_spatial, so the stale/orphan
+        // retraction paths would normally fire and delete the copies + reach row.
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'held', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay()]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $message->id)->count(),
+            'held reach row must persist (removeStaleAndRetract skips held)');
+        $copy = DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
+        $this->assertSame(0, (int) $copy->deleted, 'held post rippled-in copy must not be retracted');
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $copy->collection, 'held post rippled-in copy stays Pending');
+    }
+
+    public function test_non_held_orphaned_reach_is_removed(): void
+    {
+        // Contrast: an ordinary (non-held) reach whose post has left messages_spatial IS
+        // removed - proving the 'held' guard is what protects the report/back-to-pending copies.
+        Http::fake();
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: gone', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay()]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count(),
+            'a non-held reach whose post left spatial is removed as normal');
+    }
+
     public function test_handles_filtered_empty_polygon_tick_and_still_completes(): void
     {
         // Routing returns all 3 ticks, but tick 2's polygon is empty → it is filtered
@@ -506,6 +701,152 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    // --- Reachable-node gate (plan 2026-07-06) -----------------------------------
+
+    private function seedTargetGroupCoveringReach(): object
+    {
+        // Area intersects the fake reach box (-0.20..-0.10 lng, 51.50..51.60 lat), so
+        // ST_Intersects passes and only the node-set gate can exclude it.
+        $g = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $g->id]
+        );
+        return $g;
+    }
+
+    public function test_reachable_gate_blocks_a_group_the_polygon_covers_but_the_nodes_do_not(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        // Non-empty reachable set that does NOT include B (only the origin is node-reachable).
+        $this->fakeRoutingWithReachable([$originGid], 3);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'gate on: a group the polygon covers but with no reachable node is NOT rippled in'
+        );
+    }
+
+    public function test_reachable_gate_allows_a_group_in_the_reachable_set(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        $this->fakeRoutingWithReachable([$groupB->id], 3);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'gate on: a group in the reachable set IS rippled in'
+        );
+    }
+
+    public function test_reachable_gate_off_ripples_an_intersecting_group_regardless_of_the_set(): void
+    {
+        // Default (off): unchanged behaviour - the polygon alone decides, even though B
+        // is not in reachable_group_ids.
+        config(['freegle.ripple.reachable_gate' => false]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        $this->fakeRoutingWithReachable([$originGid], 3); // B not in the set
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'gate off: an intersecting group is still rippled in (backward compatible)'
+        );
+    }
+
+    /**
+     * @param int[] $reachableIds JSON-stored on the reach row
+     */
+    private function seedRippledCopyWithReach(array $reachableIds): array
+    {
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        // Rippled group's area INTERSECTS the reach polygon, so the polygon-only path
+        // keeps it - only the node-set gate can retract it.
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $rippled->id]
+        );
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: reach', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay(), json_encode(array_values($reachableIds))]
+        );
+        return [(int) $message->id, (int) $rippled->id];
+    }
+
+    public function test_reachable_gate_retracts_a_rippled_group_outside_the_reachable_set(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        // A NON-EMPTY set that excludes the rippled group: an empty set means "gate
+        // could not compute" and never id-retracts (see test_empty_reachable_set_never_id_retracts).
+        [$msgid, $rippledId] = $this->seedRippledCopyWithReach([999999999]);
+
+        $stats = [];
+        $this->service()->retractOutOfReachCopies($msgid, false, $stats);
+
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $rippledId)->first();
+        $this->assertSame(1, (int) $copy->deleted, 'a rippled group outside the reachable set is retracted');
+    }
+
+    public function test_reachable_gate_keeps_a_rippled_group_inside_the_reachable_set(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $rippled->id]
+        );
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: keep', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $origin->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        MessageGroup::create(['msgid' => $message->id, 'groupid' => $rippled->id, 'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subDay()]);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
+        );
+
+        $stats = [];
+        $this->service()->retractOutOfReachCopies((int) $message->id, false, $stats);
+
+        $copy = DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
+        $this->assertSame(0, (int) $copy->deleted, 'a rippled group inside the reachable set is kept');
+    }
+
     /**
      * With ripple.rippled_in_pending_hours > 0 the rippled-in row is inserted Pending, so
      * AutoApproveService approves it after the mod-veto window (rather than at ripple-in).
@@ -526,6 +867,264 @@ class ExpandServiceTest extends TestCase
         $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($b, 'post rippled into group B');
         $this->assertSame('Pending', $b->collection, 'a positive window leaves the rippled-in row Pending for the mod-veto');
+    }
+
+    /**
+     * Task #23: after a post rippled in, ripple:proximity-notes (out of the hot expander) resolves
+     * quicker=true from /v1/group-proximity + the P/Q postcodes and stores the note in
+     * rippling_proximity. The expander itself no longer computes or stores the note.
+     */
+    public function test_ripple_proximity_note_set_when_quicker(): void
+    {
+        // Far-out-at-sea coordinates (well beyond the KNN's 0.32° buffer from any real
+        // postcode, per LocationTest) so the seeded P/Q are unambiguously nearest.
+        $pId = 99100001;
+        $qId = 99100002;
+        $pAreaId = 99100011;
+        $qAreaId = 99100012;
+        $pLat = 58.000;
+        $pLng = 1.000;
+        $qLat = 58.500;
+        $qLng = 1.500;
+
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, true, $pLat, $pLng, $qLat, $qLng);
+        $this->seedPostcodeWithArea($pId, 'AB10 1XG', $pLat, $pLng, $pAreaId, 'Gilcomston');
+        $this->seedPostcodeWithArea($qId, 'AB11 5QN', $qLat, $qLng, $qAreaId, 'Aberdeen');
+
+        try {
+            $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+            $groupB = $this->createTestGroup();
+            DB::statement(
+                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+            );
+
+            $this->service()->process(false, 500);
+            // The note is computed out-of-band, not by the expander.
+            $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+            $this->assertNotNull($b, 'post rippled into group B');
+            $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+            $note = DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+            $this->assertNotNull($note, 'proximity note written for the rippled-in copy');
+            $this->assertSame('AB10 1XG (Gilcomston)', $note->p);
+            $this->assertSame('AB11 5QN (Aberdeen)', $note->q);
+            $this->assertNotNull(
+                DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+                'noted row is also marked checked'
+            );
+        } finally {
+            $this->removeSpatial('postcodes', [$pId, $qId]);
+            DB::table('locations')->whereIn('id', [$pId, $qId, $pAreaId, $qAreaId])->delete();
+        }
+    }
+
+    /** quicker=false from /v1/group-proximity → no rippling_proximity row is written. */
+    public function test_ripple_proximity_note_omitted_when_not_quicker(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, false, 58.0, 1.0, 58.5, 1.5);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post still rippled into group B'
+        );
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'not quicker - no note'
+        );
+    }
+
+    /**
+     * reachable=false from /v1/group-proximity (group outside the routing horizon) → no note, and
+     * both the expander run AND the notes command complete normally.
+     */
+    public function test_ripple_proximity_note_omitted_when_group_proximity_unreachable(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(false);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'ripple-in still counted');
+        $this->assertSame(0, $stats['errors'], 'expander no longer calls proximity, so no error either way');
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first()
+        );
+    }
+
+    /**
+     * An HTTP 500 from /v1/group-proximity must never break ripple:proximity-notes: it writes no
+     * note for that row and exits cleanly (best-effort, so a slow/erroring routing server is safe).
+     */
+    public function test_ripple_proximity_note_never_breaks_on_http_failure(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, status: 500);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0); // must not throw on the 500
+
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first()
+        );
+    }
+
+    /** Count of /v1/group-proximity requests recorded by Http::fake so far. */
+    private function proximityRequestCount(): int
+    {
+        return Http::recorded(fn ($req) => str_contains($req->url(), 'group-proximity'))->count();
+    }
+
+    /**
+     * Negative memoization (Phase 0, plans/routing-performance-step-change.md): a definitive
+     * "not quicker" answer writes a rippling_proximity_checked marker, so the row is never
+     * re-queried. Previously these rows were recomputed on every 5-minute run for the whole
+     * 8-day candidate window (the 2026-07-06 group-21521 Sentry storm's standing tax).
+     */
+    public function test_proximity_not_quicker_writes_marker_and_is_never_rechecked(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, false, 58.0, 1.0, 58.5, 1.5);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'not quicker - no note'
+        );
+        $this->assertNotNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'definitive not-quicker answer - checked marker written'
+        );
+
+        $before = $this->proximityRequestCount();
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+        $this->assertSame(
+            $before,
+            $this->proximityRequestCount(),
+            'marked row must not be re-queried on subsequent runs'
+        );
+    }
+
+    /**
+     * A definitive "unreachable within budget" answer (HTTP 200, reachable=false) is also
+     * memoized: marker written, no re-query on later runs.
+     */
+    public function test_proximity_unreachable_writes_marker_and_is_never_rechecked(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(false);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNotNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'definitive unreachable answer - checked marker written'
+        );
+
+        $before = $this->proximityRequestCount();
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+        $this->assertSame($before, $this->proximityRequestCount(), 'unreachable row not re-queried');
+    }
+
+    /**
+     * An HTTP failure is NOT a definitive answer: no marker may be written (else a routing
+     * restart would permanently suppress notes for whatever rows were checked during it),
+     * and the row IS re-queried on the next run.
+     */
+    public function test_proximity_http_failure_writes_no_marker_and_is_retried(): void
+    {
+        $this->fakeRouting(1);
+        $this->fakeGroupProximity(true, status: 500);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'HTTP failure is not definitive - no marker'
+        );
+
+        $before = $this->proximityRequestCount();
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+        $this->assertSame(
+            $before + 1,
+            $this->proximityRequestCount(),
+            'failed row is retried on the next run'
+        );
+    }
+
+    /**
+     * Markers older than the candidate window are purged by the command (candidates require
+     * mg.arrival within 8 days, so a 14-day-old marker can never be needed again); fresh
+     * markers are kept.
+     */
+    public function test_proximity_marker_purge_removes_only_expired_rows(): void
+    {
+        $this->fakeRouting(1);
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $oldMsg = $this->createTestMessage($user, $group);
+        $freshMsg = $this->createTestMessage($user, $group);
+        DB::table('rippling_proximity_checked')->insert([
+            ['msgid' => $oldMsg->id, 'groupid' => $group->id, 'checked_at' => now()->subDays(20)],
+            ['msgid' => $freshMsg->id, 'groupid' => $group->id, 'checked_at' => now()->subDays(2)],
+        ]);
+
+        $this->artisan('ripple:proximity-notes')->assertExitCode(0);
+
+        $this->assertNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $oldMsg->id)->first(),
+            'marker past the candidate window is purged'
+        );
+        $this->assertNotNull(
+            DB::table('rippling_proximity_checked')->where('msgid', $freshMsg->id)->first(),
+            'recent marker is kept'
+        );
     }
 
     /**
@@ -802,6 +1401,145 @@ class ExpandServiceTest extends TestCase
         $this->assertSame('Banned', $m->collection, 'existing banned membership left untouched');
     }
 
+    /**
+     * A poster banned from a group (users_banned row) must NOT have their post rippled into it,
+     * nor be re-joined to it. A ban is an explicit mod ejection; rippling must not silently undo it.
+     */
+    public function test_post_is_not_rippled_into_a_group_the_poster_is_banned_from(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        // Group B's area intersects the reach — it would ripple in but for the ban.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // The poster is banned from group B (authoritative users_banned record, no membership row).
+        DB::table('users_banned')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'byuser' => null, 'date' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post not rippled into a group the poster is banned from'
+        );
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'banned poster not re-joined to the group'
+        );
+    }
+
+    /** A legacy collection='Banned' membership also blocks the post rippling into that group. */
+    public function test_post_is_not_rippled_into_a_group_with_a_banned_collection_membership(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Banned', 'added' => now(),
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'post not rippled into a group where the poster has a Banned-collection membership'
+        );
+    }
+
+    /**
+     * Backfill: pullBannedRippleMemberships removes ripple-join memberships into groups the member
+     * is banned from and soft-deletes their rippled-in posts there. Dry run writes nothing.
+     */
+    public function test_backfill_removes_ripple_joins_for_banned_users(): void
+    {
+        $poster = $this->createTestUser();
+        $groupB = $this->createTestGroup();
+
+        // A rippled-in post copy of the poster's message, live in group B.
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $poster->id,
+            'subject' => 'OFFER: lamp', 'textbody' => 'A lamp.', 'source' => 'Platform',
+            'date' => now()->subDay(), 'arrival' => now()->subDay(), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $groupB->id, 'collection' => 'Approved',
+            'arrival' => now()->subDay(), 'rippled_in' => 1, 'deleted' => 0,
+        ]);
+        // The ripple-join membership and the ban that should have blocked it.
+        DB::table('memberships')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Approved', 'rippled' => 1, 'added' => now()->subDay(),
+        ]);
+        DB::table('users_banned')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'byuser' => null, 'date' => now()->subDays(2),
+        ]);
+
+        // Dry run changes nothing.
+        $dry = ['pairs' => 0, 'memberships_removed' => 0, 'posts_pulled' => 0];
+        $this->service()->pullBannedRippleMemberships(null, 1000, true, $dry);
+        $this->assertSame(1, $dry['pairs']);
+        $this->assertSame(1, $dry['memberships_removed']);
+        $this->assertSame(1, $dry['posts_pulled']);
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $poster->id)->where('groupid', $groupB->id)->first(),
+            'dry run leaves the membership in place'
+        );
+        $this->assertSame(0, (int) DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)->value('deleted'),
+            'dry run leaves the post live');
+
+        // Commit removes the membership and pulls the post.
+        $stats = ['pairs' => 0, 'memberships_removed' => 0, 'posts_pulled' => 0];
+        $this->service()->pullBannedRippleMemberships(null, 1000, false, $stats);
+        $this->assertSame(1, $stats['pairs']);
+        $this->assertSame(1, $stats['memberships_removed']);
+        $this->assertSame(1, $stats['posts_pulled']);
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $poster->id)->where('groupid', $groupB->id)->first(),
+            'ripple-join membership removed for the banned user'
+        );
+        $this->assertSame(1, (int) DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)->value('deleted'),
+            'rippled-in post soft-deleted');
+    }
+
+    /** Backfill never touches an organic (rippled=0) membership, even if the user is banned. */
+    public function test_backfill_leaves_organic_membership_of_banned_user(): void
+    {
+        $poster = $this->createTestUser();
+        $groupB = $this->createTestGroup();
+        DB::table('memberships')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'collection' => 'Approved', 'rippled' => 0, 'added' => now()->subDay(),
+        ]);
+        DB::table('users_banned')->insert([
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'byuser' => null, 'date' => now()->subDays(2),
+        ]);
+
+        $stats = ['pairs' => 0, 'memberships_removed' => 0, 'posts_pulled' => 0];
+        $this->service()->pullBannedRippleMemberships(null, 1000, false, $stats);
+
+        $this->assertSame(0, $stats['pairs'], 'organic membership is not a ripple-join and is skipped');
+        $this->assertNotNull(
+            DB::table('memberships')->where('userid', $poster->id)->where('groupid', $groupB->id)->first(),
+            'organic membership left untouched'
+        );
+    }
+
     /** A no-email home setting (0) is preserved on the rippled membership - never forced to daily. */
     public function test_no_email_home_setting_is_preserved_on_rippled_membership(): void
     {
@@ -1024,6 +1762,98 @@ class ExpandServiceTest extends TestCase
             'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
             'groupid' => $groupB->id, 'msgid' => $msgid, 'text' => 'Rippling: removed on leave',
         ]);
+    }
+
+    /**
+     * Regression (Discourse rippling-out #176/#179, msg 117580503): the group experiment runs
+     * SCOPED (global rippling off). A post rippled into B while its origin group was in the trial;
+     * the poster then LEFT B; later the origin group was REMOVED from the trial, so the post's
+     * origin fell OUTSIDE the current scope union. The leave-retraction must STILL pull the copy -
+     * cleanup of a committed rippled_in artifact is not gated by the current area scope, otherwise
+     * the post is stranded in a group the poster explicitly opted out of.
+     */
+    public function test_leave_retraction_is_not_gated_by_current_area_scope(): void
+    {
+        config(['freegle.ripple.enabled' => false]); // mirror production: scoped experiment only
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // origin (51.5, -0.1) London
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        // Origin group still in the trial: scope union COVERS the origin -> post ripples into B,
+        // poster auto-joined (Group/Joined text='Rippled').
+        $coveringScope = 'POLYGON((-0.30 51.40,0.10 51.40,0.10 51.70,-0.30 51.70,-0.30 51.40))';
+        $this->service()->process(false, 500, null, $coveringScope);
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($row, 'precondition: post rippled into B');
+        $this->assertSame(0, (int) $row->deleted, 'precondition: rippled-in row live before leave');
+
+        // Poster leaves B (Go leave path: delete membership + Group/Left log).
+        DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->delete();
+        DB::table('logs')->insert([
+            'timestamp' => now(), 'type' => 'Group', 'subtype' => 'Left',
+            'user' => $posterId, 'groupid' => $groupB->id,
+        ]);
+
+        // Origin group REMOVED from the trial: the scope union no longer covers the post's origin
+        // (a far-away Edinburgh polygon). Retraction must still run.
+        $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
+        $stats = $this->service()->process(false, 500, null, $nonCoveringScope);
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame(1, (int) $row->deleted,
+            'rippled copy must be pulled on leave even though the origin is outside the current trial scope');
+        $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
+            'groupid' => $groupB->id, 'msgid' => $msgid, 'text' => 'Rippling: removed on leave',
+        ]);
+    }
+
+    /**
+     * Companion to the leave case: when the origin post leaves the browsable set (withdrawn / taken
+     * / deleted) AFTER its origin group has left the trial, removeStaleAndRetract must still drop the
+     * reach and retract the rippled copies - it is no longer area-scoped, so an out-of-scope origin
+     * does not leave stale reach rows and orphaned copies behind.
+     */
+    public function test_stale_origin_retraction_is_not_gated_by_current_area_scope(): void
+    {
+        config(['freegle.ripple.enabled' => false]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // origin (51.5, -0.1) London
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $coveringScope = 'POLYGON((-0.30 51.40,0.10 51.40,0.10 51.70,-0.30 51.70,-0.30 51.40))';
+        $this->service()->process(false, 500, null, $coveringScope);
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $msgid)->count(), 'precondition: reach exists');
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($b, 'precondition: post rippled into B');
+        $this->assertSame(0, (int) $b->deleted, 'precondition: rippled-in row live');
+
+        // The post leaves the browsable set (withdrawn/taken/deleted -> gone from messages_spatial).
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+
+        // Origin group removed from the trial: scope no longer covers the origin.
+        $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
+        $stats = $this->service()->process(false, 500, null, $nonCoveringScope);
+
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'reach dropped even though the origin is outside the current trial scope');
+        $b = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertSame(1, (int) $b->deleted,
+            'rippled copy retracted on origin removal regardless of the current area scope');
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
     }
 
     /** The bundled intro email is claimed exactly once per post, even as more groups are added. */
@@ -1495,6 +2325,111 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    // ── Retract rippled copies when the HOME post is deleted / moved back to pending ──
+    // A mod Delete or Back-to-Pending on the origin group leaves the rippled-in copies live
+    // and Approved elsewhere, so the post still has messages_spatial rows and the
+    // spatial-IS-NULL trigger in removeStaleAndRetract never fires - the copies are stranded.
+
+    /**
+     * A post with a live rippled-in copy on group B (+ ripple membership + reach + a
+     * messages_spatial row, so it is NOT stale-by-spatial), whose ORIGIN row is in $originState:
+     *   'deleted'  - origin messages_groups row hard-deleted (mod Delete on home)
+     *   'pending'  - origin row collection=Pending (mod Back to Pending on home)
+     *   'approved' - origin row still live Approved (control)
+     * Returns [msgid, groupB, posterId].
+     */
+    private function seedRippledCopyWithOrigin(string $originState, float $lat = 51.5, float $lng = -0.1): array
+    {
+        $user = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: home-removed', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subHours(2), 'arrival' => now()->subHours(2), 'lat' => $lat, 'lng' => $lng,
+        ]);
+        if ($originState !== 'deleted') {
+            MessageGroup::create([
+                'msgid' => $message->id, 'groupid' => $origin->id,
+                'collection' => $originState === 'pending'
+                    ? MessageGroup::COLLECTION_PENDING
+                    : MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subHours(2),
+            ]);
+        }
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $groupB->id, 'collection' => 'Approved',
+            'approvedat' => now(), 'arrival' => now(), 'autoreposts' => 0,
+            'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
+        ]);
+        DB::table('memberships')->insert([
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
+        ]);
+        // A messages_spatial row (the live rippled copy has one) so the post is NOT stale-by-spatial.
+        DB::insert(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText(?, 3857), ?, ?, ?)",
+            [$message->id, "POINT($lng $lat)", $groupB->id, Message::TYPE_OFFER, now()]
+        );
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, self::WKT, now()->subHours(2)]
+        );
+
+        return [(int) $message->id, (int) $groupB->id, (int) $user->id];
+    }
+
+    /** Deleting the post on its home community pulls the rippled-in copies left live elsewhere. */
+    public function test_delete_on_home_group_retracts_rippled_copies(): void
+    {
+        Http::fake();
+        [$msgid, $groupB, $posterId] = $this->seedRippledCopyWithOrigin('deleted');
+        // Precondition: still in spatial, so the existing spatial-null retraction cannot be what fires.
+        $this->assertSame(1, (int) DB::table('messages_spatial')->where('msgid', $msgid)->count());
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'rippled-in copy pulled after the home post was deleted');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'reach dropped so the deleted post stops spreading');
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message', 'subtype' => 'Deleted', 'user' => $posterId,
+            'groupid' => $groupB, 'msgid' => $msgid, 'text' => 'Rippling: removed on origin removal',
+        ]);
+    }
+
+    /** Moving the post back to pending on its home community pulls the rippled-in copies. */
+    public function test_back_to_pending_on_home_group_retracts_rippled_copies(): void
+    {
+        Http::fake();
+        [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('pending');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'rippled-in copy pulled after the home post was moved back to pending');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count());
+    }
+
+    /** A post still live+approved on its home community keeps its rippled-in copies. */
+    public function test_live_home_post_keeps_rippled_copies(): void
+    {
+        Http::fake();
+        [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('approved');
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB)->value('deleted'),
+            'a live approved home post must not have its rippled copies retracted');
+        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'reach kept for a live post');
+    }
+
     /** A scoped (onlyMsgid) run retracts only the in-scope post, leaving others untouched. */
     public function test_scoped_only_msgid_retracts_only_in_scope_post(): void
     {
@@ -1510,8 +2445,15 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $m2)->where('groupid', $g2)->value('deleted'), 'out-of-scope copy untouched');
     }
 
-    /** A scoped (withinPolyWkt) run retracts only posts whose origin falls inside the polygon. */
-    public function test_scoped_within_poly_retracts_only_posts_inside_polygon(): void
+    /**
+     * The withinPolyWkt area scope limits EXPANSION only, NOT retraction: a scoped run retracts
+     * EVERY stale post, including one whose origin is outside the polygon. (Previously this asserted
+     * the out-of-polygon post was left untouched - that area-scoped retraction stranded rippled
+     * copies when a group was removed from the trial; see the two _not_gated_by_current_area_scope
+     * tests and Discourse rippling-out #176/#179.) Area-scoped expansion is still covered by
+     * test_within_poly_restricts_run_to_posts_inside_polygon.
+     */
+    public function test_scoped_within_poly_does_not_limit_retraction(): void
     {
         Http::fake();
         [$london] = $this->seedStaleReachWithRippledCopy(51.5, -0.1);
@@ -1521,7 +2463,7 @@ class ExpandServiceTest extends TestCase
         $this->service()->process(false, 500, null, $poly);
 
         $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $london)->count(), 'London post (inside polygon) retracted');
-        $this->assertSame(1, (int) DB::table('rippling_reach')->where('msgid', $edinburgh)->count(), 'Edinburgh post (outside polygon) untouched');
+        $this->assertSame(0, (int) DB::table('rippling_reach')->where('msgid', $edinburgh)->count(), 'Edinburgh post (outside polygon) ALSO retracted - cleanup is not area-scoped');
     }
 
     /** The poster-leaves-a-rippled-group pull also runs under a scoped run (was dark during the experiment). */
@@ -1545,5 +2487,449 @@ class ExpandServiceTest extends TestCase
             'leave-pull runs under a scoped run'
         );
         $this->assertGreaterThanOrEqual(1, $stats['pulled_on_leave']);
+    }
+
+    /** recomputeReach is a no-op unless the audience cap is actually enabled. */
+    public function test_recompute_reach_is_noop_when_cap_disabled(): void
+    {
+        config(['freegle.ripple.extent.enabled' => false]);
+        config(['freegle.ripple.extent.target_users' => 50]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $this->service()->process(false, 500); // creates reach (total_freeglers = 90)
+
+        $r = $this->service()->recomputeReach(false, 500);
+
+        $this->assertSame(0, $r['candidates'], 'cap disabled -> nothing considered');
+        $this->assertSame(
+            90,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('total_freeglers'),
+            'reach left untouched'
+        );
+    }
+
+    /** An over-reached post is shrunk to the capped schedule, with updated_at preserved (no re-mail). */
+    public function test_recompute_reach_shrinks_over_reached_post_preserving_updated_at(): void
+    {
+        // A SINGLE request-aware fake that mimics the routing server: it spreads the
+        // curve over min(pool, target_users) when target_users is sent. (Two separate
+        // Http::fake() calls would NOT work — Laravel accumulates stubs and the first
+        // registered match wins, so a later "capped" stub never overrides the first.)
+        Http::fake(function ($request) {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
+            $total = 90;
+            $cap = (int) ($q['target_users'] ?? 0);
+            $eff = ($cap > 0 && $cap < $total) ? $cap : $total;
+            $poly = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]]];
+            $sched = [];
+            foreach ([1, 2, 3] as $k) {
+                $sched[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => (int) round($eff * $k / 3), 'polygon' => $poly];
+            }
+            return Http::response(['total_freeglers' => $total, 'max_drive_min' => 30, 'schedule' => $sched], 200);
+        });
+
+        // 1) Create reach with the cap OFF -> stored uncapped (pool 90, cumulative 30/60/90).
+        config(['freegle.ripple.extent.enabled' => false]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // 0.5h -> tick 1
+        $this->service()->process(false, 500);
+
+        $this->assertSame(90, (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('total_freeglers'));
+        // Pin updated_at to a known past value to prove the recompute preserves it.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => '2020-01-01 00:00:00']);
+
+        // 2) Turn the cap ON and recompute -> the fake now returns a capped schedule
+        //    (target_users=50 -> cumulative 17/33/50), so the reach shrinks.
+        config(['freegle.ripple.extent.enabled' => true]);
+        config(['freegle.ripple.extent.target_users' => 50]);
+
+        $r = $this->service()->recomputeReach(false, 500);
+
+        $this->assertSame(1, $r['candidates']);
+        $this->assertSame(1, $r['shrunk']);
+        $after = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $sched = json_decode($after->schedule, true);
+        $last = end($sched);
+        $this->assertSame(50, (int) $last['cumulative_users'], 'stored schedule now caps at 50');
+        $this->assertSame('2020-01-01 00:00:00', (string) $after->updated_at, 'updated_at preserved (no reach-mail trigger)');
+
+        // Crosspost-breadth stat is reported and the cap never widens reach.
+        $this->assertArrayHasKey('groups_before', $r);
+        $this->assertArrayHasKey('groups_after', $r);
+        $this->assertGreaterThanOrEqual($r['groups_after'], $r['groups_before']);
+    }
+
+    /** Out-of-reach retraction pulls only the far copy; the post + near copy + organic stay. */
+    public function test_retract_out_of_reach_pulls_only_far_copies(): void
+    {
+        $srid = 3857;
+        $poster = $this->createTestUser();
+        $origin = $this->createTestGroup();
+        $near = $this->createTestGroup();
+        $far = $this->createTestGroup();
+
+        // near overlaps the reach square (0 0,1 1); far is disjoint.
+        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.5 0.5,0.5 1.5,1.5 1.5,1.5 0.5,0.5 0.5))', $srid) WHERE id = ?", [$near->id]);
+        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((10 10,10 11,11 11,11 10,10 10))', $srid) WHERE id = ?", [$far->id]);
+
+        $msg = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $poster->id,
+            'subject' => 'OFFER: chair', 'textbody' => 'a chair', 'source' => 'Platform',
+            'date' => now(), 'arrival' => now(),
+        ]);
+        foreach ([[$origin->id, 0], [$near->id, 1], [$far->id, 1]] as [$gid, $ri]) {
+            DB::table('messages_groups')->insert([
+                'msgid' => $msg->id, 'groupid' => $gid, 'collection' => 'Approved',
+                'arrival' => now(), 'rippled_in' => $ri, 'deleted' => 0,
+            ]);
+        }
+        foreach ([$near->id, $far->id] as $gid) {
+            DB::table('memberships')->insert([
+                'userid' => $poster->id, 'groupid' => $gid, 'role' => 'Member',
+                'collection' => 'Approved', 'rippled' => 1,
+            ]);
+        }
+        // Capped reach polygon = unit square at origin (overlaps near, not far).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid,lat,lng,polygon,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
+             VALUES (?,?,?,ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
+            [$msg->id, 0.5, 0.5, now(), 'drive', 1, 1, 5000, 10, json_encode([]), null, 'expanding']
+        );
+
+        $stats = [];
+        $n = $this->service()->retractOutOfReachCopies($msg->id, false, $stats);
+
+        $this->assertSame(1, $n, 'exactly the one far copy is retracted');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $near->id)->value('deleted'), 'near (in-reach) copy kept');
+        $this->assertSame(1, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $far->id)->value('deleted'), 'far (out-of-reach) copy retracted');
+        $this->assertSame(0, (int) DB::table('messages_groups')->where('msgid', $msg->id)->where('groupid', $origin->id)->value('deleted'), 'native copy untouched');
+        $this->assertDatabaseHas('messages', ['id' => $msg->id]); // the message itself stays
+        $this->assertSame(1, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $near->id)->count(), 'near ripple-membership kept');
+        $this->assertSame(0, DB::table('memberships')->where('userid', $poster->id)->where('groupid', $far->id)->count(), 'far ripple-membership removed');
+    }
+
+    public function test_reposted_pre_go_live_post_gets_reach_after_spatial_refresh(): void
+    {
+        // fakeRouting stubs the ripple-schedule endpoint; any other HTTP (the spatial-admin
+        // removeItems call in updateSpatialIndex) falls through to Laravel's default no-op 200
+        // while a fake is active. Do NOT add a catch-all Http::fake() before this: a catch-all
+        // registered first shadows the ripple-schedule stub (first matching stub wins), so the
+        // reach computation gets an empty response, no schedule, and nothing is seeded.
+        $this->fakeRouting(3);
+        // Cutoff is one hour ago; the post arrived two hours ago (pre-cutoff).
+        config(['freegle.ripple.enabled_at' => now()->subHour()->toDateTimeString()]);
+        $msgid = $this->seedSpatialPost(now()->subHours(2));
+
+        // Control: the normal cron does not seed the pre-cutoff post.
+        $this->service()->process(false, 500);
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'pre-cutoff post has no reach before it is reposted'
+        );
+
+        // Simulate the auto-repost's essential DB effect (AutoRepostService::repost): bump
+        // messages_groups.arrival to NOW(). messages_spatial.arrival is still the old value.
+        DB::table('messages_groups')->where('msgid', $msgid)->update([
+            'arrival' => now(),
+            'autoreposts' => DB::raw('autoreposts + 1'),
+        ]);
+
+        // The spatial-index cron refreshes messages_spatial.arrival from messages_groups.arrival
+        // (upsertRecentMessages re-writes any row whose arrival differs). Use the REAL service.
+        app(\App\Services\MessageSpatialService::class)->updateSpatialIndex(false);
+        $this->assertTrue(
+            (bool) DB::selectOne(
+                'SELECT arrival >= ? AS ok FROM messages_spatial WHERE msgid = ?',
+                [config('freegle.ripple.enabled_at'), $msgid]
+            )->ok,
+            'the repost pushed messages_spatial.arrival past the go-live cutoff'
+        );
+
+        // updateSpatialIndex() only refreshes messages_spatial; it does not create reach rows,
+        // so the reposted post still has none until the expand tick below.
+        $this->assertSame(
+            0,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'no reach for the reposted post until the expand tick runs'
+        );
+
+        // Next expand tick now picks the reposted post up through the normal gate — no backfill.
+        // Assert on THIS post's reach row, not the global initialised count: the REAL
+        // updateSpatialIndex() above upserts every recent approved message it can see into
+        // messages_spatial, and this suite runs in parallel (paratest) against one shared
+        // iznik_batch_test database, so the number of other posts seeded on this tick is
+        // non-deterministic. What this test actually proves is that the reposted (now
+        // post-cutoff) post specifically ripples, which the msgid-scoped assertion below does.
+        $this->service()->process(false, 500);
+
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $msgid)->count(),
+            'a reposted pre-go-live post ends up with a reach row via the arrival refresh'
+        );
+    }
+
+    // --- Slim schedule (polygons=0): per-tick ids + fetched tick polygons ---------
+
+    /**
+     * Routing fakes for the slim contract: the schedule carries per-tick
+     * reachable_group_ids and NO polygons; the tick polygon comes from the
+     * point-form catchment endpoint instead.
+     */
+    private function fakeSlimRouting(array $perTickIds, int $ticks = 3): void
+    {
+        $catchment = ['catchment' => [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ]];
+        $schedule = [];
+        $last = [];
+        for ($k = 1; $k <= $ticks; $k++) {
+            $last = array_values($perTickIds[$k - 1] ?? $last);
+            $schedule[] = [
+                'tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k,
+                'reachable_group_ids' => $last,
+            ];
+        }
+        Http::fake([
+            '*ripple-schedule*' => Http::response([
+                'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
+                'reachable_group_ids' => $last,
+            ], 200),
+            '*catchment*' => Http::response($catchment, 200),
+        ]);
+    }
+
+    public function test_slim_schedule_fetches_tick_polygon_and_gates_by_tick_ids(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30)); // tick 1
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        // B only becomes reachable at tick 2 - the tick-1 set excludes it.
+        $this->fakeSlimRouting([[$originGid], [$originGid, $groupB->id]], 3);
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row, 'slim schedule still initialises a reach row');
+        $this->assertSame(
+            'POLYGON',
+            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t,
+            'the tick polygon is materialised from the catchment endpoint'
+        );
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment'));
+
+        $ticks = json_decode($row->schedule, true);
+        $this->assertNotEmpty($ticks);
+        $this->assertArrayNotHasKey('wkt', $ticks[0], 'slim ticks are stored without per-tick WKT');
+        $this->assertSame([$originGid], json_decode($row->reachable_group_ids, true),
+            'the stored reachable set is the CURRENT tick\'s, not max extent');
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'tick-1 targeting uses tick-1 ids: B (reachable only at tick 2) is not rippled in yet'
+        );
+    }
+
+    public function test_slim_advance_fetches_polygon_and_uses_next_tick_ids(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subHours(4)); // hazard [1,3,6] => target tick 2
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+
+        // Stored SLIM schedule (no wkt): tick 1 = origin only, tick 2 adds B.
+        $ticks = [
+            ['tick' => 1, 'drive_min' => 5.0, 'cumulative_users' => 30, 'reachable_group_ids' => [$originGid]],
+            ['tick' => 2, 'drive_min' => 10.0, 'cumulative_users' => 60, 'reachable_group_ids' => [$originGid, $groupB->id]],
+            ['tick' => 3, 'drive_min' => 15.0, 'cumulative_users' => 90, 'reachable_group_ids' => [$originGid, $groupB->id]],
+        ];
+        DB::statement(
+            'INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, ?, 1, 3, 90, 30, ?, ?, ?, ?, NOW(), NOW())',
+            [
+                $msgid, self::WKT, now()->subHours(4), 'drive',
+                json_encode($ticks), json_encode([$originGid]), now()->subMinutes(5), 'expanding',
+            ]
+        );
+
+        $this->fakeSlimRouting([[$originGid], [$originGid, $groupB->id]], 3); // catchment fake used on advance
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(2, (int) $row->tick, 'the reach advanced to tick 2');
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment'));
+        $this->assertSame(
+            [$originGid, $groupB->id],
+            json_decode($row->reachable_group_ids, true),
+            'the stored reachable set moved to the new tick\'s ids'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'the tick-2 ids admit B, so it ripples in at the advance'
+        );
+    }
+
+    // --- ripple:backfill-reach (reach-algorithm change backfill) ------------------
+
+    /**
+     * One Http fake whose ripple-schedule answer switches with $phase: 'wide'
+     * (old algorithm, origin+B reachable, full polygons) then 'narrow' (new
+     * algorithm, slim, origin only). Laravel's Http::fake stubs cannot be
+     * replaced once registered, so the switch lives inside a single callback.
+     */
+    private function fakePhasedRouting(int $originGid, int $groupBId, string &$phase): void
+    {
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        Http::fake(function ($request) use ($polygon, $originGid, $groupBId, &$phase) {
+            if (str_contains($request->url(), '/v1/catchment')) {
+                return Http::response(['catchment' => $polygon], 200);
+            }
+            if (!str_contains($request->url(), '/v1/ripple-schedule')) {
+                return Http::response('', 404);
+            }
+            $wide = $phase === 'wide';
+            $ids = $wide ? [$originGid, $groupBId] : [$originGid];
+            $schedule = [];
+            for ($k = 1; $k <= 3; $k++) {
+                $entry = [
+                    'tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k,
+                    'reachable_group_ids' => $ids,
+                ];
+                if ($wide) {
+                    $entry['polygon'] = $polygon;
+                }
+                $schedule[] = $entry;
+            }
+            return Http::response([
+                'total_freeglers' => 90, 'max_drive_min' => 30,
+                'schedule' => $schedule, 'reachable_group_ids' => $ids,
+            ], 200);
+        });
+    }
+
+    public function test_backfill_reach_dry_run_previews_without_writing(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $phase = 'wide';
+        $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
+        $this->service()->process(false, 500); // ripples into B under the old wide set
+
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first();
+        $this->assertNotNull($copy);
+
+        // Simulate a pre-gate row (the backfill's real target population).
+        DB::statement('UPDATE rippling_reach SET reachable_group_ids = NULL WHERE msgid = ?', [$msgid]);
+
+        // The new algorithm says only the origin is reachable.
+        $phase = 'narrow';
+
+        $r = $this->service()->backfillReach(true, 500);
+        $this->assertSame(1, $r['updated']);
+        $this->assertGreaterThanOrEqual(1, $r['would_retract_groups']);
+        $this->assertSame(
+            0,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('deleted'),
+            'dry run leaves the copy in place'
+        );
+    }
+
+    public function test_backfill_reach_rebuilds_row_and_retracts_uncovered_copy(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $phase = 'wide';
+        $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
+        $this->service()->process(false, 500);
+
+        // Freeze the mail signal so we can assert the backfill preserves it, and
+        // simulate a pre-gate row (NULL ids = the backfill's candidate filter).
+        DB::statement('UPDATE rippling_reach SET updated_at = ?, reachable_group_ids = NULL WHERE msgid = ?', ['2026-01-01 00:00:00', $msgid]);
+
+        // The new algorithm says only the origin is reachable.
+        $phase = 'narrow';
+
+        $r = $this->service()->backfillReach(false, 500);
+        $this->assertSame(1, $r['updated']);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame([$originGid], json_decode($row->reachable_group_ids, true));
+        $ticks = json_decode($row->schedule, true);
+        $this->assertArrayNotHasKey('wkt', $ticks[0], 'the rebuilt schedule is slim');
+        $this->assertSame('2026-01-01 00:00:00', (string) $row->updated_at,
+            'backfill preserves updated_at so the reach mailer never reconsiders the row');
+
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('deleted'),
+            'the copy in the no-longer-covered group is retracted'
+        );
+
+        // Resumable: the rebuilt row now has ids set, so a second run has no candidates.
+        $r2 = $this->service()->backfillReach(false, 500);
+        $this->assertSame(0, $r2['candidates'], 'second run skips already-rebuilt rows');
+    }
+
+    public function test_empty_reachable_set_never_id_retracts(): void
+    {
+        // An empty stored set means "gate could not compute" (transient members-query
+        // failure looks identical to genuinely-zero members), so id-based retraction
+        // must not fire - otherwise one bad query would pull every copy of the post.
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->seedTargetGroupCoveringReach();
+        $phase = 'wide';
+        $this->fakePhasedRouting($originGid, (int) $groupB->id, $phase);
+        $this->service()->process(false, 500); // ripples into B
+
+        DB::statement('UPDATE rippling_reach SET reachable_group_ids = ? WHERE msgid = ?', ['[]', $msgid]);
+
+        $stats = ['pulled_out_of_reach' => 0, 'memberships_removed' => 0, 'pulled_on_removal' => 0];
+        $this->service()->retractOutOfReachCopies($msgid, false, $stats);
+
+        $this->assertSame(
+            0,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->value('deleted'),
+            'a copy in a polygon-covered group survives an empty stored reachable set'
+        );
+    }
+
+    public function test_backfill_reach_shards_partition_disjointly(): void
+    {
+        config(['freegle.ripple.reachable_gate' => true]);
+        $msgidA = $this->seedSpatialPost(now()->subMinutes(30));
+        $msgidB = $this->seedSpatialPost(now()->subMinutes(30), 51.55, -0.15);
+        $originA = (int) DB::table('messages_groups')->where('msgid', $msgidA)->value('groupid');
+        $phase = 'wide';
+        $this->fakePhasedRouting($originA, 0, $phase);
+        $this->service()->process(false, 500);
+        DB::statement('UPDATE rippling_reach SET reachable_group_ids = NULL');
+
+        $r0 = $this->service()->backfillReach(true, 500, null, 2, 0);
+        $r1 = $this->service()->backfillReach(true, 500, null, 2, 1);
+
+        $evens = (int) ($msgidA % 2 === 0) + (int) ($msgidB % 2 === 0);
+        $this->assertSame($evens, $r0['candidates'], 'shard 0 sees exactly the msgid%2==0 rows');
+        $this->assertSame(2 - $evens, $r1['candidates'], 'shard 1 sees exactly the rest');
     }
 }

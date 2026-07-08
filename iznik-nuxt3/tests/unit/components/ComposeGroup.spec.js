@@ -84,13 +84,15 @@ describe('ComposeGroup', () => {
     expect(mockComposeStore.group).toBe(1)
   })
 
-  it('preserves a pre-set group (e.g. a repost) instead of overwriting it', async () => {
+  it('ignores a pre-set group and derives the origin from the postcode', async () => {
+    // Rippling-out: a stale/pre-set group (e.g. carried over from a repost or an earlier
+    // compose) must NOT win over the containing-or-closest community for the current postcode.
     mockComposeStore.group = 2
     const wrapper = createWrapper()
     await flushPromises()
-    expect(mockComposeStore.group).toBe(2)
+    expect(mockComposeStore.group).toBe(1)
     expect(wrapper.find('[data-test="compose-group"]').text()).toContain(
-      'Westminster'
+      'London Central'
     )
   })
 

@@ -1346,6 +1346,50 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	// Log creation is now handled by the batch processor (not synchronously in the Go API).
 }
 
+// A mod reply must write its "Replied" log synchronously, exactly once. Previously the log
+// was written only by the batch, whose unconditional INSERT re-ran on task retry and
+// duplicated the row in the mod history (Discourse 9672/6). The batch now skips it.
+func TestPostMessageReplyCreatesLogSynchronously(t *testing.T) {
+	prefix := uniquePrefix("msgmod_reply_log")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reply",
+		"groupid": groupID,
+		"subject": "Re: your post",
+		"body":    "Thanks for posting!",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Exactly one Replied log, written synchronously by the Go handler.
+	var logCount int
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Message' AND subtype = 'Replied' AND msgid = ? AND byuser = ?",
+		msgID, modID).Scan(&logCount)
+	assert.Equal(t, 1, logCount, "Reply should create exactly one Replied log synchronously")
+
+	// The reply email is still queued via the background task.
+	var taskCount int
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_reply' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.GreaterOrEqual(t, taskCount, 1, "Reply should still queue the email task")
+}
+
 // A reject that lands on a message which is no longer Pending (e.g. it was
 // re-approved/promoted to live before the mod's click arrived) must NOT silently
 // queue a rejection email/log nor claim success - otherwise the mod and the poster
@@ -4643,6 +4687,47 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	assert.Equal(t, int64(1), taskCount, "freebie_alerts_add task should be queued when Offer is approved")
 }
 
+func TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd(t *testing.T) {
+	// Approving a clearance (bulk-offer) Offer must NOT queue a freebie_alerts_add task —
+	// the concierge manages those posts and freebiealerts.app is not the right channel.
+	prefix := uniquePrefix("msgw_fa_clr")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Add mod as moderator of the group.
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
+
+	// Create a pending Offer and mark it as a clearance via messages_bulk_items.
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance offer", 52.5, -1.8)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	db.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`) VALUES (?, 0, 'Office desk', 1, 'Good')", msgID)
+	defer db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ?", msgID)
+
+	// Clean any pre-existing freebie_alerts_add tasks for this message.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "freebie_alerts_add must NOT be queued when the approved Offer is a clearance")
+}
+
 func TestDeleteMessageQueuesFreebieAlertsRemove(t *testing.T) {
 	// User-deleting a message should queue freebie_alerts_remove.
 	prefix := uniquePrefix("msgw_fa_del")
@@ -5781,6 +5866,80 @@ func TestMessagesMarkSeenIdempotent(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ = getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+// TestMessagesMarkSeenBatchPreservesSemantics marks MANY messages in a single call (the batched
+// multi-row INSERT path that replaced the per-id loop) and verifies the per-message semantics are
+// unchanged: every message ends up with a View row (seen), a brand-new one gets pageview=0 (a
+// scroll impression), and a message that already has a genuine page-open (pageview=1) keeps
+// pageview=1 and has its count incremented - i.e. batching never downgrades an existing view.
+func TestMessagesMarkSeenBatchPreservesSemantics(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("markseen_batch")
+	groupID := CreateTestGroup(t, prefix)
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewerID, groupID, "Member")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	// A batch of messages (enough to exercise the multi-row INSERT).
+	const n = 12
+	ids := make([]uint64, n)
+	for i := 0; i < n; i++ {
+		ids[i] = CreateTestMessage(t, ownerID, groupID, fmt.Sprintf("%s item %d", prefix, i), 55.9533, -3.1883)
+	}
+
+	// Give the FIRST message a genuine page-open first (pageview=1), so we can prove the batch
+	// mark-seen does not downgrade it.
+	openBody, _ := json.Marshal(map[string]interface{}{"id": ids[0], "action": "View"})
+	openReq := httptest.NewRequest("POST", "/api/message?jwt="+viewerToken, bytes.NewBuffer(openBody))
+	openReq.Header.Set("Content-Type", "application/json")
+	openResp, _ := getApp().Test(openReq)
+	assert.Equal(t, 200, openResp.StatusCode)
+
+	var pvBefore, countBefore int
+	db.Raw("SELECT COALESCE(pageview, -1), count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[0], viewerID).Row().Scan(&pvBefore, &countBefore)
+	assert.Equal(t, 1, pvBefore, "page-open should set pageview=1 before the batch mark-seen")
+
+	// Mark ALL of them seen in one batched call.
+	idParts := make([]string, n)
+	for i, id := range ids {
+		idParts[i] = fmt.Sprint(id)
+	}
+	body := fmt.Sprintf(`{"ids": [%s]}`, strings.Join(idParts, ","))
+	req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+viewerToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Every message now has a View row.
+	var seenCount int
+	placeholders := make([]string, n)
+	args := make([]interface{}, 0, n+2)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, viewerID)
+	db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid IN ("+strings.Join(placeholders, ",")+
+		") AND userid = ? AND type = 'View'", args...).Scan(&seenCount)
+	assert.Equal(t, n, seenCount, "every message in the batch has a View row")
+
+	// A brand-new message (ids[1]) got pageview=0 (scroll impression).
+	var pvNew int
+	db.Raw("SELECT COALESCE(pageview, -1) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[1], viewerID).Scan(&pvNew)
+	assert.Equal(t, 0, pvNew, "a newly-seen message gets pageview=0")
+
+	// The pre-opened message (ids[0]) keeps pageview=1 (NOT downgraded) and its count incremented.
+	var pvAfter, countAfter int
+	db.Raw("SELECT COALESCE(pageview, -1), count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[0], viewerID).Row().Scan(&pvAfter, &countAfter)
+	assert.Equal(t, 1, pvAfter, "batch mark-seen must not downgrade an existing genuine view")
+	assert.Greater(t, countAfter, countBefore, "the ON DUPLICATE KEY UPDATE increments count on the existing row")
 }
 
 // --- Tests: Subject reconstruction from item + location ---
@@ -7808,6 +7967,53 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 	assert.Nil(t, msgHeldby)
 }
 
+// Regression: a soft-deleted crosspost copy that still carries a stale heldby (e.g. the
+// member withdrew the message from another group while it was held there) must NOT keep
+// messages.heldby pinned. Before the fix, the "still held on any group?" count ignored
+// deleted rows, so Release returned Success but the message stayed stuck showing "Held"
+// and no number of retries could clear it. See prod msg 120888286 ("Fob Watch").
+func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
+	prefix := uniquePrefix("rel_deleted_hold")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a") // live group the mod moderates
+	groupB := CreateTestGroup(t, prefix+"_b") // withdrawn crosspost copy, still held
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	otherModID := CreateTestUser(t, prefix+"_othermod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+
+	// Orphaned hold: a soft-deleted messages_groups row on groupB still carrying heldby,
+	// set by a mod (otherModID) on a group our releasing mod has no rights to.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, heldby, deleted) VALUES (?, ?, NOW(), 'Pending', 0, ?, 1)", msgID, groupB, otherModID)
+	// The message-level hold that mirrors it (as handleHold would have set).
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", otherModID, msgID)
+
+	// Release on the live group.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// messages.heldby must be cleared: the only row that still holds it is soft-deleted,
+	// so it must not count towards "still held".
+	var msgHeldby *uint64
+	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	assert.Nil(t, msgHeldby, "deleted group's stale hold must not keep messages.heldby pinned")
+}
+
 func TestPostMessageDeletePerGroup(t *testing.T) {
 	prefix := uniquePrefix("del_pg")
 	db := database.DBConn
@@ -7935,7 +8141,7 @@ func TestPostMessageSpamPerGroup(t *testing.T) {
 	assert.Equal(t, 0, isDeleted, "Message should not be soft-deleted when still on another group")
 }
 
-func TestPostMessageBackToPendingPerGroup(t *testing.T) {
+func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 	prefix := uniquePrefix("btp_pg")
 	db := database.DBConn
 
@@ -7954,7 +8160,10 @@ func TestPostMessageBackToPendingPerGroup(t *testing.T) {
 	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupA)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
 
-	// BackToPending on group A only.
+	// BackToPending on group A now pulls the WHOLE post back to Pending (every group it
+	// is on), so a rippled post is never left stranded and still visible elsewhere. The
+	// acting mod holds their acted-on group (A); other groups go Pending awaiting their
+	// own mods.
 	body := map[string]interface{}{
 		"id":      msgID,
 		"action":  "BackToPending",
@@ -7978,10 +8187,11 @@ func TestPostMessageBackToPendingPerGroup(t *testing.T) {
 	assert.NotNil(t, heldbyA)
 	assert.Equal(t, modID, *heldbyA)
 
-	// Group B should still be Approved and not held.
+	// Group B is ALSO pulled to Pending (the whole post is taken off the board), but is
+	// NOT held by this mod — they acted on group A, so only A carries their heldby.
 	var collectionB string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collectionB)
-	assert.Equal(t, "Approved", collectionB)
+	assert.Equal(t, "Pending", collectionB)
 
 	var heldbyB *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)

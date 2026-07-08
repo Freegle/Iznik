@@ -19,14 +19,6 @@
       />
       <span v-else class="mt-2"> Select a community to search messages. </span>
       <ModtoolsViewControl misckey="modtoolsMessagesApprovedSummary" />
-      <b-form-checkbox
-        v-model="vectorSearchEnabled"
-        switch
-        size="sm"
-        class="mt-2 ms-2"
-      >
-        Semantic search
-      </b-form-checkbox>
     </div>
     <div>
       <NoticeMessage v-if="loaded && !messages.length && !busy" class="mt-2">
@@ -64,17 +56,11 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { useMessageStore } from '@/stores/message'
-import { useMiscStore } from '@/stores/misc'
 import { setupModMessages } from '@/composables/useModMessages'
 import { useMe } from '~/composables/useMe'
 
-// Persisted (localStorage-backed) key for the semantic-search toggle so it
-// survives group changes, searches and remounts.
-const SEMANTIC_SEARCH_KEY = 'modtoolsSemanticSearch'
-
 // Stores
 const messageStore = useMessageStore()
-const miscStore = useMiscStore()
 
 // Composables
 const modMessages = setupModMessages(true)
@@ -101,10 +87,6 @@ const {
 // Local state (formerly data())
 const chosengroupid = ref(0)
 const bump = ref(0)
-const vectorSearchEnabled = ref(miscStore.get(SEMANTIC_SEARCH_KEY) ?? false)
-const searchmode = computed(() =>
-  vectorSearchEnabled.value ? 'vector' : 'keyword'
-)
 const urlOverride = ref(false)
 const loaded = ref(false)
 const highlightMsgId = ref(null)
@@ -187,15 +169,17 @@ onMounted(() => {
     messageTerm.value = route.params.term
     highlightMsgId.value = parseInt(route.params.term)
   }
-  if (route.query.searchmode) {
-    vectorSearchEnabled.value = route.query.searchmode === 'vector'
-  }
   if (messageTerm.value) {
     // Clear existing messages and reset state for fresh search.
     // Without this, the store may have old messages that get shown
     // instead of searching for the specific message from the URL.
+    // listingIds must be reset too (not just the store) — it is the filter the
+    // listing renders through, so a stale entry survives a store-only clear and
+    // paints the wrong post (Discourse 9518/366). Matches searchedMessage().
     show.value = 0
     context.value = null
+    modMessages.listingIds.value = new Set()
+    modMessages.listingIdOrder.value = []
     messageStore.clear()
     bump.value++
   }
@@ -213,8 +197,8 @@ function searchedMessage(term) {
   // messages from other sources (notably a prior "messages from member"
   // lookup, whose historical posts are not in any search index), and the
   // listing is filtered by listingIds.  Without resetting here, those leaked
-  // results stay visible during the search — mirrors searchedMember() and the
-  // vectorSearchEnabled watcher, which already reset this state.
+  // results stay visible during the search — mirrors searchedMember(), which
+  // already resets this state.
   show.value = 0
   context.value = null
   memberTerm.value = null
@@ -231,22 +215,16 @@ function searchedMessage(term) {
   }
 }
 
-watch(vectorSearchEnabled, () => {
-  // Persist the choice so it sticks across group changes, searches and remounts.
-  miscStore.set({ key: SEMANTIC_SEARCH_KEY, value: vectorSearchEnabled.value })
-  show.value = 0
-  context.value = null
-  modMessages.listingIds.value = new Set()
-  modMessages.listingIdOrder.value = []
-  messageStore.clear()
-  bump.value++
-})
-
 function searchedMember(term) {
   show.value = 0
   messageTerm.value = null
   memberTerm.value = term?.trim()
   context.value = null
+  // Reset the listing filter too, like searchedMessage(): otherwise a previous
+  // search's ids survive in listingIds and get painted alongside/over the member
+  // results (Discourse 9518/366).
+  modMessages.listingIds.value = new Set()
+  modMessages.listingIdOrder.value = []
   messageStore.clear()
 
   // Need to rerender the infinite scroll
@@ -271,12 +249,12 @@ async function loadMore($state) {
 
     let params
 
-    if (messageTerm.value && searchmode.value === 'vector') {
-      // Vector search uses the V2 search API via searchMT
+    if (messageTerm.value) {
+      // Message-term search is always semantic now: it goes through the V2
+      // vector search API via searchMT (the keyword toggle has been retired).
       const ids = await messageStore.searchMT({
         term: messageTerm.value,
         groupid: groupid.value,
-        searchmode: 'vector',
       })
       if (ids) {
         ids.forEach((id) => modMessages.listingIds.value.add(id))
@@ -284,28 +262,24 @@ async function loadMore($state) {
       }
       show.value = messages.value.length
       $state.complete()
-      // The vector branch returns early, so it must clear the loading state
-      // itself — otherwise `loaded` never becomes true and the "Please wait..."
-      // banner stays up even though the semantic-search results have rendered.
+      // This branch returns early, so it must clear the loading state itself —
+      // otherwise `loaded` never becomes true and the "Please wait..." banner
+      // stays up even though the search results have rendered.
       busy.value = false
       loaded.value = true
       return
-    } else if (messageTerm.value) {
-      params = {
-        subaction: 'searchall',
-        search: messageTerm.value,
-        exactonly: true,
-        groupid: groupid.value,
-      }
     } else if (memberTerm.value) {
       params = {
-        // TODO: Need to keep fetching as first found batch may not contain
         subaction: 'searchmemb',
         search: memberTerm.value,
-        // groupid: groupid.value // TODO: First fetch without this and then second with, with context
       }
-      if (context.value) {
-        // To get it to work for this case, only set groupid if already got a context!
+      // Scope to the selected group when one is chosen. Omitting groupid makes the
+      // backend run the name search across ALL the mod's groups via a leading-wildcard
+      // fullname LIKE joined per group, which for a mod of many groups takes 20-45s and
+      // leaves the spinner stuck ("whirling circle of doom", Discourse 9518/366). Scoped
+      // to a single group it is ~0.2s. When "All" is selected (groupid=0) the cross-group
+      // search is intentional and is bounded by the error handling below.
+      if (groupid.value) {
         params.groupid = groupid.value
       }
     } else {
@@ -320,7 +294,35 @@ async function loadMore($state) {
     params.context = context.value
     params.limit = messages.value.length + distance.value
 
-    const fetchedIds = await messageStore.fetchMessagesMT(params)
+    // Snapshot the search generation. Every search/reset (searchedMessage,
+    // searchedMember, the vector-search toggle, a term arriving via the URL)
+    // increments bump. If bump changes while this request is in flight, the user
+    // has moved on and this response is stale.
+    const gen = bump.value
+    let fetchedIds
+    try {
+      fetchedIds = await messageStore.fetchMessagesMT(params)
+    } catch (e) {
+      // A slow or failed fetch (notably an all-groups member-name search the
+      // backend can take 20s+ on) must not leave the infinite-scroll spinner and
+      // "Please wait..." banner up forever (Discourse 9518/366). Surface
+      // "Nothing found" instead of an eternal "whirling circle of doom".
+      console.log('fetchMessagesMT failed', e?.message)
+      $state.complete()
+      busy.value = false
+      loaded.value = true
+      return
+    }
+    if (bump.value !== gen) {
+      // A newer search superseded this request while it was in flight — e.g. a
+      // slow all-groups member search landing ~90s late, or a prior deep-scroll
+      // page load. Discard its ids so the stale response does not re-populate
+      // listingIds and paint an unrelated post (the "wrong post shown" symptom,
+      // Discourse 9518/366) over the current search result.
+      busy.value = false
+      loaded.value = true
+      return
+    }
     if (fetchedIds) {
       fetchedIds.forEach((id) => modMessages.listingIds.value.add(id))
     }

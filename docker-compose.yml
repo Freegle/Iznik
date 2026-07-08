@@ -276,6 +276,7 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-delivery
     profiles:
       - frontend
+      - edge   # front-end host: weserv replaces the external wsrv.nl dependency
     networks:
       - default
     image: ghcr.io/weserv/images:5.x
@@ -318,13 +319,17 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tusd
     profiles:
       - frontend
+      - edge   # front-end host: same tusd image, prod flags via ${TUSD_COMMAND}
     networks:
       default:
         aliases:
           - tusd.localhost
     ports:
       - "${PORT_TUSD:-1080}:8080"
-    command: -hooks-http=http://apiv1:80/api/image -hooks-enabled-events=pre-create,post-finish -base-path=/tus/ -cors-allow-headers=baggage,sentry-trace
+    # Default == the dev/CI command (unchanged). The edge VM overrides it via .env:
+    #   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
+    # (app1 prod runs WITHOUT -hooks-http — see plan §3/§5.)
+    command: ${TUSD_COMMAND:--hooks-http=http://apiv1:80/api/image -hooks-enabled-events=pre-create,post-finish -base-path=/tus/ -cors-allow-headers=baggage,sentry-trace}
     depends_on:
       reverse-proxy:
         condition: service_healthy
@@ -342,6 +347,118 @@ services:
       - "traefik.http.routers.tusd.middlewares=tusd-cors-headers"
       - "traefik.http.services.tusd.loadbalancer.server.port=8080"
       - "traefik.http.middlewares.tusd-cors-headers.headers.customresponseheaders.Access-Control-Allow-Headers=Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Upload-Defer-Length, Upload-Concat, Upload-Complete, Upload-Draft-Interop-Version, x-token, baggage, sentry-trace"
+
+  # ===========================================================================
+  # edge profile — user-facing front-end services, deployed on the existing
+  # docker/batch host (scale-in-place, decided 2026-07-08 — see the REVISION in
+  # plans/2026-06-25-frontend-server-migration.md). These services run ONLY
+  # under the `edge` profile, which is in NO default profile set, so dev/CI
+  # never start them and are completely unaffected. Host port bindings and the
+  # adoption of the host's existing osm volumes live in the host-only
+  # docker-compose.override.edge.yml; on dev the stack is validated over the
+  # compose network.
+  # ===========================================================================
+  frontend-nginx:
+    image: nginx:1.27-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-frontend-nginx
+    profiles:
+      - edge
+    networks:
+      - default
+    depends_on:
+      delivery:
+        condition: service_started
+      tusd:
+        condition: service_started
+      tile-server:
+        condition: service_started
+        required: false
+    volumes:
+      - ./frontend-nginx.conf:/etc/nginx/nginx.conf:ro
+      - delivery-cache:/var/cache/nginx/wsrv_cache
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  tile-server:
+    # Pinned to the EXACT image the prod host's standalone tile container
+    # (confident_curran) runs, so adopting its existing osm-data volume works:
+    # the PostGIS data dir is Postgres-major-version-locked and a newer
+    # :latest could refuse to start on it. Upgrade deliberately after
+    # adoption, not implicitly via a pull.
+    image: overv/openstreetmap-tile-server@sha256:b6a79da39b6d0758368f7c62d22e49dd3ec59e78b194a5ef9dee2723b1f3fa79
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tile-server
+    profiles:
+      - edge
+    networks:
+      - default
+    command: run
+    environment:
+      # Emit NO CORS here — the front door adds exactly one ACAO (plan §2
+      # double-CORS fix). In Stage 1 the front door is the host's native nginx
+      # `maps` vhost, which already adds one ACAO and proxies to :8080; keeping
+      # the container silent makes it exactly one header (and fixes today's
+      # confident_curran ALLOW_CORS=enabled double-CORS). frontend-nginx takes
+      # over the same single-ACAO role in a later stage.
+      - ALLOW_CORS=disabled
+      # Operational config carried over verbatim from the standalone prod tile
+      # container (confident_curran) so the swap is behaviour-for-behaviour:
+      # keep serving the already-imported osm-data AND keep applying minutely
+      # OSM replication so tiles don't go stale after adoption. (The merged
+      # def, written for a fresh VM import, omitted these — adopting without
+      # them would silently freeze tile updates.)
+      - UPDATES=enabled
+      - REPLICATION_URL=https://planet.openstreetmap.org/replication/minute/
+      - MAX_INTERVAL_SECONDS=60
+      - THREADS=100
+      - OSM2PGSQL_EXTRA_ARGS=-C 4096
+      - AUTOVACUUM=on
+      - TZ=UTC
+    shm_size: 256m
+    volumes:
+      - osm-data:/data/database
+      - osm-tiles:/data/tiles
+
+  # --- wiki (wiki.ilovefreegle.org) — adopted in place from the standalone
+  # wiki-media + wiki-mysql containers (scale-in-place, plan §2 step 2). Same
+  # host, same data: the /var/wiki host binds and the :8088 publish live in the
+  # host-only docker-compose.override.edge.yml. MediaWiki reaches its DB by the
+  # hostname `wiki-mysql` ($wgDBserver in the bind-mounted LocalSettings.php),
+  # which the compose service name provides on the private `wikinet` network —
+  # mirroring the standalone containers. Native nginx keeps fronting the vhost
+  # via 127.0.0.1:8088, so this is a same-port container swap.
+  wiki-mysql:
+    image: wiki-mysql:v02   # local-only custom image (not in any registry); already on the host
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-mysql
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    command: mysqld
+    # No MYSQL_* env on purpose: the /var/wiki/db datadir (bound in the edge
+    # override) is already initialised, so the entrypoint skips first-init and
+    # ignores those vars. This keeps the DB root/user passwords OUT of the repo;
+    # MediaWiki authenticates with the creds already in LocalSettings.php.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  wiki-media:
+    image: mediawiki:1.39
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-media
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    depends_on:
+      wiki-mysql:
+        condition: service_healthy
 
   # Old status container - replaced by status-nuxt (2026-01-18)
   # Keeping commented out for reference during transition
@@ -706,6 +823,13 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
+      # In dev, uploaded photos live in the local tusd, not the production
+      # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
+      # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
+      # so the resizer 404s on locally-uploaded files. Point it at local tusd's
+      # file-serving path (reachable from the delivery container) so dev images
+      # render — matching how V1 derives its base from TUS_UPLOADER.
+      - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
@@ -725,6 +849,10 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
@@ -829,7 +957,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 300s
+      start_period: 600s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.spatial.rule=Host(`spatial.localhost`)"
@@ -1595,6 +1723,10 @@ services:
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
@@ -1615,6 +1747,13 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-batch-prod
     profiles:
       - production
+    # Give the scheduler + daemons (schedule:work, mail:spool:process, ripple, digest
+    # shards) time to reach a safe stopping point on SIGTERM before Docker SIGKILLs them.
+    # The default is only 10s, too short for an in-flight email send / digest sweep to
+    # finish cleanly; a graceful shutdown was measured at ~9s, so 60s is generous headroom.
+    # This makes a plain `docker restart` / `docker compose restart` graceful without a
+    # manual -t flag (applied to the container's StopTimeout on next recreate).
+    stop_grace_period: 60s
     networks:
       - default
     build:
@@ -1651,6 +1790,15 @@ services:
       mjml:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # The scheduler fires spatial-dependent jobs (digest reach-gate, ripple, spatial
+      # index) the moment it starts, so it MUST wait for the spatial servers to finish
+      # their multi-minute graph/index rebuild — otherwise those jobs hang on a not-ready
+      # spatial, spin, hold their flocks and produce nothing (observed on the 2026-07-03
+      # reboot). Both have /health healthchecks that only pass once loaded.
+      spatial:
+        condition: service_healthy
+      spatial-knn:
         condition: service_healthy
     restart: unless-stopped
     environment:
@@ -1926,9 +2074,23 @@ volumes:
     driver: local
   mcp-audit-logs:
     driver: local
+  # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
+  delivery-cache:
+    driver: local   # frontend-nginx wsrv_cache (mirror of app1's 41 GB delivery cache)
+  tusd-data:
+    driver: local   # Docker-managed tusd upload dir; the VM override points /srv/tusd-data at NFS instead
+  osm-data:
+    driver: local   # tile-server PostGIS (osm-data, ~56 GB once imported)
+  osm-tiles:
+    driver: local   # tile-server rendered tiles (~44 GB)
 
 networks:
   default:
+    driver: bridge
+  # Private network for the adopted wiki pair (edge profile), isolating
+  # wiki-media <-> wiki-mysql exactly as the standalone `wikinet` did. Native
+  # nginx reaches wiki-media via its published host port, not this network.
+  wikinet:
     driver: bridge
 
 secrets:

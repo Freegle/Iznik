@@ -126,7 +126,20 @@ export default defineNuxtConfig({
   // 404 errors during prerendering when the crawler tried to access build metadata from the CDN.
   $production: {
     app: {
-      cdnURL: process.env.URL,
+      // On the real production deploy, reference assets from the custom domain
+      // (proxied to the right place via public/_redirects). On deploy previews and
+      // branch deploys, process.env.URL is STILL the production domain, which only
+      // hosts production chunks — so a PR's newly-hashed chunks (including the entry
+      // chunk with the route map) 404 there and the whole app fails to boot. For
+      // those contexts, reference the deploy's OWN assets via the same-origin
+      // /netlify/<host> proxy (mirrors modtools/nuxt.config.ts; same-origin avoids
+      // Firefox CORS issues). See public/_redirects "/netlify/* https://:splat".
+      cdnURL:
+        process.env.CONTEXT === 'production'
+          ? process.env.URL
+          : process.env.DEPLOY_URL
+            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
+            : '',
     },
   },
 
@@ -350,7 +363,6 @@ export default defineNuxtConfig({
       NETLIFY_DEPLOY_ID: process.env.DEPLOY_ID,
       NETLIFY_SITE_NAME: process.env.SITE_NAME,
       NETLIFY_BRANCH: process.env.BRANCH,
-      MATOMO_HOST: process.env.MATOMO_HOST,
       COOKIEYES: config.COOKIEYES,
       USE_COOKIES: config.USE_COOKIES,
       TRUSTPILOT_LINK: config.TRUSTPILOT_LINK,

@@ -1029,6 +1029,7 @@ func GetSession(c *fiber.Ctx) error {
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
+		var helperEscalated int64
 
 		var wg2 sync.WaitGroup
 
@@ -1163,8 +1164,12 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
+				// rippled_in = 0: an edit belongs to the post's origin group only;
+				// without this the Edit badge counts rippled-in copies that the Edit
+				// list (filtered rippled_in=0) never shows — a ghost count (Discourse
+				// 9839). Matches ListMessagesMT and groupWork's per-group Editreview.
 				db.Raw("SELECT COUNT(DISTINCT me.msgid) FROM messages_edits me "+
-					"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 "+
+					"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 "+
 					"WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
 					activeGroupIDs).Scan(&editreview)
 			}
@@ -1323,6 +1328,15 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
+		// --- Escalated helper conversations (global, Clearance permission) ---
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			if auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+				db.Raw("SELECT COUNT(*) FROM helper_repliers WHERE state = 'ESCALATED'").Scan(&helperEscalated)
+			}
+		}()
+
 		// --- Gift aid (global) ---
 		wg2.Add(1)
 		go func() {
@@ -1433,7 +1447,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout
+			emailin + emailout + helperEscalated
 
 		work = fiber.Map{
 			"pending":              pending,
@@ -1452,6 +1466,7 @@ func GetSession(c *fiber.Ctx) error {
 			"chatreview":          chatreview,
 			"chatreviewother":     chatreviewother,
 			"newsletterstories":   newsletterstories,
+			"helperEscalated":     helperEscalated,
 			"giftaid":             giftaid,
 			"happiness":           happiness,
 			"relatedmembers":      relatedmembers,
@@ -1812,6 +1827,15 @@ func PatchSession(c *fiber.Ctx) error {
 
 	if string(req.Deleted) == "null" {
 		setClauses = append(setClauses, "deleted = NULL")
+
+		// Deletion writes a (User, Deleted) audit log; record the matching
+		// reinstatement so mods can see the full story. The INSERT..SELECT only
+		// fires if the account is actually flagged deleted right now (the UPDATE
+		// clearing the flag runs after this), so a routine settings save that
+		// happens to include deleted:null doesn't spam the log.
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) "+
+			"SELECT NOW(), ?, ?, id, id FROM users WHERE id = ? AND deleted IS NOT NULL",
+			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED, myid)
 	}
 
 	if req.Marketingconsent != nil {

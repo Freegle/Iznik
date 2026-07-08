@@ -3,7 +3,10 @@
 namespace App\Providers;
 
 use App\Console\FlockEventMutex;
+use App\Console\ResilientCacheEventMutex;
+use App\Console\SchedulerMutex;
 use App\Database\DeadlockRetryConnection;
+use App\Database\FailoverConnectionFactory;
 use App\Listeners\CronJobStatusListener;
 use App\Listeners\SpamCheckListener;
 use App\Services\LokiService;
@@ -24,6 +27,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // Replace the default ConnectionFactory with our FailoverConnectionFactory so
+        // that when all read-replica hosts are unreachable, Laravel automatically falls
+        // back to the write host instead of throwing. This must be registered before
+        // the 'db' service provider resolves 'db.factory'.
+        $this->app->singleton('db.factory', function ($app) {
+            return new FailoverConnectionFactory($app);
+        });
+
         // Use DeadlockRetryConnection for MySQL — automatically retries
         // deadlocked statements at autocommit level with exponential backoff.
         \Illuminate\Database\Connection::resolverFor('mysql', function ($connection, $database, $prefix, $config) {
@@ -35,11 +46,22 @@ class AppServiceProvider extends ServiceProvider
             return new LokiService();
         });
 
-        // Register FlockEventMutex for process-aware scheduler locks.
-        // Uses OS-level flock() which auto-releases on process death.
-        if (config('cache.lock_store', 'flock') === 'flock') {
+        // Scheduler overlap mutex backend. Default (LOCK_STORE=flock) binds
+        // FlockEventMutex — OS-level flock that auto-releases on process death.
+        // Setting LOCK_STORE=redis (or another cache store) binds a TTL-based cache
+        // mutex instead; routes/console.php points it at that store. See
+        // App\Console\SchedulerMutex for why (flock does not protect
+        // ->runInBackground() jobs across ticks). We bind our own
+        // ResilientCacheEventMutex rather than the framework default so a store
+        // outage fails open (logs + runs the job) instead of throwing out of the
+        // schedule:run filter and killing the whole tick.
+        if (SchedulerMutex::usesFlock()) {
             $this->app->singleton(EventMutex::class, function ($app) {
                 return new FlockEventMutex();
+            });
+        } else {
+            $this->app->singleton(EventMutex::class, function ($app) {
+                return new ResilientCacheEventMutex($app->make('cache'));
             });
         }
     }

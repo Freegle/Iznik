@@ -1666,9 +1666,13 @@ type postImageParams struct {
 // ============================================================================
 
 // swagger:route GET /isochrone isochrone listIsochrones
-// List isochrones
+// List isochrones (DEPRECATED)
 //
-// Returns all isochrones for the authenticated user
+// DEPRECATED - no current client calls this. The per-user isochrone editor was removed in the
+// rippling-out reach flip (PR #921); only /isochrone/message and /message/count remain in use.
+// Retained for backward compatibility with older cached clients.
+//
+// Deprecated: true
 //
 // security:
 // - BearerAuth: []
@@ -1687,9 +1691,12 @@ type isochronesResponse struct {
 }
 
 // swagger:route PUT /isochrone isochrone createIsochrone
-// Create an isochrone
+// Create an isochrone (DEPRECATED)
 //
-// Creates a new isochrone for the authenticated user
+// DEPRECATED - no current client calls this (isochrone editor removed in PR #921). Retained
+// for backward compatibility only.
+//
+// Deprecated: true
 //
 // security:
 // - BearerAuth: []
@@ -1701,9 +1708,12 @@ type isochronesResponse struct {
 //	401: errorResponse
 
 // swagger:route PATCH /isochrone isochrone editIsochrone
-// Edit an isochrone
+// Edit an isochrone (DEPRECATED)
 //
-// Updates an existing isochrone
+// DEPRECATED - no current client calls this (isochrone editor removed in PR #921). Retained
+// for backward compatibility only.
+//
+// Deprecated: true
 //
 // security:
 // - BearerAuth: []
@@ -1715,9 +1725,12 @@ type isochronesResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /isochrone isochrone deleteIsochrone
-// Delete an isochrone
+// Delete an isochrone (DEPRECATED)
 //
-// Deletes an isochrone for the authenticated user
+// DEPRECATED - no current client calls this (isochrone editor removed in PR #921). Retained
+// for backward compatibility only.
+//
+// Deprecated: true
 //
 // security:
 // - BearerAuth: []
