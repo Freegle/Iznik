@@ -12,6 +12,7 @@ const path = require('path')
 const { test, expect } = require('./fixtures')
 const { timeouts } = require('./config')
 const { loginViaHomepage, logoutIfLoggedIn } = require('./utils/user')
+const { waitForNuxtHydration } = require('./utils/reply-helpers')
 
 const ASSET = (f) => path.join(__dirname, 'assets', f)
 
@@ -46,7 +47,9 @@ test.describe('Bulk offer (clearance) end-to-end', () => {
     })
 
     // Where are you? — enter postcode, wait for it to resolve a community.
-    const pc = page.locator('.pcinp, input[placeholder="Type postcode"]').first()
+    const pc = page
+      .locator('.pcinp, input[placeholder="Type postcode"]')
+      .first()
     await pc.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     await pc.fill(postcode)
     await page
@@ -205,9 +208,18 @@ async function registerInterest(page, msgId, indices, takeScreenshot, who) {
   await page.gotoAndVerify(`/message/${msgId}`, {
     timeout: timeouts.navigation.default,
   })
+  // The toggles, photos AND the register button all render server-side, so
+  // their visibility says nothing about interactivity. Every interaction
+  // below relies on Vue click handlers (the empty-submit error in particular
+  // only renders after a live handler sets bulkTriedRegister) - clicking
+  // before hydration lands on inert SSR DOM and silently does nothing, which
+  // is exactly how this test failed on a loaded CI box.
+  await waitForNuxtHydration(page)
   // Wait for the bulk catalogue toggles to render.
   const toggles = page.locator('[data-testid^="pick-"]')
-  await toggles.first().waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+  await toggles
+    .first()
+    .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
 
   // Every item photo that renders must actually load — i.e. the dev image
   // pipeline (apiv2 delivery URL → resizer → local tusd) really serves it.
