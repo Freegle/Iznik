@@ -98,6 +98,54 @@ class ChaseUpServiceTest extends TestCase
         $this->assertNotNull($mg->lastchaseup);
     }
 
+    public function test_notify_languishing_ignores_a_rippling_held_reply(): void
+    {
+        // A languishing post has no recent (deliverable) chat. A rippling-HELD reply hasn't reached
+        // the poster, so it must NOT count as recent activity that suppresses the languishing chase.
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user   = $this->createTestUser();
+        $group  = $this->createTestGroup();
+        $this->createMembership($user, $group, ['added' => now()->subDays(60)]);
+
+        $message = $this->createTestMessage($user, $group, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source'   => Message::SOURCE_PLATFORM,
+        ]);
+        // Arrival within the languishing window (31d..48h ago); autoreposts past the max (5);
+        // msgtype set because notifyLanguishing filters on messages_groups.msgtype (Offer/Wanted).
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)
+            ->update(['arrival' => now()->subDays(10), 'autoreposts' => 6, 'msgtype' => Message::TYPE_OFFER]);
+
+        // A RECENT reply (within 48h) that is HELD — must not suppress the languishing chase.
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $replier);
+        $reply = $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $message->id,
+            'date'     => now()->subHours(1),
+        ]);
+        DB::table('rippling_held_replies')->insert([
+            'chatid'        => $room->id,
+            'chatmsgid'     => $reply->id,
+            'msgid'         => $message->id,
+            'replieruserid' => $replier->id,
+            'source'        => 'web',
+            'lat'           => 51.5,
+            'lng'           => -0.1,
+            'status'        => 'held',
+            'created_at'    => now(),
+        ]);
+
+        // Held: the post is still languishing (the reply is invisible to the poster).
+        $this->assertEquals(1, $this->service->notifyLanguishing(dryRun: true),
+            'a held reply must not suppress the languishing chase');
+
+        // Released: it now counts as recent activity, so the post is no longer languishing.
+        DB::table('rippling_held_replies')->where('chatmsgid', $reply->id)
+            ->update(['status' => 'released', 'releasedat' => now()]);
+        $this->assertEquals(0, $this->service->notifyLanguishing(dryRun: true),
+            'once released, the recent reply suppresses the languishing chase');
+    }
+
     public function test_dry_run_does_not_modify_database(): void
     {
         $data = $this->createChaseCandidate();

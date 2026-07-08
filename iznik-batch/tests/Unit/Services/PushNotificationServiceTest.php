@@ -920,6 +920,48 @@ class PushNotificationServiceTest extends TestCase
             'Users who blocked this chat must not receive push (V1 parity)');
     }
 
+    public function test_consumer_unread_counts_excludes_a_rippling_held_reply(): void
+    {
+        // A rippling-HELD reply hasn't reached the poster, so it must not inflate their app-badge
+        // unread chat count. Once released it counts, matching delivery. Covers the delivery gate
+        // in consumerUnreadCounts, including the brand-new-chat (lastmsgseen NULL) case.
+        $poster  = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $group   = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($replier, $group);
+        // The post being replied to (rippling_held_replies.msgid FK).
+        $post = $this->createTestMessage($replier, $group);
+        $room = $this->createTestChatRoom($replier, $poster);
+
+        // Poster is in the roster, having seen nothing yet (lastmsgseen NULL).
+        DB::table('chat_roster')->insert([
+            'chatid' => $room->id, 'userid' => $poster->id, 'status' => 'Online', 'date' => now(),
+        ]);
+
+        // Replier's reply to the poster, held by rippling.
+        $reply = $this->createTestChatMessage($room, $replier);
+        DB::table('rippling_held_replies')->insert([
+            'chatid'        => $room->id,
+            'chatmsgid'     => $reply->id,
+            'msgid'         => $post->id,
+            'replieruserid' => $replier->id,
+            'source'        => 'web',
+            'lat'           => 51.5,
+            'lng'           => -0.1,
+            'status'        => 'held',
+            'created_at'    => now(),
+        ]);
+
+        [$chatcount] = $this->service->consumerUnreadCounts($poster->id);
+        $this->assertEquals(0, $chatcount, 'a held reply must not inflate the unread chat badge');
+
+        DB::table('rippling_held_replies')->where('chatmsgid', $reply->id)
+            ->update(['status' => 'released', 'releasedat' => now()]);
+        [$chatcount] = $this->service->consumerUnreadCounts($poster->id);
+        $this->assertEquals(1, $chatcount, 'once released, the reply counts towards the badge');
+    }
+
     public function test_recipient_with_zero_memberships_is_excluded(): void
     {
         // V1: pokeMembers/notify only fires for users with getMemberships() > 0.

@@ -152,6 +152,49 @@ class ChatExpectedServiceTest extends TestCase
         $this->assertEquals($user2->id, $row->expectee);
     }
 
+    public function test_update_expected_ignores_a_rippling_held_reply(): void
+    {
+        $poster  = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $group   = $this->createTestGroup();
+        // The post being replied to (rippling_held_replies.msgid has an FK to messages.id).
+        $post = $this->createTestMessage($poster, $group);
+        $room = $this->createTestChatRoom($poster, $replier);
+
+        // Poster sent a message expecting a reply.
+        $msg = $this->createTestChatMessage($room, $poster, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        // Replier replied — but the reply is rippling-HELD (outside the post's reach), so it has
+        // not reached the poster yet and must NOT count as "reply received" (that would prematurely
+        // stop chase-up). Once released, it counts, matching normal delivery.
+        $reply = $this->createTestChatMessage($room, $replier, [
+            'date' => now()->subDays(1),
+        ]);
+        DB::table('rippling_held_replies')->insert([
+            'chatid'        => $room->id,
+            'chatmsgid'     => $reply->id,
+            'msgid'         => $post->id,
+            'replieruserid' => $replier->id,
+            'source'        => 'web',
+            'lat'           => 51.5,
+            'lng'           => -0.1,
+            'status'        => 'held',
+            'created_at'    => now(),
+        ]);
+
+        $this->service->updateExpected();
+        $this->assertEquals(0, $msg->fresh()->replyreceived, 'a held reply must not mark replyreceived');
+
+        DB::table('rippling_held_replies')->where('chatmsgid', $reply->id)
+            ->update(['status' => 'released', 'releasedat' => now()]);
+        $this->service->updateExpected();
+        $this->assertEquals(1, $msg->fresh()->replyreceived, 'once released, the reply marks replyreceived');
+    }
+
     public function test_update_expected_marks_waiting_when_no_reply(): void
     {
         $user1 = $this->createTestUser();

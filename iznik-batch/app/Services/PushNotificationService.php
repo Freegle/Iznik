@@ -304,17 +304,21 @@ class PushNotificationService
             ->where('seen', 0)
             ->count();
 
-        // Unseen chats: User2User/User2Mod rooms where a message from someone
-        // else is newer than what this user has seen.
+        // Unseen chats: User2User/User2Mod rooms where a DELIVERABLE message from someone else is
+        // newer than what this user has seen. A rippling-HELD reply must not inflate the badge — it
+        // hasn't reached this user yet — so it is gated out of the "newest from someone else" pick.
+        // Comparing that gated max against COALESCE(lastmsgseen, 0) (rather than the old
+        // "lastmsgseen IS NULL OR …" short-circuit) means a brand-new chat whose only message is
+        // still held does NOT count — the IS NULL branch previously counted it regardless.
         $chatcount = (int) DB::table('chat_roster as cr')
             ->join('chat_rooms as crm', 'crm.id', '=', 'cr.chatid')
             ->whereIn('crm.chattype', [ChatRoom::TYPE_USER2USER, ChatRoom::TYPE_USER2MOD])
             ->where('cr.userid', $userId)
-            ->whereRaw('(cr.lastmsgseen IS NULL OR cr.lastmsgseen < (
+            ->whereRaw('(
                 SELECT MAX(cm.id) FROM chat_messages cm
                 WHERE cm.chatid = cr.chatid AND cm.userid <> ?
                   AND ' . RippleReplyService::deliveryGateSql('cm.id') . '
-            ))', [$userId])
+            ) > COALESCE(cr.lastmsgseen, 0)', [$userId])
             ->count();
 
         return [$chatcount, $notifcount];
