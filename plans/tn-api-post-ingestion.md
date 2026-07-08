@@ -22,11 +22,11 @@ TNSyncCommand (orchestrator)
 
 ## File layout
 
-- `iznik-batch/app/Console/Commands/TrashNothing/TNSyncCommand.php` — slim orchestrator (~150 lines) ✅
+- `iznik-batch/app/Console/Commands/TrashNothing/TNSyncCommand.php` — slim orchestrator ✅
 - `iznik-batch/app/Services/TrashNothing/TNApiClient.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/RatingsSyncer.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/UserChangesSyncer.php`
-- `iznik-batch/app/Services/TrashNothing/Sync/PostSyncer.php` — paging + group map resolution ✅
+- `iznik-batch/app/Services/TrashNothing/Sync/PostSyncer.php` — paging + group lookup ✅
 - `iznik-batch/app/Services/TrashNothing/Syncers/ChatMessagesSyncer.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/DuplicateUserMerger.php`
 - `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php` ✅
@@ -36,7 +36,8 @@ TNSyncCommand (orchestrator)
 - `iznik-batch/app/Services/TrashNothing/Dto/TNChatMessagePayload.php`
 - `iznik-batch/app/Services/TrashNothing/Dto/SyncResult.php`
 - `iznik-batch/tests/fixtures/tn_sync/posts_page_1.json` — local-testing fixture ✅
-- `iznik-batch/config/freegle.php` — `trashnothing.group_map` (TN group_id → nameshort) ✅
+- `iznik-batch/tests/Unit/Services/TrashNothing/GroupPostIngestionServiceTest.php` ✅
+- `iznik-batch/config/freegle.php` — `trashnothing.ingest_posts_via_api` feature flag ✅
 
 ## Key design decisions
 
@@ -112,13 +113,15 @@ Email path emits structured logs at every routing decision (`routing_reason`, `u
 - Fixture files at `tests/fixtures/tn_sync/posts_page_*.json` and `chat_messages_page_*.json` — schema decided before generation.
 - Trace log format: machine-parseable JSON (`TRACE [WRITE] {"table":...,"op":...,"set":{...}}`). Possibly emit both JSON (for diff tool) and existing `key=value` style (for humans) — open item.
 
-### K. Feature flag / rollout
-- `config('freegle.trashnothing.ingest_posts_via_api')` (default false). When false, `PostsSyncer` and `ChatMessagesSyncer` skipped entirely.
+### K. Feature flag / rollout ✅
+- `config('freegle.trashnothing.ingest_posts_via_api')` (default false) added to `config/freegle.php`.
+- `TNSyncCommand` skips `PostSyncer` unless flag is true OR `--local-testing` is set; emits `TN-SYNC-TRACE [POSTS-SKIP] reason=feature-flag-off` when skipped.
 - Separate flag to disable email path once parity proven — flipped much later. Both flags on = double-write (needs idempotency from B).
 
-### L. Test strategy
-- Unit-test each new service with fixture payloads; snapshot the rows that would be written.
-- Parity test: feed a representative TN email through `IncomingMailService` and a matching TN API payload through `PostsSyncer`; assert resulting `messages` / `messages_groups` / `logs` rows match (modulo source field and synthetic message-id).
+### L. Test strategy ✅ (posts)
+- `GroupPostIngestionServiceTest` covers: null user skip, unknown user skip, non-member skip, duplicate detection (idempotency), dry-run trace log + no DB writes, pending routing (unmapped user + moderated group), live approved creation, live pending creation, RFC822 blob content.
+- `messages.source` uses `Message::SOURCE_EMAIL` to match the email path (no new enum value or migration needed).
+- Parity test (email vs API path producing same rows) — not yet written; deferred until chat path is also done.
 - Existing `IncomingMailServiceTest` suite stays green untouched.
 
 ### M. NOT in scope
@@ -133,5 +136,8 @@ Email path emits structured logs at every routing decision (`routing_reason`, `u
 3. **Spam check on API path** — skip entirely (TN trusted), or run it and log when it would have flagged?
 4. **Worry-words on API path** — apply, or skip because TN moderates on their end?
 5. **Missing user handling** — when `PostsSyncer` sees an `fd_user_id` that doesn't exist locally yet (race with `UserChangesSyncer`), what's the desired behavior? Note: all-or-nothing checkpointing means failing the sync blocks ratings progress too.
-6. **Group lookup** — does the TN API give `nameshort`, `groupid`, or something else?
-7. **Duplicate detection in dry-run** — confirm trace lines should carry `would_be_duplicate: true` when a row with the same `tnpostid` already exists.
+
+## Resolved decisions
+
+6. **Group lookup** — TN uses the Freegle group `nameshort` as `group_id` in API responses (confirmed from `iznik-server/http/api/group.php`). `PostSyncer::findGroup()` mirrors `IncomingMailService::findGroup()`: `Group::where('nameshort', $nameshort)->first()`. No config map.
+7. **Duplicate detection in dry-run** — trace lines carry `would_be_duplicate=true` when a row with the same `tnpostid` already exists. ✅

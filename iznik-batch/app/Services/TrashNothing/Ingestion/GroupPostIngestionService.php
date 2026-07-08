@@ -53,7 +53,6 @@ class GroupPostIngestionService
         $tnType   = strtolower((string) $this->getField($post, 'type', 'getType'));
         $photos   = $this->getField($post, 'photos', 'getPhotos') ?? [];
 
-        $dateStr = $date instanceof \DateTime ? $date->format('Y-m-d\TH:i:s\Z') : (string) $date;
         $subject = strtoupper($tnType) . ': ' . $title;
 
         // Idempotency: skip if this post was already ingested for this group.
@@ -129,7 +128,7 @@ class GroupPostIngestionService
         }
 
         // Create the message record.
-        $messageId = $this->createMessage($post, $user, $group, $subject, $content, $lat, $lng, $date, $postId, $photos);
+        $messageId = $this->createMessage($user, $group, $subject, $content, $lat, $lng, $date, $postId, $photos);
 
         if ($messageId === null) {
             return 'skipped';
@@ -170,7 +169,6 @@ class GroupPostIngestionService
     }
 
     private function createMessage(
-        mixed $post,
         User $user,
         Group $group,
         string $subject,
@@ -221,8 +219,8 @@ class GroupPostIngestionService
 
             $msgData = [
                 'date'            => $date instanceof \DateTime ? $date->format('Y-m-d H:i:s') : now(),
-                'source'          => 'TN-API',
-                'sourceheader'    => 'TN-API',
+                'source'          => Message::SOURCE_EMAIL,
+                'sourceheader'    => Message::SOURCE_EMAIL,
                 'message'         => $rfc822,
                 'fromuser'        => $user->id,
                 'envelopefrom'    => null,
@@ -291,7 +289,7 @@ class GroupPostIngestionService
             if (!$this->dryRun) {
                 DB::table('messages_history')->insert([
                     'groupid'       => $group->id,
-                    'source'        => 'TN-API',
+                    'source'        => Message::SOURCE_EMAIL,
                     'fromuser'      => $user->id,
                     'envelopefrom'  => null,
                     'envelopeto'    => $groupEmail,

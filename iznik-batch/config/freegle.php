@@ -119,6 +119,9 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+        // Enable the API-based post ingestion path. Default false (disabled) so the email
+        // path stays authoritative until parity is confirmed. Flip to true to activate.
+        'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
