@@ -440,15 +440,18 @@
                   message.promisedtome ? 'Promised to you' : 'Already promised'
                 }}
               </div>
-              <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
-                We're showing this to people closest to it first — you'll be
-                able to reply once it reaches your area.
-                <nuxt-link no-prefetch to="/help?topic=which-posts">
-                  Learn more
-                </nuxt-link>
+              <NoticeMessage
+                v-if="
+                  reachBlocked && replyable && !replied && !message.successful
+                "
+                variant="info"
+                class="mb-2"
+              >
+                This hasn't reached your area yet — but go ahead and reply.
+                We'll pass it on to the owner as soon as it does.
               </NoticeMessage>
               <div
-                v-else-if="replyable && !replied && !message.successful"
+                v-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
                 <NoticeMessage
@@ -495,7 +498,7 @@
                 </b-button>
               </div>
               <b-alert
-                v-else-if="replied"
+                v-if="replied"
                 variant="info"
                 :model-value="true"
                 class="mb-0"
@@ -524,15 +527,16 @@
           <v-icon icon="handshake" />
           {{ message.promisedtome ? 'Promised to you' : 'Already promised' }}
         </div>
-        <NoticeMessage v-if="reachBlocked" variant="info" class="mb-0">
-          We're showing this to people closest to it first — you'll be able to
-          reply once it reaches your area.
-          <nuxt-link no-prefetch to="/help?topic=which-posts">
-            Learn more
-          </nuxt-link>
+        <NoticeMessage
+          v-if="reachBlocked && replyable && !replied && !message.successful"
+          variant="info"
+          class="mb-2"
+        >
+          This hasn't reached your area yet — but go ahead and reply. We'll pass
+          it on to the owner as soon as it does.
         </NoticeMessage>
         <div
-          v-else-if="replyable && !replied && !message.successful"
+          v-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
           <NoticeMessage
@@ -577,12 +581,7 @@
             }}
           </b-button>
         </div>
-        <b-alert
-          v-else-if="replied"
-          variant="info"
-          :model-value="true"
-          class="mb-0"
-        >
+        <b-alert v-if="replied" variant="info" :model-value="true" class="mb-0">
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
         </b-alert>
       </div>
@@ -764,11 +763,12 @@ const messageGroups = computed(() => {
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
-// Reply-eligibility (#2): the API returns replyeligible === false when the viewer can't
-// reply yet — the post hasn't rippled out to their area, or they're banned from every
-// group it's on. Show a view-only notice instead of the Reply button. Never blocks the
-// poster's own post. The field is omitted (so this stays false) until the reach engine
-// populates rippling_reach, so this is inert until then with no client-side flag.
+// Reply-eligibility (#2): the API returns replyeligible === false when the post hasn't rippled
+// out to the viewer's area yet (or they're banned from every group it's on). We no longer block
+// replying — the reply is accepted and HELD server-side, then delivered when the post ripples to
+// them. reachBlocked now just drives an informational notice above the Reply button / composer
+// ("we'll pass it on when it reaches you"). Never set for the poster's own post; inert (false)
+// until the reach engine populates rippling_reach.
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
 )
@@ -1062,18 +1062,19 @@ onMounted(() => {
   startThumbnailAutoScroll()
 
   // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
-  // chat-style reply pane straight away so they don't need to click Reply
-  // again — but NOT when the post is reach-blocked for them (rippling-out #5),
-  // or the deep link would bypass the reply gate. message may still be loading,
-  // so wait for it before deciding. (ChatReplyPane also gates its own composer.)
+  // chat-style reply pane straight away so they don't need to click Reply again.
+  // We open it even when the post is reach-blocked (rippling-out #5): the reply is
+  // now accepted and HELD server-side, then delivered when the post ripples to
+  // them, so there is no longer a gate for the deep link to bypass. message may
+  // still be loading, so wait for it first.
   if (useRoute().query.reply) {
     if (message.value) {
-      if (!reachBlocked.value) expandReply()
+      expandReply()
     } else {
       const stop = watch(message, (m) => {
         if (m) {
           stop()
-          if (!reachBlocked.value) expandReply()
+          expandReply()
         }
       })
     }

@@ -60,6 +60,15 @@ type HeldReplySummary struct {
 	MedianH float64 `json:"median_hold_hours" gorm:"column:median_hold_hours"`
 }
 
+// HeldBySource breaks held replies down by origin channel (email / tn / web). The web reply-hold
+// (in-app replies outside reach, previously rejected with 403) records source='web', so this
+// shows how many replies the web hold is now capturing vs the email/TN path.
+type HeldBySource struct {
+	Source string `json:"source" gorm:"column:source"`
+	Status string `json:"status" gorm:"column:status"`
+	Count  int64  `json:"count"  gorm:"column:count"`
+}
+
 // CrossGroupSummary reports the share of post appearances that were rippled in by the engine
 // (messages_groups.rippled_in = 1) and what fraction of those were approved vs rejected. This
 // directly measures §16.3 — "cross-group reach: fraction of posts from groups the viewer was
@@ -353,6 +362,7 @@ func Metrics(c *fiber.Ctx) error {
 	proposed := []ProposedParam{}
 	liveMetrics := []LiveMetricRow{}
 	heldReplySummary := []HeldReplySummary{}
+	heldBySource := []HeldBySource{}
 	type crossGroupRaw struct {
 		Total           int64 `gorm:"column:total"`
 		RippledIn       int64 `gorm:"column:rippled_in"`
@@ -429,6 +439,16 @@ func Metrics(c *fiber.Ctx) error {
 			"COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours " +
 			"FROM rippling_held_replies " +
 			"GROUP BY status ORDER BY status").Scan(&heldReplySummary)
+	}()
+
+	// Held replies broken down by origin channel (email / tn / web). Defensive: the `source`
+	// column is added by migration 2026_07_08_000001 — before it runs the query errors and the
+	// slice stays empty (the panel just omits the breakdown), which is fine.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		db.Raw("SELECT source, status, COUNT(*) AS count " +
+			"FROM rippling_held_replies GROUP BY source, status ORDER BY source, status").Scan(&heldBySource)
 	}()
 
 	// §16.3 cross-group reach summary (last 30 days).
@@ -758,6 +778,7 @@ func Metrics(c *fiber.Ctx) error {
 		"proposed_params":       proposed,
 		"live_metrics":          liveMetrics,
 		"held_reply_summary":    heldReplySummary,
+		"held_reply_by_source":  heldBySource,
 		"cross_group_summary":   crossGroup,
 		"capture_summary":       capture,
 		"reply_rate_36h":        replyRates,
@@ -770,11 +791,11 @@ func Metrics(c *fiber.Ctx) error {
 		// First day with reply-time-captured evidence ('' until the capture deploy has seen
 		// a reply): the boundary the dashboard marks on the attribution chart.
 		"attribution_capture_from": captureFrom,
-		"reply_distance_median":          replyDistances,
-		"taken_rate":                     takenRates,
-		"groups":                         groupOpts,
-		"groupid":                        gid,
-		"start":                          start,
-		"end":                            end,
+		"reply_distance_median":    replyDistances,
+		"taken_rate":               takenRates,
+		"groups":                   groupOpts,
+		"groupid":                  gid,
+		"start":                    start,
+		"end":                      end,
 	})
 }

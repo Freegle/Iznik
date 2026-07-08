@@ -230,6 +230,7 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 		"id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, " +
 		"chatid BIGINT UNSIGNED NOT NULL, chatmsgid BIGINT UNSIGNED NOT NULL, " +
 		"msgid BIGINT UNSIGNED NOT NULL, replieruserid BIGINT UNSIGNED NOT NULL, " +
+		"source ENUM('email','tn','web') NOT NULL DEFAULT 'email', " +
 		"lat DOUBLE NULL, lng DOUBLE NULL, " +
 		"status ENUM('held','released','dropped','taken-gone') NOT NULL DEFAULT 'held', " +
 		"created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, releasedat TIMESTAMP NULL)")

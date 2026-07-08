@@ -1652,7 +1652,7 @@ class IncomingMailService
         // rippling_held_replies row) so the poster isn't notified until it reaches them.
         // hasReach fails open, so before the reach engine is live nothing is held.
         if ($chatMsgId !== null) {
-            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser);
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser, $email->isFromTrashNothing() ? 'tn' : 'email');
         }
 
         // #7: Check if message has outcome (TAKEN/RECEIVED) - don't email if so
@@ -1711,7 +1711,7 @@ class IncomingMailService
      * the poster notification until the post ripples to them (status→'released'). Inert until
      * the reach engine populates rippling_reach (hasReach fails open before then).
      */
-    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier, string $source = 'email'): void
     {
         $latlng = $this->resolveReplierLatLng($replier);
         if ($latlng === null) {
@@ -1722,12 +1722,13 @@ class IncomingMailService
         $service = app(RippleReplyService::class);
 
         if ($service->shouldHold($msgid, $lat, $lng)) {
-            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng);
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng, $source);
             Log::info('ripple:held-external-reply', [
                 'msgid' => $msgid,
                 'chatid' => $chatId,
                 'chatmsgid' => $chatMsgId,
                 'replieruserid' => $replier->id,
+                'source' => $source,
             ]);
         }
     }
@@ -3205,7 +3206,7 @@ class IncomingMailService
         // by the post's reach yet - the same gate as the digest reply path - so the poster isn't
         // notified out-of-reach via this route. Only when we linked the reply to a post.
         if ($refMsgId !== null && $chatMsgId !== null) {
-            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser);
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser, $email->isFromTrashNothing() ? 'tn' : 'email');
         }
 
         // Track email reply in email_tracking for AMP comparison stats.
