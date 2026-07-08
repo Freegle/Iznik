@@ -46,14 +46,12 @@ func TestChunkAndFinish(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	var chunkResp struct {
-		Session    string `json:"session"`
-		Transcript string `json:"transcript"`
+		Session string `json:"session"`
 	}
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&chunkResp))
 	assert.NotEmpty(t, chunkResp.Session)
-	assert.Equal(t, "hiya i've got an old chair going free", chunkResp.Transcript)
 
-	// Finish the same session.
+	// Finish the same session: this is where transcription + tidy-up happen.
 	freq := httptest.NewRequest("POST", "/api/voicepost/finish?session="+chunkResp.Session, nil)
 	fresp, err := app.Test(freq, -1)
 	assert.NoError(t, err)

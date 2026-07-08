@@ -1,95 +1,106 @@
 # Voice posting prototype
 
-A voice-first way to compose a Freegle OFFER. Instead of uploading a photo and
-filling in a form, the user taps a big microphone, describes their item out loud,
-and we turn their words into a post they can review and edit.
+A voice-first way to compose a Freegle OFFER. On mobile the user can choose to
+describe their item out loud instead of typing a form; we transcribe it and turn
+their words into a post they can review and edit.
 
-Built as a self-contained demo route: **`/voicepost`**.
+Demo route: **`/voicepost`**.
 
-## How it works
+## Flow
 
 ```
- Browser                         apiv2 (Go)                       Groq
- ───────                         ──────────                       ────
- MediaRecorder ──chunk (webm)──▶ append to temp file ──audio──▶  Whisper (turbo)
-   (~4s slices)  POST /voicepost/chunk   re-transcribe so-far  ◀──transcript
-   live transcript ◀── {transcript} ─────┘
-        │
-   user taps Stop
-        │
-        └──POST /voicepost/finish──▶ final transcribe + tidy-up ─▶ Whisper + Llama
-                                    ◀── {title, description} ◀──── (JSON)
-   review screen (editable) ──▶ post
+ /give/mobile  ── A/B assign (mobile only) ──▶  voice cohort → /voicepost
+      │                                          control      → /give/mobile/photos (typed form)
+      ▼
+ /voicepost:  [ Say it ]   [ Type it ] ── Type it ─▶ /give/mobile/photos (existing form)
+      │ Say it
+      ▼
+   photo  ──▶  record (audio streams up while talking)  ──▶  Stop
+                                                              │
+                       POST /voicepost/chunk (buffer only)    │
+                       POST /voicepost/finish ──▶ transcribe ONCE + copy-edit (Groq)
+                                                              ▼
+                                              review (editable title/desc, playback,
+                                              consent) ──▶ post
 ```
 
-- **Streaming, not one big upload.** The audio is streamed to the server in ~4s
-  chunks *while the user is still talking*. Each chunk triggers a re-transcription
-  of the audio-so-far, and the growing transcript is streamed back on the chunk
-  response, so words build up on screen. When they stop, it's essentially already
-  transcribed — only a ~1s tidy-up pass remains.
-- **Server-side transcription with Groq.** We deliberately did **not** use a
-  real-time streaming STT engine (Deepgram etc.) — those are priced for sub-second
-  latency we don't need. The budget is "human latency, a few seconds", so Groq's
-  batch Whisper (`whisper-large-v3-turbo`, faster than real time) re-run per chunk
-  is the right fit. We also did not use the browser's Web Speech API — quality
-  isn't good enough and it isn't consistently supported.
-- **Tidy-up keeps the charm.** A small fast Groq chat model (`llama-3.1-8b-instant`)
-  turns the raw transcript into a short title and a friendly description,
-  preserving the person's own words and voice, without inventing details.
-- **Ephemeral audio.** The streamed audio is written to a temp file and pruned
-  quickly; the transcript is the durable artifact. Per the privacy policy a
-  *retained* voice recording would be kept at most **90 days** then deleted — the
-  prototype does not persist audio beyond the compose session.
-- **Consent captured, playback deferred.** The review screen has a "Let the person
-  collecting hear my voice description" toggle. It is captured but the recipient-
-  side player is intentionally **not** built yet.
+## Design decisions
+
+- **Choice, not forced voice.** The entry is a voice-vs-keyboard choice. "Type it"
+  hands off to the existing typed compose flow unchanged.
+- **Stream to hide upload latency; transcribe on stop.** Audio streams to the
+  server in ~3s chunks *while the user talks* (`POST /voicepost/chunk` just buffers
+  it), so when they stop there's almost nothing left to upload. Transcription then
+  happens **once**, over the whole recording, on `POST /voicepost/finish`. This is
+  simpler and cheaper than per-chunk re-transcription and sidesteps two problems:
+  no transcript-ordering races, and no chunk-boundary word splitting (a word spoken
+  across a boundary is wholly present in the concatenated file).
+- **Groq, not real-time STT.** `whisper-large-v3-turbo` transcribes faster than
+  real time at ~$0.0006/min. We deliberately avoided a WebSocket real-time engine
+  (Deepgram ~$0.0077/min streaming, ~10× the cost) — the budget is "human latency,
+  a few seconds after stop", not sub-second live captions. Not the browser Web
+  Speech API either (quality + patchy support).
+- **Copy-edit, not rewrite.** A small Groq chat model (`llama-3.1-8b-instant`,
+  temperature 0.1) *lightly copy-edits* the transcript: fix capitalisation and
+  punctuation, join fragments, drop filler — but keep the person's own words and
+  personality ("Hiya", "my nan had it for years") and invent nothing. Plus a short
+  plain title.
+- **Ephemeral audio.** Buffered to a temp file, pruned quickly; the transcript is
+  the durable artifact. Per the privacy policy a *retained* recording would be kept
+  at most **90 days** then deleted — the prototype doesn't persist audio beyond the
+  compose session.
+- **Consent captured, playback deferred.** A "let the person collecting hear my
+  voice" toggle is captured; the recipient-side player is intentionally not built.
+
+## A/B experiment (mobile)
+
+`composables/useComposeChoice.js` assigns each mobile user to `voice` or `control`
+by a fixed per-user % bucket (`ROLLOUT_PCT`, default 0 = off; `?voice=1`/`?voice=0`
+overrides for demos). `pages/give/mobile/index.vue` routes the `voice` cohort to
+`/voicepost` and everyone else to the existing form. Exposure and completion are
+recorded through the existing bandit endpoints (`$api.bandit.shown/chosen`, uid
+`mobile-compose-voice`) so the `abtest` table accumulates comparable shown/action
+rates per variant. To run the test, raise `ROLLOUT_PCT`.
 
 ## Files
 
 Backend (Go, apiv2):
-- `iznik-server-go/voicepost/voicepost.go` — `Chunk` + `Finish` handlers, Groq
-  transcription + tidy-up, in-memory session store, temp-file storage + prune.
-- `iznik-server-go/voicepost/voicepost_test.go` — handler unit tests (Groq stubbed).
-- `iznik-server-go/router/routes.go` — registers `POST /voicepost/chunk` and
-  `POST /voicepost/finish` (under both `/api` and `/apiv2`).
-- `docker-compose.yml` — passes `GROQ_API_KEY` through to the dev `apiv2` service.
+- `iznik-server-go/voicepost/voicepost.go` (+ `_test.go`) — `Chunk` (buffer) and
+  `Finish` (transcribe once + copy-edit), session store, temp-file audio + prune.
+- `iznik-server-go/router/routes.go` — `POST /voicepost/{chunk,finish}`.
+- `docker-compose.yml` — `GROQ_API_KEY` passthrough to the dev `apiv2` service.
 
 Frontend (Nuxt 3):
-- `iznik-nuxt3/pages/voicepost.vue` — the `/voicepost` page (record → live
-  transcript → review → done), MediaRecorder capture, serialized chunk upload.
-- `iznik-nuxt3/api/VoicePostAPI.js` + `api/index.js` — the `voicepost` API client.
-- `iznik-nuxt3/pages/privacy.vue` — new section 2.1 on voice descriptions, Groq,
-  and 90-day retention.
+- `iznik-nuxt3/pages/voicepost.vue` — choice → photo → record → review → done.
+- `iznik-nuxt3/composables/useComposeChoice.js` — experiment assignment + tracking.
+- `iznik-nuxt3/pages/give/mobile/index.vue` — experiment gate at the mobile entry.
+- `iznik-nuxt3/api/VoicePostAPI.js` + `api/index.js` — the `voicepost` client.
+- `iznik-nuxt3/pages/privacy.vue` — §2.1 Groq transcription + 90-day retention.
 
-Config (local only, not committed):
-- `GROQ_API_KEY` in the worktree `.env` (gitignored).
+Config (local only, not committed): `GROQ_API_KEY` in the worktree `.env`.
 
-## Cost
+## Cost / latency
 
-A typical item description is ~15–45s. Groq `whisper-large-v3-turbo` is ~$0.0006/min.
-Because we re-transcribe the growing audio each chunk, a 60s note transcribes roughly
-6–7 audio-minutes in total — still **fractions of a penny per post** (~$0.004). The
-tidy-up is a few hundred tokens on an 8B model, also negligible. At 100k posts the
-whole feature is on the order of **tens of pounds**.
-
-If cost ever matters, transcribe only on `finish` (one pass) instead of per chunk —
-that trades the live transcript for ~10× lower spend.
+| | Groq turbo (used) | Deepgram Nova-3 streaming |
+|---|---|---|
+| After stop | ~2–3s (one transcribe + copy-edit) | ~1s (transcript already done) |
+| Live captions | none (transcribe on stop) | <300ms word-by-word |
+| Price/min | ~$0.0006 | ~$0.0077 |
+| 100k posts | ~$30 | ~$230 |
 
 ## Verified
 
-- Real speech (TTS "wooden kitchen chair" clip) → Groq transcript accurate →
-  tidy-up produced title **"Wobbly Pine Kitchen Chair"** with the charm intact.
-- Full browser flow on `/voicepost` (dev-local): record → live state → stop →
-  finish → editable review (title, description, playback, raw transcript, consent
-  + 90-day/privacy copy) → "post it" confirmation. No console errors.
+- Real TTS clip → accurate transcript → title "Old Wooden Kitchen Chair",
+  description **verbatim** ("Hiya… Lovely bit of pine. My nan had it for years…").
+- Full browser flow: choice → Say it → photo → record → review → Re-record →
+  Type it → existing form. No console errors from the page.
 
 ## Not done / next steps
 
-- Wire "post it" into the real compose flow (photo + community + submit) instead
-  of the demo confirmation.
-- Build the consent-gated recipient audio player and the persistent 90-day audio
-  store + prune job (needs a new `messages_audio`-style mechanism — the existing
-  attachment pipeline is image-only).
-- Session store is in-memory (single instance); production behind a load balancer
-  needs sticky routing or shared storage for the in-flight buffer.
-- iOS Safari records `audio/mp4`; verify Groq handling on-device.
+- Wire "post it" and the typed branch into real compose completion (and record the
+  control-variant conversion there, not just voice).
+- Persistent 90-day audio store + consent-gated recipient player (needs a new
+  `messages_audio` mechanism; the attachment pipeline is image-only).
+- In-memory session store is single-instance; production needs sticky routing or
+  shared storage for the in-flight buffer.
+- iOS Safari records `audio/mp4`; confirm Groq handling on-device.

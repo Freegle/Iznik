@@ -1,28 +1,26 @@
 // Package voicepost implements a voice-first way to compose a Freegle post.
 //
 // The browser records the user describing their item and streams the audio to
-// the server in small chunks *while they are still talking* (rather than one big
-// upload at the end). As each chunk arrives the server re-runs Groq Whisper over
-// the audio-so-far and hands the growing transcript back, so the words build up
-// on screen with only a few seconds of latency. When the user stops, a final
-// transcription plus a quick Groq chat pass tidies the raw transcript into a
-// short item title and a friendly description that keeps the person's own words
-// and charm.
+// the server in small chunks *while they are still talking*, so by the time they
+// stop the recording is already buffered on the server and there is no big upload
+// to wait for. Only then - once - do we transcribe the complete recording with
+// Groq Whisper and run a quick Groq copy-edit that punctuates and lightly tidies
+// their words into a title and description without rewriting them.
 //
 // Design decisions (see docs spec):
-//   - Groq is used for BOTH transcription (whisper-large-v3-turbo) and the tidy-up
-//     (a small fast llama model). One GROQ_API_KEY. Groq turbo transcribes faster
-//     than real time and costs ~$0.0006/min, so re-transcribing the accumulated
-//     audio on every chunk is still fractions of a penny per post.
+//   - Groq for BOTH transcription (whisper-large-v3-turbo) and the copy-edit (a
+//     small fast llama model). One GROQ_API_KEY.
 //   - Transport is plain chunked HTTP, not a WebSocket to a real-time STT engine.
-//     "Human latency, a few seconds" is the budget, so we don't need (or want to
-//     pay for) sub-second streaming recognisers like Deepgram.
-//   - The streamed audio is written to a temp file and kept only briefly (the
-//     in-flight compose buffer is pruned within the hour). The transcript is the
-//     durable artifact. Per the privacy policy, a retained voice recording is
-//     kept for at most 90 days (voiceRetentionPolicyDays) and then deleted; this
-//     prototype does not yet persist audio beyond the compose session, so that
-//     ceiling is a forward-looking commitment rather than something enforced here.
+//     We stream to hide upload latency, not to get sub-second live captions, so a
+//     few seconds of "human latency" after the user stops is the budget.
+//   - Transcription happens ONCE, on stop, over the whole buffered recording. So
+//     there are no per-chunk re-transcription costs, no transcript-ordering races,
+//     and no chunk-boundary word splitting (a word spoken across a boundary is
+//     wholly present in the concatenated file).
+//   - The buffered audio is a temp file kept only briefly then pruned; the
+//     transcript is the durable artifact. Per the privacy policy a *retained*
+//     recording would be kept at most 90 days (voiceRetentionPolicyDays); this
+//     prototype does not persist audio beyond the compose session.
 package voicepost
 
 import (
@@ -54,21 +52,13 @@ const sessionRetention = 30 * time.Minute
 // here today.
 const voiceRetentionPolicyDays = 90
 
-// Re-transcribe at most this often per session, so a burst of chunks can't queue
-// up a pile of Groq calls. Chunks normally arrive every few seconds anyway.
-const minTranscribeInterval = 2500 * time.Millisecond
-
-// session holds the server-side state for one in-progress voice post. Audio is
-// appended to a temp file; the latest transcript is cached so chunk responses are
-// instant even while a Groq call is in flight.
+// session holds the server-side buffer for one in-progress voice post: audio
+// chunks are appended to a temp file as they stream in.
 type session struct {
-	mu             sync.Mutex
-	id             string
-	path           string
-	createdAt      time.Time
-	transcript     string
-	lastTranscribe time.Time
-	transcribing   bool
+	mu        sync.Mutex
+	id        string
+	path      string
+	createdAt time.Time
 }
 
 var (
@@ -140,17 +130,16 @@ func newSession() *session {
 // The audio chunk is the raw request body (application/octet-stream). Query params:
 //   - session: the session id; omit on the first chunk and the server creates one.
 //   - seq:     client-side sequence number (informational; chunks are appended in
-//     arrival order — the client sends them serially so order is preserved).
+//     arrival order - the client sends them serially so order is preserved).
 //
-// The response is JSON: {"session": "...", "transcript": "..."} where transcript
-// is the best transcript we have so far (it grows and sharpens as more audio
-// arrives). Partial-transcription failures are swallowed — we just return the last
-// good transcript and try again on the next chunk.
+// We do NOT transcribe here. Streaming exists purely to get the audio onto the
+// server while the user is still talking, so there is nothing to upload when they
+// stop. The response is JSON: {"session": "..."}.
 //
 // No authentication: like image upload, this happens during the give/post flow
 // before the user has necessarily logged in. The audio is transient and unlinked.
 //
-// @Summary Stream a chunk of voice-post audio and get the transcript so far
+// @Summary Stream a chunk of voice-post audio into the server buffer
 // @Tags VoicePost
 // @Accept octet-stream
 // @Produce json
@@ -170,7 +159,7 @@ func Chunk(c *fiber.Ctx) error {
 	} else {
 		s = getSession(sid)
 		if s == nil {
-			// Session expired or unknown — start a fresh one so the client can recover.
+			// Session expired or unknown - start a fresh one so the client can recover.
 			s = newSession()
 		}
 	}
@@ -186,36 +175,7 @@ func Chunk(c *fiber.Ctx) error {
 		s.mu.Unlock()
 	}
 
-	// Kick off a transcription of the audio-so-far if we're not already doing one
-	// and enough time has passed. This runs synchronously for a simple, ordered
-	// response, but is cheap (Groq turbo is sub-second for short clips).
-	s.mu.Lock()
-	due := !s.transcribing && time.Since(s.lastTranscribe) >= minTranscribeInterval
-	if due {
-		s.transcribing = true
-	}
-	path := s.path
-	s.mu.Unlock()
-
-	if due {
-		text, err := transcribe(path)
-		s.mu.Lock()
-		s.transcribing = false
-		s.lastTranscribe = time.Now()
-		if err == nil && strings.TrimSpace(text) != "" {
-			s.transcript = text
-		}
-		s.mu.Unlock()
-	}
-
-	s.mu.Lock()
-	transcript := s.transcript
-	s.mu.Unlock()
-
-	return c.JSON(fiber.Map{
-		"session":    s.id,
-		"transcript": transcript,
-	})
+	return c.JSON(fiber.Map{"session": s.id})
 }
 
 // FinishResult is the payload returned when a voice post is finalised.
@@ -227,12 +187,12 @@ type FinishResult struct {
 }
 
 // Finish handles POST /api/voicepost/finish. The client calls this once the user
-// has stopped talking and the final chunk has been sent. We do one last full
-// transcription (so the complete audio is captured, not just up to the last
-// partial pass), then a Groq chat pass to tidy the transcript into a title and
-// description. The audio file is left in place to be pruned later.
+// has stopped talking and the final chunk has been sent. We transcribe the whole
+// buffered recording once, then run a Groq copy-edit to punctuate and lightly
+// tidy the transcript into a title and description. The audio file is left in
+// place to be pruned later.
 //
-// @Summary Finalise a voice post: full transcript + tidied title/description
+// @Summary Finalise a voice post: transcribe once, then tidy into title/description
 // @Tags VoicePost
 // @Accept json
 // @Produce json
@@ -255,22 +215,12 @@ func Finish(c *fiber.Ctx) error {
 
 	s.mu.Lock()
 	path := s.path
-	cached := s.transcript
 	s.mu.Unlock()
 
-	// Final, authoritative transcription of the whole file.
 	transcript, err := transcribe(path)
 	if err != nil || strings.TrimSpace(transcript) == "" {
-		// Fall back to the best partial we streamed if the final pass hiccups.
-		transcript = cached
+		return fiber.NewError(fiber.StatusBadRequest, "We couldn't hear anything in that recording - please try again.")
 	}
-	if strings.TrimSpace(transcript) == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "We couldn't hear anything in that recording — please try again.")
-	}
-
-	s.mu.Lock()
-	s.transcript = transcript
-	s.mu.Unlock()
 
 	title, description := summarise(transcript)
 
@@ -301,9 +251,8 @@ func summariseModel() string {
 	return "llama-3.1-8b-instant"
 }
 
-// transcribe sends the audio file to Groq's Whisper endpoint and returns the text.
-// A truncated (mid-recording) webm file decodes fine up to its last complete
-// cluster, so this works on the growing partial file as well as the final one.
+// transcribe sends the buffered audio file to Groq's Whisper endpoint and returns
+// the text. It is a package var so tests can stub it.
 var transcribe = func(path string) (string, error) {
 	key := os.Getenv("GROQ_API_KEY")
 	if key == "" {
@@ -360,8 +309,8 @@ var transcribe = func(path string) (string, error) {
 	return strings.TrimSpace(out.Text), nil
 }
 
-// summarise turns a raw spoken transcript into a short item title and a friendly
-// description, preserving the poster's own words and charm. Any failure falls
+// summarise lightly copy-edits a raw spoken transcript into a short item title
+// and a tidied description, keeping the poster's own words. Any failure falls
 // back to using the transcript itself so the user is never blocked.
 var summarise = func(transcript string) (string, string) {
 	key := os.Getenv("GROQ_API_KEY")
@@ -369,15 +318,17 @@ var summarise = func(transcript string) (string, string) {
 		return fallbackTitle(transcript), transcript
 	}
 
-	system := "You help someone give away an item for free on Freegle, a UK reuse community. " +
-		"They spoke a description of their item out loud and it was transcribed. " +
-		"Turn the transcript into a short catchy TITLE (just a few words naming the item, no 'OFFER:' prefix) " +
-		"and a warm, friendly DESCRIPTION for other freeglers to read. " +
-		"Keep the person's own words, voice and charm. Lightly tidy filler words, false starts and obvious " +
-		"transcription slips, and fix the item name if it was clearly mis-heard, but do NOT rewrite it into " +
-		"corporate or marketing language, and do NOT invent any details (condition, size, colour, collection " +
-		"arrangements) that they did not say. Use British English. " +
-		"Respond ONLY with JSON: {\"title\": \"...\", \"description\": \"...\"}."
+	system := "You are lightly copy-editing what someone said out loud while giving away an item for free " +
+		"on Freegle, a UK reuse community. Return their OWN words, just cleaned up - this is a copy-edit, " +
+		"NOT a rewrite. Do NOT paraphrase, summarise, reword or add anything.\n" +
+		"For the DESCRIPTION: keep their exact wording, phrasing and personality (including chatty openers like " +
+		"'Hiya' and personal details like 'my nan had it for years'); fix capitalisation and punctuation; join " +
+		"fragments into coherent sentences; and drop only obvious filler, false starts and stutters. You may " +
+		"correct a word the speech-to-text clearly misheard, but change as little as possible and invent NOTHING " +
+		"(no condition, size, colour or collection details they didn't say).\n" +
+		"For the TITLE: a short plain name for the item, 2-5 words, using their words - no marketing adjectives " +
+		"they didn't use, no 'OFFER:' prefix.\n" +
+		"Use British English. Respond ONLY with JSON: {\"title\": \"...\", \"description\": \"...\"}."
 
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"model": summariseModel(),
@@ -385,7 +336,8 @@ var summarise = func(transcript string) (string, string) {
 			{"role": "system", "content": system},
 			{"role": "user", "content": "Transcript:\n\n" + transcript},
 		},
-		"temperature":     0.4,
+		// Low temperature: we want a faithful copy-edit, not a creative rewrite.
+		"temperature":     0.1,
 		"response_format": map[string]string{"type": "json_object"},
 	})
 

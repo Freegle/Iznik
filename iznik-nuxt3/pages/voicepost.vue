@@ -1,13 +1,79 @@
 <template>
   <div class="voicepost">
     <div class="voicepost__card">
-      <!-- IDLE: the big mic button -->
-      <div v-if="phase === 'idle'" class="voicepost__stage">
+      <!-- STEP 0 - choose voice or keyboard -->
+      <div v-if="phase === 'choose'" class="voicepost__stage">
+        <h1 class="voicepost__title">How do you want to add your item?</h1>
+        <p class="voicepost__lead">Talk to us, or type it in - whatever's easier.</p>
+        <div class="choice-grid">
+          <button
+            class="choice-btn choice-btn--voice"
+            @click="chooseVoice"
+          >
+            <svg viewBox="0 0 24 24" class="choice-btn__icon" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"
+              />
+              <path
+                fill="currentColor"
+                d="M18 12a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.91V20H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2.09A6 6 0 0 0 18 12Z"
+              />
+            </svg>
+            <span class="choice-btn__label">Say it</span>
+            <span class="choice-btn__sub">Describe it out loud</span>
+          </button>
+          <button class="choice-btn choice-btn--type" @click="chooseType">
+            <svg viewBox="0 0 24 24" class="choice-btn__icon" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm1 3v2h2V8H5Zm4 0v2h2V8H9Zm4 0v2h2V8h-2Zm4 0v2h2V8h-2ZM5 11v2h2v-2H5Zm4 0v2h2v-2H9Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2ZM7 14v2h10v-2H7Z"
+              />
+            </svg>
+            <span class="choice-btn__label">Type it</span>
+            <span class="choice-btn__sub">Fill in the form</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 1 - PHOTO first -->
+      <div v-else-if="phase === 'photo'" class="voicepost__stage">
+        <h1 class="voicepost__title">Add a photo</h1>
+        <p class="voicepost__lead">
+          Show your item - a clear photo helps it get snapped up. Then you'll
+          describe it out loud.
+        </p>
+        <div class="photo-wrap">
+          <PhotoUploader
+            v-model="attachments"
+            type="Message"
+            :recognise="false"
+            @skip="goToVoice"
+          />
+        </div>
+        <b-button
+          variant="primary"
+          size="lg"
+          class="w-100"
+          @click="goToVoice"
+        >
+          {{ attachments.length ? 'Next: describe it' : 'Skip photo - just talk' }}
+          <v-icon icon="arrow-right" />
+        </b-button>
+      </div>
+
+      <!-- STEP 2 - the big mic button -->
+      <div v-else-if="phase === 'idle'" class="voicepost__stage">
+        <img
+          v-if="primaryPhoto"
+          :src="primaryPhoto"
+          class="idle-photo"
+          alt="Your item"
+        />
         <h1 class="voicepost__title">Tell us about your item</h1>
         <p class="voicepost__lead">
           Tap the microphone and just describe what you're giving away, in your
-          own words. We'll turn it into a post for you - you can tidy it up
-          before anything goes live.
+          own words. We'll write it down for you to check.
         </p>
 
         <button
@@ -29,35 +95,30 @@
         <p class="voicepost__hint">Press to start &middot; press again to stop</p>
       </div>
 
-      <!-- RECORDING: live transcript builds up as they talk -->
+      <!-- RECORDING: no live transcript - we transcribe once you stop -->
       <div v-else-if="phase === 'recording'" class="voicepost__stage">
         <div class="recording-head">
           <span class="recording-dot" />
           <span class="recording-timer">{{ formattedElapsed }}</span>
         </div>
-        <p class="voicepost__lead voicepost__lead--tight">
-          Listening&hellip; describe your item and we'll write it down.
+        <p class="voicepost__lead">
+          Listening&hellip; tell us all about it, then tap Done.
         </p>
 
-        <div class="live-transcript" aria-live="polite">
-          <p v-if="liveTranscript" class="live-transcript__text">
-            {{ liveTranscript }}
-          </p>
-          <p v-else class="live-transcript__placeholder">
-            Your words will appear here&hellip;
-          </p>
+        <div class="equalizer" aria-hidden="true">
+          <span /><span /><span /><span /><span /><span /><span />
         </div>
 
         <button class="stop-btn" @click="stopRecording">
           <span class="stop-btn__square" aria-hidden="true" />
-          Stop &amp; write my post
+          Done
         </button>
       </div>
 
-      <!-- FINISHING: quick tidy-up pass -->
+      <!-- FINISHING: single transcription + tidy-up -->
       <div v-else-if="phase === 'finishing'" class="voicepost__stage">
         <b-spinner class="voicepost__spinner" />
-        <p class="voicepost__lead">Tidying up your words&hellip;</p>
+        <p class="voicepost__lead">Writing down what you said&hellip;</p>
       </div>
 
       <!-- REVIEW: editable result + consent -->
@@ -66,8 +127,16 @@
           Here's your post - have a read
         </h1>
         <p class="voicepost__lead voicepost__lead--tight">
-          We wrote this from what you said. Change anything you like.
+          We tidied up what you said - same words, just neatened. Change anything
+          you like.
         </p>
+
+        <img
+          v-if="primaryPhoto"
+          :src="primaryPhoto"
+          class="review-photo"
+          alt="Your item"
+        />
 
         <label class="field-label" for="vp-title">Item</label>
         <b-form-input id="vp-title" v-model="title" class="field-input" />
@@ -86,15 +155,10 @@
             <span aria-hidden="true">{{ playing ? '❚❚' : '▶' }}</span>
             {{ playing ? 'Pause' : 'Play your recording' }}
           </button>
-          <!-- eslint-disable-next-line vue/no-lone-template -->
           <audio ref="audioEl" :src="audioUrl" @ended="playing = false" />
         </div>
 
-        <button
-          class="raw-toggle"
-          type="button"
-          @click="showRaw = !showRaw"
-        >
+        <button class="raw-toggle" type="button" @click="showRaw = !showRaw">
           {{ showRaw ? 'Hide' : 'Show' }} exactly what you said
         </button>
         <p v-if="showRaw" class="raw-transcript">"{{ rawTranscript }}"</p>
@@ -115,8 +179,8 @@
           <b-button variant="primary" size="lg" class="w-100" @click="postIt">
             Looks good - post it
           </b-button>
-          <button class="restart-link" type="button" @click="reset">
-            Start again
+          <button class="restart-link" type="button" @click="reRecord">
+            Re-record
           </button>
         </div>
       </div>
@@ -124,12 +188,12 @@
       <!-- DONE: demo confirmation -->
       <div v-else-if="phase === 'done'" class="voicepost__stage">
         <div class="done-tick" aria-hidden="true">✓</div>
-        <h1 class="voicepost__title voicepost__title--sm">That's the words done!</h1>
+        <h1 class="voicepost__title voicepost__title--sm">That's your post ready!</h1>
         <p class="voicepost__lead">
-          <strong>{{ title }}</strong> is ready. In the full flow you'd add a
-          photo and choose your community next - this demo stops here.
+          <strong>{{ title }}</strong> is ready to go. In the full flow you'd
+          choose your community next - this demo stops here.
         </p>
-        <b-button variant="primary" size="lg" class="w-100" @click="reset">
+        <b-button variant="primary" size="lg" class="w-100" @click="resetAll">
           Do another
         </b-button>
       </div>
@@ -137,7 +201,7 @@
       <!-- ERROR -->
       <div v-else-if="phase === 'error'" class="voicepost__stage">
         <p class="voicepost__lead voicepost__error">{{ errorMessage }}</p>
-        <b-button variant="primary" size="lg" class="w-100" @click="reset">
+        <b-button variant="primary" size="lg" class="w-100" @click="goToVoice">
           Try again
         </b-button>
       </div>
@@ -147,19 +211,30 @@
 
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
-import { useNuxtApp } from '#imports'
+import { useNuxtApp, useRouter } from '#imports'
+import { useComposeChoice } from '~/composables/useComposeChoice'
 
-// Standalone demo route: record your item description, stream it to the server
-// for live transcription (Groq), then review the tidied title/description.
+// Standalone route. Flow: choose voice or keyboard; for voice, add a photo,
+// describe the item aloud (audio streams to the server as you talk), then review
+// the tidied title/description. Transcription happens once, on stop - see
+// iznik-server-go/voicepost.
 
 const { $api } = useNuxtApp()
+const router = useRouter()
+const { recordConversion } = useComposeChoice()
 
-const phase = ref('idle') // idle | recording | finishing | review | done | error
+const phase = ref('choose') // choose | photo | idle | recording | finishing | review | done | error
 const errorMessage = ref('')
+
+// Photo
+const attachments = ref([])
+const primaryPhoto = computed(() => {
+  const a = attachments.value?.[0]
+  return a ? a.preview || a.path || a.paththumb || null : null
+})
 
 // Recording state
 const session = ref(null)
-const liveTranscript = ref('')
 const elapsed = ref(0)
 let mediaRecorder = null
 let stream = null
@@ -188,6 +263,19 @@ const formattedElapsed = computed(() => {
   return `${m}:${s.toString().padStart(2, '0')}`
 })
 
+function chooseVoice() {
+  phase.value = 'photo'
+}
+
+function chooseType() {
+  // Keyboard branch: hand off to the existing typed compose form.
+  router.push('/give/mobile/photos')
+}
+
+function goToVoice() {
+  phase.value = 'idle'
+}
+
 function pickMimeType() {
   const candidates = [
     'audio/webm;codecs=opus',
@@ -204,7 +292,6 @@ function pickMimeType() {
 
 async function startRecording() {
   errorMessage.value = ''
-  liveTranscript.value = ''
   session.value = null
   chunks = []
   elapsed.value = 0
@@ -222,9 +309,7 @@ async function startRecording() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true })
   } catch (e) {
     if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
-      fail(
-        'We need permission to use your microphone. Allow it and try again.'
-      )
+      fail('We need permission to use your microphone. Allow it and try again.')
     } else if (e && e.name === 'NotFoundError') {
       fail("We couldn't find a microphone on your device.")
     } else {
@@ -237,7 +322,6 @@ async function startRecording() {
   try {
     mediaRecorder = new MediaRecorder(stream, { mimeType })
   } catch (e) {
-    // Some browsers reject an explicit mimeType — fall back to the default.
     mediaRecorder = new MediaRecorder(stream)
     mimeType = mediaRecorder.mimeType || 'audio/webm'
   }
@@ -250,8 +334,9 @@ async function startRecording() {
   }
   mediaRecorder.onstop = finalise
 
-  // Emit a chunk every few seconds so transcription keeps pace with speech.
-  mediaRecorder.start(4000)
+  // Emit a chunk every few seconds so the audio streams up while they talk and
+  // there's almost nothing left to upload when they stop.
+  mediaRecorder.start(3000)
   phase.value = 'recording'
 
   timer = setInterval(() => {
@@ -260,15 +345,16 @@ async function startRecording() {
   }, 1000)
 }
 
-// Serialise chunk uploads so the server appends them in order.
+// Serialise chunk uploads so the server appends them to the buffer in order.
+// (The response only carries the session id now - transcription is deferred.)
 function enqueueChunk(blob) {
   sendQueue = sendQueue.then(async () => {
     try {
       const res = await $api.voicepost.chunk(blob, session.value)
       if (res?.session) session.value = res.session
-      if (res?.transcript) liveTranscript.value = res.transcript
     } catch (e) {
-      // Non-fatal: a partial pass may fail; the final pass will catch up.
+      // Non-fatal: a dropped chunk just means slightly less audio; the final
+      // pass transcribes whatever made it to the buffer.
     }
   })
   return sendQueue
@@ -287,7 +373,7 @@ function stopRecording() {
 
 async function finalise() {
   phase.value = 'finishing'
-  await sendQueue // ensure every chunk, including the last, has been sent
+  await sendQueue // ensure every chunk, including the last, is in the buffer
 
   if (!session.value) {
     fail("We didn't catch that recording - please try again.")
@@ -323,8 +409,9 @@ function togglePlay() {
 }
 
 function postIt() {
-  // Demo stops here — the real flow would hand title/description/consent to the
-  // normal compose step (photo + community). letThemHear.value carries consent.
+  // Demo stops here. The real flow would hand the photo, title, description and
+  // consent (letThemHear.value) to the normal compose step.
+  recordConversion('voice')
   phase.value = 'done'
 }
 
@@ -345,7 +432,20 @@ function fail(msg) {
   }
 }
 
-function reset() {
+// Re-record the voice but keep the photo they already added.
+function reRecord() {
+  clearVoice()
+  phase.value = 'idle'
+}
+
+// Full reset back to the start (new item).
+function resetAll() {
+  clearVoice()
+  attachments.value = []
+  phase.value = 'photo'
+}
+
+function clearVoice() {
   if (audioUrl.value) {
     URL.revokeObjectURL(audioUrl.value)
     audioUrl.value = null
@@ -357,10 +457,8 @@ function reset() {
   title.value = ''
   description.value = ''
   rawTranscript.value = ''
-  liveTranscript.value = ''
   session.value = null
   chunks = []
-  phase.value = 'idle'
 }
 
 onBeforeUnmount(() => {
@@ -440,6 +538,70 @@ onBeforeUnmount(() => {
   color: $color-red;
 }
 
+.photo-wrap {
+  width: 100%;
+  margin: 0.5rem 0;
+}
+
+/* Voice-vs-keyboard choice */
+.choice-grid {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.choice-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 1.6rem 0.75rem;
+  border-radius: 14px;
+  border: 2px solid $color-green--darker;
+  background: $color-white;
+  color: $color-green--darker;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+
+  &:active {
+    transform: scale(0.97);
+  }
+
+  &--voice {
+    background: $color-green--darker;
+    color: $color-white;
+  }
+
+  &__icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  &__label {
+    font-size: 1.15rem;
+    font-weight: 700;
+  }
+
+  &__sub {
+    font-size: 0.8rem;
+    opacity: 0.85;
+  }
+}
+
+.idle-photo,
+.review-photo {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.idle-photo {
+  max-height: 160px;
+}
+
 /* Big mic button */
 .mic-btn {
   margin: 0.5rem 0;
@@ -507,25 +669,53 @@ onBeforeUnmount(() => {
   }
 }
 
-.live-transcript {
-  width: 100%;
-  min-height: 120px;
-  background: $color-gray--lighter;
-  border-radius: 10px;
-  padding: 1rem;
-  text-align: left;
+/* Listening equalizer - purely decorative, shows we're recording */
+.equalizer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  height: 72px;
+  margin: 0.5rem 0 1rem;
 
-  &__text {
-    margin: 0;
-    font-size: 1.05rem;
-    line-height: 1.6;
-    color: $color-black;
+  span {
+    display: block;
+    width: 8px;
+    background: $color-green--darker;
+    border-radius: 4px;
+    animation: eq 1s ease-in-out infinite;
   }
 
-  &__placeholder {
-    margin: 0;
-    color: $color-gray--normal;
-    font-style: italic;
+  span:nth-child(1) {
+    animation-delay: -0.9s;
+  }
+  span:nth-child(2) {
+    animation-delay: -0.7s;
+  }
+  span:nth-child(3) {
+    animation-delay: -0.5s;
+  }
+  span:nth-child(4) {
+    animation-delay: -0.3s;
+  }
+  span:nth-child(5) {
+    animation-delay: -0.5s;
+  }
+  span:nth-child(6) {
+    animation-delay: -0.7s;
+  }
+  span:nth-child(7) {
+    animation-delay: -0.9s;
+  }
+}
+
+@keyframes eq {
+  0%,
+  100% {
+    height: 16px;
+  }
+  50% {
+    height: 64px;
   }
 }
 
@@ -538,7 +728,7 @@ onBeforeUnmount(() => {
   color: $color-white;
   border: none;
   border-radius: 40px;
-  padding: 0.8rem 1.5rem;
+  padding: 0.8rem 1.6rem;
   font-size: 1.05rem;
   font-weight: 600;
   cursor: pointer;
