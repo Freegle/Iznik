@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -88,12 +89,23 @@ type rippleEvalResp struct {
 	} `json:"results"`
 }
 
-// samplePost is one post in the drive-time sample: origin + its repliers' points, plus which
-// repliers are "rippled-out" (server-derived) so section 3 can restrict the mean.
+// samplePost is one post in the drive-time sample: origin + its repliers' points, each tagged
+// rippled-out (server-derived, so section 3 can restrict the mean) and with its reply day (so a
+// drive-time trend falls out of the same routing pass for free).
 type samplePost struct {
 	lat, lng float64
 	points   [][2]float64
 	rippled  []bool
+	days     []string
+}
+
+// driveObs is one scored reply from the sample: its drive-time, whether it was rippled-out, and
+// its reply day. One routing pass produces these; the overall/rippled means and the per-day trend
+// are then computed in Go without re-calling the graph.
+type driveObs struct {
+	min     float64
+	rippled bool
+	day     string
 }
 
 // DriveStat is the result of a sampled drive-time computation: the mean travel minutes with a
@@ -102,17 +114,15 @@ type DriveStat struct {
 	MeanMin   float64 `json:"mean_min"`
 	CIHalf    float64 `json:"ci_half_min"`
 	NReplies  int     `json:"n_replies"`
-	NPosts    int     `json:"n_posts"`
 	Available bool    `json:"available"`
 }
 
-// meanDriveMinFromSample runs one ripple-eval per sampled post (bounded concurrency) and returns
-// the mean drive-time over the collected replies. When rippledOnly, only replies flagged
-// rippled-out contribute. Best-effort: routing/parse failures drop that post from the sample.
-func meanDriveMinFromSample(posts []samplePost, rippledOnly bool) DriveStat {
+// scoreSample runs one ripple-eval per sampled post (bounded concurrency) and returns the scored
+// replies. Best-effort: routing/parse failures drop that post. This is the ONLY routing pass -
+// every drive-time figure (overall, rippled-only, per-day trend) is derived from its output.
+func scoreSample(posts []samplePost) []driveObs {
 	var mu sync.Mutex
-	vals := []float64{}
-	nPosts := 0
+	obs := []driveObs{}
 
 	sem := make(chan struct{}, driveConcurrency())
 	var wg sync.WaitGroup
@@ -139,26 +149,40 @@ func meanDriveMinFromSample(posts []samplePost, rippledOnly bool) DriveStat {
 			if json.NewDecoder(resp.Body).Decode(&r) != nil || len(r.Results) != len(p.points) {
 				return
 			}
-			local := []float64{}
+			local := []driveObs{}
 			for j, res := range r.Results {
-				if rippledOnly && (j >= len(p.rippled) || !p.rippled[j]) {
+				if res.DriveMin == nil {
 					continue
 				}
-				if res.DriveMin != nil {
-					local = append(local, *res.DriveMin)
+				o := driveObs{min: *res.DriveMin}
+				if j < len(p.rippled) {
+					o.rippled = p.rippled[j]
 				}
+				if j < len(p.days) {
+					o.day = p.days[j]
+				}
+				local = append(local, o)
 			}
 			mu.Lock()
-			vals = append(vals, local...)
-			if len(local) > 0 {
-				nPosts++
-			}
+			obs = append(obs, local...)
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
+	return obs
+}
 
-	stat := DriveStat{NReplies: len(vals), NPosts: nPosts}
+// statFromObs is the mean drive-time (+95% CI) over the observations, optionally restricted to
+// rippled-out replies.
+func statFromObs(obs []driveObs, rippledOnly bool) DriveStat {
+	vals := []float64{}
+	for _, o := range obs {
+		if rippledOnly && !o.rippled {
+			continue
+		}
+		vals = append(vals, o.min)
+	}
+	stat := DriveStat{NReplies: len(vals)}
 	if len(vals) == 0 {
 		return stat
 	}
@@ -179,6 +203,37 @@ func meanDriveMinFromSample(posts []samplePost, rippledOnly bool) DriveStat {
 	return stat
 }
 
+// DriveTrendPoint is one day's mean sampled drive-time (small per-day n; a rough guide).
+type DriveTrendPoint struct {
+	Day     string  `json:"day"`
+	MeanMin float64 `json:"mean_min"`
+	N       int     `json:"n"`
+}
+
+// driveTrendFromObs buckets the sampled drive-times by reply day (ascending). Per-day n is small
+// (the window sample spread over days), so this is a rough trend, flagged as sample-based.
+func driveTrendFromObs(obs []driveObs) []DriveTrendPoint {
+	sums := map[string]float64{}
+	counts := map[string]int{}
+	days := []string{}
+	for _, o := range obs {
+		if o.day == "" {
+			continue
+		}
+		if counts[o.day] == 0 {
+			days = append(days, o.day)
+		}
+		sums[o.day] += o.min
+		counts[o.day]++
+	}
+	sort.Strings(days)
+	out := make([]DriveTrendPoint, 0, len(days))
+	for _, d := range days {
+		out = append(out, DriveTrendPoint{Day: d, MeanMin: sums[d] / float64(counts[d]), N: counts[d]})
+	}
+	return out
+}
+
 // fetchDriveSample pulls a random sample of posts (with their replier points) for the window +
 // stratum, tagging each reply rippled-out server-side. rippled-out = the replier reached the
 // post via rippling: not an established member of an ORIGIN group before arrival, on a post that
@@ -186,18 +241,20 @@ func meanDriveMinFromSample(posts []samplePost, rippledOnly bool) DriveStat {
 func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 	db := database.DBConn
 	type row struct {
-		Msgid    uint64
-		Plat     float64
-		Plng     float64
-		Rlat     float64
-		Rlng     float64
-		Rippled  int
+		Msgid   uint64
+		Plat    float64
+		Plng    float64
+		Rlat    float64
+		Rlng    float64
+		Rippled int
+		Day     string
 	}
 	var rows []row
 	// Sample post ids first (ORDER BY RAND over the windowed rippled set), then expand to
 	// replier points. Bounded to posts that actually have an Interested reply.
 	db.Raw(`
 		SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng,
+		       DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
 		       (NOT EXISTS(SELECT 1 FROM messages_groups og
 		                   INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid
 		                     AND mem.collection = 'Approved' AND mem.added < og.arrival
@@ -214,9 +271,10 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 		JOIN messages m    ON m.id = samp.msgid
 		JOIN locations ml  ON ml.id = m.locationid AND ml.lat IS NOT NULL
 		JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested'
+		                     AND cm.date >= ? AND cm.date < ?
 		JOIN users u       ON u.id = cm.userid
 		JOIN locations ul  ON ul.id = u.lastlocation AND ul.lat IS NOT NULL
-		ORDER BY samp.msgid`, start, end, sampleN).Scan(&rows)
+		ORDER BY samp.msgid`, start, end, sampleN, start, end).Scan(&rows)
 
 	byPost := map[uint64]*samplePost{}
 	order := []uint64{}
@@ -229,6 +287,7 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 		}
 		sp.points = append(sp.points, [2]float64{r.Rlng, r.Rlat})
 		sp.rippled = append(sp.rippled, r.Rippled == 1)
+		sp.days = append(sp.days, r.Day)
 	}
 	out := make([]samplePost, 0, len(order))
 	for _, id := range order {
@@ -303,20 +362,22 @@ func Analytics(c *fiber.Ctx) error {
 		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
 	}
 
-	// Section 1 + 3 drive-time - one sampled routing pass covers both (all replies and the
-	// rippled-out subset) since fetchDriveSample tags each reply rippled-out server-side.
-	sample := fetchDriveSample(start, end, stratumSQL, driveSampleSize())
-	kpi.ReplyDrive = meanDriveMinFromSample(sample, false)
+	// ONE sampled routing pass feeds every drive-time figure: the Section 1 overall mean, the
+	// Section 3 rippled-out mean, and the drive-time trend - no re-calling the graph.
+	obs := scoreSample(fetchDriveSample(start, end, stratumSQL, driveSampleSize()))
+	kpi.ReplyDrive = statFromObs(obs, false)
 
-	// Section 2 - trends: the same SQL KPIs bucketed per arrival day. Drive-time is NOT trended
-	// (per-day sampling would multiply the routing cost); the section-1 mean stands for the window.
-	trend := trendSeries(start, end, stratumSQL)
+	// Section 2 - trends: the SQL KPIs (reply rate, taken rate, mean replies, freeglers reached)
+	// per arrival day, plus the sample-based drive-time trend from the pass above.
+	trend := fiber.Map{
+		"kpis":       trendSeries(start, end, stratumSQL),
+		"drive_time": driveTrendFromObs(obs),
+	}
 
-	// Section 3 - rippling-out specific (server-derived): of replies to rippled posts, what share
-	// came via rippling, and of the takers, what share replied via rippling. Plus the rippled-out
-	// mean drive-time from the same sample.
+	// Section 3 - is rippling helping? Server-derived rippled-out shares, the rescue floor and
+	// contribution range, the home-vs-rippled comparison, and the rippled-out mean drive-time.
 	s3 := rippledOutSection(start, end, stratumSQL)
-	s3.RippleDrive = meanDriveMinFromSample(sample, true)
+	s3.RippleDrive = statFromObs(obs, true)
 
 	return c.JSON(fiber.Map{
 		"stratum":       stratum,
@@ -362,17 +423,38 @@ func trendSeries(start, end, stratumSQL string) []TrendRow {
 	return rows
 }
 
-// Section3RippledOut is the "rippling-out specifically" block. rippled-out is server-derived:
-// the replier reached the post via rippling (not an established member of an origin group before
-// arrival). ClientInstrumentedPct cross-checks against the client-reported provenance once that
-// data is live in prod (currently ~0).
+// Section3RippledOut is the "is rippling helping?" block. rippled-out is server-derived: the
+// replier reached the post via rippling (not an established member of an origin group before
+// arrival).
+//
+// The headline is a CONTRIBUTION RANGE, because per-reply conversion (rippled worse - people
+// further away follow through less) is the wrong lens: rippled takes are ADDITIVE.
+//   - Floor = RescuedTakes: posts taken by a rippled replier that had NO home-group reply at all.
+//     Without rippling those posts go silent, so those takes definitely would not have happened.
+//   - Ceiling = RippledTakers: every take by a rippled replier (assumes no home member would have
+//     taken it instead).
+// Rippling's true contribution to reuse sits between the two.
+//
+// HomeConvPct / RippledConvPct give the reply->take comparison you'd expect rippled to lose (it's
+// further away), shown so the "worse per reply, still additive" point is explicit.
 type Section3RippledOut struct {
-	Replies               int       `json:"replies"`
-	RippledReplies        int       `json:"rippled_replies"`
-	RippledRepliesPct     float64   `json:"rippled_replies_pct"`
-	Takers                int       `json:"takers"`
-	RippledTakers         int       `json:"rippled_takers"`
-	RippledTakersPct      float64   `json:"rippled_takers_pct"`
+	Replies           int     `json:"replies"`
+	RippledReplies    int     `json:"rippled_replies"`
+	RippledRepliesPct float64 `json:"rippled_replies_pct"`
+	Takers            int     `json:"takers"`
+	RippledTakers     int     `json:"rippled_takers"`
+	RippledTakersPct  float64 `json:"rippled_takers_pct"`
+
+	// "Is it helping?" contribution range (share of all takes on rippled-eligible posts).
+	RescuedTakes        int     `json:"rescued_takes"`
+	RescuedTakesPct     float64 `json:"rescued_takes_pct"`
+	ContributionLowPct  float64 `json:"contribution_low_pct"`  // = rescued / takers
+	ContributionHighPct float64 `json:"contribution_high_pct"` // = rippled / takers
+
+	// Per-reply reply->take conversion, home vs rippled cohort.
+	HomeConvPct    float64 `json:"home_conv_pct"`
+	RippledConvPct float64 `json:"rippled_conv_pct"`
+
 	ClientInstrumentedPct float64   `json:"client_instrumented_pct"`
 	RippleDrive           DriveStat `json:"ripple_drive_min"`
 }
@@ -410,14 +492,44 @@ func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d`, start, end).Scan(&raw)
 
+	// Rescue floor: DISTINCT posts that were taken AND had at least one reply AND had NO reply
+	// from an established home-group member - so the take could only have come via rippling.
+	var rescued int
+	database.DBConn.Raw(`
+		SELECT COUNT(*) FROM (
+		    SELECT rr.msgid
+		    FROM rippling_reach rr
+		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
+		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
+		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+		      AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid)
+		      AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')
+		      AND NOT EXISTS(
+		          SELECT 1 FROM chat_messages ch
+		          INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0
+		          INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid
+		            AND mem.collection = 'Approved' AND mem.added < og.arrival
+		          WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')
+		) x`, start, end).Scan(&rescued)
+
 	s := Section3RippledOut{Replies: raw.Replies, RippledReplies: raw.RippledReplies,
-		Takers: raw.Takers, RippledTakers: raw.RippledTakers}
+		Takers: raw.Takers, RippledTakers: raw.RippledTakers, RescuedTakes: rescued}
 	if raw.Replies > 0 {
 		s.RippledRepliesPct = float64(raw.RippledReplies) / float64(raw.Replies) * 100
 		s.ClientInstrumentedPct = float64(raw.ClientRippled) / float64(raw.Replies) * 100
 	}
 	if raw.Takers > 0 {
 		s.RippledTakersPct = float64(raw.RippledTakers) / float64(raw.Takers) * 100
+		s.RescuedTakesPct = float64(rescued) / float64(raw.Takers) * 100
+		s.ContributionLowPct = s.RescuedTakesPct
+		s.ContributionHighPct = s.RippledTakersPct
+	}
+	// Per-reply conversion, home vs rippled cohort (derived from the counts).
+	if raw.RippledReplies > 0 {
+		s.RippledConvPct = float64(raw.RippledTakers) / float64(raw.RippledReplies) * 100
+	}
+	if homeReplies := raw.Replies - raw.RippledReplies; homeReplies > 0 {
+		s.HomeConvPct = float64(raw.Takers-raw.RippledTakers) / float64(homeReplies) * 100
 	}
 	return s
 }

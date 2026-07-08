@@ -46,6 +46,7 @@
         {{ stratumLabel }} window.
       </p>
 
+      <!-- Section 1 - KPIs -->
       <b-row class="g-3">
         <b-col cols="12" md="6" lg="3">
           <div class="kpi-card">
@@ -53,8 +54,8 @@
             <GChart
               type="PieChart"
               :data="repliedPie"
-              :options="pieOptions(['#28a745', '#ced4da'])"
-              style="width: 100%; height: 150px"
+              :options="pieOptions"
+              style="width: 100%; height: 140px"
             />
             <div class="kpi-figure">{{ pct(s1.replied_pct) }}</div>
             <div class="kpi-label">of offers get a reply</div>
@@ -66,8 +67,8 @@
             <GChart
               type="PieChart"
               :data="takenPie"
-              :options="pieOptions(['#146c43', '#ced4da'])"
-              style="width: 100%; height: 150px"
+              :options="pieOptions"
+              style="width: 100%; height: 140px"
             />
             <div class="kpi-figure">{{ pct(s1.taken_pct) }}</div>
             <div class="kpi-label">marked taken (underestimate)</div>
@@ -106,36 +107,59 @@
         </b-col>
       </b-row>
 
-      <!-- Section 2 - trends -->
+      <!-- Section 2 - trends, one small chart per metric -->
       <h5 class="mt-4">Trends</h5>
-      <p class="text-muted small mb-1">
-        The same headline numbers over time, by post arrival day.
-      </p>
-      <GChart
-        v-if="trendChart"
-        type="LineChart"
-        :data="trendChart"
-        :options="trendOptions()"
-        style="width: 100%; height: 300px"
-      />
-      <p v-else class="text-muted small">No trend data yet.</p>
-
-      <!-- Section 3 - rippling-out specifically -->
-      <h5 class="mt-4">Rippling out specifically</h5>
       <p class="text-muted small mb-2">
-        Of the replies to rippled-out offers, how much of the response the
-        <em>rippling reach</em> is actually earning. "Rippled-out" is derived
-        server-side (the replier reached the post via rippling, not as an
-        established member of an origin group).
-        <span v-if="s3 && s3.client_instrumented_pct > 0">
-          Client-instrumented cross-check:
-          {{ s3.client_instrumented_pct.toFixed(1) }}% of replies.
-        </span>
-        <span v-else class="fst-italic">
-          Client-instrumented figure fills in once reply-provenance ships to
-          production.
-        </span>
+        Each headline number over time, by post arrival day.
       </p>
+      <b-row class="g-3">
+        <b-col v-for="t in trendCharts" :key="t.title" cols="12" md="6" lg="4">
+          <div class="kpi-card">
+            <strong class="small d-block mb-1">{{ t.title }}</strong>
+            <GChart
+              v-if="t.data"
+              type="LineChart"
+              :data="t.data"
+              :options="miniLineOptions(t.color, t.format)"
+              style="width: 100%; height: 180px"
+            />
+            <p v-else class="text-muted small mb-0">No data.</p>
+            <p v-if="t.note" class="text-muted small fst-italic mb-0">
+              {{ t.note }}
+            </p>
+          </div>
+        </b-col>
+      </b-row>
+
+      <!-- Section 3 - is rippling helping? -->
+      <h5 class="mt-4">Is rippling out helping?</h5>
+      <p v-if="s3" class="text-muted small mb-2">
+        Rippling shows offers to people beyond the origin group. The takes they
+        produce are <strong>additive</strong> — the honest question is how many.
+        Per reply they convert worse (they're further away, so less likely to
+        follow through), but that isn't the point; a rippled take is reuse that
+        the origin group alone wouldn't have delivered.
+      </p>
+
+      <div v-if="s3" class="kpi-card helping mb-3">
+        <div class="kpi-figure-lg">
+          {{ pct(s3.contribution_low_pct) }} –
+          {{ pct(s3.contribution_high_pct) }}
+        </div>
+        <div class="kpi-label mb-1">
+          of the {{ s3.takers.toLocaleString() }} completed takes on these
+          offers are down to rippling.
+        </div>
+        <div class="text-muted small">
+          <strong>Floor</strong> — {{ s3.rescued_takes.toLocaleString() }} takes
+          rescued from silence (posts with <em>no</em> local reply at all, so
+          without rippling they'd have gone nowhere). <strong>Ceiling</strong> —
+          {{ s3.rippled_takers.toLocaleString() }} takes by people reached only
+          via rippling (some of those posts might have found a local taker
+          anyway). The truth sits between.
+        </div>
+      </div>
+
       <b-row v-if="s3" class="g-3">
         <b-col cols="12" md="6" lg="3">
           <div class="kpi-card">
@@ -143,12 +167,12 @@
             <GChart
               type="PieChart"
               :data="rippledRepliesPie"
-              :options="pieOptions(['#28a745', '#ced4da'])"
+              :options="pieOptions"
               style="width: 100%; height: 130px"
             />
             <div class="kpi-figure">{{ pct(s3.rippled_replies_pct) }}</div>
             <div class="kpi-label">
-              of {{ s3.replies.toLocaleString() }} replies came via rippling
+              of {{ s3.replies.toLocaleString() }} replies
             </div>
           </div>
         </b-col>
@@ -158,20 +182,31 @@
             <GChart
               type="PieChart"
               :data="rippledTakersPie"
-              :options="pieOptions(['#146c43', '#ced4da'])"
+              :options="pieOptions"
               style="width: 100%; height: 130px"
             />
             <div class="kpi-figure">{{ pct(s3.rippled_takers_pct) }}</div>
             <div class="kpi-label">
-              of {{ s3.takers.toLocaleString() }} takers replied via rippling
+              of {{ s3.takers.toLocaleString() }} takers
             </div>
           </div>
         </b-col>
         <b-col cols="12" md="6" lg="3">
           <div class="kpi-card d-flex flex-column justify-content-center">
-            <div class="kpi-figure-lg">{{ pct(s3.rippled_replies_pct) }}</div>
-            <div class="kpi-label">
-              share of all replies that rippling brought in
+            <strong class="small d-block mb-2">Reply → take</strong>
+            <div>
+              <span class="kpi-figure-lg">{{ pct(s3.home_conv_pct) }}</span>
+              <span class="kpi-label"> home members</span>
+            </div>
+            <div>
+              <span class="kpi-figure-lg text-success">{{
+                pct(s3.rippled_conv_pct)
+              }}</span>
+              <span class="kpi-label"> rippled-out</span>
+            </div>
+            <div class="text-muted small mt-1">
+              Rippled converts lower per reply — expected, they travel further —
+              but every one is additive.
             </div>
           </div>
         </b-col>
@@ -197,6 +232,16 @@
           </div>
         </b-col>
       </b-row>
+      <p v-if="s3" class="text-muted small mt-2 mb-0">
+        <span v-if="s3.client_instrumented_pct > 0">
+          Client-instrumented cross-check:
+          {{ s3.client_instrumented_pct.toFixed(1) }}% of replies.
+        </span>
+        <span v-else class="fst-italic">
+          "Rippled-out" is derived server-side; the client-instrumented figure
+          fills in once reply-provenance ships to production.
+        </span>
+      </p>
     </div>
     <p v-else class="text-muted small">No data yet.</p>
   </div>
@@ -210,92 +255,114 @@ import api from '~/api'
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
 
+const POS = '#28a745' // shared "positive outcome" green across every pie
+const NEG = '#ced4da' // shared neutral grey for the remainder
+
 const loading = ref(true)
 const error = ref(null)
 const startDate = ref('')
 const endDate = ref('')
 const stratum = ref('all')
 const s1 = ref(null)
-const s2 = ref([])
+const s2 = ref({ kpis: [], drive_time: [] })
 const s3 = ref(null)
 
 const stratumLabel = computed(() =>
   stratum.value === 'all' ? 'all-density' : stratum.value
 )
 
-const trendChart = computed(() => {
-  if (!s2.value.length) return null
-  const rows = s2.value.map((r) => [
-    new Date(r.day),
-    r.replied_pct,
-    r.taken_pct,
-    r.mean_replies * 10,
-  ])
-  return [
-    ['Date', 'Reply rate (%)', 'Taken rate (%)', 'Mean replies (×10)'],
-    ...rows,
-  ]
-})
-function trendOptions() {
-  return {
-    curveType: 'function',
-    legend: { position: 'bottom' },
-    chartArea: { width: '85%', height: '65%' },
-    vAxis: { viewWindow: { min: 0 }, format: '#.#' },
-    hAxis: { format: 'dd MMM' },
-    series: {
-      0: { color: '#28a745' },
-      1: { color: '#146c43' },
-      2: { color: '#6c757d' },
-    },
-  }
-}
-
-const rippledRepliesPie = computed(() => {
-  if (!s3.value) return null
-  return [
-    ['Source', 'Replies'],
-    ['Via rippling', s3.value.rippled_replies],
-    ['Own members', s3.value.replies - s3.value.rippled_replies],
-  ]
-})
-const rippledTakersPie = computed(() => {
-  if (!s3.value) return null
-  return [
-    ['Source', 'Takers'],
-    ['Via rippling', s3.value.rippled_takers],
-    ['Own members', s3.value.takers - s3.value.rippled_takers],
-  ]
-})
-
-const repliedPie = computed(() => {
-  if (!s1.value) return null
-  return [
-    ['Outcome', 'Offers'],
-    ['Got a reply', s1.value.replied],
-    ['Silent', s1.value.posts - s1.value.replied],
-  ]
-})
-const takenPie = computed(() => {
-  if (!s1.value) return null
-  return [
-    ['Outcome', 'Offers'],
-    ['Marked taken', s1.value.taken],
-    ['Not marked', s1.value.posts - s1.value.taken],
-  ]
-})
-
 function pct(v) {
   return (v || 0).toFixed(1) + '%'
 }
-function pieOptions(colors) {
+const pieOptions = {
+  legend: { position: 'none' },
+  pieHole: 0.55,
+  chartArea: { width: '90%', height: '85%' },
+  colors: [POS, NEG],
+  pieSliceText: 'none',
+  backgroundColor: 'transparent',
+}
+
+const repliedPie = computed(() =>
+  s1.value
+    ? [
+        ['Outcome', 'Offers'],
+        ['Got a reply', s1.value.replied],
+        ['Silent', s1.value.posts - s1.value.replied],
+      ]
+    : null
+)
+const takenPie = computed(() =>
+  s1.value
+    ? [
+        ['Outcome', 'Offers'],
+        ['Marked taken', s1.value.taken],
+        ['Not marked', s1.value.posts - s1.value.taken],
+      ]
+    : null
+)
+const rippledRepliesPie = computed(() =>
+  s3.value
+    ? [
+        ['Source', 'Replies'],
+        ['Via rippling', s3.value.rippled_replies],
+        ['Own members', s3.value.replies - s3.value.rippled_replies],
+      ]
+    : null
+)
+const rippledTakersPie = computed(() =>
+  s3.value
+    ? [
+        ['Source', 'Takers'],
+        ['Via rippling', s3.value.rippled_takers],
+        ['Own members', s3.value.takers - s3.value.rippled_takers],
+      ]
+    : null
+)
+
+// One small line chart per metric, so no single graph is overloaded.
+function series(rows, key, mult = 1) {
+  if (!rows || !rows.length) return null
+  return [
+    ['Date', 'v'],
+    ...rows.map((r) => [new Date(r.day), (r[key] || 0) * mult]),
+  ]
+}
+const trendCharts = computed(() => {
+  const k = s2.value.kpis
+  const dt = s2.value.drive_time
+  return [
+    { title: 'Reply rate (%)', data: series(k, 'replied_pct'), color: POS },
+    { title: 'Taken rate (%)', data: series(k, 'taken_pct'), color: '#146c43' },
+    {
+      title: 'Mean replies / offer',
+      data: series(k, 'mean_replies'),
+      color: '#17a2b8',
+    },
+    {
+      title: 'Active freeglers reached',
+      data: series(k, 'mean_freeglers'),
+      color: '#6c757d',
+    },
+    {
+      title: 'Mean reply travel (min)',
+      data:
+        dt && dt.length
+          ? [['Date', 'v'], ...dt.map((r) => [new Date(r.day), r.mean_min])]
+          : null,
+      color: '#fd7e14',
+      note: 'Sample-based — small per-day counts, so read the shape not the wiggles.',
+    },
+  ]
+})
+function miniLineOptions(color) {
   return {
+    curveType: 'function',
     legend: { position: 'none' },
-    pieHole: 0.55,
-    chartArea: { width: '90%', height: '85%' },
-    colors,
-    pieSliceText: 'none',
-    backgroundColor: 'transparent',
+    chartArea: { width: '82%', height: '72%' },
+    vAxis: { viewWindow: { min: 0 }, format: '#.#' },
+    hAxis: { format: 'dd MMM', textStyle: { fontSize: 10 } },
+    series: { 0: { color } },
   }
 }
 
@@ -309,7 +376,7 @@ async function fetchAnalytics() {
       endDate.value
     )
     s1.value = result?.section1 || null
-    s2.value = result?.section2 || []
+    s2.value = result?.section2 || { kpis: [], drive_time: [] }
     s3.value = result?.section3 || null
   } catch (e) {
     error.value = e.message || 'Unknown error'
@@ -333,7 +400,12 @@ defineExpose({ fetchAnalytics, stratum, onFilterFetch })
   border-radius: 12px;
   padding: 14px 16px;
   height: 100%;
-  min-height: 180px;
+  min-height: 170px;
+}
+.kpi-card.helping {
+  min-height: 0;
+  border-color: #28a745;
+  background: rgba(40, 167, 69, 0.05);
 }
 .kpi-figure {
   font-size: 1.9rem;
