@@ -24,6 +24,10 @@ return new class extends Migration
         }
 
         Schema::create('messages_bulk_items_interest', function (Blueprint $table) {
+            // Pin the collation to the schema-wide utf8mb4_unicode_ci (see the sibling
+            // messages_bulk_items migration) rather than the MySQL 8 server default.
+            $table->charset = 'utf8mb4';
+            $table->collation = 'utf8mb4_unicode_ci';
             $table->comment('Per-item interest in a bulk offer: who wants what, how many, when they can collect, and state.');
             $table->bigIncrements('id');
             $table->unsignedBigInteger('bulkitemid');

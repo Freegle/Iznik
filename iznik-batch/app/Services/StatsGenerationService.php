@@ -487,7 +487,7 @@ class StatsGenerationService
                 . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
                 . 'FROM messages_bulk_items bi '
                 . 'INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 '
-                . 'LEFT JOIN items i ON i.name = bi.name '
+                . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
                 . 'WHERE bi.available = 0 '
                 . '  AND bi.updated_at >= ? AND bi.updated_at < ? '
                 . 'GROUP BY mg.groupid',
@@ -510,7 +510,7 @@ class StatsGenerationService
                 . 'FROM messages_bulk_items_interest mbi '
                 . 'INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid '
                 . 'INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 '
-                . 'LEFT JOIN items i ON i.name = bi.name '
+                . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
                 . 'WHERE mbi.state = ? '
                 . '  AND mbi.updated_at >= ? AND mbi.updated_at < ? '
                 . 'GROUP BY mg.groupid',
@@ -706,7 +706,7 @@ class StatsGenerationService
                     . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
                     . 'FROM messages_bulk_items bi '
                     . 'INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 '
-                    . 'LEFT JOIN items i ON i.name = bi.name '
+                    . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
                     . 'WHERE bi.available = 0 '
                     . '  AND bi.updated_at >= ? AND bi.updated_at < ? '
                     . 'GROUP BY mg.groupid',
@@ -728,7 +728,7 @@ class StatsGenerationService
                     . 'FROM messages_bulk_items_interest mbi '
                     . 'INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid '
                     . 'INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 '
-                    . 'LEFT JOIN items i ON i.name = bi.name '
+                    . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
                     . 'WHERE mbi.state = ? '
                     . '  AND mbi.updated_at >= ? AND mbi.updated_at < ? '
                     . 'GROUP BY mg.groupid',
