@@ -91,22 +91,25 @@ type rippleEvalResp struct {
 }
 
 // samplePost is one post in the drive-time sample: origin + its repliers' points, each tagged
-// rippled-out (server-derived, so section 3 can restrict the mean) and with its reply day (so a
-// drive-time trend falls out of the same routing pass for free).
+// rippled-out (server-derived, so section 3 can restrict the mean), with its reply day (so a
+// drive-time trend falls out of the same routing pass for free) and whether that replier became
+// the taker (so the reliability bullseye - reply->take conversion by drive-time ring - falls out too).
 type samplePost struct {
 	lat, lng float64
 	points   [][2]float64
 	rippled  []bool
 	days     []string
+	takers   []bool
 }
 
-// driveObs is one scored reply from the sample: its drive-time, whether it was rippled-out, and
-// its reply day. One routing pass produces these; the overall/rippled means and the per-day trend
-// are then computed in Go without re-calling the graph.
+// driveObs is one scored reply from the sample: its drive-time, whether it was rippled-out, its
+// reply day, and whether the replier became the taker. One routing pass produces these; the
+// overall/rippled means, the per-day trend and the bullseye are computed in Go without re-calling.
 type driveObs struct {
 	min     float64
 	rippled bool
 	day     string
+	taker   bool
 }
 
 // DriveStat is the result of a sampled drive-time computation: the mean travel minutes with a
@@ -161,6 +164,9 @@ func scoreSample(posts []samplePost) []driveObs {
 				}
 				if j < len(p.days) {
 					o.day = p.days[j]
+				}
+				if j < len(p.takers) {
+					o.taker = p.takers[j]
 				}
 				local = append(local, o)
 			}
@@ -235,6 +241,70 @@ func driveTrendFromObs(obs []driveObs) []DriveTrendPoint {
 	return out
 }
 
+// BullseyeBand is one drive-time ring of the reliability bullseye: the reply->take conversion for
+// replies whose drive-time from the post falls in [MinLo, MinHi) minutes. NReplies/NTakers carry
+// the n and CIHalf the 95% half-width, so a sparse outer ring reads honestly rather than as noise.
+type BullseyeBand struct {
+	MinLo    int     `json:"min_lo"`
+	MinHi    int     `json:"min_hi"`
+	NReplies int     `json:"n_replies"`
+	NTakers  int     `json:"n_takers"`
+	ConvPct  float64 `json:"conv_pct"`
+	CIHalf   float64 `json:"ci_half_pct"`
+}
+
+// bullseyeEdges are the ring boundaries in minutes. Coarser than the offline reach-tuning analysis
+// (which merged only 5-min bands over a huge batch): the innermost 0-10 is one ring because
+// sub-5-min-drive replies are rare, so a 0-5 ring would always be too sparse to read on a live
+// sample. 5-min resolution is kept through the populated 10-30 band; the 30-45 outer ring is
+// inclusive of driveMaxMinutes (the isochrone cap) so no scored reply is dropped. The 30 edge lines
+// up with the reach edge drawn on the bullseye.
+var bullseyeEdges = []int{0, 10, 15, 20, 25, 30, driveMaxMinutes}
+
+// Bullseye buckets parallel (drive-time, taker?) observations into the fixed drive-time rings and
+// computes reply->take conversion per ring with a 95% CI half-width (normal approximation). It is
+// exported and input-typed (not driveObs) so the banding is unit-testable without a routing pass.
+func Bullseye(mins []float64, takers []bool) []BullseyeBand {
+	bands := make([]BullseyeBand, 0, len(bullseyeEdges)-1)
+	for i := 0; i+1 < len(bullseyeEdges); i++ {
+		lo, hi := bullseyeEdges[i], bullseyeEdges[i+1]
+		last := i+2 == len(bullseyeEdges)
+		b := BullseyeBand{MinLo: lo, MinHi: hi}
+		for j, m := range mins {
+			if m < float64(lo) {
+				continue
+			}
+			if m > float64(hi) || (m == float64(hi) && !last) {
+				continue
+			}
+			b.NReplies++
+			if j < len(takers) && takers[j] {
+				b.NTakers++
+			}
+		}
+		if b.NReplies > 0 {
+			p := float64(b.NTakers) / float64(b.NReplies)
+			b.ConvPct = p * 100
+			b.CIHalf = 1.96 * math.Sqrt(p*(1-p)/float64(b.NReplies)) * 100
+		}
+		bands = append(bands, b)
+	}
+	return bands
+}
+
+// bullseyeFromObs pulls the drive-time + taker flag off the sampled observations and bands them.
+// Over ALL sampled replies (home + rippled) on rippled-out posts, so it reads as "how reliably does
+// a reply at this drive-time complete" - the offerer's-eye reliability profile of the reach.
+func bullseyeFromObs(obs []driveObs) []BullseyeBand {
+	mins := make([]float64, len(obs))
+	takers := make([]bool, len(obs))
+	for i, o := range obs {
+		mins[i] = o.min
+		takers[i] = o.taker
+	}
+	return Bullseye(mins, takers)
+}
+
 // fetchDriveSample pulls a random sample of posts (with their replier points) for the window +
 // stratum, tagging each reply rippled-out server-side. rippled-out = the replier reached the
 // post via rippling: not an established member of an ORIGIN group before arrival, on a post that
@@ -248,6 +318,7 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 		Rlat    float64
 		Rlng    float64
 		Rippled int
+		Taker   int
 		Day     string
 	}
 	var rows []row
@@ -256,6 +327,7 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 	db.Raw(`
 		SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng,
 		       DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
+		       EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker,
 		       (NOT EXISTS(SELECT 1 FROM messages_groups og
 		                   INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid
 		                     AND mem.collection = 'Approved' AND mem.added < og.arrival
@@ -289,6 +361,7 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 		sp.points = append(sp.points, [2]float64{r.Rlng, r.Rlat})
 		sp.rippled = append(sp.rippled, r.Rippled == 1)
 		sp.days = append(sp.days, r.Day)
+		sp.takers = append(sp.takers, r.Taker == 1)
 	}
 	out := make([]samplePost, 0, len(order))
 	for _, id := range order {
@@ -421,6 +494,8 @@ func Analytics(c *fiber.Ctx) error {
 		"section1":      kpi,
 		"section2":      trend,
 		"section3":      s3,
+		// Reliability bullseye: reply->take conversion by drive-time ring, from the same sample.
+		"bullseye": bullseyeFromObs(obs),
 	})
 }
 

@@ -242,6 +242,104 @@
         </span>
       </p>
 
+      <!-- Reliability bullseye - reply -> take conversion by drive-time ring -->
+      <h5 class="section-h">
+        How reliably does a reply convert, by drive-time?
+      </h5>
+      <p class="text-muted small mb-2">
+        The offerer sits at the centre; each ring is a drive-time band reaching
+        outward. Greener = a reply from that distance is more likely to complete
+        the rehoming. The dashed ring is the 30-minute reach edge. Sampled live,
+        so outer rings hold fewer replies and a wider margin — read the fade
+        across rings, not any single one. Switch density above to compare rural
+        and dense.
+      </p>
+      <div v-if="bullseyeRings.length" class="panel">
+        <div class="panel-body bullseye-wrap">
+          <svg
+            class="bullseye"
+            :viewBox="`0 0 ${bullseyeSize} ${bullseyeSize}`"
+            role="img"
+            :aria-label="bullseyeAria"
+          >
+            <circle
+              v-for="r in bullseyeDraw"
+              :key="'ring-' + r.min_hi"
+              :cx="bullseyeC"
+              :cy="bullseyeC"
+              :r="r.radius"
+              :fill="r.fill"
+              stroke="#ffffff"
+              stroke-width="1.5"
+            >
+              <title>{{ r.tip }}</title>
+            </circle>
+            <!-- 30-minute reach edge -->
+            <circle
+              :cx="bullseyeC"
+              :cy="bullseyeC"
+              :r="reachEdgeRadius"
+              fill="none"
+              stroke="#d98324"
+              stroke-width="2.5"
+              stroke-dasharray="5 4"
+            />
+            <!-- the offerer, at the centre -->
+            <circle
+              :cx="bullseyeC"
+              :cy="bullseyeC"
+              r="13"
+              fill="#ffffff"
+              stroke="#1a1c1a"
+              stroke-width="1.5"
+            />
+            <text
+              :x="bullseyeC"
+              :y="bullseyeC + 3.5"
+              text-anchor="middle"
+              class="be-origin"
+            >
+              post
+            </text>
+          </svg>
+          <div class="bullseye-side">
+            <table class="be-table">
+              <thead>
+                <tr>
+                  <th>Drive</th>
+                  <th>Convert</th>
+                  <th>n</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in bullseyeRings" :key="'row-' + r.min_hi">
+                  <td>
+                    <span class="be-swatch" :style="{ background: r.fill }" />{{
+                      r.min_lo
+                    }}–{{ r.min_hi }}m
+                  </td>
+                  <td>
+                    <span v-if="r.n_replies">{{ pct(r.conv_pct) }}</span>
+                    <span v-else class="text-muted">—</span>
+                  </td>
+                  <td class="text-muted">{{ r.n_replies || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="sub muted mt-1">
+              <span class="be-legend">
+                <span class="be-legend-bar" />
+                low → high conversion
+              </span>
+              <div>Grey = no sampled replies at that distance.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p v-else class="text-muted small">
+        No drive-time sample for the bullseye in this window.
+      </p>
+
       <!-- Where do replies come from - attribution channels over time -->
       <h5 class="section-h">Where do replies come from?</h5>
       <p class="text-muted small mb-2">
@@ -334,6 +432,7 @@ const stratum = ref('all')
 const s1 = ref(null)
 const s2 = ref({ kpis: [], drive_time: [] })
 const s3 = ref(null)
+const bull = ref([])
 // Folded in from the retired dashboard: reply-source attribution + geographic hotspots
 // (fetched in parallel from the metrics endpoint, which already computes them).
 const replySource = ref([])
@@ -518,6 +617,57 @@ function areaOptions(color) {
   }
 }
 
+// Bullseye geometry + colour. Rings are sized ~linearly by drive-time (a 5-min band ≈ 15px, the
+// 15-min-wide 30-45 band ≈ 45px), so the pale outer band is also the largest area — much ground,
+// little reliability. Colour is a single green ramp by conversion (sequential), independent of the
+// ring's radius, so darkness means the same thing in every stratum. Empty rings render grey, not
+// pale green, so "no sampled replies" never reads as "0% conversion".
+const bullseyeSize = 300
+const bullseyeC = 150
+const BE_CENTER_R = 16
+const BE_MAX_R = 138
+const BE_CONV_FULL = 35 // conversion (%) that maps to the darkest green
+
+function beRadius(minHi) {
+  return BE_CENTER_R + (BE_MAX_R - BE_CENTER_R) * (minHi / 45)
+}
+function beFill(band) {
+  if (!band.n_replies) return '#eef0ec'
+  const t = Math.max(0, Math.min(1, (band.conv_pct || 0) / BE_CONV_FULL))
+  const l = 90 - 62 * t /* 90% (pale) → 28% (deep green) */
+  return `hsl(146, 47%, ${l.toFixed(1)}%)`
+}
+const reachEdgeRadius = computed(() => beRadius(30))
+const bullseyeRings = computed(() =>
+  (bull.value || []).map((b) => {
+    const ci =
+      b.n_replies && b.ci_half_pct ? ` ±${b.ci_half_pct.toFixed(1)}` : ''
+    return {
+      ...b,
+      radius: beRadius(b.min_hi),
+      fill: beFill(b),
+      tip: b.n_replies
+        ? `${b.min_lo}–${b.min_hi} min · ${pct(b.conv_pct)}${ci} convert (n=${
+            b.n_replies
+          })`
+        : `${b.min_lo}–${b.min_hi} min · no sampled replies`,
+    }
+  })
+)
+// Draw the largest ring first so inner rings paint on top, leaving each band a visible annulus.
+const bullseyeDraw = computed(() => [...bullseyeRings.value].reverse())
+const bullseyeAria = computed(() => {
+  const rings = bullseyeRings.value.filter((r) => r.n_replies)
+  if (!rings.length) return 'Reliability bullseye: no sampled replies.'
+  const inner = rings[0]
+  const outer = rings[rings.length - 1]
+  return `Reliability bullseye: reply-to-take conversion is ${pct(
+    inner.conv_pct
+  )} in the ${inner.min_lo}-${inner.min_hi} minute ring, fading to ${pct(
+    outer.conv_pct
+  )} in the ${outer.min_lo}-${outer.min_hi} minute ring.`
+})
+
 async function fetchAnalytics() {
   loading.value = true
   error.value = null
@@ -533,6 +683,7 @@ async function fetchAnalytics() {
     s1.value = result?.section1 || null
     s2.value = result?.section2 || { kpis: [], drive_time: [] }
     s3.value = result?.section3 || null
+    bull.value = result?.bullseye || []
     replySource.value = metrics?.reply_source_split || []
     hotspots.value = metrics?.hotspots || []
     attributionCaptureFrom.value = metrics?.attribution_capture_from || ''
@@ -723,5 +874,68 @@ $line: #e4e8e3;
   border-radius: 14px;
   padding: 18px 20px;
   text-align: center;
+}
+
+/* Reliability bullseye: SVG rings + an exact-values table side by side, stacking on narrow screens */
+.bullseye-wrap {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+.bullseye {
+  width: 300px;
+  max-width: 100%;
+  height: auto;
+}
+.be-origin {
+  font-size: 10px;
+  font-weight: 700;
+  fill: $ink;
+}
+.bullseye-side {
+  text-align: left;
+  min-width: 180px;
+}
+.be-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.be-table th,
+.be-table td {
+  padding: 3px 12px 3px 0;
+  text-align: left;
+  white-space: nowrap;
+}
+.be-table th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #99a29a;
+  font-weight: 700;
+  border-bottom: 1px solid $line;
+}
+.be-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  margin-right: 7px;
+  vertical-align: -1px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.be-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.be-legend-bar {
+  display: inline-block;
+  width: 60px;
+  height: 9px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, hsl(146, 47%, 90%), hsl(146, 47%, 28%));
 }
 </style>

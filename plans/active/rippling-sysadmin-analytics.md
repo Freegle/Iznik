@@ -72,6 +72,33 @@ LOCAL. Prod hits routing on the LAN (parallel) → ~5-10s. Local .env uses RIPPL
 add an endpoint smoke test + a component vitest. Rippled-out drive-time n is small at sample 80
 (CI ±3min) - fine at prod sample 250. Section 3 client-instrumented fills in after #1001 deploys.
 
+## Bullseye addition (2026-07-08)
+Follow-up to Edward's "merged doesn't have bullseye diagram". The reliability bullseye (reply->take
+conversion by drive-time ring, offerer at centre, greener = more reliable, dashed 30-min reach edge)
+existed only as a static SVG in the reach-tuning writeup - never wired into the live dashboard.
+- **Backend** (`analytics.go`): carries each sampled reply's taker flag through the SAME single
+  routing pass (`samplePost.takers`, `driveObs.taker`, `is_taker` in `fetchDriveSample`), then
+  `Bullseye(mins, takers)` / `bullseyeFromObs` bucket reply->take conversion into rings with a 95%
+  CI. Emitted as top-level `bullseye` in the Analytics response. NO extra routing cost; recomputes
+  per density via the existing stratum selector.
+- **Bands**: `bullseyeEdges = {0,10,15,20,25,30,45}` (6 rings). Coarser than the offline analysis's
+  5-min bands because on-the-fly sampling can't fill 7 rings - the innermost 0-10 is one ring
+  (sub-5-min replies are rare); 30 edge aligns with the drawn reach edge. Legible at sample 80
+  (~150 replies, n>=13/ring) and firms up at prod sample 250.
+- **Frontend** (`ModSysAdminRipplingAnalytics.vue`): data-driven SVG (rings sized ~linearly by
+  drive-time, single green ramp by conversion so darkness means the same in every stratum, empty
+  rings grey not pale-green, native `<title>` hover) + an exact-values table + gradient legend.
+  Section "How reliably does a reply convert, by drive-time?" between s3 and the channels chart.
+- **Deployed** to apiv2-live (rebuilt) + modtools-dev-live (HMR). Endpoint verified live (6 bands,
+  visible core->edge fade). Render self-verified via a standalone preview screenshot.
+- **Tests**: Go `TestBullseye` (band boundaries + conversion + empty-ring + short-slice safety);
+  vitest "draws the reliability bullseye" (ring-per-band, empty greyed, table values).
+- **Incidental**: the current branch's HEAD commit `25c3f512d` (hold-web-replies) had a
+  test/component copy mismatch - `WhichPostsExplanation.spec.js` expected "On the default view"/
+  "you'll only see posts that have already reached your area"/"widen the distance, change the sort"
+  which the component didn't render. Reconciled the component copy to its spec (uncommitted; belongs
+  with the hold-web-replies feature, not the bullseye PR).
+
 ## Notes
 - Read-only prod convention: endpoint must not write. Sampling is read-only.
 - Coverage: this is exploratory sysadmin analytics; keep the routing helper thin + unit-test the pure bits (band/stratum classification, mean calc). Full routing not unit-tested (external).
