@@ -40,6 +40,16 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"
+    environment:
+      # Cap renderd render threads. confident_curran ran THREADS=100 as a
+      # near-dedicated tile host; on THIS shared 8-core box (batch/spatial/wiki
+      # co-resident) 100 render threads saturate CPU on every replication cycle
+      # (renderd "Failed to send render cmd", growing expiry backlog, load 100+).
+      # Serving already-rendered tiles is unaffected (they come from the
+      # osm-tiles volume); this only bounds the background re-render concurrency.
+      # cgroup: tile-server is in the default slice (weight 100) — it yields to
+      # interactive image serving (800) and outranks batch (25).
+      - THREADS=4
 
   wiki-mysql:
     # Adopt the already-initialised DB datadir in place (zero copy).
