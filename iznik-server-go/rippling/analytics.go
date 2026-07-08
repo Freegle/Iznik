@@ -303,9 +303,20 @@ func Analytics(c *fiber.Ctx) error {
 		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
 	}
 
-	// Section 1 drive-time - sampled, on the fly via the routing graph.
+	// Section 1 + 3 drive-time - one sampled routing pass covers both (all replies and the
+	// rippled-out subset) since fetchDriveSample tags each reply rippled-out server-side.
 	sample := fetchDriveSample(start, end, stratumSQL, driveSampleSize())
 	kpi.ReplyDrive = meanDriveMinFromSample(sample, false)
+
+	// Section 2 - trends: the same SQL KPIs bucketed per arrival day. Drive-time is NOT trended
+	// (per-day sampling would multiply the routing cost); the section-1 mean stands for the window.
+	trend := trendSeries(start, end, stratumSQL)
+
+	// Section 3 - rippling-out specific (server-derived): of replies to rippled posts, what share
+	// came via rippling, and of the takers, what share replied via rippling. Plus the rippled-out
+	// mean drive-time from the same sample.
+	s3 := rippledOutSection(start, end, stratumSQL)
+	s3.RippleDrive = meanDriveMinFromSample(sample, true)
 
 	return c.JSON(fiber.Map{
 		"stratum":       stratum,
@@ -313,5 +324,100 @@ func Analytics(c *fiber.Ctx) error {
 		"end":           end,
 		"sample_target": driveSampleSize(),
 		"section1":      kpi,
+		"section2":      trend,
+		"section3":      s3,
 	})
+}
+
+// TrendRow is one arrival-day point for the Section 2 time series.
+type TrendRow struct {
+	Day           string  `json:"day"            gorm:"column:day"`
+	Posts         int     `json:"posts"          gorm:"column:posts"`
+	RepliedPct    float64 `json:"replied_pct"    gorm:"column:replied_pct"`
+	TakenPct      float64 `json:"taken_pct"      gorm:"column:taken_pct"`
+	MeanReplies   float64 `json:"mean_replies"   gorm:"column:mean_replies"`
+	MeanFreeglers float64 `json:"mean_freeglers" gorm:"column:mean_freeglers"`
+}
+
+// trendSeries returns per-day KPI points (ascending) over the window + stratum. Pure SQL.
+func trendSeries(start, end, stratumSQL string) []TrendRow {
+	rows := []TrendRow{}
+	database.DBConn.Raw(`
+		SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day,
+		       COUNT(*) AS posts,
+		       100 * SUM(nreplies > 0) / COUNT(*) AS replied_pct,
+		       100 * SUM(taken) / COUNT(*) AS taken_pct,
+		       SUM(nreplies) / COUNT(*) AS mean_replies,
+		       AVG(freeglers) AS mean_freeglers
+		FROM (
+		    SELECT rr.created_at AS created, rr.total_freeglers AS freeglers,
+		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies,
+		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken
+		    FROM rippling_reach rr
+		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
+		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
+		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+		) d
+		GROUP BY day ORDER BY day`, start, end).Scan(&rows)
+	return rows
+}
+
+// Section3RippledOut is the "rippling-out specifically" block. rippled-out is server-derived:
+// the replier reached the post via rippling (not an established member of an origin group before
+// arrival). ClientInstrumentedPct cross-checks against the client-reported provenance once that
+// data is live in prod (currently ~0).
+type Section3RippledOut struct {
+	Replies               int       `json:"replies"`
+	RippledReplies        int       `json:"rippled_replies"`
+	RippledRepliesPct     float64   `json:"rippled_replies_pct"`
+	Takers                int       `json:"takers"`
+	RippledTakers         int       `json:"rippled_takers"`
+	RippledTakersPct      float64   `json:"rippled_takers_pct"`
+	ClientInstrumentedPct float64   `json:"client_instrumented_pct"`
+	RippleDrive           DriveStat `json:"ripple_drive_min"`
+}
+
+// rippledOutSection computes the server-derived rippled-out reply/taker shares (pure SQL) over
+// replies to rippled posts in the window + stratum.
+func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
+	var raw struct {
+		Replies        int
+		RippledReplies int
+		Takers         int
+		RippledTakers  int
+		ClientRippled  int
+	}
+	database.DBConn.Raw(`
+		SELECT COUNT(*) AS replies,
+		       SUM(rippled) AS rippled_replies,
+		       SUM(is_taker) AS takers,
+		       SUM(rippled AND is_taker) AS rippled_takers,
+		       SUM(client_rippled) AS client_rippled
+		FROM (
+		    SELECT
+		      (NOT EXISTS(SELECT 1 FROM messages_groups og
+		                  INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid
+		                    AND mem.collection = 'Approved' AND mem.added < og.arrival
+		                  WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled,
+		      EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker,
+		      EXISTS(SELECT 1 FROM rippling_reply_attribution rra
+		             WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid
+		               AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled
+		    FROM chat_messages cm
+		    JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0`+stratumSQL+`
+		    JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer'
+		    WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?
+		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+		) d`, start, end).Scan(&raw)
+
+	s := Section3RippledOut{Replies: raw.Replies, RippledReplies: raw.RippledReplies,
+		Takers: raw.Takers, RippledTakers: raw.RippledTakers}
+	if raw.Replies > 0 {
+		s.RippledRepliesPct = float64(raw.RippledReplies) / float64(raw.Replies) * 100
+		s.ClientInstrumentedPct = float64(raw.ClientRippled) / float64(raw.Replies) * 100
+	}
+	if raw.Takers > 0 {
+		s.RippledTakersPct = float64(raw.RippledTakers) / float64(raw.Takers) * 100
+	}
+	return s
 }
