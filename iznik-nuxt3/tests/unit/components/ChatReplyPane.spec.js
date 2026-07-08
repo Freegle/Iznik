@@ -256,6 +256,20 @@ describe('ChatReplyPane', () => {
     return wrapper
   }
 
+  describe('resilience', () => {
+    it('still renders the overlay when the message fetch rejects', async () => {
+      // Regression: the fetch is a top-level await under <Suspense>; an
+      // unhandled rejection meant the overlay never mounted and the Reply
+      // click was a silent no-op (seen in CI when the API blipped offline).
+      // The pane must render with whatever is cached in the store instead.
+      mockMessageStore.fetch.mockRejectedValueOnce(new Error('Failed to fetch'))
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.reply-overlay').exists()).toBe(true)
+      expect(wrapper.find('.reply-card').exists()).toBe(true)
+    })
+  })
+
   describe('post photo zoom', () => {
     it('opens the photo carousel modal when a multi-photo post is tapped', async () => {
       // Multiple photos → the modal is the swipeable carousel (it shows all
