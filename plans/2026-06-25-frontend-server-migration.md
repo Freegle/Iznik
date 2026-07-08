@@ -1,6 +1,102 @@
 # Front-End Server Migration — consolidated plan (2026-06-25)
 
-**Goal.** Stand up a new Katapult VM running a FreegleDocker Compose environment that hosts **every externally-accessed service** currently split across (a) `app1-internal` bare-metal and (b) this `docker` host's Compose env + host nginx. Afterwards: **app1 is retired**, and this `docker` host keeps **only internal batch/mail/ops** (it is also the prod batch host, `batch-prod`).
+> ## REVISION 2026-07-08 — scale-in-place on the existing docker host (DECIDED)
+>
+> **Direction change (Edward):** no new VM. Scale the existing `docker` host,
+> adopt its standalone containers into Compose, and migrate app1's services
+> onto it. app1 is retired; the docker host becomes the single mixed node
+> running everything (edge + batch), with priority guaranteed by **cgroup v2
+> slices** (work-conserving weights - batch soaks idle capacity, yields under
+> contention), not by physical partitioning. Slices implemented in **PR #1006**
+> (`interactive.slice`/`batch.slice` + `docker-compose.override.batchprod.yml`).
+>
+> **Why consolidation won** (measured 2026-07-08): edge traffic is ~10:1
+> peak:trough (app1 delivery logs: ~9K req/hr at 03:00 vs ~98K/hr 08:00-10:00)
+> and CPU-light (app1 serves the whole image tier's peak on 1 vCPU at load
+> 0.11), while batch is CPU-shaped and starving (docker host load 13.6 on 8
+> cores, batch-prod at 428% CPU, 12G into swap). Complementary shapes: a
+> dedicated edge VM would waste CPU at all hours; on a shared box batch gets
+> the 12-14 cores edge doesn't use. Caveat: digests (07:00-12:00) *cause* the
+> edge morning peak (emails full of image links), so the biggest batch job and
+> the edge peak coincide - weights let image-serving win and digest shards
+> stretch within their window; watch `/proc/pressure/cpu` there post-merge.
+>
+> **What this revision eliminates from the plan below:**
+> - §3 two-VM target architecture and all of §7's VM provisioning.
+> - tiles/geocode/wiki "migration" - they are **already on this host**; the
+>   DNS A-records already point here (185.44.254.12). They don't move at all;
+>   the tile server and wiki containers just get adopted into Compose.
+> - The osm-data/osm-tiles/wiki data-sync problem - verified 2026-07-08: the
+>   tile server (`confident_curran`) already uses named Docker volumes
+>   `osm-data`/`osm-tiles` (adopt via `external: true`), and wiki uses bind
+>   mounts under `/var/wiki` - zero data movement, same-host container swap.
+>
+> **What survives unchanged:** §2 verified facts; §5/§6 dev-validated `edge`
+> profile artifacts (deployed here instead of on a VM, alongside the existing
+> profiles → `COMPOSE_PROFILES=backend,production,mail,edge`); the §8 HAProxy
+> cutover mechanics for uploads/delivery; §10 risks/observability (promtail,
+> cache-key HIT replay, PROXY framing); §11 AI-safety protocol.
+>
+> **Feasibility verified live 2026-07-08 (read-only):**
+> - NFS: `nfs2.nlc.storage.katapult.io` (10.11.3.10/.20) **is reachable from
+>   this host** - TCP 2049 connects via the default route; no Katapult network
+>   change needed. Export allowlist for this host still to be confirmed at
+>   first mount (`-o ro` first, per §11).
+> - Host is cgroup v2 + systemd cgroup driver + controllers delegated
+>   (Docker 29.2.1/runc 1.3.4) - PR #1006 slices work with no daemon changes.
+> - Port constraint: native nginx owns `:80`/`:443` (certbot TLS for
+>   tiles/geocode/wiki + stale discourse) and `:8080` is the tile container's
+>   published port. So the HAProxy-fronted vhosts (uploads incl. the
+>   `:8080`-URL form + delivery) publish on **new ports** (e.g. `:8180`
+>   proxy_protocol, `:8188` plain) and the HAProxy backends target those.
+>   Native nginx keeps the direct-A TLS domains initially; moving
+>   tiles/geocode/wiki behind applb (DNS repoint → HAProxy TLS) is an optional
+>   later step that removes certbot from this host and makes failover uniform.
+>
+> **Revised staging** (each step independently reversible, human-gated):
+> 0. **Immediately, before anything else:** disk is at 89% - add block storage
+>    (£0.15/GB/mo) and grow the filesystem. Deploy PR #1006 slices (relief for
+>    the current overload, and the priority mechanism everything else relies
+>    on). Investigate batch-prod's 428% CPU separately (likely the ripple
+>    loop - see plans/routing-performance-step-change.md).
+> 1. **Upsize the host** (Krystal package upgrades are live/no-downtime):
+>    target ROCK-48-class 16 vCPU/48G. RAM is the binding constraint: current
+>    real working set ~20-24G (box is 12G into swap) + weserv/nginx/tusd
+>    (small) + MemoryLow-protected page cache for the 41G image cache.
+>    ROCK-96 (32/96, £480/mo) is the escape hatch.
+> 2. **Adopt standalone containers into Compose** (same host, same data):
+>    `tile-server` service on external volumes `osm-data`/`osm-tiles` (stop
+>    `confident_curran`, `up` the compose service); `wiki-media`+`wiki-mysql`
+>    services on the existing `/var/wiki` binds; drop `ors-app` (superseded by
+>    spatial on db1/2/3) and the stale discourse vhost. Photon stays native
+>    under monit for now (own later stage). tile-server sits in the default
+>    tier (it mixes user serving with render storms), wiki likewise.
+> 3. **Images migration (the only real move):** mount NFS `/images` ro; bring
+>    up `delivery` (weserv) + `tusd` + `frontend-nginx` (uploads + delivery
+>    vhosts only, pinned cache key per §2) on the new ports under
+>    `interactive.slice`; low-priority rsync of app1's 41G `/wsrv_cache`;
+>    replay-validate >90% HIT (§10); then HAProxy cutover per §8 - repoint
+>    `tusd_backend`, add `delivery_backend`, and **keep app1 as `backup`
+>    server in both** (free rollback AND a warm failover sibling until
+>    retirement).
+> 4. **Legacy `images`/`cdn`/`users`-web** (app1 PHP-coupled, HAProxy default
+>    backend): still the awkward tail - needs the legacy PHP served here
+>    (apiv1 container or port the vhosts) before app1 can retire. Own stage;
+>    `users` mail-alias MX remains a separate workstream (§8).
+> 5. **Retire app1** per §9 (after ≥1 week clean, and only after step 4).
+>    Post-retirement failover: the next investments are a second HAProxy on a
+>    Katapult VIP, and - if wanted later - a second mixed node as backup
+>    backend for uploads/delivery (NFS is shared; caches cold-start).
+>
+> A host reboot now takes user-facing services down with it - the reboot
+> runbook (plans/2026-07-03-host-reboot-runbook.md) becomes the canonical
+> procedure, and restart policies deserve hardening (most edge services are
+> `restart: "no"`, relying on `freegle-docker.service`).
+>
+> The original plan below is retained for its verified facts, dev-validation
+> results, HAProxy mechanics, and safety protocol. Read §3/§7 as superseded.
+
+**Goal.** ~~Stand up a new Katapult VM~~ **(superseded 2026-07-08 - see REVISION above: scale the existing docker host in place)** running a FreegleDocker Compose environment that hosts **every externally-accessed service** currently split across (a) `app1-internal` bare-metal and (b) this `docker` host's Compose env + host nginx. Afterwards: **app1 is retired** - the docker host runs everything, with cgroup slices separating the tiers (it remains the prod batch host, `batch-prod`).
 
 This supersedes and broadens `docs/superpowers/specs/2026-04-11-frontend-server-design.md` (which scoped only images + tiles). Scope is now: **anything reached from the outside world moves; internal batch processing stays.**
 
