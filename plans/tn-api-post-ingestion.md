@@ -22,19 +22,21 @@ TNSyncCommand (orchestrator)
 
 ## File layout
 
-- `iznik-batch/app/Console/Commands/TrashNothing/TNSyncCommand.php` — slim orchestrator (~150 lines)
+- `iznik-batch/app/Console/Commands/TrashNothing/TNSyncCommand.php` — slim orchestrator (~150 lines) ✅
 - `iznik-batch/app/Services/TrashNothing/TNApiClient.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/RatingsSyncer.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/UserChangesSyncer.php`
-- `iznik-batch/app/Services/TrashNothing/Syncers/PostsSyncer.php`
+- `iznik-batch/app/Services/TrashNothing/Sync/PostSyncer.php` — paging + group map resolution ✅
 - `iznik-batch/app/Services/TrashNothing/Syncers/ChatMessagesSyncer.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/DuplicateUserMerger.php`
-- `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php`
+- `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php` ✅
 - `iznik-batch/app/Services/TrashNothing/Ingestion/ChatMessageIngestionService.php`
-- `iznik-batch/app/Services/TrashNothing/Ingestion/TNPayloadToRfc822.php`
+- `iznik-batch/app/Services/TrashNothing/Ingestion/TNPayloadToRfc822.php` — RFC822 synthesis inlined into GroupPostIngestionService for now
 - `iznik-batch/app/Services/TrashNothing/Dto/TNPostPayload.php`
 - `iznik-batch/app/Services/TrashNothing/Dto/TNChatMessagePayload.php`
 - `iznik-batch/app/Services/TrashNothing/Dto/SyncResult.php`
+- `iznik-batch/tests/fixtures/tn_sync/posts_page_1.json` — local-testing fixture ✅
+- `iznik-batch/config/freegle.php` — `trashnothing.group_map` (TN group_id → nameshort) ✅
 
 ## Key design decisions
 

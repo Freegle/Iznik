@@ -1,0 +1,627 @@
+<?php
+
+namespace App\Services\TrashNothing\Ingestion;
+
+use App\Models\Group;
+use App\Models\Membership;
+use App\Models\Message;
+use App\Models\MessageAttachment;
+use App\Models\MessageGroup;
+use App\Models\User;
+use App\Services\ItemService;
+use App\Services\LokiService;
+use App\Services\SpatialQueryService;
+use App\Services\TusService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+/**
+ * Ingests a TN API post into the database, mirroring the logic of
+ * IncomingMailService::handleGroupPost + ::createGroupPostMessage.
+ *
+ * The email path (IncomingMailService) is never touched. Logic here is
+ * duplicated — not extracted — until parity is proven.
+ *
+ * With $dryRun = true, no DB writes occur. Every would-be write emits a
+ * TN-SYNC-TRACE [WRITE] log line for diffing against the email path.
+ */
+class GroupPostIngestionService
+{
+    public function __construct(
+        private readonly bool $dryRun,
+        private readonly LokiService $loki,
+        private readonly ItemService $itemService,
+    ) {}
+
+    /**
+     * Ingest a single TN API post for the given Freegle group.
+     *
+     * @param  mixed  $post  OpenAPI Post object or fixture array
+     * @param  Group  $group  Resolved Freegle group
+     * @return string  'approved'|'pending'|'duplicate'|'dropped'|'skipped'
+     */
+    public function ingest(mixed $post, Group $group): string
+    {
+        $postId   = $this->getField($post, 'post_id', 'getPostId');
+        $fdUserId = $this->getField($post, 'user_id', 'getUserId');
+        $title    = $this->getField($post, 'title', 'getTitle') ?? '';
+        $content  = $this->getField($post, 'content', 'getContent') ?? '';
+        $date     = $this->getField($post, 'date', 'getDate');
+        $lat      = $this->getField($post, 'latitude', 'getLatitude');
+        $lng      = $this->getField($post, 'longitude', 'getLongitude');
+        $tnType   = strtolower((string) $this->getField($post, 'type', 'getType'));
+        $photos   = $this->getField($post, 'photos', 'getPhotos') ?? [];
+
+        $dateStr = $date instanceof \DateTime ? $date->format('Y-m-d\TH:i:s\Z') : (string) $date;
+        $subject = strtoupper($tnType) . ': ' . $title;
+
+        // Idempotency: skip if this post was already ingested for this group.
+        $isDuplicate = $this->postAlreadyExists((string) $postId, $group->id);
+        if ($isDuplicate) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=duplicate tnpostid=' . $postId . ' groupid=' . $group->id . ($this->dryRun ? ' would_be_duplicate=true' : ''));
+            $this->loki->logEvent('tn-sync', 'post-skip-duplicate', ['tn_post_id' => $postId, 'group_id' => $group->id]);
+            return 'duplicate';
+        }
+
+        // Resolve Freegle user from TN fd_user_id.
+        $user = $fdUserId ? User::find($fdUserId) : null;
+        if ($user === null) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-user tnpostid=' . $postId . ' fd_user_id=' . $fdUserId);
+            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'fd_user_id' => $fdUserId]);
+            return 'skipped';
+        }
+
+        // Update user's last access.
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
+        if (!$this->dryRun) {
+            DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()]);
+        }
+
+        // Membership check: user must be an approved member.
+        $membership = Membership::where('userid', $user->id)
+            ->where('groupid', $group->id)
+            ->where('collection', 'Approved')
+            ->first();
+
+        if ($membership === null) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-non-member', ['tn_post_id' => $postId, 'user_id' => $user->id]);
+            return 'skipped';
+        }
+
+        // Determine posting status, applying the same override hierarchy as the email path.
+        $postingStatus = $membership->ourPostingStatus;
+
+        $overrideModeration = $group->overridemoderation ?? 'None';
+        if ($overrideModeration === 'ModerateAll') {
+            $postingStatus = 'MODERATED';
+        }
+
+        if ($user->isModeratorOf($group->id)) {
+            $postingStatus = 'MODERATED';
+        }
+
+        $groupSettings = is_array($group->settings) ? $group->settings : (json_decode($group->settings ?? '{}', true) ?: []);
+        if (!empty($groupSettings['moderated'])) {
+            $postingStatus = 'MODERATED';
+        }
+
+        // Determine routing result.
+        $routingResult = 'pending';
+        $pendingReason = null;
+
+        if ($user->lastlocation === null) {
+            $pendingReason = 'unmapped user';
+        } elseif ($this->subjectContainsWorryWords($subject, $content)) {
+            $pendingReason = 'worry words';
+        } else {
+            $routingResult = match ($postingStatus) {
+                'DEFAULT', 'UNMODERATED' => 'approved',
+                'PROHIBITED'             => 'dropped',
+                default                  => 'pending',
+            };
+        }
+
+        if ($routingResult === 'dropped') {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
+            return 'dropped';
+        }
+
+        // Create the message record.
+        $messageId = $this->createMessage($post, $user, $group, $subject, $content, $lat, $lng, $date, $postId, $photos);
+
+        if ($messageId === null) {
+            return 'skipped';
+        }
+
+        // Record in messages_postings (matches email path #12).
+        Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
+        if (!$this->dryRun) {
+            DB::table('messages_postings')->insert([
+                'msgid'      => $messageId,
+                'groupid'    => $group->id,
+                'repost'     => 0,
+                'autorepost' => 0,
+                'date'       => now(),
+            ]);
+        }
+
+        if ($routingResult === 'approved') {
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
+            if (!$this->dryRun) {
+                MessageGroup::where('msgid', $messageId)->update([
+                    'collection' => MessageGroup::COLLECTION_APPROVED,
+                    'approvedat' => now(),
+                ]);
+                $this->addToSpatialIndex($messageId, $group->id);
+            }
+            $this->loki->logEvent('tn-sync', 'post-create', ['tn_post_id' => $postId, 'msg_id' => $messageId, 'collection' => 'Approved']);
+        } else {
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
+            if (!$this->dryRun) {
+                MessageGroup::where('msgid', $messageId)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+                $this->notifyGroupMods($group->id);
+            }
+            $this->loki->logEvent('tn-sync', 'post-create', ['tn_post_id' => $postId, 'msg_id' => $messageId, 'collection' => 'Pending', 'reason' => $pendingReason]);
+        }
+
+        return $routingResult;
+    }
+
+    private function createMessage(
+        mixed $post,
+        User $user,
+        Group $group,
+        string $subject,
+        string $content,
+        mixed $lat,
+        mixed $lng,
+        mixed $date,
+        string $postId,
+        array $photos,
+    ): ?int {
+        try {
+            $type = Message::determineType($subject);
+
+            // Synthesized message-ID: unique per post+group, stable across retries.
+            $messageid = $postId . '@tn.trashnothing.com-' . $group->id;
+
+            // Resolve location: use API coordinates directly (replaces header parsing).
+            $locationId = null;
+            if ($lat !== null && $lng !== null) {
+                $locationId = $this->findClosestPostcodeId((float) $lat, (float) $lng);
+            } else {
+                [$lat, $lng] = $user->getLatLng();
+                if ($user->lastlocation) {
+                    $locationId = $user->lastlocation;
+                }
+            }
+
+            if ($lat !== null && $lng !== null && $locationId === null) {
+                $locationId = $this->findClosestPostcodeId((float) $lat, (float) $lng);
+            }
+
+            if ($locationId && $user->id) {
+                Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
+                if (!$this->dryRun) {
+                    DB::table('users')->where('id', $user->id)->update(['lastlocation' => $locationId]);
+                }
+            }
+
+            $fromName = $user->fullname ?? $user->firstname ?? null;
+
+            // Synthesize minimal RFC822 message blob so downstream code that
+            // re-parses messages.message still recovers the key fields.
+            $dateStr = $date instanceof \DateTime
+                ? $date->format('D, d M Y H:i:s +0000')
+                : now()->format('D, d M Y H:i:s +0000');
+            $groupEmail = $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+            $rfc822 = $this->synthesizeRfc822($fromName, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
+
+            $msgData = [
+                'date'            => $date instanceof \DateTime ? $date->format('Y-m-d H:i:s') : now(),
+                'source'          => 'TN-API',
+                'sourceheader'    => 'TN-API',
+                'message'         => $rfc822,
+                'fromuser'        => $user->id,
+                'envelopefrom'    => null,
+                'envelopeto'      => $groupEmail,
+                'fromname'        => $fromName,
+                'fromaddr'        => null,
+                'replyto'         => null,
+                'fromip'          => null,
+                'fromcountry'     => null,
+                'subject'         => $subject,
+                'suggestedsubject' => $subject,
+                'messageid'       => $messageid,
+                'tnpostid'        => $postId,
+                'textbody'        => $content,
+                'type'            => $type,
+                'lat'             => $lat !== null ? (float) $lat : null,
+                'lng'             => $lng !== null ? (float) $lng : null,
+                'locationid'      => $locationId,
+                'spamtype'        => null,
+                'spamreason'      => null,
+            ];
+
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages op=insert set=' . json_encode([
+                'messageid' => $messageid,
+                'tnpostid'  => $postId,
+                'groupid'   => $group->id,
+                'fromuser'  => $user->id,
+                'type'      => $type,
+                'subject'   => $subject,
+                'lat'       => $lat,
+                'lng'       => $lng,
+                'locationid' => $locationId,
+            ]));
+
+            $message = null;
+            if (!$this->dryRun) {
+                $message = Message::create($msgData);
+                if (!$message || !$message->id) {
+                    Log::error('TN post ingestion: failed to create message record');
+                    return null;
+                }
+            }
+
+            $messageId = $message?->id ?? 0;
+
+            // messages_groups entry — starts as Incoming; collection updated after routing.
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',msgtype=' . $type . ',collection=Incoming');
+            if (!$this->dryRun) {
+                MessageGroup::create([
+                    'msgid'      => $messageId,
+                    'groupid'    => $group->id,
+                    'msgtype'    => $type,
+                    'collection' => MessageGroup::COLLECTION_INCOMING,
+                    'arrival'    => now(),
+                ]);
+            }
+
+            // messages_items link (weight statistics, same as email path).
+            if (!$this->dryRun) {
+                $this->itemService->recordFromSubject($messageId, $subject);
+            }
+
+            // messages_history.
+            $prunedSubject = $this->pruneSubject($subject);
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_history op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',fromuser=' . $user->id);
+            if (!$this->dryRun) {
+                DB::table('messages_history')->insert([
+                    'groupid'       => $group->id,
+                    'source'        => 'TN-API',
+                    'fromuser'      => $user->id,
+                    'envelopefrom'  => null,
+                    'envelopeto'    => $groupEmail,
+                    'fromname'      => $fromName,
+                    'fromaddr'      => null,
+                    'fromip'        => null,
+                    'subject'       => $subject,
+                    'prunedsubject' => $prunedSubject,
+                    'messageid'     => $messageid,
+                    'msgid'         => $messageId,
+                ]);
+            }
+
+            // Log receipt.
+            Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Received,msgid=' . $messageId . ',groupid=' . $group->id);
+            if (!$this->dryRun) {
+                DB::table('logs')->insert([
+                    'timestamp' => now(),
+                    'type'      => 'Message',
+                    'subtype'   => 'Received',
+                    'groupid'   => $group->id,
+                    'user'      => $user->id,
+                    'msgid'     => $messageId,
+                    'text'      => $messageid,
+                ]);
+            }
+
+            // Process TN photos from API (replaces scraping trashnothing.com/pics/ links).
+            if (!empty($photos)) {
+                $this->createImageAttachments($messageId, $photos);
+            }
+
+            return $this->dryRun ? -1 : $messageId;
+
+        } catch (\Exception $e) {
+            if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                Log::info('TN post ingestion: duplicate messageid, skipping', ['tnpostid' => $postId]);
+                return null;
+            }
+
+            Log::error('TN post ingestion: failed to create message', [
+                'tnpostid' => $postId,
+                'error'    => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private function postAlreadyExists(string $tnPostId, int $groupId): bool
+    {
+        return DB::table('messages')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->where('messages.tnpostid', $tnPostId)
+            ->where('messages_groups.groupid', $groupId)
+            ->exists();
+    }
+
+    /**
+     * Duplicate of IncomingMailService::containsWorryWords (subject + body).
+     * Kept separate per plan: no extraction until email path parity is proven.
+     */
+    private function subjectContainsWorryWords(string $subject, string $body): bool
+    {
+        if (str_contains($subject, '£') || str_contains($body, '£')) {
+            return true;
+        }
+
+        $worryWords = DB::table('worrywords')->get();
+
+        foreach ($worryWords as $ww) {
+            if ($ww->type === 'Allowed') {
+                $pattern  = '/\b' . preg_quote($ww->keyword, '/') . '\b/i';
+                $subject  = preg_replace($pattern, '', $subject) ?? $subject;
+                $body     = preg_replace($pattern, '', $body) ?? $body;
+            }
+        }
+
+        foreach ($worryWords as $ww) {
+            if ($ww->type !== 'Allowed' && str_contains($ww->keyword, ' ')) {
+                if (stripos($subject, $ww->keyword) !== false || stripos($body, $ww->keyword) !== false) {
+                    return true;
+                }
+            }
+        }
+
+        $allWords = preg_split('/\b/', $subject . ' ' . $body);
+        foreach ($allWords as $word) {
+            $word = trim($word);
+            if (empty($word)) {
+                continue;
+            }
+            foreach ($worryWords as $ww) {
+                if ($ww->type !== 'Allowed' && !empty($ww->keyword)) {
+                    $ratio = strlen($word) / strlen($ww->keyword);
+                    if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein(strtolower($ww->keyword), strtolower($word)) < 1) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Duplicate of IncomingMailService::pruneSubject.
+     */
+    private function pruneSubject(?string $subject): ?string
+    {
+        if ($subject === null) {
+            return null;
+        }
+        $pruned = preg_replace('/\s*\([^)]+\)\s*$/', '', $subject);
+        $pruned = preg_replace('/^(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i', '', $pruned);
+        return trim($pruned);
+    }
+
+    /**
+     * Duplicate of IncomingMailService::findClosestPostcodeId.
+     */
+    private function findClosestPostcodeId(float $lat, float $lng): ?int
+    {
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
+        return $ids[0] ?? null;
+    }
+
+    /**
+     * Duplicate of IncomingMailService::addToSpatialIndex.
+     */
+    private function addToSpatialIndex(int $messageId, int $groupId): void
+    {
+        $message = Message::query()->useWritePdo()->find($messageId);
+        if (!$message || (!$message->lat && !$message->lng)) {
+            return;
+        }
+
+        $srid = config('freegle.srid', 3857);
+        $mg   = DB::table('messages_groups')->useWritePdo()
+            ->where('msgid', $messageId)
+            ->where('groupid', $groupId)
+            ->first();
+
+        $arrival = $mg->arrival ?? now();
+        $msgType = $message->type;
+
+        try {
+            DB::statement(
+                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+                 VALUES (?, ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?), ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                 point = ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?),
+                 groupid = ?, msgtype = ?, arrival = ?",
+                [$messageId, $srid, $groupId, $msgType, $arrival, $srid, $groupId, $msgType, $arrival]
+            );
+        } catch (\Exception $e) {
+            Log::warning('TN post ingestion: failed to add to spatial index', [
+                'message_id' => $messageId,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Duplicate of IncomingMailService::notifyGroupMods.
+     */
+    private function notifyGroupMods(int $groupId): void
+    {
+        try {
+            $count = app(\App\Services\PushNotificationService::class)->notifyGroupMods($groupId);
+            Log::info('TN post ingestion: notified group mods', ['group_id' => $groupId, 'count' => $count]);
+        } catch (\Throwable $e) {
+            Log::warning('TN post ingestion: failed to notify group mods', ['group_id' => $groupId, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Download TN API photo URLs and create MessageAttachment records.
+     * Replaces scrapeTnImageUrls + createTnImageAttachments from email path —
+     * photos are delivered directly by the API, no HTML scraping needed.
+     */
+    private function createImageAttachments(int $messageId, array $photos): int
+    {
+        if ($this->dryRun) {
+            $count = count($photos);
+            Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . $count . ' (dry-run, not fetching)');
+            return $count;
+        }
+
+        $tusService = app(TusService::class);
+        $created    = 0;
+        $isFirst    = true;
+
+        foreach ($photos as $photo) {
+            $url = $this->bestPhotoUrl($photo);
+            if (!$url) {
+                continue;
+            }
+
+            try {
+                $response = Http::timeout(120)->get($url);
+                if (!$response->successful()) {
+                    Log::warning('TN post ingestion: failed to download photo', ['url' => $url, 'status' => $response->status()]);
+                    continue;
+                }
+
+                $imageData   = $response->body();
+                $contentType = $response->header('Content-Type') ?? 'image/jpeg';
+                $hash        = $this->computeImageHash($imageData);
+
+                if ($hash && MessageAttachment::where('msgid', $messageId)->where('hash', $hash)->exists()) {
+                    continue;
+                }
+
+                $tusUrl = $tusService->upload($imageData, $contentType);
+                if (!$tusUrl) {
+                    Log::warning('TN post ingestion: failed to upload photo to tusd', ['url' => $url]);
+                    continue;
+                }
+
+                $externalUid = TusService::urlToExternalUid($tusUrl);
+
+                MessageAttachment::create([
+                    'msgid'       => $messageId,
+                    'externaluid' => $externalUid,
+                    'hash'        => $hash,
+                    'primary'     => $isFirst,
+                ]);
+
+                $created++;
+                $isFirst = false;
+
+            } catch (\Exception $e) {
+                Log::warning('TN post ingestion: exception processing photo', ['url' => $url, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return $created;
+    }
+
+    /**
+     * Return the best available URL from a TN Photo object or array.
+     * Prefers the highest-resolution image in the images array, falls back to photo url.
+     */
+    private function bestPhotoUrl(mixed $photo): ?string
+    {
+        if (is_array($photo)) {
+            $images = $photo['images'] ?? [];
+            if (!empty($images)) {
+                return $images[0]['url'] ?? null;
+            }
+            return $photo['url'] ?? null;
+        }
+
+        // OpenAPI Photo object
+        $images = $photo->getImages() ?? [];
+        if (!empty($images)) {
+            return $images[0]->getUrl();
+        }
+        return $photo->getUrl();
+    }
+
+    /**
+     * Compute perceptual hash for image deduplication.
+     * Duplicate of IncomingMailService::computeImageHash.
+     */
+    private function computeImageHash(string $imageData): ?string
+    {
+        try {
+            $img = @\imagecreatefromstring($imageData);
+            if (!$img) {
+                return substr(md5($imageData), 0, 16);
+            }
+            if (class_exists(\Jenssegers\ImageHash\ImageHash::class)) {
+                $hasher = new \Jenssegers\ImageHash\ImageHash;
+                $hash   = $hasher->hash($img)->toHex();
+                \imagedestroy($img);
+                return substr($hash, 0, 16);
+            }
+            \imagedestroy($img);
+            return substr(md5($imageData), 0, 16);
+        } catch (\Exception $e) {
+            return substr(md5($imageData), 0, 16);
+        }
+    }
+
+    /**
+     * Synthesize a minimal RFC822 message blob so any code that re-parses
+     * messages.message can still recover the key fields.
+     */
+    private function synthesizeRfc822(
+        ?string $fromName,
+        string $groupEmail,
+        string $subject,
+        string $date,
+        string $messageId,
+        string $tnPostId,
+        mixed $lat,
+        mixed $lng,
+        string $body,
+    ): string {
+        $from = $fromName ? "{$fromName} <noreply@trashnothing.com>" : 'noreply@trashnothing.com';
+        $coords = ($lat !== null && $lng !== null) ? "{$lat},{$lng}" : '';
+
+        return implode("\r\n", [
+            "From: {$from}",
+            "To: {$groupEmail}",
+            "Subject: {$subject}",
+            "Date: {$date}",
+            "Message-ID: <{$messageId}>",
+            "X-Trashnothing-Post-Id: {$tnPostId}",
+            $coords ? "X-Trashnothing-Coordinates: {$coords}" : '',
+            'Content-Type: text/plain; charset=utf-8',
+            '',
+            $body,
+        ]);
+    }
+
+    /**
+     * Unified field accessor for both OpenAPI objects and fixture arrays.
+     *
+     * @param  mixed   $post      OpenAPI Post object or array
+     * @param  string  $arrayKey  Key name for array (fixture) access
+     * @param  string  $method    Getter method name for object access
+     */
+    private function getField(mixed $post, string $arrayKey, string $method): mixed
+    {
+        if (is_array($post)) {
+            return $post[$arrayKey] ?? null;
+        }
+        return method_exists($post, $method) ? $post->$method() : null;
+    }
+}
