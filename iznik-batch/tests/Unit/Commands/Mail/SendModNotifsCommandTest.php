@@ -4,6 +4,7 @@ namespace Tests\Unit\Commands\Mail;
 
 use App\Services\EmailSpoolerService;
 use App\Services\ModNotifService;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -20,10 +21,33 @@ class SendModNotifsCommandTest extends TestCase
             ->assertExitCode(0);
     }
 
-    public function test_without_force_returns_success(): void
+    public function test_without_force_outside_window_skips(): void
     {
-        // Without --force the command respects the hour window.
-        // We cannot control the clock in tests, so just verify exit code = 0.
+        // Freeze the clock outside the 8:00-21:00 London window so the guard
+        // path runs deterministically. This test previously used the real
+        // clock ("we cannot control the clock" - we can: travelTo), so which
+        // branch executed depended on what hour CI ran, flipping these lines
+        // in and out of coverage and tripping Coveralls on unrelated PRs.
+        $this->travelTo(Carbon::parse('2026-01-15 22:30:00', 'Europe/London'));
+
+        $service = $this->createMock(ModNotifService::class);
+        $service->method('getNotificationsToSend')->willReturn([]);
+        $this->app->instance(ModNotifService::class, $service);
+
+        Mail::fake();
+
+        $this->artisan('mail:mod-notifs')
+            ->expectsOutputToContain('Outside notification window')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+        $this->travelBack();
+    }
+
+    public function test_without_force_inside_window_runs(): void
+    {
+        $this->travelTo(Carbon::parse('2026-01-15 10:30:00', 'Europe/London'));
+
         $service = $this->createMock(ModNotifService::class);
         $service->method('getNotificationsToSend')->willReturn([]);
         $this->app->instance(ModNotifService::class, $service);
@@ -32,6 +56,8 @@ class SendModNotifsCommandTest extends TestCase
 
         $this->artisan('mail:mod-notifs')
             ->assertExitCode(0);
+
+        $this->travelBack();
     }
 
     public function test_force_flag_skips_hour_window(): void
