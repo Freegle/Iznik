@@ -110,3 +110,50 @@ func TestGetImageDeliveryUrlBadModsIgnored(t *testing.T) {
 	url := GetImageDeliveryUrl("freegletusd-xyz", `not json`)
 	assert.NotContains(t, url, "&ro=")
 }
+
+func TestGetExternalImageDeliveryUrl(t *testing.T) {
+	os.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+	defer os.Unsetenv("IMAGE_DELIVERY")
+
+	url := GetExternalImageDeliveryUrl("https://photos.example.com/a b.jpg", "")
+	assert.Equal(t, "https://delivery.test?url=https%3A%2F%2Fphotos.example.com%2Fa+b.jpg", url)
+}
+
+func TestGetExternalImageDeliveryUrlWithRotate(t *testing.T) {
+	// V1 puts ro before url.
+	os.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+	defer os.Unsetenv("IMAGE_DELIVERY")
+
+	url := GetExternalImageDeliveryUrl("https://photos.example.com/a.jpg", `{"rotate":180}`)
+	assert.Equal(t, "https://delivery.test?ro=180&url=https%3A%2F%2Fphotos.example.com%2Fa.jpg", url)
+}
+
+func TestGetExternalImageDeliveryUrlBadModsIgnored(t *testing.T) {
+	os.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+	defer os.Unsetenv("IMAGE_DELIVERY")
+
+	url := GetExternalImageDeliveryUrl("https://photos.example.com/a.jpg", "not json")
+	assert.NotContains(t, url, "ro=")
+}
+
+func TestGetArchivedImageDeliveryUrl(t *testing.T) {
+	// The archive branch of V1 Attachment::canRedirect: w & h & url, with the
+	// archived-domain image URL escaped.
+	os.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+	os.Setenv("IMAGE_ARCHIVED_DOMAIN", "archive.test")
+	defer os.Unsetenv("IMAGE_DELIVERY")
+	defer os.Unsetenv("IMAGE_ARCHIVED_DOMAIN")
+
+	url := GetArchivedImageDeliveryUrl("img", 123, 250, 250)
+	assert.Equal(t, "https://delivery.test?w=250&h=250&url=https%3A%2F%2Farchive.test%2Fimg_123.jpg", url)
+}
+
+func TestGetArchivedImageDeliveryUrlNoResize(t *testing.T) {
+	os.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+	os.Setenv("IMAGE_ARCHIVED_DOMAIN", "archive.test")
+	defer os.Unsetenv("IMAGE_DELIVERY")
+	defer os.Unsetenv("IMAGE_ARCHIVED_DOMAIN")
+
+	url := GetArchivedImageDeliveryUrl("mimg", 7, 0, 0)
+	assert.Equal(t, "https://delivery.test?url=https%3A%2F%2Farchive.test%2Fmimg_7.jpg", url)
+}
