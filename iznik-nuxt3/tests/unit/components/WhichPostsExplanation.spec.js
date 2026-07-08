@@ -21,14 +21,15 @@ describe('WhichPostsExplanation', () => {
     expect(wrapper.text()).toContain('most relevant posts first')
   })
 
-  it('makes the reply caveat conditional on changing from the default view', () => {
+  it('tells members an out-of-reach reply is held (not blocked) and passed on when it reaches them', () => {
     const wrapper = createWrapper()
     const text = wrapper.text()
-    expect(text).toContain('On the default view')
-    expect(text).toContain(
-      "you'll only see posts that have already reached your area"
-    )
-    expect(text).toContain('widen the distance, change the sort')
+    // Rippling-out hold: you can always reply; a reply to a post that hasn't reached you yet is
+    // held and delivered when it does. Assert the hold BEHAVIOUR, not brittle exact wording, so
+    // the test survives minor copy tweaks.
+    expect(text).toContain('go ahead and reply')
+    expect(text).toContain('pass it on to the owner')
+    expect(text).toMatch(/reaches you/i)
   })
 
   it('does not use "this is new / we have changed" framing', () => {
