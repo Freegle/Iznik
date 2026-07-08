@@ -888,6 +888,11 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn
     profiles:
       - frontend
+      # Also in `production`: batch-prod hard-depends on this service, so the
+      # batch host (COMPOSE_PROFILES=backend,production,mail) must include it
+      # explicitly. Newer Compose (v5) auto-enables cross-profile dependencies,
+      # but older docker-compose binaries reject the project as invalid.
+      - production
     networks:
       default:
         aliases:
@@ -921,6 +926,8 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial
     profiles:
       - frontend
+      # Also in `production`: see spatial-knn note above.
+      - production
     networks:
       default:
         aliases:
@@ -1005,6 +1012,13 @@ services:
       - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
       - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+      # Routing server (graph) for on-the-fly rippling drive-time analytics. Prod: the routing
+      # internal no-auth port. Locally, point ROUTING_EVAL_URL at the live routing tunnel in .env.
+      - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
+      # Drive-time sample size + routing concurrency for the analytics endpoint. Tunable without a
+      # rebuild. apiv2-live reaches routing over the slow SSH tunnel, so raise concurrency locally.
+      - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
+      - RIPPLE_ANALYTICS_CONCURRENCY=${RIPPLE_ANALYTICS_CONCURRENCY:-16}
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100

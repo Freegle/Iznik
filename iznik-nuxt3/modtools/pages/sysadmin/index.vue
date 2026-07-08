@@ -93,9 +93,9 @@
           <template #title>
             <h2 class="ms-2 me-2">Rippling</h2>
           </template>
-          <ModSysAdminRippling
+          <ModSysAdminRipplingAnalytics
             v-if="showRippling"
-            :key="'rippling-' + ripplingBump"
+            :key="'rippling-analytics-' + ripplingBump"
           />
         </b-tab>
       </b-tabs>

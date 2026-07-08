@@ -1,0 +1,21 @@
+# User-facing / latency-sensitive tier on the batch-prod host.
+# Install: cp interactive.slice batch.slice /etc/systemd/system/ && systemctl daemon-reload
+# Wired to containers via cgroup_parent in docker-compose.override.batchprod.yml.
+#
+# Weights are work-conserving: they only bite under contention. With
+# interactive=800, unclassified containers + host daemons (system.slice,
+# weight 100) and batch (25), the interactive tier is guaranteed ~86% of CPU
+# when everything is busy, but batch may still use 100% of an idle machine.
+#
+# MemoryLow protects this tier's RAM *and page cache* from reclaim caused by
+# batch memory pressure. Verify /proc/mounts shows cgroup2 mounted with
+# memory_recursiveprot so the protection distributes to the container scopes;
+# the override file also sets mem_reservation per service as belt-and-braces.
+#
+# IOWeight only has effect if the block device scheduler is bfq
+# (cat /sys/block/sda/queue/scheduler) - see the deployment plan.
+
+[Slice]
+CPUWeight=800
+MemoryLow=4G
+IOWeight=500
