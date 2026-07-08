@@ -28,22 +28,29 @@
 
 services:
   # --- Stage 1: adopted services, come UP on this host ----------------------
+  # restart: unless-stopped — the standalone containers ran restart:always; on
+  # this always-on host we want Docker to bring them back after a crash/OOM,
+  # not only via freegle-docker.service on reboot (mirrors the spatial services
+  # in docker-compose.override.yml). Base compose leaves them restart:"no".
   tile-server:
     # Native nginx `maps` vhost fronts tiles.ilovefreegle.org via 127.0.0.1:8080
     # (unchanged), so the adopted container republishes :8080 exactly like the
     # standalone confident_curran did. Swap: free :8080 (stop confident_curran)
     # then start this.
+    restart: unless-stopped
     ports:
       - "8080:80"
 
   wiki-mysql:
     # Adopt the already-initialised DB datadir in place (zero copy).
+    restart: unless-stopped
     volumes:
       - /var/wiki/db:/var/lib/mysql
       - /var/wiki/sharemysql:/var/sharemysql
 
   wiki-media:
     # Native nginx fronts wiki.ilovefreegle.org via 127.0.0.1:8088 (unchanged).
+    restart: unless-stopped
     ports:
       - "8088:80"
     volumes:
@@ -76,7 +83,11 @@ services:
       - /srv/tusd-data:/srv/tusd-data
 
 volumes:
+  # Adopt the host's existing unprefixed volumes (created by confident_curran)
+  # via `name:` rather than `external: true` — the base file declares these with
+  # `driver: local`, and external+driver is a hard conflict. The benign "not
+  # created by Compose" warning is the accepted cost of the in-place adoption.
   osm-data:
-    name: osm-data      # adopt the existing volume, do not create freegledocker_osm-data
+    name: osm-data
   osm-tiles:
-    name: osm-tiles     # adopt the existing volume
+    name: osm-tiles
