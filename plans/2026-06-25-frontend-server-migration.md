@@ -59,11 +59,16 @@
 >    the current overload, and the priority mechanism everything else relies
 >    on). Investigate batch-prod's 428% CPU separately (likely the ripple
 >    loop - see plans/routing-performance-step-change.md).
-> 1. **Upsize the host** (Krystal package upgrades are live/no-downtime):
->    target ROCK-48-class 16 vCPU/48G. RAM is the binding constraint: current
->    real working set ~20-24G (box is 12G into swap) + weserv/nginx/tusd
->    (small) + MemoryLow-protected page cache for the 41G image cache.
->    ROCK-96 (32/96, £480/mo) is the escape hatch.
+> 1. **Upsize the host ONLY on evidence** (Krystal package upgrades are
+>    live/no-downtime, so buying early gains nothing). Measured 2026-07-08:
+>    the 12G swap is COLD pages (photon JVM 6.2G + renderd 4.0G idle;
+>    swap-in ~4 pages/s - no thrash), the hot set fits in 23G, and app1 runs
+>    the entire image tier in 2.8G/1 vCPU - so consolidation adds only
+>    ~1 core + 2-4G and fits the current size once the ripple CPU waste is
+>    fixed. Upsize triggers: sustained swap-in (100s of pages/s), PSI memory
+>    pressure, digest shards overrunning the 07:00-12:00 window, or
+>    interactive-tier CPU stalls after the ripple fix. Then: ROCK-48
+>    (16 vCPU/48G, +£120/mo), ROCK-96 as the further escape hatch.
 > 2. **Adopt standalone containers into Compose** (same host, same data):
 >    `tile-server` service on external volumes `osm-data`/`osm-tiles` (stop
 >    `confident_curran`, `up` the compose service); `wiki-media`+`wiki-mysql`
