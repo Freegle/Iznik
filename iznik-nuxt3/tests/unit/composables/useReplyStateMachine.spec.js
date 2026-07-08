@@ -1332,10 +1332,12 @@ describe('processing timeout', () => {
 })
 
 // ============================================================
-// Rippling-out reach gate — a post rippled to the member's community but whose reach
-// polygon has not yet reached their location: replyeligible=false (read path) and a 403
-// "not_in_reach" (write path). Must show the graceful "closest first" message and NEVER
-// force a re-login. Regression: Marc Ashby, 2026-07-04 (Henley post rippled into Reading).
+// Rippling-out reach gate — a post rippled to the member's community but whose reach polygon
+// has not yet reached their location: replyeligible=false (read path). The reply is now ACCEPTED
+// and HELD server-side rather than blocked, so there is no longer a proactive block. A 403
+// "not_in_reach" from the send remains only a deploy-window backstop: it must show the graceful
+// "closest first" message and NEVER force a re-login. Regression: Marc Ashby, 2026-07-04
+// (Henley post rippled into Reading).
 // ============================================================
 describe('reach gate (rippling-out reply eligibility)', () => {
   function setupLoggedIn() {
@@ -1350,7 +1352,7 @@ describe('reach gate (rippling-out reply eligibility)', () => {
 
   const CLOSEST = 'closest to it first'
 
-  it('proactively blocks the reply when the message is replyeligible=false, without sending', async () => {
+  it('no longer blocks a replyeligible=false reply — it lets the send proceed (held server-side)', async () => {
     await setupLoggedIn()
     // The message the member is replying to is flagged not-yet-reachable by the server.
     mockMessageById.mockReturnValue({ id: MSG_ID, replyeligible: false })
@@ -1362,10 +1364,10 @@ describe('reach gate (rippling-out reply eligibility)', () => {
     await result.submit()
     await flushPromises()
 
-    expect(result.state.value).toBe(ReplyState.ERROR)
-    expect(result.error.value).toContain(CLOSEST)
-    // Never attempts the send, and never bounces the member to a login.
-    expect(mockReplyToPostFn).not.toHaveBeenCalled()
+    // The reply is now sent (the server accepts and HOLDS it) rather than blocked with the old
+    // "closest first" error, and the member is never bounced to a login.
+    expect(mockReplyToPostFn).toHaveBeenCalled()
+    expect(result.state.value).not.toBe(ReplyState.ERROR)
     expect(mockForceLogin.value).toBe(false)
   })
 

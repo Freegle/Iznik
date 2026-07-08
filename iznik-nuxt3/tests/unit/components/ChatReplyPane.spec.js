@@ -610,21 +610,22 @@ describe('ChatReplyPane', () => {
   })
 
   describe('reach-blocked (rippling-out #5)', () => {
-    it('hides the composer and shows a notice when replyeligible is false', async () => {
+    it('shows the composer AND a hold notice when replyeligible is false (reply is held, not blocked)', async () => {
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         replyeligible: false,
       })
       const wrapper = await createWrapper()
-      // No reply box whose send the server would reject; an explanatory notice instead.
-      expect(wrapper.find('.reply-card__composer').exists()).toBe(false)
-      expect(wrapper.text()).toContain('closest to it first')
+      // The composer stays — the reply is accepted and held server-side, not blocked — with an
+      // explanatory notice above it.
+      expect(wrapper.find('.reply-card__composer').exists()).toBe(true)
+      expect(wrapper.text()).toContain('go ahead and reply')
     })
 
-    it('shows the composer when replyeligible is not false', async () => {
+    it('shows the composer without the hold notice when replyeligible is not false', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.reply-card__composer').exists()).toBe(true)
-      expect(wrapper.text()).not.toContain('closest to it first')
+      expect(wrapper.text()).not.toContain('go ahead and reply')
     })
   })
 })

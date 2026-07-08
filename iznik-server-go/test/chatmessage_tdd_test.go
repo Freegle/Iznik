@@ -86,6 +86,7 @@ func TestGetChatMessages_HeldReplyHiddenFromPoster(t *testing.T) {
 	// Self-sufficient: rippling_held_replies belongs to PR C. Minimal stand-in for isolation.
 	db.Exec("CREATE TABLE IF NOT EXISTS rippling_held_replies (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, " +
 		"chatid BIGINT UNSIGNED, chatmsgid BIGINT UNSIGNED, msgid BIGINT UNSIGNED, replieruserid BIGINT UNSIGNED, " +
+		"source ENUM('email','tn','web') NOT NULL DEFAULT 'email', " +
 		"lat DOUBLE NULL, lng DOUBLE NULL, status VARCHAR(20) DEFAULT 'held', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
 	groupID := CreateTestGroup(t, prefix)
