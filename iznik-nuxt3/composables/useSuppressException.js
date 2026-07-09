@@ -25,6 +25,32 @@ export function suppressSentryEvent(event) {
       if (isFtUtilsFrame && isFreestarFn) {
         return true
       }
+
+      // Third-party ad / IAB-TCF consent stack. These fire from anonymous/injected
+      // ad scripts (Prebid header bidding + the TCF __tcfapiLocator frame-walk) with
+      // no Freegle source frame, so match the exact vendor frame signature - our own
+      // code source-maps to real files and never hits these:
+      //   - RangeError "Maximum call stack size exceeded" in HTMLIFrameElement.get:
+      //     the TCF locator recursing up cross-origin iframes (Sentry 7372856855,
+      //     258 events / 78 users; breadcrumbs "TC String set" + "Prebid loaded").
+      //   - TypeError null.document in an anonymous HTMLDocument handler: an ad
+      //     bidder's document handler (Sentry 7377347048, 186 events / 75 users;
+      //     breadcrumbs are the Prebid SSP fan-out - teads / criteo / rubicon / ...).
+      const noSource = !frame.filename || frame.filename === '<anonymous>'
+      if (
+        fn === 'HTMLIFrameElement.get' &&
+        (ex.type === 'RangeError' ||
+          (ex.value || '').includes('Maximum call stack'))
+      ) {
+        return true
+      }
+      if (
+        fn === 'HTMLDocument.<anonymous>' &&
+        noSource &&
+        (ex.value || '').includes("reading 'document'")
+      ) {
+        return true
+      }
     }
   }
   return false
