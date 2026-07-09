@@ -114,7 +114,6 @@
 import { ref, computed } from 'vue'
 import SpinButton from './SpinButton'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
-import AIImagesAPI from '~/api/AIImagesAPI'
 
 const props = defineProps({
   aiimage: {
@@ -126,6 +125,7 @@ const props = defineProps({
 const emit = defineEmits(['next'])
 
 const microVolunteeringStore = useMicroVolunteeringStore()
+const { $api } = useNuxtApp()
 
 const containsPeople = ref(null)
 const submitted = ref(false)
@@ -136,8 +136,7 @@ const currentIndex = ref(0)
 const currentImageUrl = computed(() => images.value[currentIndex.value])
 
 async function regenerate() {
-  const api = new AIImagesAPI()
-  const result = await api.regenerate(props.aiimage.id)
+  const result = await $api.aiimages.regenerate(props.aiimage.id)
   images.value.push(result.url)
   currentIndex.value = images.value.length - 1
 }
