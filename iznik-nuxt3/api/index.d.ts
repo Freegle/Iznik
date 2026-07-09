@@ -31,7 +31,6 @@ import ImageAPI from './ImageAPI.js'
 import IsochroneAPI from './IsochroneAPI.js'
 import JobAPI from './JobAPI.js'
 import LocationAPI from './LocationAPI.js'
-import LogoAPI from './LogoAPI.js'
 import LogsAPI from './LogsAPI.js'
 import MembershipsAPI from './MembershipsAPI.js'
 import MergeAPI from './MergeAPI.js'
@@ -76,7 +75,6 @@ interface API {
   isochrone: IsochroneAPI;
   job: JobAPI;
   location: LocationAPI;
-  logo: LogoAPI;
   logs: LogsAPI;
   memberships: MembershipsAPI;
   merge: MergeAPI;

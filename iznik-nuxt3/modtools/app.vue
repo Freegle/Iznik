@@ -57,7 +57,6 @@ import { useStatsStore } from '~/stores/stats'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
 import { useImageStore } from '~/stores/image'
 import { useDomainStore } from '~/stores/domain'
-import { useLogoStore } from '~/stores/logo'
 import { useLocationStore } from '~/stores/location'
 import { useShortlinkStore } from '~/stores/shortlinks'
 import { useMiscStore } from '~/stores/misc'
@@ -120,7 +119,6 @@ const statsStore = useStatsStore()
 const microVolunteeringStore = useMicroVolunteeringStore()
 const imageStore = useImageStore()
 const domainStore = useDomainStore()
-const logoStore = useLogoStore()
 const locationStore = useLocationStore()
 const shortlinkStore = useShortlinkStore()
 const configStore = useConfigStore()
@@ -163,7 +161,6 @@ statsStore.init(runtimeConfig)
 microVolunteeringStore.init(runtimeConfig)
 imageStore.init(runtimeConfig)
 domainStore.init(runtimeConfig)
-logoStore.init(runtimeConfig)
 locationStore.init(runtimeConfig)
 shortlinkStore.init(runtimeConfig)
 configStore.init(runtimeConfig)
