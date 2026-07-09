@@ -61,9 +61,8 @@
           We keep the original voice recording for no more than
           <strong>90 days</strong>, after which it is deleted automatically -
           after that, only the text of your post remains. When you record, we ask
-          whether you're happy for the person collecting your item to hear your
-          recording, and we will only ever let someone else hear it if you choose
-          to allow that.
+          whether you're happy for other freeglers to hear your recording, and we
+          will only ever let someone else hear it if you choose to allow that.
         </p>
         <h2>3. Cookies and Tracking</h2>
         <p>
@@ -237,6 +236,11 @@
         <h3>Change History</h3>
         <p>Here are the changes to this page.</p>
         <ul class>
+          <li>
+            09/07/2026: Clarify in section 2.1 that a voice recording may be
+            shared with other freeglers, not only the person collecting, if you
+            choose to allow it.
+          </li>
           <li>
             08/07/2026: Add section 2.1 on voice descriptions, our use of Groq
             for speech-to-text, and the 90-day retention of voice recordings.

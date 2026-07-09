@@ -18,7 +18,7 @@ export const COMPOSE_METHOD_UID = 'mobile-compose-method'
 // Percentage of eligible (mobile) users shown the voice option. Start at 0 and
 // raise to roll the experiment out to a slice of traffic. Per-visit override:
 // ?voice=1 forces the voice variant, ?voice=0 forces control (handy for demos).
-const ROLLOUT_PCT = 0
+const ROLLOUT_PCT = 10
 
 export function useComposeChoice() {
   const miscStore = useMiscStore()

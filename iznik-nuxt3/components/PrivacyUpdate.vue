@@ -18,7 +18,7 @@ import { useMe } from '~/composables/useMe'
 
 const authStore = useAuthStore()
 const { me } = useMe()
-const lastUpdate = dayjs('2025-12-20')
+const lastUpdate = dayjs('2026-07-09')
 
 if (me.value && !me.value?.settings?.lastPrivacySeen) {
   // Not seen any privacy notice so far.  Mark the current date as the last seen.

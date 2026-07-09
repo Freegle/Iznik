@@ -167,7 +167,7 @@
 
         <div class="consent">
           <b-form-checkbox v-model="letThemHear">
-            Let the person collecting hear my voice description
+            Let other freeglers hear my voice description
           </b-form-checkbox>
           <p class="consent__help">
             Optional. Your recording is kept for up to 90 days and then deleted -
