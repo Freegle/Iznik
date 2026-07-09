@@ -73,6 +73,33 @@ Two things are measured, both through the existing bandit endpoints
 2. **Method** (uid `mobile-compose-method`): of those shown the choice, whether
    they picked `voice` or `keyboard` (recorded on the choice screen).
 
+## Instrumentation (full funnel)
+
+The bandit counters above are just the headline A/B rates. For the full picture,
+rich per-session events go through `useClientLog` (`action(name, ctx)` →
+`POST /clientlog`, auto-tagged with `session_id` / `user_id` / `url` / timestamp),
+so every stage and dimension can be cross-tabulated per session. All events are
+prefixed `voicepost_`:
+
+| Event | When | Key context |
+|---|---|---|
+| `voicepost_entry` | give flow assigns the experiment (active only) | `variant`, `is_mobile` |
+| `voicepost_choice_shown` | choice screen shown | `has_photo` |
+| `voicepost_method_chosen` | Say it / Type it tapped | `method`, `has_photo` |
+| `voicepost_record_start` | recording begins | – |
+| `voicepost_record_error` | mic / record failure | `reason` (permission_denied / no_microphone / unsupported / other) |
+| `voicepost_transcribed` | review reached | `duration_s`, `transcript_chars`, `title_chars`, `desc_chars`, `rerecord_count` |
+| `voicepost_finish_error` | transcription / finish failed | `reason`, `duration_s` |
+| `voicepost_played_recording` | first playback of their own recording | – |
+| `voicepost_rerecord` | Re-record tapped | `count` |
+| `voicepost_posted` | "post it" | `consent_play_voice`, `title_edited`, `desc_edited`, `desc_char_delta`, `had_photo`, `played_back`, `rerecord_count`, `seconds_on_review` |
+| `voicepost_review_abandoned` | left review without posting | `has_photo`, `rerecord_count` |
+
+Together these answer: how often it was shown, the voice-vs-keyboard split,
+drop-off and errors through the funnel, the consent-to-play rate, whether people
+trusted the words (edited vs posted as-is, and by how much), and the time/effort
+they spent - i.e. whether the feature is actually working.
+
 ## Files
 
 Backend (Go, apiv2):

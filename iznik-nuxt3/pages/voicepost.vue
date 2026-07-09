@@ -218,6 +218,7 @@ import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { useComposeChoice } from '~/composables/useComposeChoice'
+import { useClientLog } from '~/composables/useClientLog'
 
 // Standalone route. Flow: add a photo, then choose voice or keyboard. For voice,
 // describe the item aloud (audio streams up while you talk) and review the tidied
@@ -231,10 +232,22 @@ const authStore = useAuthStore()
 const miscStore = useMiscStore()
 const { recordConversion, recordMethodShown, recordMethodChosen } =
   useComposeChoice()
+// Rich, session-correlated analytics for the whole funnel (see useClientLog).
+const { action: logVpEvent } = useClientLog()
 
 const phase = ref('photo') // photo | choose | idle | recording | finishing | review | done | error
 const errorMessage = ref('')
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+
+// Instrumentation state: lets us report duration, edit-or-not, re-records and
+// time-on-review so we can judge whether people trust and complete the flow.
+const originalTitle = ref('')
+const originalDescription = ref('')
+let recordDurationS = 0
+let reviewShownAt = 0
+let rerecordCount = 0
+let posted = false
+let played = false
 
 // Photo, held in the compose store (shared with the typed flow), mirroring
 // pages/give/mobile/photos.vue so either branch continues the same draft.
@@ -298,16 +311,26 @@ const formattedElapsed = computed(() => {
 function advanceFromPhoto() {
   phase.value = 'choose'
   recordMethodShown()
+  // How often the choice was shown, and whether they'd added a photo first.
+  logVpEvent('voicepost_choice_shown', { has_photo: hasPhotos.value })
 }
 
 function chooseVoice() {
   recordMethodChosen('voice')
+  logVpEvent('voicepost_method_chosen', {
+    method: 'voice',
+    has_photo: hasPhotos.value,
+  })
   phase.value = 'idle'
 }
 
 function chooseType() {
   // Keyboard branch: continue in the existing typed form (photo already added).
   recordMethodChosen('keyboard')
+  logVpEvent('voicepost_method_chosen', {
+    method: 'keyboard',
+    has_photo: hasPhotos.value,
+  })
   router.push('/give/mobile/details')
 }
 
@@ -336,6 +359,7 @@ async function startRecording() {
     !navigator.mediaDevices ||
     typeof MediaRecorder === 'undefined'
   ) {
+    logVpEvent('voicepost_record_error', { reason: 'unsupported' })
     fail("Your browser can't record audio. Try a recent Chrome, Edge or Safari.")
     return
   }
@@ -343,13 +367,17 @@ async function startRecording() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true })
   } catch (e) {
+    let reason = 'other'
     if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+      reason = 'permission_denied'
       fail('We need permission to use your microphone. Allow it and try again.')
     } else if (e && e.name === 'NotFoundError') {
+      reason = 'no_microphone'
       fail("We couldn't find a microphone on your device.")
     } else {
       fail("We couldn't start recording. Please try again.")
     }
+    logVpEvent('voicepost_record_error', { reason })
     return
   }
 
@@ -373,6 +401,7 @@ async function startRecording() {
   // there's almost nothing left to upload when they stop.
   mediaRecorder.start(3000)
   phase.value = 'recording'
+  logVpEvent('voicepost_record_start', {})
 
   timer = setInterval(() => {
     elapsed.value += 1
@@ -396,6 +425,7 @@ function enqueueChunk(blob) {
 }
 
 function stopRecording() {
+  recordDurationS = elapsed.value
   if (timer) {
     clearInterval(timer)
     timer = null
@@ -411,6 +441,10 @@ async function finalise() {
   await sendQueue // ensure every chunk, including the last, is in the buffer
 
   if (!session.value) {
+    logVpEvent('voicepost_finish_error', {
+      reason: 'no_session',
+      duration_s: recordDurationS,
+    })
     fail("We didn't catch that recording - please try again.")
     return
   }
@@ -420,13 +454,28 @@ async function finalise() {
     title.value = res.title || ''
     description.value = res.description || ''
     rawTranscript.value = res.transcript || ''
+    // Remember what we produced so we can tell later if they edited it.
+    originalTitle.value = title.value
+    originalDescription.value = description.value
 
     if (chunks.length) {
       audioBlob.value = new Blob(chunks, { type: mimeType })
       audioUrl.value = URL.createObjectURL(audioBlob.value)
     }
+    reviewShownAt = Date.now()
+    logVpEvent('voicepost_transcribed', {
+      duration_s: recordDurationS,
+      transcript_chars: (res.transcript || '').length,
+      title_chars: title.value.length,
+      desc_chars: description.value.length,
+      rerecord_count: rerecordCount,
+    })
     phase.value = 'review'
   } catch (e) {
+    logVpEvent('voicepost_finish_error', {
+      reason: 'finish_failed',
+      duration_s: recordDurationS,
+    })
     fail('Something went wrong writing your post. Please try again.')
   }
 }
@@ -438,6 +487,10 @@ function togglePlay() {
     el.pause()
     playing.value = false
   } else {
+    if (!played) {
+      played = true
+      logVpEvent('voicepost_played_recording', {})
+    }
     el.play()
     playing.value = true
   }
@@ -446,6 +499,25 @@ function togglePlay() {
 function postIt() {
   // Demo stops here. The real flow would hand the photo, title, description and
   // consent (letThemHear.value) to the normal compose step.
+  const titleEdited = title.value !== originalTitle.value
+  const descEdited = description.value !== originalDescription.value
+  posted = true
+  // The full picture of a completed voice post: did they trust the words (edit
+  // or not), allow playback, listen back, re-record, and how long they mulled it.
+  logVpEvent('voicepost_posted', {
+    consent_play_voice: letThemHear.value,
+    title_edited: titleEdited,
+    desc_edited: descEdited,
+    title_chars: title.value.length,
+    desc_chars: description.value.length,
+    desc_char_delta: description.value.length - originalDescription.value.length,
+    had_photo: hasPhotos.value,
+    played_back: played,
+    rerecord_count: rerecordCount,
+    seconds_on_review: reviewShownAt
+      ? Math.round((Date.now() - reviewShownAt) / 1000)
+      : null,
+  })
   recordConversion('voice')
   phase.value = 'done'
 }
@@ -469,6 +541,8 @@ function fail(msg) {
 
 // Re-record the voice but keep the photo they already added.
 function reRecord() {
+  rerecordCount++
+  logVpEvent('voicepost_rerecord', { count: rerecordCount })
   clearVoice()
   phase.value = 'idle'
 }
@@ -477,6 +551,8 @@ function reRecord() {
 function resetAll() {
   clearVoice()
   attachments.value = []
+  rerecordCount = 0
+  posted = false
   phase.value = 'photo'
 }
 
@@ -487,16 +563,28 @@ function clearVoice() {
   }
   audioBlob.value = null
   playing.value = false
+  played = false
   showRaw.value = false
   letThemHear.value = false
   title.value = ''
   description.value = ''
   rawTranscript.value = ''
+  originalTitle.value = ''
+  originalDescription.value = ''
+  reviewShownAt = 0
   session.value = null
   chunks = []
 }
 
 onBeforeUnmount(() => {
+  // If they reached the review but navigated away without posting, that's a
+  // drop-off worth knowing about.
+  if (phase.value === 'review' && !posted) {
+    logVpEvent('voicepost_review_abandoned', {
+      had_photo: hasPhotos.value,
+      rerecord_count: rerecordCount,
+    })
+  }
   stopStream()
   if (timer) clearInterval(timer)
   if (audioUrl.value) URL.revokeObjectURL(audioUrl.value)
