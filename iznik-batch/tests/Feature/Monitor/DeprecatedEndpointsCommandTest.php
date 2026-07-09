@@ -83,4 +83,17 @@ class DeprecatedEndpointsCommandTest extends TestCase
 
         Mail::assertNothingSent();
     }
+
+    public function test_fails_loudly_when_spec_unreachable(): void
+    {
+        Mail::fake();
+        // apiv2 spec unreachable/misconfigured -> the command must NOT behave like
+        // "nothing deprecated"; it exits non-zero (red cron badge) and sends nothing.
+        Http::fake(['http://apiv2/*' => Http::response('down', 503)]);
+
+        $this->artisan('monitor:deprecated-endpoints')
+            ->assertExitCode(1);
+
+        Mail::assertNothingSent();
+    }
 }

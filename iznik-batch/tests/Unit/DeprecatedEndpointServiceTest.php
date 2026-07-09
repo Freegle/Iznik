@@ -52,12 +52,13 @@ class DeprecatedEndpointServiceTest extends TestCase
         $this->assertSame('GET /message/:id', $msg['logged_endpoint']);
     }
 
-    public function test_returns_empty_when_spec_unreachable(): void
+    public function test_returns_null_when_spec_unreachable(): void
     {
         config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
         Http::fake(['*' => Http::response('nope', 503)]);
 
         $svc = new DeprecatedEndpointService();
-        $this->assertSame([], $svc->pastSunset(Carbon::parse('2026-07-09')));
+        // null (not []) so the caller can distinguish unreachable from empty.
+        $this->assertNull($svc->pastSunset(Carbon::parse('2026-07-09')));
     }
 }

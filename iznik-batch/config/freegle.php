@@ -431,9 +431,13 @@ return [
     ],
 
     // Served OpenAPI spec for monitor:deprecated-endpoints (source of truth for
-    // which apiv2 endpoints are deprecated + their x-sunset dates). apiv2 serves
-    // it at /swagger/swagger.json (verified 2026-07-09; /swagger/doc.json 404s).
-    'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2/swagger/swagger.json'),
+    // which apiv2 endpoints are deprecated + their x-sunset dates). The Go API
+    // serves it at /swagger/swagger.json on port 8192; inside the compose network
+    // the batch container reaches it as http://apiv2:8192 (verified 2026-07-09 —
+    // NOT port 80, and /swagger/doc.json 404s). PROD must set APIV2_SWAGGER_URL to
+    // the reachable apiv2 spec URL for its network (batch-prod isn't in this
+    // compose network); if the fetch fails the command warns and exits non-zero.
+    'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2:8192/swagger/swagger.json'),
 
     /*
     |--------------------------------------------------------------------------

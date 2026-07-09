@@ -14,13 +14,18 @@ use Illuminate\Support\Facades\Log;
 class DeprecatedEndpointService
 {
     /**
-     * @return array<int, array{method:string, path:string, sunset:string, logged_endpoint:string}>
+     * Returns the deprecated operations whose sunset date has passed — or NULL if
+     * the spec couldn't be fetched, so the caller can tell "apiv2 unreachable /
+     * misconfigured" apart from "reachable but nothing deprecated" and surface the
+     * former loudly instead of silently emailing nothing forever.
+     *
+     * @return array<int, array{method:string, path:string, sunset:string, logged_endpoint:string}>|null
      */
-    public function pastSunset(Carbon $now): array
+    public function pastSunset(Carbon $now): ?array
     {
         $spec = $this->fetchSpec();
         if ($spec === null) {
-            return [];
+            return null;
         }
 
         $out = [];

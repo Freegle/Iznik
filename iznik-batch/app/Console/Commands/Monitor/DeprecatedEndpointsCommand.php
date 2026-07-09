@@ -27,7 +27,15 @@ class DeprecatedEndpointsCommand extends Command
         $now = Carbon::now();
         $endpoints = $catalog->pastSunset($now);
 
-        if (empty($endpoints)) {
+        if ($endpoints === null) {
+            // Spec unreachable/misconfigured — surface it (red cron badge, non-zero
+            // exit) rather than silently behaving like "nothing is deprecated".
+            $this->warn('Could not fetch the apiv2 OpenAPI spec ('.config('freegle.apiv2_swagger_url').'); cannot report on deprecated endpoints. Check APIV2_SWAGGER_URL.');
+
+            return self::FAILURE;
+        }
+
+        if (count($endpoints) === 0) {
             $this->info('No deprecated endpoints past their sunset date.');
 
             return self::SUCCESS;
