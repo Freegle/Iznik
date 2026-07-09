@@ -792,11 +792,22 @@ git commit -m "feat(batch): monitor:deprecated-endpoints - nightly retire/chase 
 
 ---
 
-## Task 5: Runbook — apply the mechanism to a rationalised endpoint
+## Task 5: Runbook — apply the mechanism to PR #984's endpoints
 
-The mechanism above is generic. This is the repeatable per-endpoint procedure to run for each endpoint the rationalisation PR removes client usage of. It is deliberately not "one commit" — it's the checklist you follow per endpoint.
+The mechanism above (Tasks 1-4) is generic. This is the repeatable per-endpoint procedure to run for each endpoint being rationalised by **PR #984 `chore/api-surface-audit`** ("OpenAPI audit - delete 27 dead ones").
 
-**Worked example: deprecating `GET /activity`.**
+**Key reframe of #984:** #984 currently *hard-deletes* the routes. To *observe* an endpoint we must keep it registered. So for each endpoint we want the safety net on, the #984 change flips from "delete the route" to "keep the route, wrap it in `deprecation.Marker()`, mark it `deprecated`+`x-sunset`"; the actual route/handler deletion moves to a **follow-up PR** run only after the nightly report confirms silence since sunset. Endpoints too obviously dead to bother observing (team's call) can still hard-delete in #984 as-is.
+
+**The #984 endpoint set** (removed route registrations — the candidates for the observe net):
+
+- **apiv2** (`iznik-server-go/router/routes.go` + `swagger/swagger.json`):
+  `GET /activity`, `GET /messages`, `GET /isochrone`, `PUT /isochrone`, `PATCH /isochrone`, `DELETE /isochrone`, `DELETE /message/:id`, `GET /modtools/admin/:id`, `GET /modtools/alert/:id`, `PATCH /config/admin`, `DELETE /noticeboard/:id`, `POST /story`, `DELETE /story/:id`, `POST /team`, `DELETE /team`, `PATCH /microvolunteering`, `GET /simulation`
+- **routing** (`iznik-routing-go`): `GET /posts-for-member`
+- **spatial** (`iznik-spatial-go`): `GET /v1/datasets`, `GET /v1/:dataset/status`, `GET /v1/:dataset/within`, `GET /v1/:dataset/within_coords`, `POST /v1/rebuild`
+
+> The Go `deprecation` package (Task 1) lives in `iznik-server-go`. The routing and spatial servers are separate Go services; applying the observe net there needs the same tiny `Marker()` copied into each (or a shared module). If those two servers' endpoints are confidently dead (they are internal service-to-service calls, not reachable by web/app/external users), prefer hard-deleting them in #984 and reserve the observe net for the **apiv2** set, which is the only surface the three caller populations reach. Recommended: observe net on the apiv2 GET endpoints; hard-delete the rest.
+
+**Worked example: deprecating `GET /activity` (instead of deleting it in #984).**
 
 - [ ] **Step 1: Mark it in the spec**
 
@@ -866,7 +877,7 @@ git commit -m "chore(apiv2): deprecate GET /activity (sunset 2026-07-23) - marke
 - "Keep + chase = remove x-sunset to mute" → documented in Task 4 docblock + Task 5 Step 6.
 - "Single source of truth for the date (spec only; Go never hard-codes it)" → Marker() takes no date; header is boolean; date parsed only from spec.
 
-**Placeholder scan:** No TBD/TODO. The one intentional variable is *which* endpoints get deprecated — that is the PR's content, handled by the Task 5 runbook with a full worked example, not a placeholder.
+**Placeholder scan:** No TBD/TODO. The endpoints are the concrete PR #984 set, listed in Task 5. The one team decision left open (observe-net all of them vs apiv2-GETs-only + hard-delete the rest) is called out explicitly with a recommendation, not left as a placeholder.
 
 **Type consistency:** The endpoint label form `METHOD /path/:param` is produced by Go `buildHitFields` (`c.Method()+" "+c.Route().Path`) and reproduced by PHP `DeprecatedEndpointService::loggedEndpoint()` (converts `{id}`→`:id`); the command filters Loki on that exact string and re-checks equality to avoid prefix collisions. `queryRange(string, Carbon, Carbon): array` is defined in Task 2 and called in Task 4 with `($logql, $sunset, $now)`.
 
