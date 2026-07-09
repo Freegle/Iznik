@@ -38,12 +38,13 @@ class DeprecatedEndpointsCommand extends Command
 
         foreach ($endpoints as $ep) {
             $sunset = Carbon::parse($ep['sunset'])->startOfDay();
-            $logql = sprintf('{source="deprecated_endpoint"} |= "%s"', $ep['logged_endpoint']);
+            // endpoint is a Loki label (a bounded set of deprecated routes), so match
+            // it exactly via the stream selector — index-based and exact — rather than
+            // scanning every deprecated_endpoint line with a |= substring filter and
+            // re-filtering in PHP (which also risks one route being a prefix of another).
+            $selector = str_replace(['\\', '"'], ['\\\\', '\\"'], $ep['logged_endpoint']);
+            $logql = sprintf('{source="deprecated_endpoint", endpoint="%s"}', $selector);
             $hits = $loki->queryRange($logql, $sunset, $now);
-
-            // Keep only hits whose endpoint field exactly matches (|= is a
-            // substring filter; guard against one route being a prefix of another).
-            $hits = array_values(array_filter($hits, fn ($h) => ($h['endpoint'] ?? null) === $ep['logged_endpoint']));
 
             $days = max(1, (int) $sunset->diffInDays($now));
 
