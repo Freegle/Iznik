@@ -14,10 +14,6 @@ const mockAIImagesAPI = {
   regenerate: vi.fn(),
 }
 
-vi.mock('~/api/AIImagesAPI', () => ({
-  default: vi.fn().mockImplementation(() => mockAIImagesAPI),
-}))
-
 const testAIImage = {
   id: 42,
   name: 'Sofa',
@@ -28,6 +24,10 @@ const testAIImage = {
 describe('MicroVolunteeringAIImageReview', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // The component obtains its API client via useNuxtApp().$api.aiimages (a
+    // Nuxt auto-import resolved from global scope), matching the app's real
+    // wiring and useAIImages.spec.js — not a bare `new AIImagesAPI()`.
+    globalThis.useNuxtApp = () => ({ $api: { aiimages: mockAIImagesAPI } })
   })
 
   function createWrapper(props = {}) {
