@@ -19,14 +19,23 @@ import (
 // ON THE FLY (no overnight batch): pure-SQL KPIs over the full set, and drive-time metrics from
 // a random SAMPLE of posts scored against the live routing graph. Read-only.
 
-// routingEvalURL is the routing server's /v1/ripple-eval base. Prod: the routing internal
-// no-auth port (http://spatial:8194). Local apiv2-live points ROUTING_EVAL_URL at the live
-// routing tunnel (http://<host>:1235). Kept distinct from the KNN spatial server URL.
+// routingEvalURL is the base URL of the ROUTING server (iznik-routing-go), which
+// serves POST /v1/ripple-eval on its internal no-auth listener. This is NOT the
+// KNN spatial server, and NOT the routing server's external JWT-gated port.
+//
+//	ROUTING_EVAL_URL — explicit override. Prod sets http://localhost:8197 (routing
+//	                   SPATIAL_INTERNAL_PORT); apiv2-live points it at the routing tunnel.
+//	default          — local Docker: the routing container's internal no-auth port.
+//
+// It previously fell back to SPATIAL_KNN_URL, which addresses the KNN service — a
+// different server with no /v1/ripple-eval. Wherever ROUTING_EVAL_URL was unset
+// (prod apiv2 and the regular local apiv2 both set SPATIAL_KNN_URL but not
+// ROUTING_EVAL_URL) every ripple-eval hit KNN, 404'd, and zeroed the drive-time
+// analytics ("No drive-time sample", all-grey bullseye). SPATIAL_SERVER_URL is
+// deliberately NOT a fallback either: it points at the routing server's AUTH port
+// (8196), which 401s an unauthenticated ripple-eval call.
 func routingEvalURL() string {
 	if u := os.Getenv("ROUTING_EVAL_URL"); u != "" {
-		return u
-	}
-	if u := os.Getenv("SPATIAL_KNN_URL"); u != "" {
 		return u
 	}
 	return "http://spatial:8194"

@@ -885,6 +885,10 @@ services:
       - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
       - SPATIAL_KNN_URL=http://spatial-knn:8194
       - SPATIAL_SERVER_URL=http://spatial:8196
+      # ripple-eval is served by the routing container ('spatial') on its internal
+      # no-auth port (SPATIAL_INTERNAL_PORT=8194) — NOT spatial-knn, NOT the 8196
+      # auth port. Explicit so the drive-time analytics don't silently misroute.
+      - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
       # Groq API key for the voice-posting endpoint (streaming transcription + tidy-up).
       - GROQ_API_KEY=${GROQ_API_KEY:-}
     volumes:
