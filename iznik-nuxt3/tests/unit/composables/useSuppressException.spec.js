@@ -68,9 +68,7 @@ describe('suppressException', () => {
   })
 
   it('returns false when neither message nor stack matches known patterns', () => {
-    expect(
-      suppressException({ message: 'foo', stack: 'bar' })
-    ).toBe(false)
+    expect(suppressException({ message: 'foo', stack: 'bar' })).toBe(false)
   })
 
   it('suppresses Freestar ftUtils.js null-document errors', () => {
@@ -143,7 +141,8 @@ describe('suppressException', () => {
       suppressException({
         name: 'TypeError',
         message: "Cannot read properties of null (reading 'document')",
-        stack: '    at MyComponent.vue:42 (https://example.com/MyComponent.vue)',
+        stack:
+          '    at MyComponent.vue:42 (https://example.com/MyComponent.vue)',
       })
     ).toBe(false)
   })
@@ -297,6 +296,90 @@ describe('suppressSentryEvent', () => {
       },
     }
     expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('suppresses the TCF/consent frame-walk RangeError (HTMLIFrameElement.get, Sentry 7372856855)', () => {
+    // The IAB-TCF __tcfapiLocator recurses up cross-origin iframes and overflows
+    // the stack via HTMLIFrameElement.get - third-party ad/consent code, not ours.
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'RangeError',
+            value: 'Maximum call stack size exceeded.',
+            stacktrace: {
+              frames: [
+                { function: 'HTMLIFrameElement.get', filename: '<anonymous>' },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('suppresses the ad-bidder null.document handler (HTMLDocument.<anonymous>, Sentry 7377347048)', () => {
+    // A Prebid SSP bidder's anonymous document handler reads .document on null.
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'document')",
+            stacktrace: {
+              frames: [
+                {
+                  function: 'HTMLDocument.<anonymous>',
+                  filename: '<anonymous>',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('does NOT suppress a real RangeError / null.document from our own source', () => {
+    // Genuine infinite recursion or null-deref in our code source-maps to a real
+    // file with a named function - it must still be reported, not masked.
+    expect(
+      suppressSentryEvent({
+        exception: {
+          values: [
+            {
+              type: 'RangeError',
+              value: 'Maximum call stack size exceeded.',
+              stacktrace: {
+                frames: [
+                  {
+                    function: 'MyComponent.recurse',
+                    filename: '/MyComponent.vue',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      })
+    ).toBe(false)
+    expect(
+      suppressSentryEvent({
+        exception: {
+          values: [
+            {
+              type: 'TypeError',
+              value: "Cannot read properties of null (reading 'document')",
+              stacktrace: {
+                frames: [{ function: 'setup', filename: '/pages/browse.vue' }],
+              },
+            },
+          ],
+        },
+      })
+    ).toBe(false)
   })
 
   it('does not suppress ftUtils.js frames with unknown function names', () => {

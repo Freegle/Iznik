@@ -157,8 +157,23 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 		placeholders, categoryClause, areaClause, JOBS_LIMIT,
 	), args...).Scan(&rows)
 
+	// Collapse near-identical cards that survive the spatial KNN dedup. KNN keys
+	// primarily on bodyhash (right for WhatJobs' cross-town spam, whose copies
+	// share an identical body), but advertisers also repost the *same* role in
+	// the *same* town many times with slightly varied body text — e.g. Deliveroo
+	// posts "Deliveroo Rider / preston" a dozen times, each a different bodyhash —
+	// so they arrive here as distinct ids and render as duplicate cards. To the
+	// user, same title + same location is one job. Rows arrive ordered by expected
+	// value (cpc*clickability*freshness), so keeping the first occurrence keeps the
+	// best-ranked copy. Different locations stay distinct (genuine local variety).
 	ret := make([]Job, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
 	for _, r := range rows {
+		key := strings.ToLower(strings.TrimSpace(r.Title)) + "\x00" + strings.ToLower(strings.TrimSpace(r.Location))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
 		job := Job{
 			ID:           r.ID,
 			Dist:         r.DistKm,
