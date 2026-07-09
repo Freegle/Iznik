@@ -1853,9 +1853,11 @@ const httpServer = http.createServer(async (req, res) => {
     // *_pure_test.go files, which need no DB) actually run: ./test/... alone
     // never compiles them, so they were dormant and their lines showed as
     // uncovered. These are DB-free, so they add no fixture requirements.
+    // ./deprecation/... likewise: it has its own package tests (TestMain sets
+    // LOKI env for the deprecation-hit logger) that ./test/... never compiles.
     const testCmd = withCoverage
-      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... ./message/... -coverpkg ./..."
-      : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... ./message/... -v";
+      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... ./message/... ./deprecation/... -coverpkg ./..."
+      : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... ./message/... ./deprecation/... -v";
 
     // Run tests asynchronously
     const { spawn } = require("child_process");

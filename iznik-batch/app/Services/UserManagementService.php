@@ -603,6 +603,52 @@ class UserManagementService
     }
 
     /**
+     * Demote stale Moderator systemroles. A user whose users.systemrole is
+     * 'Moderator' but who no longer holds an Owner/Moderator membership on any
+     * group is set back to 'User'. Support and Admin are never touched — they
+     * are granted deliberately and outrank Moderator.
+     *
+     * This backfills the historical gap where the Go membership-removal path
+     * (leave/ban) did not reconcile systemrole the way V1 User::updateSystemRole
+     * did, leaving ex-moderators carrying a Moderator systemrole and the
+     * elevated access it implies. The ongoing fix lives in the Go API
+     * (user.SyncSystemRole on membership deletion); this one-off cleans up the
+     * accumulated rows. Each user is updated individually (Galera-safe) and the
+     * UPDATE is guarded on systemrole = 'Moderator' so a concurrent change is
+     * never clobbered.
+     */
+    public function backfillModeratorSystemRoles(bool $dryRun = false): array
+    {
+        $stats = ['demoted' => 0];
+
+        $staleMods = DB::table('users')
+            ->where('systemrole', 'Moderator')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('memberships')
+                    ->whereColumn('memberships.userid', 'users.id')
+                    ->whereIn('memberships.role', ['Moderator', 'Owner']);
+            })
+            ->pluck('id')
+            ->all();
+
+        foreach ($staleMods as $userId) {
+            if (!$dryRun) {
+                DB::table('users')
+                    ->where('id', $userId)
+                    ->where('systemrole', 'Moderator')
+                    ->update(['systemrole' => 'User']);
+
+                Log::info("Demoted stale Moderator systemrole to User for user #{$userId}");
+            }
+
+            $stats['demoted']++;
+        }
+
+        return $stats;
+    }
+
+    /**
      * Validate recently-added non-bouncing emails and delete invalid ones.
      *
      * Uses Message::EMAIL_REGEXP. Scoped to the last 30 days because the regex

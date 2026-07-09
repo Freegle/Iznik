@@ -318,6 +318,14 @@ Schedule::command('monitor:email-health')
     ->sendOutputTo(cronLog('monitor:email-health'))
     ->runInBackground();
 
+// Deprecated-endpoint retirement report: once daily, early, so the team sees it
+// with the morning's mail. Only emails when an endpoint is past its x-sunset date.
+Schedule::command('monitor:deprecated-endpoints')
+    ->dailyAt('06:20')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('monitor:deprecated-endpoints'))
+    ->runInBackground();
+
 // Outcome-based monitoring — asserts that scheduled tasks actually DID their
 // work (rows written, cursor advanced), not just that the scheduler is alive.
 // Breaches escalate to Sentry. Runs inline (it's just a few aggregate queries)
