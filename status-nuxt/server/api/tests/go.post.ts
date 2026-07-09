@@ -47,12 +47,13 @@ export default defineEventHandler(async (event) => {
     set -e
     echo "Setting up Go test database (iznik_go_test)..."
 
-    # Copy schema from main iznik database
-    docker exec ${prefix}-apiv1 sh -c "\\
-      mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \\
-      mysqldump -h percona -u root -piznik --no-data --routines --triggers iznik | mysql -h percona -u root -piznik iznik_go_test && \\
-      mysql -h percona -u root -piznik -e \\"SET GLOBAL sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'\\" && \\
-      mysql -h percona -u root -piznik -e \\"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\\"" || echo "Warning: Database setup had issues, continuing..."
+    # Clone the schema (no data) from the migrated iznik database via the percona container.
+    # Go tests create their own fixture data at runtime, so only the schema is required.
+    docker exec ${prefix}-percona sh -c "\\
+      mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \\
+      mysqldump -u root -piznik --no-data --routines --triggers iznik | mysql -u root -piznik iznik_go_test && \\
+      mysql -u root -piznik -e \\"SET GLOBAL sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'\\" && \\
+      mysql -u root -piznik -e \\"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\\"" || echo "Warning: Database setup had issues, continuing..."
 
     echo "Running Go tests against iznik_go_test database..."
     docker exec -w /app ${prefix}-apiv2 sh -c "${testCmd} 2>&1"

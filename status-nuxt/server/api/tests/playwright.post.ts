@@ -273,7 +273,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         // Reset the test database before retry. Tests that ran in the main suite
         // have already modified the iznik database (created posts, replies, users).
         // Re-running those spec files against a dirty database causes failures unrelated
-        // to the actual code under test. Drop + recreate + migrate + testenv restores
+        // to the actual code under test. Drop + recreate + migrate + fixture reload restores
         // the same clean state that the main run started from.
         appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
         // Brief pause to let MySQL connections from the completed test run settle
@@ -288,21 +288,22 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           // already closed between the SELECT and the KILL.
           try {
             execSync(
-              `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -h percona -u root -piznik"`,
+              `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -u root -piznik"`,
               { encoding: 'utf8', timeout: 10000 }
             )
           } catch {}
           execSync(
-            `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+            `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
             { encoding: 'utf8', timeout: 300000 }
           )
           execSync(
             `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
             { encoding: 'utf8', timeout: 300000 }
           )
+          // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
           execSync(
-            `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
-            { encoding: 'utf8', timeout: 60000 }
+            `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
+            { encoding: 'utf8', timeout: 120000 }
           )
           // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
           // the database invalidates those connections. Restart the container so it
@@ -325,12 +326,10 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           if (!apiv2Ready) {
             throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
           }
-          // Clear the in-memory testEnv cache so the retry receives fresh
-          // postcode/ID data from the reset DB. Without this, the cache serves
-          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
-          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
-          // location typeahead to return empty results and the validation-tick
-          // to never appear in postMessage flows.
+          // Clear the in-memory testEnv cache so the retry re-reads the seeded
+          // postcode/ID data. The fixture reload restores the same ids, so the
+          // cached values remain valid, but clearing keeps the cache honest after
+          // a DB reset (avoids serving data from a prior, differently-seeded run).
           clearTestEnvCache()
           appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
           appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)

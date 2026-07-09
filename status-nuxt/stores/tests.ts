@@ -25,7 +25,6 @@ export const useTestStore = defineStore('tests', {
   state: (): TestStoreState => ({
     tests: {
       go: createInitialTestState('go'),
-      php: createInitialTestState('php'),
       laravel: createInitialTestState('laravel'),
       vitest: createInitialTestState('vitest'),
       playwright: createInitialTestState('playwright'),

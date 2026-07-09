@@ -2,11 +2,14 @@ import { execSync } from 'child_process'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
 
+// Recreate the shared test users (test@test.com / testmod@test.com) by deleting them and
+// reloading the captured fixtures (scripts/test-fixtures.sql), which restore the users along
+// with their memberships, roles, isochrones and chats exactly as seeded.
 export default defineEventHandler(async () => {
   try {
     const results: string[] = []
 
-    // Delete existing test users first to ensure clean recreate
+    // Delete existing test users first so the fixture reload recreates them cleanly.
     try {
       execSync(
         `docker exec ${prefix}-percona mysql -u root -piznik iznik -e "DELETE FROM users WHERE id IN (SELECT userid FROM (SELECT userid FROM users_emails WHERE email IN ('test@test.com', 'testmod@test.com')) AS subquery)"`,
@@ -17,37 +20,15 @@ export default defineEventHandler(async () => {
       results.push(`Warning: Failed to delete existing users - ${error.message}`)
     }
 
-    // Recreate test@test.com
-    try {
-      const testUserResult = execSync(
-        `docker exec ${prefix}-apiv1 php /var/www/iznik/scripts/cli/user_create.php -e test@test.com -n "Test User" -p freegle`,
-        { encoding: 'utf8', timeout: 30000 }
-      )
-      results.push(`test@test.com: ${testUserResult.trim()}`)
-    } catch (error: any) {
-      results.push(`test@test.com: Failed - ${error.message}`)
-    }
-
-    // Recreate testmod@test.com
-    try {
-      const modUserResult = execSync(
-        `docker exec ${prefix}-apiv1 php /var/www/iznik/scripts/cli/user_create.php -e testmod@test.com -n "Test Mod" -p freegle`,
-        { encoding: 'utf8', timeout: 30000 }
-      )
-      results.push(`testmod@test.com: ${modUserResult.trim()}`)
-    } catch (error: any) {
-      results.push(`testmod@test.com: Failed - ${error.message}`)
-    }
-
-    // Grant Support role to testmod@test.com
+    // Reload the captured fixtures to recreate the test users (idempotent INSERT IGNORE).
     try {
       execSync(
-        `docker exec ${prefix}-percona mysql -u root -piznik iznik -e "UPDATE users SET systemrole = 'Support' WHERE id = (SELECT userid FROM users_emails WHERE email = 'testmod@test.com')"`,
-        { encoding: 'utf8', timeout: 10000 }
+        `docker cp /project/scripts/test-fixtures.sql ${prefix}-percona:/tmp/test-fixtures.sql && docker exec ${prefix}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
+        { encoding: 'utf8', timeout: 120000 }
       )
-      results.push('testmod@test.com: Granted Support role')
+      results.push('Reloaded test fixtures (test@test.com, testmod@test.com recreated)')
     } catch (error: any) {
-      results.push(`testmod@test.com: Failed to grant Support role - ${error.message}`)
+      results.push(`Failed to reload fixtures - ${error.message}`)
     }
 
     return {
