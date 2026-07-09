@@ -66,6 +66,20 @@ class DeprecatedEndpointsCommandTest extends TestCase
         $this->artisan('monitor:deprecated-endpoints')
             ->expectsOutput('Report emailed: 1 retire, 1 still in use, 0 could not check.')
             ->assertExitCode(0);
+
+        // Regression guard for a bug no response-mock can catch: `endpoint` is NOT a
+        // promoted Loki label (Alloy keeps it in the JSON body), so the query MUST parse
+        // the message with `| json` and match the field — a `{endpoint="..."}` stream
+        // selector matches nothing and would mark every endpoint falsely retirable.
+        Http::assertSent(function ($request) {
+            $url = urldecode($request->url());
+            if (! str_contains($url, 'loki')) {
+                return false;
+            }
+
+            return str_contains($url, '| json | endpoint="GET /message/:id"')
+                && ! str_contains($url, 'source="deprecated_endpoint", endpoint=');
+        });
     }
 
     public function test_loki_query_failure_is_not_treated_as_retirable(): void

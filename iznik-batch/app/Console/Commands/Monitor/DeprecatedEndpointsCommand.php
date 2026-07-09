@@ -56,12 +56,13 @@ class DeprecatedEndpointsCommand extends Command
             // observes the trailing window rather than the whole since-sunset span.
             $windowStart = $sunset->copy()->max($now->copy()->subDays($windowDays));
 
-            // endpoint is a Loki label (a bounded set of deprecated routes), so match
-            // it exactly via the stream selector — index-based and exact — rather than
-            // scanning every deprecated_endpoint line with a |= substring filter and
-            // re-filtering in PHP (which also risks one route being a prefix of another).
+            // endpoint is NOT a promoted Loki label — Alloy keeps it in the JSON
+            // message body (verified in-container). So parse the message with | json
+            // and match the field exactly. A stream selector {endpoint="..."} would
+            // match NOTHING, making every endpoint look unused → catastrophic false
+            // "safe to retire". The exact | json match also avoids |= prefix collisions.
             $selector = str_replace(['\\', '"'], ['\\\\', '\\"'], $ep['logged_endpoint']);
-            $logql = sprintf('{source="deprecated_endpoint", endpoint="%s"}', $selector);
+            $logql = sprintf('{source="deprecated_endpoint"} | json | endpoint="%s"', $selector);
             $hits = $loki->queryRange($logql, $windowStart, $now);
 
             if ($hits === null) {
