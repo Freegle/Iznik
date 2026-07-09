@@ -11,20 +11,22 @@ import { useRouter } from '#imports'
 import { useComposeChoice } from '~/composables/useComposeChoice'
 
 const router = useRouter()
-const { assign, recordShown, isMobile } = useComposeChoice()
+const { experimentActive, assign, recordShown, isMobile } = useComposeChoice()
 
 onMounted(() => {
+  // Experiment off (default): behave exactly as before - straight to the existing
+  // typed photos flow, with no assignment and no tracking side effects. This is
+  // what makes merging safe: the existing route is unchanged until the rollout is
+  // deliberately raised.
+  if (!experimentActive()) {
+    router.replace('/give/mobile/photos')
+    return
+  }
+
   const variant = assign()
   // Only record exposure for the eligible (mobile) population so the experiment
   // rates aren't diluted by desktop control traffic.
   if (isMobile()) recordShown(variant)
-
-  if (variant === 'voice') {
-    // Offer the voice-or-keyboard choice.
-    router.replace('/voicepost')
-  } else {
-    // Control: the existing typed compose flow, unchanged.
-    router.replace('/give/mobile/photos')
-  }
+  router.replace(variant === 'voice' ? '/voicepost' : '/give/mobile/photos')
 })
 </script>

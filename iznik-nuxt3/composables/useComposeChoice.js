@@ -41,6 +41,15 @@ export function useComposeChoice() {
     return Math.abs(h) % 100
   }
 
+  // Whether the experiment is live at all. When it's off (the default), the
+  // compose entry keeps its original behaviour with zero side effects - so
+  // merging this changes nothing for existing users until ROLLOUT_PCT is raised.
+  function experimentActive() {
+    const q = route?.query?.voice
+    if (q === '1' || q === '0') return true
+    return ROLLOUT_PCT > 0
+  }
+
   // Returns 'voice' or 'control'.
   function assign() {
     const q = route?.query?.voice
@@ -92,6 +101,7 @@ export function useComposeChoice() {
     COMPOSE_CHOICE_UID,
     COMPOSE_METHOD_UID,
     isMobile,
+    experimentActive,
     assign,
     recordShown,
     recordConversion,
