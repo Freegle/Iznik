@@ -11,7 +11,6 @@ vi.mock('~/stores/misc', () => ({
 vi.mock('~/stores/newsfeed', () => ({ useNewsfeedStore: () => ({}) }))
 vi.mock('~/stores/message', () => ({ useMessageStore: () => ({}) }))
 vi.mock('~/stores/notification', () => ({ useNotificationStore: () => ({}) }))
-vi.mock('~/stores/logo', () => ({ useLogoStore: () => ({}) }))
 vi.mock('~/stores/communityevent', () => ({ useCommunityEventStore: () => ({}) }))
 vi.mock('~/stores/volunteering', () => ({ useVolunteeringStore: () => ({}) }))
 vi.mock('~/stores/mobile', () => ({ useMobileStore: () => ({ isApp: false }) }))
@@ -382,9 +381,6 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
         fetchCount: vi.fn(),
         fetchActivePostCount: vi.fn(),
       }),
-    }))
-    vi.doMock('~/stores/logo', () => ({
-      useLogoStore: () => ({ fetch: vi.fn() }),
     }))
     vi.doMock('~/stores/communityevent', () => ({
       useCommunityEventStore: () => ({ count: 0, fetchList: vi.fn() }),

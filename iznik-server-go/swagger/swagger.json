@@ -2799,21 +2799,6 @@
         }
       }
     },
-    "/logo": {
-      "get": {
-        "description": "Returns logo information",
-        "tags": [
-          "misc"
-        ],
-        "summary": "Get logo",
-        "operationId": "getLogo",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/genericResponse"
-          }
-        }
-      }
-    },
     "/memberships": {
       "get": {
         "security": [

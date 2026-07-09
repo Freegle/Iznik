@@ -3,7 +3,6 @@ import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMessageStore } from '~/stores/message'
 import { useNotificationStore } from '~/stores/notification'
-import { useLogoStore } from '~/stores/logo'
 import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
 import { fetchMe } from '~/composables/useMe'
@@ -88,7 +87,6 @@ export function useNavbar() {
   const messageStore = useMessageStore()
   const notificationStore = useNotificationStore()
   const chatStore = useChatStore()
-  const logoStore = useLogoStore()
   const communityEventStore = useCommunityEventStore()
   const volunteeringStore = useVolunteeringStore()
   const route = useRoute()
@@ -97,8 +95,6 @@ export function useNavbar() {
   const online = computed(() => miscStore.online)
   const myid = computed(() => authStore.user?.id)
   const distance = ref(1000)
-  const logo = ref('/icon.png')
-  const logoFormat = ref('webp')
   const unreadNotificationCount = ref(0)
   const mobileStore = useMobileStore()
   const chatCount = computed(() => {
@@ -202,17 +198,6 @@ export function useNavbar() {
   })
 
   onMounted(() => {
-    setTimeout(async () => {
-      // Look for a custom logo.
-      const ret = await logoStore.fetch()
-
-      // v2 API returns data directly without ret/status wrapper
-      if (ret?.logo) {
-        logo.value = ret.logo.path.replace(/.*logos/, '/logos')
-        logoFormat.value = 'gif'
-      }
-    }, 500000)
-
     // Only fetch counts once, even if multiple components use useNavbar().
     if (!countsInitialized) {
       countsInitialized = true
@@ -389,8 +374,6 @@ export function useNavbar() {
   return {
     online,
     distance,
-    logo,
-    logoFormat,
     unreadNotificationCount,
     chatCount,
     activePostsCount,

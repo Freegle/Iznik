@@ -49,7 +49,6 @@ import (
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
-	"github.com/freegle/iznik-server-go/logo"
 	"github.com/freegle/iznik-server-go/logs"
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
@@ -1524,15 +1523,6 @@ func SetupRoutes(app *fiber.App) {
 		// GDPR Data Export
 		rg.Post("/export", export.PostExport)
 		rg.Get("/export", export.GetExport)
-
-		// Logo
-		// @Router /logo [get]
-		// @Summary Get logo
-		// @Description Returns logo information
-		// @Tags misc
-		// @Produce json
-		// @Success 200 {object} logo.LogoResponse
-		rg.Get("/logo", logo.Get)
 
 		// Microvolunteering
 		// @Router /microvolunteering [get]

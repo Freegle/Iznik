@@ -693,7 +693,6 @@ const API_DESCRIPTIONS = {
   'GET /apiv2/online': () => 'Check online status',
   'GET /apiv2/latestmessage': () => 'Get latest message',
   'GET /apiv2/activity': () => 'Get recent activity',
-  'GET /apiv2/logo': () => 'Get logo',
   'GET /apiv2/donations': () => 'Get donations',
   'GET /apiv2/giftaid': () => 'Get Gift Aid status',
   'GET /apiv2/microvolunteering': () => 'Get microvolunteering challenge',
