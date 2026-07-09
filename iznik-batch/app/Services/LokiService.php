@@ -276,16 +276,20 @@ class LokiService
 
     /**
      * Read side: run a LogQL query over [$start, $end] and return the decoded
-     * JSON body of every matching log line. Returns [] on any error so a nightly
-     * monitor degrades to "no data" rather than throwing.
+     * JSON body of every matching log line — or NULL if the query itself failed
+     * (no URL, network error, non-200). NULL (vs an empty array) matters: a caller
+     * must not treat a query error as "zero results", or a Loki hiccup would look
+     * like "unused". An empty array means the query succeeded with no matches.
      *
-     * @return array<int, array<string, mixed>>
+     * @return array<int, array<string, mixed>>|null
      */
-    public function queryRange(string $logql, Carbon $start, Carbon $end): array
+    public function queryRange(string $logql, Carbon $start, Carbon $end): ?array
     {
         $url = config('freegle.loki.query_url');
         if (empty($url)) {
-            return [];
+            Log::warning('LokiService::queryRange: no freegle.loki.query_url configured');
+
+            return null;
         }
 
         try {
@@ -299,13 +303,13 @@ class LokiService
         } catch (\Throwable $e) {
             Log::warning('LokiService::queryRange failed: '.$e->getMessage());
 
-            return [];
+            return null;
         }
 
         if (! $resp->ok()) {
-            Log::warning('LokiService::queryRange non-200: '.$resp->status());
+            Log::warning('LokiService::queryRange non-200: '.$resp->status().' '.$resp->body());
 
-            return [];
+            return null;
         }
 
         $rows = [];

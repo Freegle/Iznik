@@ -64,7 +64,23 @@ class DeprecatedEndpointsCommandTest extends TestCase
         ]);
 
         $this->artisan('monitor:deprecated-endpoints')
-            ->expectsOutput('Report emailed: 1 retire, 1 still in use.')
+            ->expectsOutput('Report emailed: 1 retire, 1 still in use, 0 could not check.')
+            ->assertExitCode(0);
+    }
+
+    public function test_loki_query_failure_is_not_treated_as_retirable(): void
+    {
+        Mail::fake();
+        Http::fake([
+            'http://apiv2/*' => Http::response([
+                'paths' => ['/message/{id}' => ['get' => ['deprecated' => true, 'x-sunset' => '2026-07-01']]],
+            ], 200),
+            // Loki errors on the query -> must NOT count as "safe to retire".
+            'http://loki:3100/*' => Http::response('range too long', 400),
+        ]);
+
+        $this->artisan('monitor:deprecated-endpoints')
+            ->expectsOutput('Report emailed: 0 retire, 0 still in use, 1 could not check.')
             ->assertExitCode(0);
     }
 

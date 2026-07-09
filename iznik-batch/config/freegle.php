@@ -439,6 +439,13 @@ return [
     // compose network); if the fetch fails the command warns and exits non-zero.
     'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2:8192/swagger/swagger.json'),
 
+    // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
+    // max_query_length (~30d) — a longer since-sunset range 400s; this many days of
+    // post-sunset silence is enough to call an endpoint retirable.
+    'deprecated_endpoints' => [
+        'observation_window_days' => (int) env('DEPRECATED_ENDPOINTS_WINDOW_DAYS', 29),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Spam Checking

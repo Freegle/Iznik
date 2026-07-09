@@ -42,24 +42,21 @@ class LokiServiceQueryTest extends TestCase
         $this->assertSame('GET /foo', $rows[1]['endpoint']);
     }
 
-    public function test_query_range_returns_empty_on_non_200(): void
+    public function test_query_range_returns_null_on_non_200(): void
     {
         config()->set('freegle.loki.query_url', 'http://loki:3100');
         Http::fake(['*' => Http::response('boom', 500)]);
 
         $svc = new LokiService();
-        $rows = $svc->queryRange('{source="deprecated_endpoint"}', now()->subDay(), now());
-
-        $this->assertSame([], $rows);
+        // null (not []) so callers don't mistake a Loki error for "zero hits".
+        $this->assertNull($svc->queryRange('{source="deprecated_endpoint"}', now()->subDay(), now()));
     }
 
-    public function test_query_range_returns_empty_when_no_url_configured(): void
+    public function test_query_range_returns_null_when_no_url_configured(): void
     {
         config()->set('freegle.loki.query_url', null);
 
         $svc = new LokiService();
-        $rows = $svc->queryRange('{source="deprecated_endpoint"}', now()->subDay(), now());
-
-        $this->assertSame([], $rows);
+        $this->assertNull($svc->queryRange('{source="deprecated_endpoint"}', now()->subDay(), now()));
     }
 }

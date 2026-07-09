@@ -41,30 +41,48 @@ class DeprecatedEndpointsCommand extends Command
             return self::SUCCESS;
         }
 
+        // Loki caps a single query at max_query_length (~30d), so we observe at most
+        // this many days back — enough post-sunset silence to call an endpoint dead.
+        $windowDays = (int) config('freegle.deprecated_endpoints.observation_window_days', 29);
+
         $retire = [];
         $stillUsed = [];
+        $couldNotCheck = [];
 
         foreach ($endpoints as $ep) {
             $sunset = Carbon::parse($ep['sunset'])->startOfDay();
+            // Query from the sunset date, but never further back than $windowDays
+            // (a longer range 400s in Loki). For endpoints long past sunset this
+            // observes the trailing window rather than the whole since-sunset span.
+            $windowStart = $sunset->copy()->max($now->copy()->subDays($windowDays));
+
             // endpoint is a Loki label (a bounded set of deprecated routes), so match
             // it exactly via the stream selector — index-based and exact — rather than
             // scanning every deprecated_endpoint line with a |= substring filter and
             // re-filtering in PHP (which also risks one route being a prefix of another).
             $selector = str_replace(['\\', '"'], ['\\\\', '\\"'], $ep['logged_endpoint']);
             $logql = sprintf('{source="deprecated_endpoint", endpoint="%s"}', $selector);
-            $hits = $loki->queryRange($logql, $sunset, $now);
+            $hits = $loki->queryRange($logql, $windowStart, $now);
 
-            $days = max(1, (int) $sunset->diffInDays($now));
+            if ($hits === null) {
+                // The Loki query itself failed — do NOT conclude "safe to retire"
+                // (deleting a live endpoint is the dangerous mistake). Flag it.
+                $couldNotCheck[] = sprintf('  %s  (Loki query failed — status unknown, NOT safe to retire)', $ep['logged_endpoint']);
+
+                continue;
+            }
+
+            $observed = max(1, (int) $windowStart->diffInDays($now));
 
             if (count($hits) === 0) {
-                $retire[] = sprintf('  %s  (silent %d day%s since sunset %s)',
-                    $ep['logged_endpoint'], $days, $days === 1 ? '' : 's', $ep['sunset']);
+                $retire[] = sprintf('  %s  (no calls in %d day%s observed; sunset %s)',
+                    $ep['logged_endpoint'], $observed, $observed === 1 ? '' : 's', $ep['sunset']);
             } else {
-                $stillUsed[] = $this->stillUsedLine($ep, $hits, $days);
+                $stillUsed[] = $this->stillUsedLine($ep, $hits, $observed);
             }
         }
 
-        $this->emailReport($retire, $stillUsed);
+        $this->emailReport($retire, $stillUsed, $couldNotCheck);
 
         return self::SUCCESS;
     }
@@ -97,21 +115,27 @@ class DeprecatedEndpointsCommand extends Command
         );
     }
 
-    private function emailReport(array $retire, array $stillUsed): void
+    private function emailReport(array $retire, array $stillUsed, array $couldNotCheck = []): void
     {
         $body = "Deprecated apiv2 endpoints past their sunset date:\n\n";
 
-        $body .= "SAFE TO RETIRE (no calls since sunset):\n";
+        $body .= "SAFE TO RETIRE (no calls in the observed window):\n";
         $body .= empty($retire) ? "  (none)\n" : implode("\n", $retire)."\n";
 
         $body .= "\nSTILL IN USE (chase the callers, or remove x-sunset to keep):\n";
         $body .= empty($stillUsed) ? "  (none)\n" : implode("\n", $stillUsed)."\n";
+
+        if (! empty($couldNotCheck)) {
+            $body .= "\nCOULD NOT CHECK (Loki query failed — investigate, do NOT retire):\n";
+            $body .= implode("\n", $couldNotCheck)."\n";
+        }
 
         $to = config('freegle.geeks_addr', 'geeks@ilovefreegle.org');
         Mail::raw($body, function ($message) use ($to) {
             $message->to($to)->subject('Deprecated endpoint report');
         });
 
-        $this->info(sprintf('Report emailed: %d retire, %d still in use.', count($retire), count($stillUsed)));
+        $this->info(sprintf('Report emailed: %d retire, %d still in use, %d could not check.',
+            count($retire), count($stillUsed), count($couldNotCheck)));
     }
 }
