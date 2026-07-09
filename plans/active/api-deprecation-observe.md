@@ -1,7 +1,20 @@
 # API endpoint deprecation-and-observe
 
-**Status:** design (brainstormed 2026-07-09)
+**Status:** implemented — PR #1021 (mechanism) + PR #1025 (applied to #984's endpoints)
 **Owner:** geeks@ilovefreegle.org
+
+> **Mechanism evolved (2026-07-09, PR #1025):** the sections below describe the
+> *sunset date* living in the OpenAPI spec as an `x-sunset` extension. That turned
+> out to be impossible here: `swagger.json` is **go-swagger-generated at build**,
+> and adding `x-sunset` to a `swagger:route` block **breaks generation** (empirically
+> verified; `// Deprecated: true` survives, `x-sunset` does not). So the source of
+> truth moved into the code: `deprecation.Marker(endpoint, sunset)` **registers**
+> each deprecated route and serves the set at `GET /apiv2/deprecated`, which the
+> batch command reads instead of parsing the spec. This is also *safer* than a
+> config map — the registry IS the set of `Marker()`'d (hit-logging) routes, so the
+> observed set and the logging can't drift into a false "safe to retire". Read the
+> design below for the rationale; substitute "registry / GET /apiv2/deprecated" for
+> every "`x-sunset` in `swagger.json`".
 
 ## Problem
 
