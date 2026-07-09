@@ -30,7 +30,7 @@ class DeprecatedEndpointsCommand extends Command
         if ($endpoints === null) {
             // Spec unreachable/misconfigured — surface it (red cron badge, non-zero
             // exit) rather than silently behaving like "nothing is deprecated".
-            $this->warn('Could not fetch the apiv2 OpenAPI spec ('.config('freegle.apiv2_swagger_url').'); cannot report on deprecated endpoints. Check APIV2_SWAGGER_URL.');
+            $this->warn('Could not fetch the apiv2 deprecated-endpoint registry ('.config('freegle.apiv2_deprecated_url').'); cannot report on deprecated endpoints. Check APIV2_DEPRECATED_URL.');
 
             return self::FAILURE;
         }
