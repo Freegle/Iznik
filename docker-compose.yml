@@ -460,6 +460,32 @@ services:
       wiki-mysql:
         condition: service_healthy
 
+  # Grafana Alloy (edge) — ships the edge container logs (frontend-nginx
+  # uploads/delivery/tiles access + tusd events) to the Loki container via Docker
+  # service discovery, closing the edge log blind spot (plan §10). Distinct from
+  # the dev/monitoring `alloy` service (which ships apiv2_logs under the
+  # `monitoring` profile, not active on the prod host). Alloy, not Promtail (EOL).
+  alloy-edge:
+    image: grafana/alloy:v1.4.2
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-alloy-edge
+    profiles:
+      - edge
+    networks:
+      - default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./alloy-edge.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_started
+        required: false
+
   # Old status container - replaced by status-nuxt (2026-01-18)
   # Keeping commented out for reference during transition
   # status:
@@ -890,6 +916,11 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn
     profiles:
       - frontend
+      # Also in `production`: batch-prod hard-depends on this service, so the
+      # batch host (COMPOSE_PROFILES=backend,production,mail) must include it
+      # explicitly. Newer Compose (v5) auto-enables cross-profile dependencies,
+      # but older docker-compose binaries reject the project as invalid.
+      - production
     networks:
       default:
         aliases:
@@ -923,6 +954,8 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial
     profiles:
       - frontend
+      # Also in `production`: see spatial-knn note above.
+      - production
     networks:
       default:
         aliases:
@@ -2094,6 +2127,8 @@ volumes:
     driver: local   # tile-server PostGIS (osm-data, ~56 GB once imported)
   osm-tiles:
     driver: local   # tile-server rendered tiles (~44 GB)
+  alloy-data:
+    driver: local   # Grafana Alloy positions/WAL (edge log shipping)
 
 networks:
   default:

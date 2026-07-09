@@ -127,4 +127,48 @@ class SyncWhatJobsClickabilityTest extends TestCase
         $job = DB::table('jobs')->where('id', $jobId)->first();
         $this->assertEquals(0, $job->clickability);
     }
+
+    /**
+     * @test
+     *
+     * sync() now scores clickability in PHP and writes it on the batched INSERT
+     * (insertJobs) instead of a post-swap per-row UPDATE pass, so the ~1M-row
+     * table is never re-touched. This asserts the score lands on the row at
+     * insert time — the same title-keyword scoring updateClickability applied
+     * (a matching title > 0, an unmatched title 0), now folded into the insert.
+     */
+    public function test_insertJobs_scores_clickability_on_insert_from_keywords(): void
+    {
+        // getMaxish() 95th-pct over a single keyword returns its count (5), so a
+        // title whose pair matches scores 5/5 = 1.0; an unmatched title scores 0.
+        DB::table('jobs_keywords')->insert(['keyword' => 'web developer', 'count' => 5]);
+
+        $svc = new WhatJobsService();
+        $svc->prepareTempTable();
+        $svc->insertJobs([
+            $this->jobRow('clickability-test-insert-1', 'Web Developer London'),
+            $this->jobRow('clickability-test-insert-2', 'Unicorn Wrangler'),
+        ], $this->srid);
+
+        $matched   = DB::table('jobs_new')->where('job_reference', 'clickability-test-insert-1')->first();
+        $unmatched = DB::table('jobs_new')->where('job_reference', 'clickability-test-insert-2')->first();
+
+        $this->assertGreaterThan(0, (float) $matched->clickability, 'title matching a seeded keyword should score > 0 at insert');
+        $this->assertEquals(0.0, (float) $unmatched->clickability, 'title with no keyword match should score 0 at insert');
+
+        DB::statement('DROP TABLE IF EXISTS jobs_new');
+    }
+
+    /** Full job-row shape insertJobs() consumes (mirrors parseFeed's yield). */
+    private function jobRow(string $ref, string $title): array
+    {
+        return [
+            'location' => 'Leeds', 'title' => $title, 'city' => 'Leeds', 'state' => 'West Yorkshire',
+            'zip' => null, 'country' => 'UK', 'job_type' => null, 'posted_at' => null,
+            'job_reference' => $ref, 'company' => 'Test Co', 'category' => 'IT',
+            'url' => 'https://clickability-test.example/' . $ref, 'body' => 'body', 'cpc' => 0.5,
+            'geometry' => $this->geom, 'clickability' => 1, 'bodyhash' => md5($ref),
+            'seenat' => now()->format('Y-m-d H:i:s'), 'visible' => 1, 'canonical_title' => null,
+        ];
+    }
 }

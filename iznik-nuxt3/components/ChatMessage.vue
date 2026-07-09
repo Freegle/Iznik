@@ -83,11 +83,15 @@
     </div>
     <b-badge
       v-if="chatmessage?.heldbyrippling"
-      variant="warning"
+      :variant="chatmessage?.userid === myid ? 'info' : 'warning'"
       class="mt-1"
       data-testid="rippling-held-badge"
     >
-      Held: rippling out
+      <template v-if="chatmessage?.userid === myid">
+        Waiting to send — we'll deliver this to the owner when the item reaches
+        your area.
+      </template>
+      <template v-else> Held: rippling out </template>
     </b-badge>
     <chat-message-warning v-if="phoneNumber" />
     <chat-message-date-read :id="id" :chatid="chatid" :last="last" :pov="pov" />

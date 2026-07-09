@@ -3,8 +3,10 @@
 #
 # Feeds the new organisation replies (gathered by run-loop-gmail.sh) plus the bulk
 # offer catalogue to the FSM brain (headless `claude`, subscription auth). The
-# brain replies to each org by email through `bulkoffer:reply-outreach`. This is
-# the mailbox-transport twin of driver.sh (which acts over Freegle chats).
+# brain QUEUES a reply to each org through `bulkoffer:propose-reply`, which writes
+# a Helper proposal for the member to review/approve in their Bulk Offer management
+# page; `bulkoffer:send-approved-outreach` then emails whatever they approved. This
+# is the mailbox-transport twin of driver.sh (which acts over Freegle chats).
 #
 # Requires MSGID + ARTISAN in the environment (run-loop-gmail.sh exports them).
 

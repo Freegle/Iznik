@@ -404,14 +404,14 @@ class WhatJobsServiceTest extends TestCase
         $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
         $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        // MINIMUM_CPC = 0.10; use 0.09 to go under
+        // One penny under the floor, whatever the floor currently is.
         $xml  = $this->makeFeedXml([[
             'job_reference' => 'LOWCPC1',
             'title'         => 'Driver',
             'city'          => 'London',
             'state'         => 'England',
             'country'       => 'UK',
-            'cpc'           => '0.09',
+            'cpc'           => number_format(WhatJobsService::MINIMUM_CPC - 0.01, 2),
             'posted_at'     => date('Y-m-d'),
         ]]);
         $path  = $this->makeFeedFile($xml);
@@ -436,7 +436,7 @@ class WhatJobsServiceTest extends TestCase
             'city'          => 'London',
             'state'         => 'England',
             'country'       => 'UK',
-            'cpc'           => '0.10',          // exactly at threshold
+            'cpc'           => number_format(WhatJobsService::MINIMUM_CPC, 2),   // exactly at threshold
             'posted_at'     => date('Y-m-d'),
         ]]);
         $path  = $this->makeFeedFile($xml);

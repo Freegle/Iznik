@@ -47,8 +47,10 @@ type ChatMessage struct {
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
 	// HeldByRippling is true when this message is held by the rippling reply-hold engine
-	// (a non-released row exists in rippling_held_replies). Only populated for moderators;
-	// stripped from responses to normal users along with other review fields.
+	// (a non-released row exists in rippling_held_replies). Populated for moderators (any
+	// message) and for a normal caller on their OWN held reply, so the sender can show a
+	// "waiting to send" indicator. It is NOT set on the poster's view (the delivery gate
+	// removes held replies from their fetch entirely).
 	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
 	Addressid      *uint64 `json:"addressid" gorm:"-"`
 	Modnote        bool    `json:"modnote" gorm:"-"`
@@ -215,10 +217,14 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	messages := []ChatMessageQuery{}
 	db.Raw(query, args...).Scan(&messages)
 
-	// For moderators, flag messages that are held by the rippling reply-hold engine.
-	// Non-released rows in rippling_held_replies mean the message is delivery-blocked
-	// (not a manual mod hold — that is chat_messages_held). Batch lookup to avoid N+1.
-	if modAccess && len(messages) > 0 {
+	// Flag messages held by the rippling reply-hold engine (a non-released rippling_held_replies
+	// row means the message is delivery-blocked — not a manual mod hold, which is chat_messages_held).
+	// Mods see it on any message (review context). A normal caller sees it only on their OWN held
+	// reply: the poster never receives a held reply (the delivery gate above strips it from the
+	// query), so the sender's own copy is the only held message a non-mod fetch can contain. The
+	// sender uses this to show a "waiting to send — we'll deliver it when the item reaches your
+	// area" indicator on their out-of-reach reply. Batch lookup to avoid N+1.
+	if len(messages) > 0 {
 		msgIDs := make([]string, 0, len(messages))
 		idxByID := make(map[uint64]int, len(messages))
 		for ix, m := range messages {
@@ -233,7 +239,9 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 			strings.Join(msgIDs, ",") + ") AND status <> 'released'").Scan(&held)
 		for _, h := range held {
 			if ix, ok := idxByID[h.Chatmsgid]; ok {
-				messages[ix].HeldByRippling = true
+				if modAccess || messages[ix].Userid == userID {
+					messages[ix].HeldByRippling = true
+				}
 			}
 		}
 	}
@@ -546,6 +554,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// User2Mod room is a REPORT, not a reply), so fetch it once here.
 	roomType := ""
 	reach := replyReachEvidence{}
+	holdReply := false
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
 		db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", id).Scan(&roomType)
 		if roomType == utils.CHAT_TYPE_USER2USER {
@@ -570,8 +579,13 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					reach.checked = true
 					reach.reachRows = rc.ReachRows
 					reach.inReach = rc.InReach
+					// Out of reach: do NOT reject. HOLD the reply like an email/TN reply — create
+					// the chat message below, then record a rippling_held_replies row so the poster
+					// isn't notified until the post ripples to the replier. The existing
+					// ripple:release-replies cron then delivers it (or 'taken-gone' if the post goes
+					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
 					if rc.ReachRows > 0 && rc.InReach == 0 {
-						return fiber.NewError(fiber.StatusForbidden, "not_in_reach")
+						holdReply = true
 					}
 				}
 			}
@@ -597,6 +611,22 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	if newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
+
+	// Rippling-out reply HOLD: the replier is outside the post's current reach, so the reply was
+	// created but must not reach the poster yet. Record a rippling_held_replies row (source='web')
+	// — the delivery gate withholds it from the poster until ripple:release-replies releases it
+	// when the post ripples to the replier. Same table and lifecycle as email/TN holds; only the
+	// source differs. Best-effort: an instrumentation failure must not fail the reply, and the
+	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
+	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
+	if holdReply {
+		db.Exec("INSERT INTO rippling_held_replies "+
+			"(chatid, chatmsgid, msgid, replieruserid, source, lat, lng, status, created_at) "+
+			"VALUES (?, ?, ?, ?, 'web', ?, ?, 'held', NOW())",
+			id, newid, *payload.Refmsgid, myid, reach.lat, reach.lng)
+		db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'held', 1) " +
+			"ON DUPLICATE KEY UPDATE count = count + 1")
 	}
 
 	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the

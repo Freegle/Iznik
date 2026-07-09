@@ -2,10 +2,20 @@
   <div class="helper-proposal" :data-testid="'proposal-' + proposal.id">
     <div class="helper-proposal__head">
       <b-badge :variant="typeVariant" class="me-2">{{ typeLabel }}</b-badge>
-      <span class="helper-proposal__summary">{{ proposal.summary || typeLabel }}</span>
+      <span class="helper-proposal__summary">{{
+        proposal.summary || typeLabel
+      }}</span>
     </div>
 
-    <p v-if="proposal.rationale" class="helper-proposal__rationale small text-muted">
+    <p v-if="isEmail" class="helper-proposal__channel small text-muted">
+      <v-icon icon="envelope" class="me-1" />Email to
+      {{ emailTo || 'the organisation' }}
+    </p>
+
+    <p
+      v-if="proposal.rationale"
+      class="helper-proposal__rationale small text-muted"
+    >
       <v-icon icon="lightbulb" class="me-1" />{{ proposal.rationale }}
     </p>
 
@@ -58,6 +68,23 @@ const text = ref(props.proposal.proposed_text || '')
 
 const hasText = computed(() => props.proposal.proposed_text != null)
 
+// payload may arrive as a JSON string or an already-parsed object.
+const payloadObj = computed(() => {
+  const p = props.proposal.payload
+  if (!p) return {}
+  if (typeof p === 'string') {
+    try {
+      return JSON.parse(p)
+    } catch {
+      return {}
+    }
+  }
+  return p
+})
+// An email-channel proposal is an outbound email to an outreach org (not a chat).
+const isEmail = computed(() => payloadObj.value.channel === 'email')
+const emailTo = computed(() => payloadObj.value.orgname || null)
+
 const typeLabel = computed(() => {
   switch (props.proposal.type) {
     case 'allocation':
@@ -71,7 +98,7 @@ const typeLabel = computed(() => {
     case 'withdrawal_notice':
       return 'Withdrawn'
     case 'message':
-      return 'Message to send'
+      return isEmail.value ? 'Email reply' : 'Message to send'
     default:
       return 'Message'
   }
@@ -120,7 +147,16 @@ async function dismiss() {
   }
 }
 
-defineExpose({ text, hasText, typeLabel, send, dismiss, busy })
+defineExpose({
+  text,
+  hasText,
+  typeLabel,
+  isEmail,
+  emailTo,
+  send,
+  dismiss,
+  busy,
+})
 </script>
 
 <style scoped lang="scss">

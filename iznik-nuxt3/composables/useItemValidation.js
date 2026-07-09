@@ -39,6 +39,29 @@ const UNPOSTABLE_ITEM_PATTERNS = [
   /^browse$/,
   /^eney fink$/,
   /^eney think$/,
+  // Additional content-free catch-alls found slipping through the anchored list
+  // above on live data (30 days of production WANTED posts). None is ever a real
+  // item, so specific single-word posts ("bike", "sofa", "fan", "tv") are never
+  // affected; together these add ~13/30d of low-quality posts with zero
+  // false positives in the sampled matches.
+  /^various( items| stuff| things)?$/,
+  /^free (stuff|items|things)$/,
+  /^freebies$/,
+  /^something$/,
+  /^owt$/,
+  /^whatever$/,
+  /^unwanted( items| stuff)?$/,
+  /^misc$/,
+  /^miscellaneous$/,
+  /^sundries$/,
+  /^no idea$/,
+  /^not sure$/,
+  /^nothing specific$/,
+  // The "anything / everything / something" family with only a content-free
+  // qualifier ("anything nice", "everything really") still says nothing about
+  // the item. A *specific* trailer ("anything for a toddler", "something for the
+  // garden") is deliberately NOT matched, so real posts still get through.
+  /^(anything|everything|something) (else|nice|really|useful|good|free|at all)$/,
 ]
 
 // Shared core: true when the value has no descriptive letters after trimming —

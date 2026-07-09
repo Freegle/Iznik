@@ -164,15 +164,15 @@ shows it to the right people, closest first. You no longer need to think about "
 group should I post to?" or post to a second group for more reach - the system handles
 that for you.
 
-### "You can reply when it reaches you"
+### "You can always reply - we'll pass it on"
 
-On the default Nearby view, every post you see has already reached you, so you can
-always reply. Only if you move away from that default - for example by switching to
-"All my communities", or widening what you are looking at - might you occasionally come
-across a post that has not rippled out to your area yet. If so, you will see a friendly
-message instead of a reply box. As soon as the post reaches your area, the reply option
-appears and you can get in touch as normal. Nothing is lost - it is just "not yet" rather
-than "no".
+On the default Nearby view, every post you see has already reached you, so your reply
+goes straight to the owner. Only if you move away from that default - for example by
+switching to "All my communities", or widening what you are looking at - might you come
+across a post that has not rippled out to your area yet. You can still reply: we simply
+**hold your message and pass it on to the owner the moment the post reaches you**. You
+do not need to do anything or come back - it is delivered automatically, and your reply
+shows as "waiting to send" until then. Nothing is lost.
 
 ---
 

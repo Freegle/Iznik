@@ -11,6 +11,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\Notification;
 use App\Models\User;
+use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -300,6 +301,9 @@ class ChaseUpService
                         ->where('refmsgid', $msg->msgid);
                 })
                 ->where('date', '>=', $end)
+                // A rippling-held reply hasn't reached the poster yet, so it isn't "activity" that
+                // should suppress the still-available chase-up. Once released it counts as normal.
+                ->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'))
                 ->max('date');
 
             if ($recentChat) {

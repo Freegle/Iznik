@@ -80,12 +80,15 @@ your change is seen everywhere the post appears.
 
 ### 4. Held replies in Chat Review
 
-Occasionally a reply is held because the post has not yet rippled out to where that
-member is. Chat Review shows you it is held because of rippling (not because you chose
-to hold it). You do not need to do anything - the reply is released automatically once
-the post reaches that member's area, or once the post has finished spreading as far as it
-will go, so no reply is ever held indefinitely. Members are never shown this reason; only
-moderators see it.
+Sometimes a reply is held because the post has not yet rippled out to where that member
+is. This now applies to replies made on the **website and app** as well as by email or
+TrashNothing - wherever a member replies from outside the post's current reach, the reply
+is accepted and held rather than turned away. Chat Review shows you it is held because of
+rippling (not because you chose to hold it). You do not need to do anything - the reply is
+released automatically once the post reaches that member's area, or once the post has
+finished spreading as far as it will go, so no reply is ever held indefinitely. The member
+who sent it sees their own message marked as "waiting to send"; the owner is not shown it
+until it is released.
 
 ### 5. Members' Nearby feed is ordered by relevance, with their own distance preference
 
@@ -310,17 +313,20 @@ single origin community, those posts will ripple like any other.
 
 ## What to expect from members
 
-The main thing members may ask you about is **"why can't I reply to this post?"** The
-answer is reassuring:
+Members can now reply to any post they can see, even one that has not yet rippled out to
+their area. If they do, we **hold** the reply and deliver it automatically once the post
+reaches them - so instead of "why can't I reply?", a member might ask why their reply
+hasn't been answered yet, or notice their message marked **"waiting to send"**. The answer
+is reassuring:
 
-> *The post has not rippled out to your area yet. It is being shown to people closest
-> to it first. As soon as it reaches you, you will be able to reply - you do not need
+> *Your reply has been saved. The post just hasn't quite reached your area yet, so we're
+> holding your message and will pass it to the owner the moment it does - you do not need
 > to do anything.*
 
 Worth knowing: on their default Nearby view, a member only ever sees posts that have
-already reached them, so this question usually only comes up if they have switched to
-"All my communities" or otherwise moved away from the default view. It is fine to say so -
-it should reassure them that what they normally see is always reply-able.
+already reached them, so a held reply usually only happens if they have switched to "All
+my communities" or otherwise widened their view. What they normally see is delivered
+straight away.
 
 Members may also ask about the order posts appear in, or about the new distance slider in
 the filters - see "Members' Nearby feed is ordered by relevance" above for the mechanism.

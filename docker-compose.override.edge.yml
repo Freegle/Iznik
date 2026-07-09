@@ -40,6 +40,16 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"
+    environment:
+      # Cap renderd render threads. confident_curran ran THREADS=100 as a
+      # near-dedicated tile host; on THIS shared 8-core box (batch/spatial/wiki
+      # co-resident) 100 render threads saturate CPU on every replication cycle
+      # (renderd "Failed to send render cmd", growing expiry backlog, load 100+).
+      # Serving already-rendered tiles is unaffected (they come from the
+      # osm-tiles volume); this only bounds the background re-render concurrency.
+      # cgroup: tile-server is in the default slice (weight 100) — it yields to
+      # interactive image serving (800) and outranks batch (25).
+      - THREADS=4
 
   wiki-mysql:
     # Adopt the already-initialised DB datadir in place (zero copy).
@@ -57,30 +67,73 @@ services:
       - /var/wiki/html:/var/www/html
       - /var/wiki/sharewiki:/var/www/share
 
-  # --- Not-yet-migrated images tier: kept in the `edge` profile but held DOWN
-  # on this host until its own stage (plan §3). replicas:0 means a bare
-  # `docker compose up -d` or a reboot auto-start never brings the images tier
-  # up prematurely.
+  # --- Images tier (plan §3) — brought UP 2026-07-08 for validation + cache
+  # warming on the new ports (:8180/:8188). NOT yet fronting live traffic: the
+  # HAProxy cutover on ha-internal (repoint tusd_backend, add delivery_backend)
+  # is the separate human-gated step. Until then these serve only Host-header
+  # test curls and the low-priority cache rsync; no user reaches them.
+  #
+  # cgroup_parent: interactive.slice — latency-sensitive user serving, same
+  # priority tier as embedding-sidecar (CPUWeight=800). Requires the slice
+  # units from PR #1006 installed (they are). The digest job (07:00-12:00,
+  # batch.slice weight 25) *causes* the edge image peak, so this weighting is
+  # what lets image serving win under that exact contention.
   frontend-nginx:
     deploy:
-      replicas: 0
+      replicas: 1
+    cgroup_parent: interactive.slice
     ports:
       - "8180:80"     # HAProxy reaches this with send-proxy (PROXY protocol)
       - "8188:8080"   # plain — the :8080 upload-URL form (apps/Freebie Alerts)
 
   delivery:
     deploy:
-      replicas: 0
+      replicas: 1
+    cgroup_parent: interactive.slice
 
   tusd:
     deploy:
-      replicas: 0
+      replicas: 1
+    cgroup_parent: interactive.slice
+    # Pin to app1's EXACT prod version. Base compose uses tusproject/tusd:latest
+    # (v2.10.0), which creates a per-request <id>.lock file even on GET
+    # downloads (file-locking added after v2.4.0). On the shared NFS that .lock
+    # write is denied → intermittent 500s ("open /images/<id>.lock: permission
+    # denied") serving existing uploads. app1 runs v2.4.0, which does not lock
+    # on GET and serves the same files reliably. Match it. (Found during the
+    # 2026-07-08 cutover; upgrading tusd is separate, tested work.)
+    image: tusproject/tusd:v2.4.0
+    # Prod flags, replicating app1 EXACTLY: -upload-dir=/images (NOT
+    # /srv/tusd-data), -behind-proxy, -base-path /, -disable-cors (all tus CORS
+    # from HAProxy). NO -hooks-http — app1 prod runs without hooks (plan §3/§5).
+    #
+    # CRITICAL: the NFS is mounted at /images INSIDE the container (matching
+    # app1's -upload-dir=images → /images), even though the HOST mount is
+    # /srv/tusd-data. tusd's filestore bakes the ABSOLUTE storage path into
+    # every <id>.info ("Storage":{"Path":"/images/<id>"}). app1 wrote all
+    # existing .info files with /images/<id>; tusd v2.10.0 honours that recorded
+    # path, so a /srv/tusd-data mount made it 404 every existing upload
+    # (ERR_UPLOAD_NOT_FOUND) — and new edge uploads would have written
+    # /srv/tusd-data/<id>, which app1-as-backup could not serve. Mounting at
+    # /images keeps the recorded paths symmetric across app1 and the edge on the
+    # shared store. (Found + rolled back during the 2026-07-08 cutover.)
+    command: -upload-dir=/images -behind-proxy -base-path / -disable-cors
+    # Base healthcheck probes /tus/ (the dev base-path); prod base-path is /,
+    # where tusd returns 405 for GET and 404 at /tus/. Probe / and accept 405.
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/ 2>&1 | grep -E '(200|405)' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     volumes:
-      # /srv/tusd-data on the host is the shared-NFS mount
-      # (nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE), mounted
-      # read-only during prep and flipped to rw only at the human-gated upload
-      # cutover (plan §7/§11). Inert while replicas:0.
-      - /srv/tusd-data:/srv/tusd-data
+      # Host /srv/tusd-data (the shared-NFS mount
+      # nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE, rw) is bound
+      # to /images INSIDE the container so tusd's world matches app1's exactly —
+      # see the -upload-dir note above for why the path MUST be /images. rw:
+      # uploads migrate here; a second rw NFS client is the intended shared-store
+      # design and app1/edge use unique tusd IDs so they never collide.
+      - /srv/tusd-data:/images
 
 volumes:
   # Adopt the host's existing unprefixed volumes (created by confident_curran)

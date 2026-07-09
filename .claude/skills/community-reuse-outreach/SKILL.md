@@ -58,6 +58,19 @@ A bounce usually means the *listed* address is stale, not that the org is unreac
 6. **Facebook as the fallback channel.** When no email survives but the org has an active, ownership-verified Facebook page (linked from its own site, or a handle its own site confirms), message the page / post the offer - a manual, human-in-the-loop step. Login walls block dating posts, so verify the page is *theirs* via a link on their own site and treat activity as "unknown" rather than guessing a URL.
 7. **Re-send is a fresh send:** same one-cluster discipline, same human sign-off, and add BOTH the bounced and the new address to the ledger (suppression + alternatives) so the next run starts clean.
 
+## Concierge FSM: handling replies once the offer is live (proven on WAGGGS, 2026)
+
+Outreach doesn't end at send. Replies arrive over days, items get taken at the donor's end you can't see, and the same item gets asked for by several orgs. Run the reply-handling as a small state machine, one pass per "check":
+
+1. **Mailbox scan + mark-read.** Classify each new inbound as reply / auto-ack / bounce; mark processed threads read so the mailbox is a true work-queue (only genuinely-new mail resurfaces). Keep a concierge-state file (one row per replier: org, contact, wants, collect, state, score) as the source of truth for *actioned vs held* — independent of read status.
+2. **Availability sync — trust the donor's live data, not your own tracking.** Read the offer's current per-item availability straight from the source (for a Freegle bulk offer: the `available` flag + `quantity` per `messages_bulk_items`, and `availablenow`). Your own notes drift — on the WAGGGS run we'd recorded an item gone that was actually still available, and another available that had gone. The live row is ground truth; reset your item table from it each pass. The collection address/instructions live there too (`messages_bulk_access.accessinstructions`).
+3. **Reconcile — honour prior commitments FIRST, never first-come.** This is the load-bearing rule. **Do not reallocate anything you've already offered someone in a sent message.** Before matching available items to held repliers, RE-READ the actual thread history you sent each one (not your summary of it) — "offered the cabinets" to two people is a latent double-promise. Compare against earlier messages every time. Only *after* honouring commitments do you allocate the genuinely-unpromised remainder, by need/priority + fit (a refugee/homelessness/priority org over an individual; fit of item to mission). First-come is NOT the rule — not reneging is.
+4. **Waitlist, don't dead-end** (see gotcha below) anyone left unmatched.
+5. **Propose, don't auto-send.** The stage emits a plan; a human signs off the exact reply text before anything goes (approve mode). Replies thread into each org's existing conversation.
+6. **Address discipline.** Never put the exact collection address in an OFFER — give only the area and say the address follows once they confirm. The full address goes out only in the collection-confirmation message, after they've committed. (Otherwise you broadcast the donor's address to every org you offer an item to.)
+
+When availability changes (the donor updates it), just re-run the sync+reconcile pass — it re-reads live truth and re-proposes without disturbing honoured commitments.
+
 ## The output is a candidate list, NOT a send list
 
 A human reviews and marks send/skip PER ROW. The whole exercise is stakeable on one bad email, so the human gate is deliberate and sticky (no bulk-send > 5; rate-limit ~20/hour). Tier 1 first, then Tier 2 one-cluster emails, each naming specific items - no mail-merge. Sign as the human facilitator, never "AI".

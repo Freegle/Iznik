@@ -114,6 +114,56 @@ const FULL = {
       available: true,
     },
   },
+  bullseye: [
+    {
+      min_lo: 0,
+      min_hi: 10,
+      n_replies: 120,
+      n_takers: 36,
+      conv_pct: 30.0,
+      ci_half_pct: 8.2,
+    },
+    {
+      min_lo: 10,
+      min_hi: 15,
+      n_replies: 140,
+      n_takers: 39,
+      conv_pct: 27.9,
+      ci_half_pct: 7.4,
+    },
+    {
+      min_lo: 15,
+      min_hi: 20,
+      n_replies: 90,
+      n_takers: 22,
+      conv_pct: 24.4,
+      ci_half_pct: 8.9,
+    },
+    {
+      min_lo: 20,
+      min_hi: 25,
+      n_replies: 60,
+      n_takers: 13,
+      conv_pct: 21.7,
+      ci_half_pct: 10.4,
+    },
+    {
+      min_lo: 25,
+      min_hi: 30,
+      n_replies: 40,
+      n_takers: 7,
+      conv_pct: 17.5,
+      ci_half_pct: 11.8,
+    },
+    {
+      min_lo: 30,
+      min_hi: 45,
+      n_replies: 0,
+      n_takers: 0,
+      conv_pct: 0,
+      ci_half_pct: 0,
+    },
+  ],
 }
 
 describe('ModSysAdminRipplingAnalytics', () => {
@@ -217,6 +267,31 @@ describe('ModSysAdminRipplingAnalytics', () => {
     expect(html).toContain('Anomaly Town')
     expect(html).toContain('secondary_reject_rate')
     expect(mockFetchMetrics).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('draws the reliability bullseye: a ring per drive-time band, empty rings greyed', async () => {
+    mockFetchAnalytics.mockResolvedValue(FULL)
+    const wrapper = mountComponent()
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('How reliably does a reply convert')
+
+    // One <circle> per band (7) + the 30-min reach-edge ring + the centre "post" dot.
+    const circles = wrapper.findAll('svg.bullseye circle')
+    expect(circles.length).toBe(FULL.bullseye.length + 2)
+
+    // Populated bands are a green ramp (hsl); the empty 30-45 band is grey, not pale green,
+    // so "no sampled replies" never reads as "0% conversion".
+    const greenRings = circles.filter((c) =>
+      c.attributes('fill')?.startsWith('hsl')
+    )
+    expect(greenRings.length).toBe(5) // five populated bands; the empty 30-45 band is grey
+    expect(html).toContain('#eef0ec') // empty ring grey
+
+    // The exact-values table carries the real numbers beside the shape.
+    expect(html).toContain('30.0%') // 0-10 min conversion
+    expect(html).toContain('0–10m')
     wrapper.unmount()
   })
 

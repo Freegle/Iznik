@@ -37,7 +37,11 @@ type Job struct {
 
 const JOBS_LIMIT = 50
 const JOBS_DISTANCE = 64
-const JOBS_MINIMUM_CPC = 0.10
+// Lowered 0.10 -> 0.08 on 2026-07-09 after WhatJobs compressed their bids to
+// ~£0.084 (below the old £0.10 floor), which had collapsed the billable feed.
+// Keep in lockstep with iznik-batch WhatJobsService::MINIMUM_CPC (ingest) and
+// Job::MINIMUM_CPC (eligibility). See the note in WhatJobsService.
+const JOBS_MINIMUM_CPC = 0.08
 
 func GetJobs(c *fiber.Ctx) error {
 	lat, _ := strconv.ParseFloat(c.Query("lat"), 64)
@@ -153,8 +157,23 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 		placeholders, categoryClause, areaClause, JOBS_LIMIT,
 	), args...).Scan(&rows)
 
+	// Collapse near-identical cards that survive the spatial KNN dedup. KNN keys
+	// primarily on bodyhash (right for WhatJobs' cross-town spam, whose copies
+	// share an identical body), but advertisers also repost the *same* role in
+	// the *same* town many times with slightly varied body text — e.g. Deliveroo
+	// posts "Deliveroo Rider / preston" a dozen times, each a different bodyhash —
+	// so they arrive here as distinct ids and render as duplicate cards. To the
+	// user, same title + same location is one job. Rows arrive ordered by expected
+	// value (cpc*clickability*freshness), so keeping the first occurrence keeps the
+	// best-ranked copy. Different locations stay distinct (genuine local variety).
 	ret := make([]Job, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
 	for _, r := range rows {
+		key := strings.ToLower(strings.TrimSpace(r.Title)) + "\x00" + strings.ToLower(strings.TrimSpace(r.Location))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
 		job := Job{
 			ID:           r.ID,
 			Dist:         r.DistKm,

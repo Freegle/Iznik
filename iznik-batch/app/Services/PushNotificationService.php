@@ -313,6 +313,7 @@ class PushNotificationService
             ->whereRaw('(cr.lastmsgseen IS NULL OR cr.lastmsgseen < (
                 SELECT MAX(cm.id) FROM chat_messages cm
                 WHERE cm.chatid = cr.chatid AND cm.userid <> ?
+                  AND ' . RippleReplyService::deliveryGateSql('cm.id') . '
             ))', [$userId])
             ->count();
 
