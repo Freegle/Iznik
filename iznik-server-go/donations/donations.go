@@ -341,7 +341,7 @@ type BulkDonation struct {
 }
 
 // BulkUploadDonations records multiple donations from an external source like PayPal Giving Fund.
-// Matches the logic in iznik-server/scripts/cli/paypal_giving_fund.php.
+// Matches the logic in the legacy V1 PHP paypal_giving_fund script.
 // @Summary Bulk upload donations
 // @Description Records multiple donations from PayPal Giving Fund or similar sources. Admin only.
 // @Tags donations

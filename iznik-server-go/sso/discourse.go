@@ -28,7 +28,7 @@ type ssoSession struct {
 }
 
 // DiscourseSSO handles the Discourse SSO login flow.
-// This is the Go equivalent of iznik-server/http/discourse_sso.php.
+// This is the Go equivalent of the legacy V1 PHP Discourse SSO handler.
 //
 // Discourse sends GET with `sso` and `sig` query params. We validate the signature,
 // look up the user from the Iznik-Discourse-SSO cookie, verify they are a Freegle moderator,

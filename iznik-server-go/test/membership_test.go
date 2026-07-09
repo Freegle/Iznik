@@ -849,7 +849,7 @@ func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 }
 
 /*
-V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808).
+V1 parity (User::updateSystemRole, legacy V1 PHP implementation).
 A per-group Member→Moderator/Owner promotion must propagate to users.systemrole
 so the frontend crown gate (ModLogUser.vue's `systemrole !== 'User'`) renders
 correctly. Without this, a Trainee mod showed the crown on the members page

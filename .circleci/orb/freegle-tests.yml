@@ -2,7 +2,7 @@ version: 2.1
 
 description: |
   Shared commands and jobs for Freegle testing and app builds.
-  Used by FreegleDocker (monorepo with inline subtrees for iznik-server, iznik-server-go, iznik-nuxt3).
+  Used by FreegleDocker (monorepo with inline subtrees for iznik-server-go, iznik-nuxt3, iznik-batch).
 
 executors:
   machine-executor:
@@ -2232,7 +2232,7 @@ jobs:
           name: Verify monorepo subtree directories
           command: |
             echo "=== Verifying subtree directories ==="
-            ls -d iznik-nuxt3/ iznik-server-go/ iznik-server/ iznik-batch/ || { echo "ERROR: subtree directories missing"; exit 1; }
+            ls -d iznik-nuxt3/ iznik-server-go/ iznik-batch/ || { echo "ERROR: subtree directories missing"; exit 1; }
 
             # ModTools is now built from iznik-nuxt3/modtools (same repo, different build)
             echo "=== Verifying modtools directory ==="

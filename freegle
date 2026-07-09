@@ -212,7 +212,7 @@ cmd_worktree_create() {
 
     # Fix CRLF line endings in subtrees (WSL/Windows git may convert LF→CRLF,
     # breaking shell scripts like generate-swagger.sh inside containers)
-    for dir in iznik-nuxt3 iznik-server-go iznik-server; do
+    for dir in iznik-nuxt3 iznik-server-go; do
         git -C "$worktree_dir/$dir" config core.autocrlf false 2>/dev/null || true
     done
 

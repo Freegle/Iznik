@@ -1544,7 +1544,7 @@ func PatchMemberships(c *fiber.Ctx) error {
 			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
 
-		// V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808):
+		// V1 parity (User::updateSystemRole, legacy V1 PHP implementation):
 		// changes to memberships.role must propagate to users.systemrole so the
 		// global Moderator flag stays in sync. The frontend reads users.systemrole
 		// to render the crown next to a user (ModLogUser.vue, byline avatars,

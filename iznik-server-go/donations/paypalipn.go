@@ -13,7 +13,7 @@ import (
 )
 
 // PayPalIPN handles PayPal Instant Payment Notification callbacks.
-// This is the Go equivalent of iznik-server/http/donateipn.php.
+// This is the Go equivalent of the legacy V1 PHP donate-IPN handler.
 //
 // PayPal sends a POST with form-encoded data when a donation is received.
 // We record the donation, handle gift aid notifications, and queue thank-you emails.

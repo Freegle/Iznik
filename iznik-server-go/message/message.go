@@ -320,7 +320,7 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 			continue
 		}
 
-		// Mirror V1 Message::getPublic() (iznik-server Message.php:1106-1110):
+		// Mirror the legacy V1 PHP Message::getPublic() behaviour:
 		//   $maxagetoshow = $g->getSetting('maxagetoshow', 90);
 		//   $reposts      = $g->getSetting('reposts', ['offer'=>3,'wanted'=>14,'max'=>10,...]);
 		//   $repost       = $type == Offer ? $reposts['offer'] : $reposts['wanted'];
