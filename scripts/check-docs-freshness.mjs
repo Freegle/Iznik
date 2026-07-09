@@ -34,6 +34,8 @@ import { join, relative } from 'node:path'
 
 const args = process.argv.slice(2)
 const warnOnly = args.includes('--warn')
+// --staged checks staged changes (for a pre-commit hook) instead of base...HEAD.
+const staged = args.includes('--staged')
 const baseIdx = args.indexOf('--base')
 const base =
   (baseIdx !== -1 && args[baseIdx + 1]) ||
@@ -47,14 +49,16 @@ function sh(cmd) {
   return execSync(cmd, { cwd: REPO, encoding: 'utf8' }).trim()
 }
 
-// --- changed files in this branch vs base -------------------------------------
+// --- changed files: staged (pre-commit hook) or this branch vs base -----------
 let changed = []
 try {
-  const out = sh(`git diff --name-only ${base}...HEAD`)
+  const out = staged
+    ? sh('git diff --cached --name-only')
+    : sh(`git diff --name-only ${base}...HEAD`)
   changed = out ? out.split('\n').filter(Boolean) : []
 } catch (e) {
-  console.error(`Could not diff against ${base}: ${e.message}`)
-  console.error('Pass --base <ref> or set DOCS_FRESHNESS_BASE.')
+  console.error(`Could not compute changed files: ${e.message}`)
+  console.error('Pass --base <ref>, set DOCS_FRESHNESS_BASE, or use --staged.')
   process.exit(warnOnly ? 0 : 2)
 }
 const changedSet = new Set(changed)
@@ -138,7 +142,8 @@ for (const page of pages) {
 
 // --- report -------------------------------------------------------------------
 if (!violations.length) {
-  console.log(`docs freshness: OK (checked ${pages.length} pages against ${base})`)
+  const scope = staged ? 'staged changes' : base
+  console.log(`docs freshness: OK (checked ${pages.length} pages against ${scope})`)
   process.exit(0)
 }
 

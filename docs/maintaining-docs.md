@@ -101,7 +101,19 @@ covers:
 ```bash
 node scripts/check-docs-freshness.mjs --base origin/master
 node scripts/check-docs-freshness.mjs --warn      # advisory: print, exit 0
+node scripts/check-docs-freshness.mjs --staged     # for a pre-commit hook
 ```
+
+To get the nudge locally, install the optional advisory pre-commit hook:
+
+```bash
+ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
+```
+
+It runs the gate on your **staged** changes (never blocking the commit) and reminds you to
+regenerate screenshots if you staged UI changes - it does not run Playwright, which is far
+too slow for a commit hook. CI stays the hard gate. If you already have a pre-commit hook
+(the ESLint one), append those two commands to it instead, or use a hook manager to run both.
 
 You satisfy the gate by updating the page. If the change genuinely needs no wording update,
 bump the page's `last_reviewed:` date - that still counts as touching the page, so the
