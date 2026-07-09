@@ -42,16 +42,16 @@ Playwright expect; needs no runtime PHP.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 0 | Capture `test-fixtures.sql` (base env + all known prefixes) from apiv1 | ⬜ | non-destructive; do first |
-| 1 | Rewrite `scripts/setup-test-database.sh` to be apiv1-free (percona+batch+fixture) | ⬜ | |
-| 2 | Rewire status container test endpoints off apiv1 | ⬜ | go/playwright/recreate-users/env; delete php.post.ts; services.ts/layouts/types/all.get |
-| 3 | Verify Go suite green off the fixture (apiv1 stopped) | ⬜ | gate before deletion |
-| 4 | Remove apiv1/apiv1-phpunit from compose + ports + yesterday; deps + IZNIK_API_V1 + mounts; tusd hook | ⬜ | |
-| 5 | Update CI orb (remove apiv1 build/health/phpunit; use percona+fixture); publish orb | ⬜ | |
+| 0 | Capture `test-fixtures.sql` (base env + all known prefixes) from apiv1 | ✅ | + regenerate-test-fixtures.sh; round-trips exactly |
+| 1 | Rewrite `scripts/setup-test-database.sh` to be apiv1-free (percona+batch+fixture) | ✅ | committed a1aabbeed |
+| 2 | Rewire status container test endpoints off apiv1 | ✅ | go/playwright/recreate-users/env; php.post.ts deleted; apiv1 svc removed |
+| 3 | Verify Go suite green off the fixture (apiv1 stopped) | ✅ | **3439 passed, 0 failed** via status API on percona path |
+| 4 | Remove apiv1/apiv1-phpunit from compose + ports + yesterday; deps + IZNIK_API_V1 + mounts; tusd hook | ✅ | committed dc0bdac97; `docker-compose config` clean |
+| 5 | Update CI orb (remove apiv1 build/health/phpunit; use percona+fixture); publish orb | 🔄 | IN PROGRESS. Also: repoint Laravel coverage upload apiv1→batch; delete retired run-php-tests |
 | 6 | Delete `iznik-server/` + `iznik-server-my.cnf.template` (verify) + .gitattributes/.gitignore entries | ⬜ | |
-| 7 | Docs sweep (README/ARCHITECTURE/CircleCI.md/Logging.md/etc + iznik-batch comments) | ⬜ | neutralize dangling refs |
-| 8 | Memory cleanup (MEMORY.md + V1/apiv1 memory files) | ⬜ | |
-| 9 | Full suite green in worktree (Go, vitest, Laravel, Playwright) | ⬜ | |
+| 7 | Docs sweep (README/ARCHITECTURE/CircleCI.md/Logging.md/etc + iznik-batch comments + yesterday/ subdir) | ⬜ | neutralize dangling refs. yesterday/ subsystem heavily coupled to apiv1 |
+| 8 | Memory cleanup (MEMORY.md + V1/apiv1 memory files) | ⬜ | feedback_v1_no_longer_in_use, finding_go_tests_fail_when_apiv1_down etc |
+| 9 | Full suite green in worktree (Go✅, vitest, Laravel, Playwright) | 🔄 | Go done; bring up stack sans apiv1 + run the rest |
 | 10 | Push branch, open PR, CI green | ⬜ | |
 
 ## Open risks to verify during execution
