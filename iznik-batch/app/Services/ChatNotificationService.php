@@ -333,7 +333,7 @@ class ChatNotificationService
 
         // User2User: Use standard roster-based logic.
         // Only notify the actual chat participants (user1/user2), not mods who may have
-        // added mod notes to the chat. See original iznik-server getMembersStatus().
+        // added mod notes to the chat. See the legacy V1 PHP getMembersStatus().
         $query = ChatRoster::where('chatid', $chatRoom->id)
             ->whereIn('userid', [$chatRoom->user1, $chatRoom->user2])
             ->notBlocked()
@@ -488,7 +488,7 @@ class ChatNotificationService
      * (same template, previous-message context and threading) with the subject
      * prefixed "WAITING FOR REPLY:".
      *
-     * Mirrors iznik-server ChatRoom::chaseupExpected() (ChatRoom.php:2456-2520),
+     * Mirrors the legacy V1 PHP ChatRoom::chaseupExpected() behaviour,
      * which constructs the ordinary user2user notification but prefixes the
      * subject. Used by ChatChaseupExpectedService / chats:chaseup-expected.
      */

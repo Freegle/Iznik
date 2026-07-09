@@ -16,7 +16,7 @@ use Tests\TestCase;
  * INNER JOIN messages_items drops the message and reports zero kg even though
  * the item was given away.
  *
- * @see https://github.com/Freegle/iznik-server include/message/Message.php (item-extraction on save)
+ * @see the legacy V1 PHP Message::save() (item-extraction on save)
  */
 class IncomingMailItemLinkTest extends TestCase
 {

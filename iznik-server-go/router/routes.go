@@ -39,6 +39,7 @@ import (
 	"github.com/freegle/iznik-server-go/communityevent"
 	"github.com/freegle/iznik-server-go/config"
 	"github.com/freegle/iznik-server-go/dashboard"
+	"github.com/freegle/iznik-server-go/deprecation"
 	"github.com/freegle/iznik-server-go/domain"
 	"github.com/freegle/iznik-server-go/donations"
 	"github.com/freegle/iznik-server-go/emailtracking"
@@ -49,7 +50,6 @@ import (
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
-	"github.com/freegle/iznik-server-go/logo"
 	"github.com/freegle/iznik-server-go/logs"
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
@@ -124,7 +124,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags message
 		// @Produce json
 		// @Success 200 {array} message.Activity
-		rg.Get("/activity", message.GetRecentActivity)
+		rg.Get("/activity", deprecation.Marker("GET /activity", "2026-08-01"), message.GetRecentActivity)
+
+		// Lists the endpoints currently wrapped in deprecation.Marker() + their
+		// sunset dates, for the nightly monitor:deprecated-endpoints report.
+		rg.Get("/deprecated", deprecation.GetDeprecated)
 
 		// User Addresses
 		// @Router /address [get]
@@ -187,7 +191,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
-		rg.Get("/modtools/alert/:id", alert.GetAlert)
+		rg.Get("/modtools/alert/:id", deprecation.Marker("GET /modtools/alert/:id", "2026-08-01"), alert.GetAlert)
 
 		// @Router /alert [put]
 		// @Summary Create a new alert
@@ -210,7 +214,7 @@ func SetupRoutes(app *fiber.App) {
 
 		// Admin
 		rg.Get("/modtools/admin", admin.ListAdmins)
-		rg.Get("/modtools/admin/:id", admin.GetAdmin)
+		rg.Get("/modtools/admin/:id", deprecation.Marker("GET /modtools/admin/:id", "2026-08-01"), admin.GetAdmin)
 		rg.Post("/modtools/admin", admin.PostAdmin)
 		rg.Patch("/modtools/admin", admin.PatchAdmin)
 		rg.Delete("/modtools/admin", admin.DeleteAdmin)
@@ -586,7 +590,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Accept json
 		// @Produce json
 		// @Security BearerAuth
-		adminConfig.Patch("", config.PatchAdminConfig)
+		adminConfig.Patch("", deprecation.Marker("PATCH /config/admin", "2026-08-01"), config.PatchAdminConfig)
 
 		// Groups
 		// @Router /group [get]
@@ -683,7 +687,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Noticeboard ID"
 		// @Security BearerAuth
 		// @Success 200 {object} fiber.Map
-		rg.Delete("/noticeboard/:id", noticeboard.DeleteNoticeboard)
+		rg.Delete("/noticeboard/:id", deprecation.Marker("DELETE /noticeboard/:id", "2026-08-01"), noticeboard.DeleteNoticeboard)
 
 		// Isochrones
 		//
@@ -702,10 +706,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Deprecated
 		// @Success 200 {array} isochrone.Isochrone
-		rg.Get("/isochrone", isochrone.ListIsochrones)
-		rg.Put("/isochrone", isochrone.CreateIsochrone)
-		rg.Patch("/isochrone", isochrone.EditIsochrone)
-		rg.Delete("/isochrone", isochrone.DeleteIsochrone)
+		rg.Get("/isochrone", deprecation.Marker("GET /isochrone", "2026-08-01"), isochrone.ListIsochrones)
+		rg.Put("/isochrone", deprecation.Marker("PUT /isochrone", "2026-08-01"), isochrone.CreateIsochrone)
+		rg.Patch("/isochrone", deprecation.Marker("PATCH /isochrone", "2026-08-01"), isochrone.EditIsochrone)
+		rg.Delete("/isochrone", deprecation.Marker("DELETE /isochrone", "2026-08-01"), isochrone.DeleteIsochrone)
 
 		// Isochrone Messages
 		// @Router /isochrone/message [get]
@@ -856,7 +860,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Router /messages [get]
 		// @Summary List messages with moderation queue support
 		// @Tags message
-		rg.Get("/messages", message.ListMessages)
+		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
 
 		// Message Count
@@ -961,7 +965,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} map[string]interface{}
 		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
-		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
+		rg.Delete("/message/:id", deprecation.Marker("DELETE /message/:id", "2026-08-01"), message.DeleteMessageEndpoint)
 
 		// Bulk-offer ("clearance") logged-out update page: an external item-owner
 		// toggles item available/taken and edits counts via an unguessable secret
@@ -1176,7 +1180,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags story
 		// @Accept json
 		// @Produce json
-		rg.Post("/story", story.PostStory)
+		rg.Post("/story", deprecation.Marker("POST /story", "2026-08-01"), story.PostStory)
 
 		// @Router /story/like [post]
 		// @Summary Like a story
@@ -1197,7 +1201,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags story
 		// @Param id path integer true "Story ID"
 		// @Produce json
-		rg.Delete("/story/:id", story.DeleteStory)
+		rg.Delete("/story/:id", deprecation.Marker("DELETE /story/:id", "2026-08-01"), story.DeleteStory)
 
 		// Session Actions
 		// @Router /session [post]
@@ -1254,9 +1258,9 @@ func SetupRoutes(app *fiber.App) {
 
 		// Teams
 		rg.Get("/team", team.GetTeam)
-		rg.Post("/team", team.PostTeam)
+		rg.Post("/team", deprecation.Marker("POST /team", "2026-08-01"), team.PostTeam)
 		rg.Patch("/team", team.PatchTeam)
-		rg.Delete("/team", team.DeleteTeam)
+		rg.Delete("/team", deprecation.Marker("DELETE /team", "2026-08-01"), team.DeleteTeam)
 
 		// Mod Configs
 		rg.Get("/modtools/modconfig", modconfig.GetModConfig)
@@ -1525,15 +1529,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/export", export.PostExport)
 		rg.Get("/export", export.GetExport)
 
-		// Logo
-		// @Router /logo [get]
-		// @Summary Get logo
-		// @Description Returns logo information
-		// @Tags misc
-		// @Produce json
-		// @Success 200 {object} logo.LogoResponse
-		rg.Get("/logo", logo.Get)
-
 		// Microvolunteering
 		// @Router /microvolunteering [get]
 		// @Summary Get microvolunteering challenge
@@ -1564,7 +1559,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Security BearerAuth
 		// @Success 200 {object} fiber.Map
-		rg.Patch("/microvolunteering", microvolunteering.ModFeedback)
+		rg.Patch("/microvolunteering", deprecation.Marker("PATCH /microvolunteering", "2026-08-01"), microvolunteering.ModFeedback)
 
 		// User by Email
 
@@ -1752,7 +1747,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Delete("/merge", merge.DeleteMerge)
 
 		// Simulation
-		rg.Get("/simulation", simulation.GetSimulation)
+		rg.Get("/simulation", deprecation.Marker("GET /simulation", "2026-08-01"), simulation.GetSimulation)
 
 		// Domains
 		rg.Get("/domains", domain.GetDomain)

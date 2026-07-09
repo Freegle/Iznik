@@ -241,10 +241,6 @@ EOF
 
 echo "Created MySQL config file: $MYCNF_FILE"
 
-# Generate MySQL client configs for containers
-echo "Generating MySQL client configs..."
-/var/www/FreegleDocker/scripts/generate-mysql-configs.sh
-
 # Update docker-compose.yml with the correct version and config file mount
 sed -i "s|image: percona:.*|image: percona:$PERCONA_VERSION|g" "$COMPOSE_FILE"
 
@@ -484,15 +480,14 @@ update_status "building" "Building containers..."
 # Without this, docker compose up -d reuses stale images and containers may crash
 # on missing modules or run outdated code.
 # Only build services that Yesterday actually uses and that compile code into the image:
-# - base: shared base image for apiv1
-# - apiv1: PHP API (rarely changes but uses base)
+# - base: shared base image
 # - apiv2: Go API (compiles at startup, needs go modules in image)
 # - freegle-dev-local/modtools-dev-local: Nuxt dev containers (need npm deps in image)
 # - status: Status page
 echo "Building base image..."
 docker compose build base 2>&1 | tail -3
 echo "Building application containers..."
-docker compose build apiv1 apiv2 freegle-dev-local modtools-dev-local status 2>&1 | tail -5
+docker compose build apiv2 freegle-dev-local modtools-dev-local status 2>&1 | tail -5
 echo "✅ Container build complete"
 
 echo ""
@@ -563,15 +558,6 @@ update_status "starting_apps" "Starting application containers..."
 # and start the dependent application containers without timeout issues.
 docker compose up -d
 
-echo "Configuring PHP-FPM for production load..."
-# Wait for API v1 container to be running
-sleep 5
-docker exec ${PROJECT_NAME}-apiv1 sed -i 's/^pm.max_children = 5$/pm.max_children = 20/' /etc/php/8.1/fpm/pool.d/www.conf
-docker exec ${PROJECT_NAME}-apiv1 sed -i 's/^pm.start_servers = 2$/pm.start_servers = 5/' /etc/php/8.1/fpm/pool.d/www.conf
-docker exec ${PROJECT_NAME}-apiv1 sed -i 's/^pm.min_spare_servers = 1$/pm.min_spare_servers = 3/' /etc/php/8.1/fpm/pool.d/www.conf
-docker exec ${PROJECT_NAME}-apiv1 sed -i 's/^pm.max_spare_servers = 3$/pm.max_spare_servers = 10/' /etc/php/8.1/fpm/pool.d/www.conf
-docker exec ${PROJECT_NAME}-apiv1 /etc/init.d/php8.1-fpm restart
-echo "✅ PHP-FPM configured with increased worker pool"
 
 echo ""
 echo "Infrastructure containers ready. Waiting for application containers..."

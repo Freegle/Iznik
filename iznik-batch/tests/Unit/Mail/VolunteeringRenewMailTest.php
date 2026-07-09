@@ -23,7 +23,7 @@ class VolunteeringRenewMailTest extends TestCase
 
     public function test_subject_is_regarding_the_title(): void
     {
-        // Mirrors iznik-server Volunteering::askRenew(): "Regarding: {title}".
+        // Mirrors the legacy V1 PHP Volunteering::askRenew(): "Regarding: {title}".
         $mail = $this->makeMail('Beach clean-up');
 
         $this->assertSame('Regarding: Beach clean-up', $mail->envelope()->subject);

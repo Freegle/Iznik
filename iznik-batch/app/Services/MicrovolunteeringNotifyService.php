@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Sends onsite notifications asking active users to review pending messages.
  *
- * Migrated from iznik-server/scripts/cron/microvolunteering.php → MicroVolunteering::notifyForMessages().
+ * Migrated from the legacy V1 PHP microvolunteering cron script → MicroVolunteering::notifyForMessages().
  *
  * For each recent message from a microvolunteering-enabled group that has not yet
  * had a notification sent today, finds up to 10 eligible users per message and

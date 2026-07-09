@@ -82,7 +82,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # ============ GEOIP DATABASE ============
 # Copy fallback GeoIP database first, then try to download fresh version
 # This ensures we always have a working database even if MaxMind download limits are hit
-COPY iznik-server/install/GeoLite2-Country.mmdb /var/lib/GeoIP/GeoLite2-Country.mmdb
+COPY iznik-batch/resources/geoip/GeoLite2-Country.mmdb /var/lib/GeoIP/GeoLite2-Country.mmdb
 ARG MAXMIND_ACCOUNT
 ARG MAXMIND_KEY
 RUN mkdir -p /var/lib/GeoIP \

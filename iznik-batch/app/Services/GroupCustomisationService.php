@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Mail;
 /**
  * Sends monthly reminders to group moderators about missing customisation attributes.
  *
- * Migrated from iznik-server/scripts/cron/group_customisation.php
+ * Migrated from the legacy V1 PHP group_customisation cron script.
  */
 class GroupCustomisationService
 {

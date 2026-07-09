@@ -11,7 +11,7 @@ class JobIllustrationsService
 
     /**
      * Canonical job categories mapped to their iconic object for image generation.
-     * Kept in sync with iznik-server/include/misc/Pollinations.php CANONICAL_JOBS.
+     * Kept in sync with the legacy V1 PHP Pollinations::CANONICAL_JOBS.
      */
     public const CANONICAL_JOBS = [
         'Accountant' => 'calculator',

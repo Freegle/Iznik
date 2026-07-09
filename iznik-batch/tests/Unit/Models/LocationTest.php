@@ -10,7 +10,7 @@ use Tests\TestCase;
 
 /**
  * Tests for Location::closestPostcode() — ported from iznik-server-go
- * TestClosest (location_test.go) and iznik-server LocationTest.
+ * TestClosest (location_test.go) and the legacy V1 PHP LocationTest.
  *
  * These tests depend on the locations and locations_spatial tables having
  * postcode data. The test database is populated by migrations + testenv.php.

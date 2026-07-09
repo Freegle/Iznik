@@ -1079,7 +1079,7 @@ The branch (${branchName}) is already checked out. Apply the changes directly to
 
       // Only add the specific files that were identified for modification
       // This prevents accidentally committing other changed files in the working directory
-      // Note: fixFiles paths are relative to FreegleDockerWSL (e.g., "iznik-server/include/foo.php")
+      // Note: fixFiles paths are relative to FreegleDockerWSL (e.g., "iznik-batch/app/Foo.php")
       // but we're running git add from within project.repoPath, so strip the repo directory prefix
       const repoDir = path.basename(project.repoPath);
       const filesToAdd = analysis.fixFiles.map(f => {

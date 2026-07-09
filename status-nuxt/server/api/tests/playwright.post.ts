@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process'
+import { spawn, execSync, exec } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
 import { clearTestEnvCache } from '../../utils/testEnvCache'
@@ -63,6 +63,8 @@ export default defineEventHandler(async (event) => {
 })
 
 async function runPlaywrightTests(testFile: string | null, testName: string | null) {
+  // Drives periodic background-task processing during the run (started/stopped below).
+  let bgTasksInterval: ReturnType<typeof setInterval> | null = null
   try {
     // Check both prod containers are running
     const pfx = process.env.COMPOSE_PROJECT_NAME || 'freegle'
@@ -195,6 +197,26 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       )
     } catch {}
 
+    // Process incoming chat messages throughout the run. apiv2 (Go) creates a reply chat message
+    // with processingrequired=1; chats:process-incoming flips it to processingsuccessful=1, which
+    // makes the ChatListEntry visible (see iznik-server-go chatmessage.go). The retired V1 apiv1
+    // cron used to run this every minute; with apiv1 gone and batch's scheduler disabled in CI,
+    // nothing else processes it while Playwright runs, so chat-dependent specs (post-flow reply,
+    // user-ratings) hang. We drive short run-once invocations from the (stable) status container
+    // event loop rather than a long-lived detached process, which the batch PID 1 can reap. The
+    // stale command-lock is cleared each tick (flock isn't reliably released on the bind mount).
+    let bgTasksBusy = false
+    bgTasksInterval = setInterval(() => {
+      if (bgTasksBusy) return
+      bgTasksBusy = true
+      exec(
+        `docker exec ${pfx}-batch sh -c "rm -f storage/framework/command-locks/App-Console-Commands-Chat-ProcessIncomingChatCommand.lock; php artisan chats:process-incoming"`,
+        { timeout: 60000 },
+        () => { bgTasksBusy = false }
+      )
+    }, 5000)
+    appendTestLogs('playwright', 'Started chats:process-incoming processor for the run\n')
+
     setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
@@ -273,7 +295,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         // Reset the test database before retry. Tests that ran in the main suite
         // have already modified the iznik database (created posts, replies, users).
         // Re-running those spec files against a dirty database causes failures unrelated
-        // to the actual code under test. Drop + recreate + migrate + testenv restores
+        // to the actual code under test. Drop + recreate + migrate + fixture reload restores
         // the same clean state that the main run started from.
         appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
         // Brief pause to let MySQL connections from the completed test run settle
@@ -288,21 +310,22 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           // already closed between the SELECT and the KILL.
           try {
             execSync(
-              `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -h percona -u root -piznik"`,
+              `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -u root -piznik"`,
               { encoding: 'utf8', timeout: 10000 }
             )
           } catch {}
           execSync(
-            `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+            `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
             { encoding: 'utf8', timeout: 300000 }
           )
           execSync(
             `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
             { encoding: 'utf8', timeout: 300000 }
           )
+          // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
           execSync(
-            `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
-            { encoding: 'utf8', timeout: 60000 }
+            `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
+            { encoding: 'utf8', timeout: 120000 }
           )
           // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
           // the database invalidates those connections. Restart the container so it
@@ -325,12 +348,10 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           if (!apiv2Ready) {
             throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
           }
-          // Clear the in-memory testEnv cache so the retry receives fresh
-          // postcode/ID data from the reset DB. Without this, the cache serves
-          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
-          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
-          // location typeahead to return empty results and the validation-tick
-          // to never appear in postMessage flows.
+          // Clear the in-memory testEnv cache so the retry re-reads the seeded
+          // postcode/ID data. The fixture reload restores the same ids, so the
+          // cached values remain valid, but clearing keeps the cache honest after
+          // a DB reset (avoids serving data from a prior, differently-seeded run).
           clearTestEnvCache()
           appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
           appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
@@ -386,6 +407,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       }
     }
 
+    // Stop the background-task processor started for this run.
+    if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
+
     const state = getTestState('playwright')
     const p = state.progress
     setTestState('playwright', {
@@ -398,6 +422,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     })
     console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
+    if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
     setTestState('playwright', {
       status: 'failed',
       message: `Error: ${error.message}`,

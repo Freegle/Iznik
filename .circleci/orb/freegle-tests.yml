@@ -2,7 +2,7 @@ version: 2.1
 
 description: |
   Shared commands and jobs for Freegle testing and app builds.
-  Used by FreegleDocker (monorepo with inline subtrees for iznik-server, iznik-server-go, iznik-nuxt3).
+  Used by FreegleDocker (monorepo with inline subtrees for iznik-server-go, iznik-nuxt3, iznik-batch).
 
 executors:
   machine-executor:
@@ -53,9 +53,6 @@ executors:
       PORT_TUSD: 10080
       PORT_STATUS: 17081
       PORT_AI_SUPPORT: 17083
-      PORT_APIV1_SSH: 10023
-      PORT_APIV1_HTTP: 9083
-      PORT_APIV1_HTTP2: 17181
       PORT_APIV2: 17193
       PORT_APIV2_LIVE: 17194
       PORT_FREEGLE_DEV_LOCAL: 12002
@@ -101,9 +98,6 @@ executors:
       PORT_TUSD: 10080
       PORT_STATUS: 17081
       PORT_AI_SUPPORT: 17083
-      PORT_APIV1_SSH: 10023
-      PORT_APIV1_HTTP: 9083
-      PORT_APIV1_HTTP2: 17181
       PORT_APIV2: 17193
       PORT_APIV2_LIVE: 17194
       PORT_FREEGLE_DEV_LOCAL: 12002
@@ -290,7 +284,7 @@ commands:
                 # ramp (load spikes to ~40 on 16 cores) they starve the agent's
                 # heartbeat and the control plane declares the VM dead. Containerised
                 # runners are already +19; re-applying is harmless.
-                test_pids=$(pgrep -f 'vitest|playwright|phpunit|go-build|/test/|artisan test' 2>/dev/null | tr '\n' ' ')
+                test_pids=$(pgrep -f 'vitest|playwright|go-build|/test/|artisan test' 2>/dev/null | tr '\n' ' ')
                 [ -n "$test_pids" ] && sudo renice -n 19 -p $test_pids >/dev/null 2>&1 || true
                 # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
                 agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
@@ -408,7 +402,7 @@ commands:
                 echo "  $p = $(cat "$f" 2>/dev/null)"
               done | head -40
               echo "--- [cpuset-evidence] native test-runner affinity (want 1..N-1) ---"
-              for tp in $(pgrep -f 'vitest|playwright|phpunit|go-build|artisan test' 2>/dev/null | head -20); do
+              for tp in $(pgrep -f 'vitest|playwright|go-build|artisan test' 2>/dev/null | head -20); do
                 echo "  pid $tp $(cat /proc/$tp/comm 2>/dev/null) -> $(taskset -cp $tp 2>/dev/null | sed 's/.*: //')"
               done
               echo "--- [cpuset-evidence] runner agent/heartbeat placement (allowed should include 0) ---"
@@ -548,7 +542,7 @@ commands:
             fi
 
             # Pre-pull shared base images once before any parallel builds start.
-            # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.
+            # freegle-base: used by freegle-prod-local, modtools-prod-local, etc.
             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
             #   On Katapult, the cache server GHCR mirror (185.44.254.6:5001) serves both
             #   images locally, so pulls are fast even on ephemeral VMs with no layer cache.
@@ -580,14 +574,6 @@ commands:
               # it saves (7 large images × 300-500MB = 2-3GB of unnecessary downloads).
               {
                 echo 'services:'
-                echo '  apiv1:'
-                echo '    build:'
-                echo '      cache_from:'
-                echo '        - 185.44.254.6:5002/ci/apiv1:latest'
-                echo '  apiv1-phpunit:'
-                echo '    build:'
-                echo '      cache_from:'
-                echo '        - 185.44.254.6:5002/ci/apiv1:latest'
                 echo '  apiv2:'
                 echo '    build:'
                 echo '      cache_from:'
@@ -646,13 +632,9 @@ commands:
               # Build all container groups in parallel — each group is independent.
               # BuildKit's internal scheduler further parallelises steps within each build.
               echo "Katapult: building all container groups in parallel..."
-              PHP_LOG=$(mktemp) GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
+              GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
 
-              # PHP API containers (share freegle-base PHP layer)
-              docker-compose build $INLINE_CACHE_FLAG apiv1 apiv1-phpunit > "$PHP_LOG" 2>&1 &
-              PHP_PID=$!
-
-              # Go API container (independent — no shared layers with PHP/Nuxt)
+              # Go API container (independent — no shared layers with Nuxt)
               docker-compose build $INLINE_CACHE_FLAG apiv2 > "$GO_LOG" 2>&1 &
               GO_PID=$!
 
@@ -689,7 +671,6 @@ commands:
                 fi
               }
 
-              check_build $PHP_PID   "PHP (apiv1/apiv1-phpunit)" "$PHP_LOG"
               check_build $GO_PID    "Go (apiv2)"                "$GO_LOG"
               check_build $NUXT_PID  "Nuxt (freegle/modtools)"   "$NUXT_LOG"
               check_build $OTHER_PID "Playwright + status"       "$OTHER_LOG"
@@ -706,7 +687,7 @@ commands:
               for attempt in $(seq 1 $MAX_RETRIES); do
                 echo "Build attempt $attempt of $MAX_RETRIES..."
                 if docker-compose build $CACHE_FLAG \
-                  apiv1 apiv1-phpunit apiv2 \
+                  apiv2 \
                   freegle-prod-local modtools-prod-local \
                   playwright status spatial-knn spatial; then
                   echo "✅ Build succeeded on attempt $attempt"
@@ -744,7 +725,6 @@ commands:
                 echo "Pushing built images to local cache registry (${CACHE_REG})..."
                 # Map: registry name → docker-compose generated image name
                 declare -A SVC_IMAGES=(
-                  ["apiv1"]="${PROJECT}-apiv1"
                   ["apiv2"]="${PROJECT}-apiv2"
                   ["freegle-prod-local"]="${PROJECT}-freegle-prod-local"
                   ["modtools-prod-local"]="${PROJECT}-modtools-prod-local"
@@ -771,7 +751,7 @@ commands:
             # Two-phase startup: databases must exist before application containers start.
             #
             # Phase 1: Start infrastructure + batch (runs Laravel migrations to create iznik DB)
-            # Then run setup-test-database.sh to clone iznik → iznik_phpunit_test, iznik_go_test
+            # Then run setup-test-database.sh to load fixtures + clone iznik → iznik_go_test
             #
             # Phase 2: Start all remaining containers (all databases already exist)
 
@@ -854,7 +834,7 @@ commands:
             echo ""
             echo "=== Verifying container names ==="
             # Containers needed for CI tests (dev containers excluded as they're not used in tests)
-            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-postgres ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
+            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-postgres ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
             MISSING=""
             for container in $ALL_CONTAINERS; do
               if docker inspect "$container" >/dev/null 2>&1; then
@@ -1054,9 +1034,6 @@ commands:
                 echo "=== Status container logs (last 30) ==="
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status --tail 30 2>&1 || true
                 echo ""
-                echo "=== API v1 container logs (last 30) ==="
-                docker logs ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit --tail 30 2>&1 || true
-                echo ""
                 echo "=== API v2 container logs (last 30) ==="
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 --tail 30 2>&1 || true
                 echo ""
@@ -1072,16 +1049,15 @@ commands:
                 # Get health status from status service
                 health_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/status/all 2>/dev/null || echo '{}')
 
-                # Check if API v1 and v2 are healthy
-                apiv1_status=$(echo "$health_response" | jq -r '.apiv1.status // "unknown"')
+                # Check if the API is healthy
                 apiv2_status=$(echo "$health_response" | jq -r '.apiv2.status // "unknown"')
 
-                if [ "$apiv1_status" = "success" ] && [ "$apiv2_status" = "success" ]; then
-                  echo "✅ API v1 and v2 services are healthy!"
+                if [ "$apiv2_status" = "success" ]; then
+                  echo "✅ API v2 service is healthy!"
                   break
                 else
                   elapsed_min=$((elapsed / 60))
-                  echo "[${elapsed_min}m] API v1: $apiv1_status, API v2: $apiv2_status - waiting..."
+                  echo "[${elapsed_min}m] API v2: $apiv2_status - waiting..."
                 fi
               else
                 echo "Status service not yet responding..."
@@ -1297,186 +1273,6 @@ commands:
               exit 1
             fi
           no_output_timeout: 40m
-
-  run-php-tests:
-    description: "RETIRED — iznik-server PHPUnit tests have been removed. This command is no longer called."
-    parameters:
-      reason:
-        type: string
-        default: "Retired"
-    steps:
-      - restore_cache:
-          keys:
-            - geoip-db-v1
-      - run:
-          name: Run PHPUnit tests
-          command: |
-            # Support both FreegleDocker (~/project) and submodule (~/FreegleDocker) paths
-            if [ -d "$HOME/FreegleDocker" ]; then
-              cd "$HOME/FreegleDocker"
-            fi
-            echo "🐘 << parameters.reason >>..."
-
-            # Restore GeoIP database from cache if available
-            # Copy to the dedicated PHPUnit test container since that's where tests run
-            if [ -f ~/geoip-cache/GeoLite2-Country.mmdb ]; then
-              echo "📍 Restoring GeoIP database from cache..."
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit mkdir -p /var/lib/GeoIP
-              docker cp ~/geoip-cache/GeoLite2-Country.mmdb ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/lib/GeoIP/GeoLite2-Country.mmdb
-              docker cp ~/geoip-cache/GeoLite2-City.mmdb ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/lib/GeoIP/GeoLite2-City.mmdb 2>/dev/null || true
-              echo "✅ GeoIP database restored from cache"
-            else
-              echo "⚠️ No GeoIP cache found - container will attempt download"
-              # Give container time to download GeoIP (it has retry logic)
-              echo "Waiting for GeoIP download attempt..."
-              sleep 30
-            fi
-
-            # Database schema set up by setup-test-database step (Laravel migrations)
-            # Just verify the database is accessible
-            echo "Verifying database connection..."
-            docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'SELECT 1 FROM iznik.groups LIMIT 1'" || {
-              echo "Database not ready after setup-test-database - this should not happen"
-              echo "Check that ${COMPOSE_PROJECT_NAME:-freegle}-batch migrations ran successfully"
-              docker logs ${COMPOSE_PROJECT_NAME:-freegle}-batch --tail 30 2>&1 || true
-              exit 1
-            }
-
-            # Trigger tests via API
-            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" http://localhost:${PORT_STATUS:-8081}/api/tests/php)
-            http_code="${response: -3}"
-
-            if [ "$http_code" -ne "200" ]; then
-              echo "❌ Failed to trigger PHP tests. HTTP code: $http_code"
-              echo "Response: $response"
-              exit 1
-            fi
-
-            echo "✅ PHP tests triggered successfully"
-
-            # Monitor test progress with timeout
-            echo "📊 Monitoring PHP test progress..."
-            start_time=$(date +%s)
-            timeout_duration=2700  # 45 minutes
-
-            while true; do
-              current_time=$(date +%s)
-              elapsed=$((current_time - start_time))
-
-              if [ $elapsed -gt $timeout_duration ]; then
-                echo "❌ PHP tests timed out after 45 minutes"
-                exit 1
-              fi
-
-              sleep 10
-              status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/php/status || echo '{"status":"error"}')
-              status=$(echo "$status_response" | jq -r '.status // "unknown"')
-              message=$(echo "$status_response" | jq -r '.message // "No message"')
-
-              elapsed_min=$((elapsed / 60))
-              echo "[${elapsed_min}m] Status: $status"
-              echo "Message: $message"
-
-              if [ "$status" = "completed" ]; then
-                echo "🎉 PHP tests completed!"
-                echo "✅ PHPUnit tests passed!"
-                echo "PHP_TESTS_PASSED=true" >> $BASH_ENV
-                break
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                echo "❌ PHP tests failed!"
-                echo "Error details:"
-                echo "$status_response" | jq -r '.logs // "No logs available"' | tail -30
-
-                # Show the failure details from the PHPUnit debug log
-                echo ""
-                echo "Extracting failure details from PHPUnit output..."
-                # Use the dedicated PHPUnit test container (${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit)
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit sh -c '
-                  if [ -f /tmp/phpunit-debug.log ]; then
-                    echo "=== TEST FAILURES ==="
-                    grep "##teamcity\[testFailed" /tmp/phpunit-debug.log | head -10 | while read -r line; do
-                      test_name=$(echo "$line" | sed "s/.*name='"'"'\([^'"'"']*\)'"'"'.*/\1/")
-                      message=$(echo "$line" | sed "s/.*message='"'"'\([^'"'"']*\)'"'"'.*/\1/")
-                      details=$(echo "$line" | sed "s/.*details='"'"'\([^'"'"']*\)'"'"'.*/\1/" | sed "s/|n/\n/g")
-                      if [ -n "$test_name" ]; then
-                        echo "❌ $test_name"
-                        [ -n "$message" ] && echo "   Message: $message"
-                        [ -n "$details" ] && echo "   Details: $details"
-                      fi
-                    done
-
-                    echo ""
-                    echo "=== TEST SUMMARY ==="
-                    tail -20 /tmp/phpunit-debug.log | grep -E "Tests:|FAILURES!|Skipped:" || echo "No summary found"
-                  else
-                    echo "Debug log not found"
-                  fi
-                ' || echo "Could not extract failure details"
-
-                echo "PHP_TESTS_PASSED=false" >> $BASH_ENV
-                exit 1
-              fi
-            done
-
-            # Upload PHP coverage immediately after tests complete
-            echo "📤 Uploading PHP coverage..."
-            if [ -z "${COVERALLS_REPO_TOKEN}" ]; then
-              echo "⚠️ COVERALLS_REPO_TOKEN not set - skipping coverage upload"
-              exit 0
-            fi
-
-            # Copy coverage file from container
-            COVERAGE_FOUND=false
-            if docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/www/iznik/test/ut/php/clover.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "✅ Found PHP coverage at /var/www/iznik/test/ut/php/clover.xml"
-            elif docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-coverage.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "✅ Found PHP coverage at /tmp/phpunit-coverage.xml"
-            fi
-
-            if [ "$COVERAGE_FOUND" = "true" ]; then
-              # Check for Coveralls outage before uploading
-              OUTAGE_JSON=$(curl -sf --max-time 10 "https://status.coveralls.io/api/v2/incidents/unresolved.json" 2>/dev/null || echo '{}')
-              INCIDENT_COUNT=$(echo "$OUTAGE_JSON" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('incidents',[])))" 2>/dev/null || echo "0")
-              if [ "$INCIDENT_COUNT" -gt 0 ]; then
-                echo "⚠️ Coveralls has an active outage (see https://status.coveralls.io) - skipping upload"
-              else
-                npm install -g coveralls
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer.phar require php-coveralls/php-coveralls --dev" || echo "php-coveralls install warning"
-
-                # Copy coverage file to container and upload
-                docker cp /tmp/phpunit-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/www/iznik/clover.xml
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN} COVERALLS_SERVICE_NAME=circleci COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM} vendor/bin/php-coveralls -v --coverage_clover=clover.xml --json_path=/tmp/coveralls.json"
-
-                if [ $? -eq 0 ]; then
-                  echo "✅ PHP coverage uploaded successfully"
-                else
-                  echo "❌ PHP coverage upload failed"
-                  exit 1
-                fi
-              fi
-            else
-              echo "❌ PHP coverage file not found"
-              exit 1
-            fi
-          no_output_timeout: 50m
-      - run:
-          name: Save GeoIP database for caching
-          when: always
-          command: |
-            # Copy GeoIP database from container for caching (if it exists)
-            mkdir -p ~/geoip-cache
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/lib/GeoIP/GeoLite2-Country.mmdb ~/geoip-cache/GeoLite2-Country.mmdb 2>/dev/null && \
-              echo "✅ GeoIP Country database saved for caching" || \
-              echo "⚠️ GeoIP Country database not available to cache"
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/lib/GeoIP/GeoLite2-City.mmdb ~/geoip-cache/GeoLite2-City.mmdb 2>/dev/null && \
-              echo "✅ GeoIP City database saved for caching" || \
-              echo "⚠️ GeoIP City database not available to cache"
-      - save_cache:
-          key: geoip-db-v1
-          paths:
-            - ~/geoip-cache
 
   wait-for-batch-container:
     description: "Wait for batch container to be healthy and migrations to complete"
@@ -1847,11 +1643,11 @@ commands:
                 echo "⚠️ Coveralls has an active outage (see https://status.coveralls.io) - skipping upload"
               else
                 npm install -g coveralls
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer.phar require php-coveralls/php-coveralls --dev" || echo "php-coveralls install warning"
+                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-batch bash -c "cd /var/www/html && composer require php-coveralls/php-coveralls --dev" || echo "php-coveralls install warning"
 
                 # Copy coverage file to container and upload
-                docker cp /tmp/laravel-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/www/iznik/clover.xml
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN} COVERALLS_SERVICE_NAME=circleci COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM} vendor/bin/php-coveralls -v --coverage_clover=clover.xml --json_path=/tmp/coveralls.json"
+                docker cp /tmp/laravel-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-batch:/var/www/html/clover.xml
+                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-batch bash -c "cd /var/www/html && COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN} COVERALLS_SERVICE_NAME=circleci COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM} vendor/bin/php-coveralls -v --coverage_clover=clover.xml --json_path=/tmp/coveralls.json"
 
                 if [ $? -eq 0 ]; then
                   echo "✅ Laravel coverage uploaded successfully"
@@ -1888,11 +1684,6 @@ commands:
             fi
 
             # Use fixed container names from docker-compose.yml (no dynamic lookup needed)
-
-            # Collect PHPUnit test output files
-            mkdir -p ~/artifacts/phpunit
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-output.log ~/artifacts/phpunit/ 2>/dev/null || true
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-debug.log ~/artifacts/phpunit/ 2>/dev/null || true
 
             # Collect Laravel (batch) test output and monitoring logs
             mkdir -p ~/artifacts/laravel
@@ -1958,12 +1749,6 @@ commands:
               echo "=== FAILED TEST SUITES ==="
             } > ~/artifacts/ci-failure-diagnostics.txt
 
-            # PHPUnit failures
-            if [ -f ~/artifacts/phpunit/phpunit-output.log ]; then
-              echo "--- PHPUnit ---" >> ~/artifacts/ci-failure-diagnostics.txt
-              grep -E 'FAIL|Error|ERRORS!|FAILURES!' ~/artifacts/phpunit/phpunit-output.log >> ~/artifacts/ci-failure-diagnostics.txt 2>/dev/null || echo "  (no failure lines found)" >> ~/artifacts/ci-failure-diagnostics.txt
-              echo "" >> ~/artifacts/ci-failure-diagnostics.txt
-            fi
 
             # Go test failures
             if docker ps --format '{{.Names}}' | grep -q ${COMPOSE_PROJECT_NAME:-freegle}-apiv2; then
@@ -2099,66 +1884,6 @@ commands:
               fi
             else
               echo "ℹ️ No Go coverage found (this is OK if Go tests didn't run)"
-            fi
-          when: always
-      - run:
-          name: Upload PHP coverage
-          command: |
-            if [ "$SKIP_COVERAGE" = "true" ]; then exit 0; fi
-            # Support both FreegleDocker main build and submodule paths
-            if [ -d "$HOME/FreegleDocker" ]; then
-              cd "$HOME/FreegleDocker"
-            fi
-            # Use fixed container name from docker-compose.yml
-            COVERAGE_FOUND=false
-
-            # Try the standard test path first (used by PR tests)
-            if docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/www/iznik/test/ut/php/clover.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "Found PHP coverage at /var/www/iznik/test/ut/php/clover.xml"
-            # Also try /tmp/phpunit-coverage.xml (used by status service when running via API)
-            elif docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-coverage.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "Found PHP coverage at /tmp/phpunit-coverage.xml"
-            fi
-
-            if [ "$COVERAGE_FOUND" = "true" ]; then
-              echo "Processing PHP coverage..."
-
-              # Install php-coveralls in the container using composer.phar
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer.phar require php-coveralls/php-coveralls --dev 2>&1" || true
-
-              # Copy coverage file to container
-              docker cp /tmp/phpunit-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/www/iznik/clover.xml
-
-              # Create coveralls config in container with writable json_path
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "echo 'coverage_clover: clover.xml' > /var/www/iznik/.coveralls.yml && echo 'json_path: /tmp/coveralls-upload.json' >> /var/www/iznik/.coveralls.yml && echo 'service_name: circleci' >> /var/www/iznik/.coveralls.yml"
-
-              # Initialize a minimal git repo in container for php-coveralls (it needs git info)
-              # The submodule's .git file points to a path not mounted in container
-              # Must create an initial commit so there's a branch for collectBranch()
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && rm -f .git && git init && git config user.email 'ci@freegle.org' && git config user.name 'CircleCI' && git remote add origin https://github.com/Freegle/Iznik.git && git commit --allow-empty -m 'CI initial commit' && git branch -M $CIRCLE_BRANCH"
-
-              # Run php-coveralls from within the container (which has PHP)
-              # All coverage now goes to the monorepo Coveralls project
-              # Pass git info via environment variables since container doesn't have access to .git/modules
-              if docker exec \
-                -e COVERALLS_REPO_TOKEN="$COVERALLS_REPO_TOKEN" \
-                -e COVERALLS_RUN_LOCALLY=1 \
-                -e CI_BRANCH="$CIRCLE_BRANCH" \
-                -e CI_COMMIT_ID="$CIRCLE_SHA1" \
-                -e CI_BUILD_NUMBER="$CIRCLE_BUILD_NUM" \
-                -e CI_BUILD_URL="$CIRCLE_BUILD_URL" \
-                -e CI_NAME="circleci" \
-                ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer/vendor/bin/php-coveralls -v --config .coveralls.yml --exclude-no-stmt 2>&1"; then
-                echo "✅ PHP coverage uploaded"
-                echo "PHP_UPLOADED=true" >> $BASH_ENV
-              else
-                echo "❌ PHP coverage upload failed"
-                exit 1
-              fi
-            else
-              echo "ℹ️ No PHP coverage found at either location"
             fi
           when: always
       - run:
@@ -2507,7 +2232,7 @@ jobs:
           name: Verify monorepo subtree directories
           command: |
             echo "=== Verifying subtree directories ==="
-            ls -d iznik-nuxt3/ iznik-server-go/ iznik-server/ iznik-batch/ || { echo "ERROR: subtree directories missing"; exit 1; }
+            ls -d iznik-nuxt3/ iznik-server-go/ iznik-batch/ || { echo "ERROR: subtree directories missing"; exit 1; }
 
             # ModTools is now built from iznik-nuxt3/modtools (same repo, different build)
             echo "=== Verifying modtools directory ==="

@@ -1704,8 +1704,8 @@ func PatchSession(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Handle email confirmation via validatekey. This is a standalone operation
-	// that confirms ownership of an email address. Ported from PHP
-	// User::confirmEmail() in iznik-server/include/user/User.php.
+	// that confirms ownership of an email address. Ported from the legacy V1
+	// PHP User::confirmEmail() implementation.
 	if req.Key != nil && *req.Key != "" {
 		type EmailRecord struct {
 			ID     uint64 `gorm:"column:id"`

@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Command to generate and send AI-powered git commit summaries.
  *
- * This replaces the PHP script at iznik-server/scripts/cron/git_summary_ai.php.
+ * This replaces the legacy V1 PHP git_summary_ai cron script.
  * Summaries are sent to Discourse via email-to-forum integration.
  */
 class GitSummaryCommand extends Command

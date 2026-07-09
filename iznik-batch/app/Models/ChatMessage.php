@@ -252,7 +252,7 @@ class ChatMessage extends Model implements Auditable
      *
      * When $other=true, counts messages that are currently held instead of unheld.
      *
-     * Ported from iznik-server/include/chat/ChatMessage.php::getReviewCountByGroup().
+     * Ported from the legacy V1 PHP ChatMessage::getReviewCountByGroup().
      *
      * @param User|null $me    The moderator. NULL returns an empty array.
      * @param bool      $other When true, count held messages instead of unreviewed ones.

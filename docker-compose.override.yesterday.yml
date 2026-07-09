@@ -9,7 +9,7 @@
 # This configuration:
 # - Disables production-build containers (not needed on Yesterday, dev containers are faster)
 # - Disables MCP containers (not needed on Yesterday, and port 8084 conflicts with 2FA)
-# - Disables playwright and apiv1-phpunit (not needed on Yesterday)
+# - Disables playwright (not needed on Yesterday)
 # - Remaps API ports to avoid conflicts with yesterday-traefik
 # - Exposes dev containers on external ports for yesterday access
 #
@@ -49,15 +49,7 @@ services:
     deploy:
       replicas: 0
 
-  apiv1-phpunit:
-    deploy:
-      replicas: 0
-
-  # Remap API ports to avoid conflicts with yesterday-traefik (which uses 8181 and 8193)
-  apiv1:
-    ports: !reset
-      - "8182:80"
-
+  # Remap API ports to avoid conflicts with yesterday-traefik (which uses 8193)
   apiv2:
     ports: !reset
       - "8195:8192"

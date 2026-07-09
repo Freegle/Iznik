@@ -1,9 +1,12 @@
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
+import { useMobileStore } from '~/stores/mobile'
 import { useNuxtApp, useRoute } from '#imports'
 
-// Experiment: on mobile, offer a voice-vs-keyboard choice for composing an OFFER
-// instead of going straight to the typed form, and measure whether it helps.
+// Experiment: on mobile WEB, offer a voice-vs-keyboard choice for composing an
+// OFFER instead of going straight to the typed form, and measure whether it helps.
+// Web only - the native app is a separate release channel and is excluded (see the
+// mobileStore.isApp guards below).
 //
 // Assignment is a fixed per-user % bucket (a clean A/B holdout, not the adaptive
 // bandit) so a stable slice of mobile users sees the voice option. Exposure and
@@ -18,11 +21,12 @@ export const COMPOSE_METHOD_UID = 'mobile-compose-method'
 // Percentage of eligible (mobile) users shown the voice option. Start at 0 and
 // raise to roll the experiment out to a slice of traffic. Per-visit override:
 // ?voice=1 forces the voice variant, ?voice=0 forces control (handy for demos).
-const ROLLOUT_PCT = 0
+const ROLLOUT_PCT = 10
 
 export function useComposeChoice() {
   const miscStore = useMiscStore()
   const authStore = useAuthStore()
+  const mobileStore = useMobileStore()
   const route = useRoute()
   const { $api } = useNuxtApp()
 
@@ -45,6 +49,8 @@ export function useComposeChoice() {
   // compose entry keeps its original behaviour with zero side effects - so
   // merging this changes nothing for existing users until ROLLOUT_PCT is raised.
   function experimentActive() {
+    // Web-only: never run the experiment inside the native app, even with ?voice.
+    if (mobileStore.isApp) return false
     const q = route?.query?.voice
     if (q === '1' || q === '0') return true
     return ROLLOUT_PCT > 0
@@ -52,6 +58,8 @@ export function useComposeChoice() {
 
   // Returns 'voice' or 'control'.
   function assign() {
+    // Web-only: the native app never sees the voice variant.
+    if (mobileStore.isApp) return 'control'
     const q = route?.query?.voice
     if (q === '1') return 'voice'
     if (q === '0') return 'control'

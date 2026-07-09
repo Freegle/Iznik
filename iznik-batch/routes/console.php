@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schedule;
  * Define the application's command schedule.
  *
  * IMPORTANT: Most commands are disabled for now. Only enable when ready to go live.
- * Commands are gradually being enabled as we migrate from iznik-server crontab.
+ * Commands are gradually being enabled as we migrate from the legacy V1 PHP crontab.
  */
 
 // Helper to build a per-command log path for output capture.

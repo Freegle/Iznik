@@ -3118,7 +3118,7 @@ func TestPutMessageRecordsFromIP(t *testing.T) {
 // TestPutMessageGeneratesSyntheticMessageID verifies that PUT /message
 // populates messages.messageid with a synthetic value in the form
 // "<microtime>@users.ilovefreegle.org-<groupid>" (V1 parity — see
-// iznik-server/include/message/Message.php lines 2708 and 2717).
+// the legacy V1 PHP Message implementation).
 // Before this fix, Go left messageid NULL, breaking dedupe and
 // cross-reference lookups that rely on the column being populated.
 func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {

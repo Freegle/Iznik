@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Generates the daily `stats` table rows that V1's Stats::generate() wrote.
  *
- * V1 source: iznik-server/include/misc/Stats.php and scripts/cron/group_stats.php.
+ * V1 source: the legacy V1 PHP Stats class and its group_stats cron script.
  * V1 invocation (group_stats.php line 93-99): for $date = yesterday, for every
  * row in `groups`, call Stats::generate($date) which REPLACEs one row per
  * stat-type into `stats(date, groupid, type, count|breakdown)`.

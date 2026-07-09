@@ -8,7 +8,7 @@ use Illuminate\Mail\Mailables\Envelope;
 
 /**
  * Alert to geeks about groups with no recent messages.
- * Migrated from iznik-server/scripts/cron/groups_nomessages.php
+ * Migrated from the legacy V1 PHP groups_nomessages cron script.
  */
 class AlertNoMessagesMail extends MjmlMailable
 {

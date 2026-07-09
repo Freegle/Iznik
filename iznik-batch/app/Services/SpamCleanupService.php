@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Removes spam members and their content from Freegle groups.
  *
- * Mirrors V1 Spam::removeSpamMembers() from iznik-server/include/spam/Spam.php.
+ * Mirrors the legacy V1 PHP Spam::removeSpamMembers().
  *
  * Actions taken for each known spammer (spam_users.collection = 'Spammer'):
  *   1. Member-role memberships are removed and the user is banned from those groups.

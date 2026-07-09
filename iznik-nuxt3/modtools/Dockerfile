@@ -2,8 +2,7 @@ FROM ghcr.io/freegle/freegle-base:latest
 
 WORKDIR /app
 
-ENV IZNIK_API_V1=http://freegle-apiv1:80/api \
-    IZNIK_API_V2=http://freegle-apiv2:8192/api
+ENV IZNIK_API_V2=http://freegle-apiv2:8192/api
 
 # Copy the iznik-nuxt3 directory from build context (modtools is a subdirectory)
 COPY iznik-nuxt3 .

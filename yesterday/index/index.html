@@ -762,7 +762,7 @@
         if (data.containers && data.containers.length > 0) {
           let html = '<div class="status-grid">';
 
-          const keyServices = ['freegle-dev', 'modtools-dev', 'apiv1', 'apiv2', 'percona', 'redis', 'beanstalkd', 'spamassassin'];
+          const keyServices = ['freegle-dev', 'modtools-dev', 'apiv2', 'percona', 'redis', 'beanstalkd', 'spamassassin'];
 
           keyServices.forEach(serviceName => {
             const container = data.containers.find(c => c.name.includes(serviceName));
@@ -782,7 +782,7 @@
                                  container.state === 'running' && isStarting ? 'starting' :
                                  container.state === 'running' ? 'healthy' : 'unhealthy';
               const displayName = serviceName.replace('freegle-dev', 'Freegle').replace('modtools-dev', 'ModTools')
-                                            .replace('percona', 'Database').replace('apiv1', 'API v1').replace('apiv2', 'API v2')
+                                            .replace('percona', 'Database').replace('apiv2', 'API v2')
                                             .replace('beanstalkd', 'Queue').replace('spamassassin', 'Spam');
               const stateText = container.state === 'running' && container.health === 'healthy' ? 'Running' :
                                container.state === 'running' && isStarting ? 'Starting' :

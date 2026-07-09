@@ -5,7 +5,7 @@ package test
 // inserts a row into messages_ai_declined so the illustrations cron never
 // re-injects an AI image for that message.
 //
-// Root cause: V1 (iznik-server/include/message/Message.php:3974–3989) does
+// Root cause: the legacy V1 PHP implementation does
 // INSERT IGNORE INTO messages_ai_declined whenever an attachment with
 // externalmods.ai===true is removed.  The Go recordAIDeletions function only
 // cast a Reject microaction and omitted this insert, leaving the message

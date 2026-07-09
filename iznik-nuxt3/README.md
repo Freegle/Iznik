@@ -31,7 +31,6 @@ npm i
 
 Set some environment variables:
 ```
-IZNIK_API_V1=https://fdapidbg.ilovefreegle.org/api
 IZNIK_API_V2=https://api.ilovefreegle.org/apiv2
 ```
 

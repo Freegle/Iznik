@@ -226,7 +226,7 @@ class MailParserServiceTest extends TestCase
     public function test_bounce_detected_by_subject_heuristics(): void
     {
         // Legacy compatibility: detect bounces by subject even without proper DSN format
-        // This matches the behavior in iznik-server/include/message/Message.php
+        // This matches the behavior in the legacy V1 PHP Message class
         $rawEmail = $this->createMinimalEmail([
             'From' => 'someuser@example.com',
             'To' => 'notify-123-456@users.ilovefreegle.org',
