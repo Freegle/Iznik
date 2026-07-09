@@ -16,8 +16,9 @@ Freegle has two APIs, and the frontend uses both during the ongoing migration:
 - **v2 (Go), `iznik-server-go/`** - the **primary** API and where new work goes. Handlers
   return bare JSON.
 - **v1 (PHP), `iznik-server/`** - the **legacy** API, being retired. It returns a
-  `{ ret, status, ... }` envelope. The frontend still falls back to it where v2 does not
-  yet cover something.
+  `{ ret, status, ... }` envelope. The **frontend no longer calls v1**: its api-client
+  layer only speaks v2. v1 survives for a few server-side uses (for example the tusd image
+  upload hook) while it is wound down.
 
 When you add or change an endpoint, add it to **v2**. The mandatory patterns for a new Go
 endpoint (routing, structure, error handling) are in
@@ -26,10 +27,15 @@ new pattern; follow that guide. The live Swagger docs are served at `/swagger`.
 
 ## How the frontend talks to the APIs
 
-The Nuxt frontend calls the APIs through its store/api layer rather than fetching
-directly in components. Keep enrichment and business logic on the server side of that
-boundary, and pass ids rather than whole objects between components where practical - see
-the conventions in [../../codingstandards.md](../../codingstandards.md).
+The Nuxt frontend calls the APIs through a dedicated api-client layer, not by fetching in
+components: one module per domain under `iznik-nuxt3/api/` (`MessageAPI.js`, `UserAPI.js`,
+and so on) extending `BaseAPI.js`, with the endpoint path strings as literals in each
+method, and Pinia stores calling those modules. On the Go side, every route is registered
+in one place, `iznik-server-go/router/routes.go`'s `SetupRoutes`, so an endpoint maps
+cleanly to its handler. (Note some write endpoints such as `POST /message` multiplex
+several behaviours behind an `action` field.) Keep enrichment and business logic on the
+server side of that boundary, and pass ids rather than whole objects between components
+where practical - see [../../codingstandards.md](../../codingstandards.md).
 
 ## The data model
 

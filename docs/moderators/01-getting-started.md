@@ -6,6 +6,9 @@ covers:
   - iznik-nuxt3/modtools/layouts/**
   - iznik-nuxt3/modtools/composables/useMe.js
   - iznik-nuxt3/modtools/pages/teams.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-modtools-login.spec.js
+  - iznik-nuxt3/tests/e2e/test-modtools-dashboard.spec.js
 ---
 
 # Getting started as a moderator

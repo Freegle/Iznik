@@ -46,8 +46,9 @@ and per-group membership and roles are the ones you will meet first.
 
 ## How the pieces talk
 
-- The frontend calls the **Go v2 API** for most things, falling back to the **PHP v1 API**
-  where v2 does not yet cover a case. See [APIs and data](04-apis-and-data.md).
+- The frontend calls the **Go v2 API**; its api-client layer speaks v2 only. The **PHP v1
+  API** is legacy and being retired (it survives for a few server-side uses). See
+  [APIs and data](04-apis-and-data.md).
 - **Batch** (Laravel) runs the scheduled and background work (digests, notification
   emails, reposts) against the database.
 - **Routing and spatial** Go services answer "how far / which area" questions that

@@ -5,6 +5,10 @@ covers:
   - iznik-nuxt3/pages/find/**
   - iznik-nuxt3/pages/chats/**
   - iznik-nuxt3/pages/message/**
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-reply-flow-logged-in.spec.js
+  - iznik-nuxt3/tests/e2e/test-reply-to-chat.spec.js
+  - iznik-server-go/test/chatmessage_rippling_held_test.go
 ---
 
 # Getting something

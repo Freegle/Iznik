@@ -6,6 +6,10 @@ covers:
   - iznik-nuxt3/components/LoginModal.vue
   - iznik-nuxt3/pages/explore/**
   - iznik-nuxt3/pages/browse/**
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-browse.spec.js
+  - iznik-nuxt3/tests/e2e/test-explore.spec.js
+  - iznik-nuxt3/tests/e2e/test-homepage.spec.js
 ---
 
 # Getting started

@@ -6,6 +6,9 @@ covers:
   - iznik-nuxt3/modtools/pages/chats/**
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-modtools-member-review.spec.js
+  - iznik-nuxt3/tests/e2e/test-modtools-spammers.spec.js
 ---
 
 # Managing members

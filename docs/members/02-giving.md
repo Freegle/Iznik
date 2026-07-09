@@ -6,6 +6,10 @@ covers:
   - iznik-nuxt3/pages/myposts.vue
   - iznik-nuxt3/pages/mypost/**
   - iznik-nuxt3/components/MyMessage.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
+  - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
+  - iznik-server-go/test/message_test.go
 ---
 
 # Giving something away

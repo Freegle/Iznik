@@ -6,6 +6,9 @@ covers:
   - iznik-nuxt3/components/settings/**
   - iznik-nuxt3/pages/unsubscribe/**
   - iznik-nuxt3/pages/mydata.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-settings.spec.js
+  - iznik-nuxt3/tests/e2e/test-register-unsubscribe.spec.js
 ---
 
 # Your account

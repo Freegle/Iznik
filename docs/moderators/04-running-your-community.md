@@ -7,6 +7,8 @@ covers:
   - iznik-nuxt3/modtools/pages/communityevents/**
   - iznik-nuxt3/modtools/pages/admins.vue
   - iznik-nuxt3/modtools/pages/logs.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-nuxt3/tests/e2e/test-modtools-settings-modconfig.spec.js
 ---
 
 # Running your community

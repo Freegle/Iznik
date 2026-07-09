@@ -108,6 +108,23 @@ bump the page's `last_reviewed:` date - that still counts as touching the page, 
 "nothing to say here" decision is explicit rather than silent. When you add a page, give it
 a `covers:` list; when you add a feature, the gate points you at the page to update.
 
+#### Cover behaviour across the stack, not just the UI files
+
+A user-facing behaviour usually lives in more than the page files: posting an item is partly
+the Vue page, partly the Go API handler, partly a Laravel job. A `covers:` list of only
+frontend paths misses a behaviour change made in the API or batch layer.
+
+So for behaviour-heavy pages, also `covers:` the **cross-stack tests** that exercise the
+behaviour - the Playwright spec, the Go `*_test.go`, the Laravel test. A test is the most
+durable anchor: it changes when the behaviour changes (whichever language moved), it survives
+refactors that line numbers do not, and it is the only signal that crosses the frontend/API
+boundary. A static import graph cannot follow an HTTP call, and this repo's Swagger spec is
+hand-maintained and drifts, so neither is a reliable join - the behaviour tests are.
+
+This is deterministic but not complete: if someone changes behaviour without touching any
+test, nothing here flags it. That residual case is what the advisory LLM reviewer (below) is
+for. Nothing removes the human from judging whether a page needs a rewrite.
+
 ### Screenshots: regenerate and auto-commit (built)
 
 `docs/screenshots/regenerate-and-commit.sh` regenerates the screenshots from the running
