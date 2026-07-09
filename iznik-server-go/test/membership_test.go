@@ -4193,3 +4193,26 @@ func TestNotesFilterAllCommunitiesPagination(t *testing.T) {
 	members2, _ := page2["members"].([]interface{})
 	assert.Equal(t, 2, len(members2), "second page must have the remaining 2 members")
 }
+
+// TestDeleteMembershipsDemotesStaleModeratorSystemRole covers the systemrole
+// reconciliation wired into DeleteMemberships: when a user leaves their only
+// Owner/Moderator group, their now-stale Moderator systemrole must drop to User
+// (user.SyncSystemRole, V1 updateSystemRole parity). Regression guard for the
+// gap that left ~800 ex-mods with elevated systemrole.
+func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
+	prefix := uniquePrefix("del_demote")
+	userID := CreateTestUser(t, prefix, "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Moderator") // their only mod role
+	token := getToken(t, userID)
+
+	body, _ := json.Marshal(map[string]interface{}{"groupid": groupID})
+	req := httptest.NewRequest("DELETE", "/api/memberships?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var systemrole string
+	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	assert.Equal(t, "User", systemrole, "leaving the only mod group must demote systemrole to User")
+}
