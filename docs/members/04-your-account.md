@@ -1,6 +1,11 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/pages/settings/**
+  - iznik-nuxt3/components/settings/**
+  - iznik-nuxt3/pages/unsubscribe/**
+  - iznik-nuxt3/pages/mydata.vue
 ---
 
 # Your account

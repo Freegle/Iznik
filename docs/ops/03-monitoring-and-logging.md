@@ -1,6 +1,10 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - Logging.md
+  - SENTRY-INTEGRATION.md
+  - SENTRY-AUTOFIX.md
 ---
 
 # Monitoring and logging

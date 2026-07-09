@@ -1,6 +1,11 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/pages/index.vue
+  - iznik-nuxt3/components/LoginModal.vue
+  - iznik-nuxt3/pages/explore/**
+  - iznik-nuxt3/pages/browse/**
 ---
 
 # Getting started

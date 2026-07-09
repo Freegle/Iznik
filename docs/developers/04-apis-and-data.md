@@ -1,6 +1,10 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-server-go/API-GUIDE.md
+  - DATABASE-READ-WRITE-SPLIT.md
+  - Logging.md
 ---
 
 # APIs and data

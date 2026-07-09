@@ -1,6 +1,11 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/modtools/pages/members/**
+  - iznik-nuxt3/modtools/pages/chats/**
+  - iznik-nuxt3/modtools/pages/spammers.vue
+  - iznik-nuxt3/modtools/components/ModMember*.vue
 ---
 
 # Managing members

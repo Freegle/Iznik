@@ -1,6 +1,10 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - DATABASE-READ-WRITE-SPLIT.md
+  - docs/RSPAMD.md
+  - SPATIAL-SERVERS.md
 ---
 
 # Domains, services, and runbooks

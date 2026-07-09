@@ -1,6 +1,12 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/modtools/pages/settings/**
+  - iznik-nuxt3/modtools/pages/members/stories.vue
+  - iznik-nuxt3/modtools/pages/communityevents/**
+  - iznik-nuxt3/modtools/pages/admins.vue
+  - iznik-nuxt3/modtools/pages/logs.vue
 ---
 
 # Running your community

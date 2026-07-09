@@ -1,6 +1,11 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/pages/give/**
+  - iznik-nuxt3/pages/myposts.vue
+  - iznik-nuxt3/pages/mypost/**
+  - iznik-nuxt3/components/MyMessage.vue
 ---
 
 # Giving something away

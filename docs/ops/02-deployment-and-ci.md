@@ -1,6 +1,10 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - CircleCI.md
+  - .circleci/**
+  - README-APP.md
 ---
 
 # Deployment and CI

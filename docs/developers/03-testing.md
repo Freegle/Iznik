@@ -1,6 +1,9 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - codingstandards.md
+  - iznik-nuxt3/tests/e2e/README.md
 ---
 
 # Testing

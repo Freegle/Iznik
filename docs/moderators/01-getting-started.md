@@ -1,6 +1,11 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/modtools/pages/index.vue
+  - iznik-nuxt3/modtools/layouts/**
+  - iznik-nuxt3/modtools/composables/useMe.js
+  - iznik-nuxt3/modtools/pages/teams.vue
 ---
 
 # Getting started as a moderator

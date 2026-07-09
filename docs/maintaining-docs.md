@@ -76,21 +76,66 @@ including how to run it and how to keep shots stable, is in
 Images are committed next to the guide that uses them, under `members/assets/`,
 `moderators/assets/`, and so on.
 
-## Keeping it fresh (recommended CI additions)
+## Keeping it fresh
 
-These are the practices that stop docs rotting. Adopt them as capacity allows:
+There are two kinds of drift, and they need different mechanisms. Screenshots are a pure
+function of the code, so they can be regenerated automatically. Prose is a human judgement,
+so it cannot be auto-written - but staleness can be made impossible to merge silently.
 
-1. **Screenshot drift gate.** On a pull request that touches `iznik-nuxt3/pages/`,
-   `iznik-nuxt3/components/` or `iznik-nuxt3/modtools/`, regenerate the screenshots and
-   fail the check if they differ beyond a small pixel threshold. This ties a doc update
-   to the same pull request that changed the UI, exactly as the CircleCI orb version
-   bumps already work. Do not silently auto-commit regenerated images - make a human look.
-2. **Link checking.** Run a Markdown link checker (for example `lychee`) over `docs/` in
-   CI to catch dead internal and external links cheaply.
-3. **`last_reviewed` lint.** A few lines of Node can flag pages whose `last_reviewed` is
-   older than the last commit touching the code they reference.
-4. **CODEOWNERS.** Map `docs/members/**` and `docs/moderators/**` to the people who own
-   the matching UI, so any pull request that changes it pings a docs reviewer.
-5. **Step tests for the top journeys.** For a handful of critical walkthroughs (report a
-   post, approve a member, post an OFFER), let a Playwright test assert the documented
-   steps still work, so broken *steps*, not just stale images, get caught.
+### Prose: the freshness gate (built)
+
+Each content page declares, in front matter, the source paths it documents:
+
+```yaml
+---
+last_reviewed: 2026-07-09
+covers:
+  - iznik-nuxt3/modtools/pages/messages/**
+  - iznik-nuxt3/modtools/components/ModMessage*.vue
+---
+```
+
+`scripts/check-docs-freshness.mjs` diffs the branch against a base and **fails** if a
+`covers:` path changed but the doc page did not. Run it locally or in CI:
+
+```bash
+node scripts/check-docs-freshness.mjs --base origin/master
+node scripts/check-docs-freshness.mjs --warn      # advisory: print, exit 0
+```
+
+You satisfy the gate by updating the page. If the change genuinely needs no wording update,
+bump the page's `last_reviewed:` date - that still counts as touching the page, so the
+"nothing to say here" decision is explicit rather than silent. When you add a page, give it
+a `covers:` list; when you add a feature, the gate points you at the page to update.
+
+### Screenshots: regenerate and auto-commit (built)
+
+`docs/screenshots/regenerate-and-commit.sh` regenerates the screenshots from the running
+app and, if any changed, commits them back to the branch with `[skip ci]` in the message so
+the push does **not** start a new pipeline. It refuses to run on master/production and
+no-ops if HEAD is already an auto-generated screenshot commit.
+
+To wire this into CircleCI: run it as a job on feature branches after the prod container is
+healthy (it reuses the Playwright environment). One caveat - a `[skip ci]` commit carries no
+CircleCI status, so if a CircleCI check is *required* to merge, either do not make the
+screenshot job a required check, or drop `[skip ci]` and accept a fast path-filtered no-op
+re-run. This job is not yet added to the pipeline; wiring it in touches the shared test orb,
+so do it as a reviewed change.
+
+### Still worth adding
+
+1. **Link checking.** Run a Markdown link checker (for example `lychee`) over `docs/` in CI
+   to catch dead links cheaply.
+2. **CODEOWNERS.** Map the docs to the people who own the matching UI so changes ping a docs
+   reviewer, for example:
+   ```
+   docs/members/**      @your-frontend-owner
+   docs/moderators/**   @your-modtools-owner
+   docs/ops/**          @your-ops-owner
+   ```
+3. **Step tests for the top journeys.** For a handful of critical walkthroughs (report a
+   post, approve a member, post an OFFER), let a Playwright test assert the documented steps
+   still work, so broken *steps*, not just stale images, get caught.
+4. **AI-drafted updates (optional).** When `covers:` paths change, a job could feed the code
+   diff and the current page to an LLM and open a *suggested* doc edit for a human to accept.
+   Keep it review-gated: never auto-commit prose, which can be confidently wrong.

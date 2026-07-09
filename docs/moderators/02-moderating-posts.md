@@ -1,6 +1,9 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/modtools/pages/messages/**
+  - iznik-nuxt3/modtools/components/ModMessage*.vue
 ---
 
 # Moderating posts

@@ -1,6 +1,10 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - ARCHITECTURE.md
+  - SPATIAL-SERVERS.md
+  - RIPPLING-ALGORITHM.md
 ---
 
 # Architecture and codebase map

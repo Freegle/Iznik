@@ -1,6 +1,10 @@
 ---
 last_reviewed: 2026-07-09
 owner: Freegle dev team
+covers:
+  - iznik-nuxt3/pages/find/**
+  - iznik-nuxt3/pages/chats/**
+  - iznik-nuxt3/pages/message/**
 ---
 
 # Getting something
