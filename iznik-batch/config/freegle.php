@@ -430,14 +430,16 @@ return [
         'query_url' => env('LOKI_URL', 'http://loki:3100'),
     ],
 
-    // Served OpenAPI spec for monitor:deprecated-endpoints (source of truth for
-    // which apiv2 endpoints are deprecated + their x-sunset dates). The Go API
-    // serves it at /swagger/swagger.json on port 8192; inside the compose network
-    // the batch container reaches it as http://apiv2:8192 (verified 2026-07-09 —
-    // NOT port 80, and /swagger/doc.json 404s). PROD must set APIV2_SWAGGER_URL to
-    // the reachable apiv2 spec URL for its network (batch-prod isn't in this
-    // compose network); if the fetch fails the command warns and exits non-zero.
-    'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2:8192/swagger/swagger.json'),
+    // apiv2's deprecated-endpoint registry for monitor:deprecated-endpoints — the
+    // single source of truth for which routes are deprecated + their sunset dates
+    // (served from the same deprecation.Marker() calls that log the hits, so the
+    // set and the logging can't drift). NOT the OpenAPI spec: go-swagger's
+    // swagger:route form can't carry an x-sunset extension. The Go API serves it
+    // at /deprecated on port 8192; inside the compose network the batch container
+    // reaches it as http://apiv2:8192 (NOT port 80). PROD must set
+    // APIV2_DEPRECATED_URL for its network (batch-prod isn't in this compose
+    // network); if the fetch fails the command warns and exits non-zero.
+    'apiv2_deprecated_url' => env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/apiv2/deprecated'),
 
     // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
     // max_query_length (~30d) — a longer since-sunset range 400s; this many days of
