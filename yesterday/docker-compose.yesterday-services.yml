@@ -35,7 +35,6 @@ services:
       - "--entrypoints.modtools.transport.respondingtimeouts.idletimeout=300s"
       - "--entrypoints.phpmyadmin.address=:8447"
       - "--entrypoints.mailhog.address=:8448"
-      - "--entrypoints.apiv1.address=:8181"
       - "--entrypoints.apiv2.address=:8193"
       - "--serversTransport.forwardingTimeouts.dialTimeout=300s"
       - "--serversTransport.forwardingTimeouts.responseHeaderTimeout=300s"
@@ -116,12 +115,6 @@ services:
       - "traefik.http.routers.mailhog-route.tls.certresolver=letsencrypt"
       - "traefik.http.routers.mailhog-route.service=yesterday-svc"
       - "traefik.http.routers.mailhog-route.middlewares=add-port-8448"
-      # Iznik API v1 (port 8181)
-      - "traefik.http.routers.yesterday-apiv1.rule=Host(`${YESTERDAY_HOSTNAME}`)"
-      - "traefik.http.routers.yesterday-apiv1.entrypoints=apiv1"
-      - "traefik.http.routers.yesterday-apiv1.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.yesterday-apiv1.service=yesterday-svc"
-      - "traefik.http.routers.yesterday-apiv1.middlewares=add-port-8181"
       # Iznik API v2 (port 8193)
       - "traefik.http.routers.yesterday-apiv2.rule=Host(`${YESTERDAY_HOSTNAME}`)"
       - "traefik.http.routers.yesterday-apiv2.entrypoints=apiv2"

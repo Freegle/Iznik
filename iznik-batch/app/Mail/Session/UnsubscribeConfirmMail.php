@@ -10,7 +10,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * Unsubscribe confirmation email asking the user to confirm they want to leave Freegle.
  *
- * Matches the legacy User::confirmUnsubscribe() email from iznik-server.
+ * Matches the legacy V1 PHP User::confirmUnsubscribe() email.
  */
 class UnsubscribeConfirmMail extends MjmlMailable
 {

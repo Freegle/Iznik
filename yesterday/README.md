@@ -302,7 +302,6 @@ All services use **pure port-based routing** through a single 2FA gateway. Each 
 | **8446** | ModTools Dev | Any authenticated | freegle-modtools-dev:3000 | ModTools application (dev mode) |
 | **8447** | PHPMyAdmin | Admin only | freegle-phpmyadmin:80 | Database management |
 | **8448** | Mailhog | Admin only | freegle-mailhog:8025 | Email testing interface |
-| **8181** | Iznik API v1 | Any authenticated | freegle-apiv1:80 | PHP/MySQL API endpoints |
 | **8193** | Iznik API v2 | Any authenticated | freegle-apiv2:8192 | Go API endpoints |
 | **8095** | Image Delivery | Public (no auth) | freegle-delivery:80 | Image resizing service |
 

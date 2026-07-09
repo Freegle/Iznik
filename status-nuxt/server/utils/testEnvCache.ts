@@ -1,6 +1,6 @@
-// Shared in-memory cache for test environments created by create-test-env.php.
-// Exported so playwright.post.ts can clear it after a DB reset, preventing
-// stale postcode/ID data from being served to freeze-retry test runs.
+// Shared in-memory cache for the per-prefix Playwright test environments served from
+// iznik-nuxt3/tests/e2e/test-envs.json. Exported so playwright.post.ts can clear it after
+// a DB reset, preventing stale postcode/ID data from being served to freeze-retry test runs.
 
 export const testEnvCache: Record<string, any> = {}
 export const testEnvPending: Record<string, Promise<any>> = {}

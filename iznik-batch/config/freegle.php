@@ -54,7 +54,7 @@ return [
         'group_domain' => env('FREEGLE_GROUP_DOMAIN', 'groups.ilovefreegle.org'),
         // Internal domains that should be excluded when selecting a user's preferred email.
         // These are Freegle-internal addresses that can't receive external mail.
-        // Matches iznik-server's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups.
+        // Matches the legacy V1 PHP implementation's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups.
         'internal_domains' => [
             'users.ilovefreegle.org',
             'groups.ilovefreegle.org',

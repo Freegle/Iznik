@@ -1,10 +1,10 @@
 # Cron mail migration — parity audit
 
-Adversarial V1-parity audit of four iznik-server cron scripts migrated to Laravel
+Adversarial V1-parity audit of four legacy V1 PHP cron scripts migrated to Laravel
 artisan commands. For each: the V1 source, the Laravel target, the operations
 checked, and any deviations (with justification).
 
-Source of truth: `iznik-server/scripts/cron/*.php` and the classes they call.
+Source of truth: the legacy V1 PHP cron scripts and the classes they call.
 
 | V1 script | Artisan command | Service |
 |-----------|-----------------|---------|

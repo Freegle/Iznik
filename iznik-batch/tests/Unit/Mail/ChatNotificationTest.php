@@ -1148,7 +1148,7 @@ class ChatNotificationTest extends TestCase
      * Test User2Mod: when member receives mod reply, FROM name should be "GroupName Volunteers"
      * not the individual moderator's name.
      *
-     * This matches iznik-server behavior in processUnmailedMessage() lines 3009-3013:
+     * This matches the legacy V1 PHP behavior in processUnmailedMessage():
      * For User2Mod when notifying member, fromname is always "{group.namedisplay} volunteers"
      */
     public function test_user2mod_member_receives_mod_reply_from_name_is_volunteers(): void
@@ -1200,7 +1200,7 @@ class ChatNotificationTest extends TestCase
      * Test User2Mod: when member receives mod reply, the message content should NOT
      * show the moderator's individual name - it should show "Volunteers" or similar.
      *
-     * This matches iznik-server prepareForTwig() lines 1971-1980 which uses group profile
+     * This matches the legacy V1 PHP prepareForTwig() which uses group profile
      * instead of individual mod profile when notifying member.
      */
     public function test_user2mod_member_receives_mod_reply_hides_mod_identity_in_message(): void

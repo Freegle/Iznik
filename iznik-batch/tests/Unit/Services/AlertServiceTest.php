@@ -258,8 +258,8 @@ class AlertServiceTest extends TestCase
         $this->insertAlert(['groupprogress' => min($group1->id, $group2->id) - 1]);
 
         // Same mod in two groups. V1 parity: the already-sent check is keyed on
-        // alertid + userid + emailid + type + to (no groupid — see iznik-server
-        // include/group/Alert.php:236), so a mod with one email address gets
+        // alertid + userid + emailid + type + to (no groupid — see the legacy
+        // V1 PHP Alert implementation), so a mod with one email address gets
         // exactly ONE email per alert regardless of how many groups they
         // moderate. Matches this test's name.
         $result = $this->service->processAlerts();

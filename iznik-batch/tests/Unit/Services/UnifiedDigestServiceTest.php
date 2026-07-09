@@ -484,8 +484,8 @@ class UnifiedDigestServiceTest extends TestCase
 
     public function test_digest_includes_users_own_posts(): void
     {
-        // V1 parity: the per-group digest selection in iznik-server
-        // include/mail/Digest.php has no fromuser != ? filter, so a user's
+        // V1 parity: the per-group digest selection in the legacy V1 PHP
+        // Digest implementation has no fromuser != ? filter, so a user's
         // own posts appear in their own digest. Mirror that here.
         $recipient = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -1880,7 +1880,7 @@ class UnifiedDigestServiceTest extends TestCase
     // Bug case (user 801, Richmond Upon Thames, 2026-05-27): a user with
     // legacy simplemail='Full' who had switched some groups to Daily was
     // being treated as a "Full" user for every group and flooded with
-    // immediate emails. V1 (iznik-server/include/mail/Digest.php:418)
+    // immediate emails. V1 (the legacy V1 PHP Digest implementation)
     // ignores simplemail at send time and filters strictly on
     // memberships.emailfrequency. These tests pin that behaviour so the
     // regression cannot recur.

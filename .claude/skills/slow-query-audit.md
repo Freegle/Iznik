@@ -13,7 +13,7 @@ Investigate slow/frequent database queries on db3-internal and create a GitHub i
    ssh db3-internal "mysql performance_schema -e \"SELECT DIGEST_TEXT, COUNT_STAR, ROUND(AVG_TIMER_WAIT/1000000000, 1) as avg_ms, ROUND(SUM_TIMER_WAIT/1000000000000, 1) as total_s FROM events_statements_summary_by_digest WHERE SCHEMA_NAME = 'iznik' AND LAST_SEEN > DATE_SUB(NOW(), INTERVAL 1 DAY) ORDER BY SUM_TIMER_WAIT DESC LIMIT 10;\""
    ```
 
-2. **Filter**: Focus on V2 Go API (`iznik-server-go/`) and `iznik-batch` queries. Exclude V1 PHP API (`iznik-server/`). Map each query to its source file using distinctive table/column patterns with Grep.
+2. **Filter**: Focus on V2 Go API (`iznik-server-go/`) and `iznik-batch` queries. (The retired V1 PHP API no longer exists.) Map each query to its source file using distinctive table/column patterns with Grep.
 
 3. **Analyze**: For each identified query, determine if it can be optimized. Common patterns:
    - OR conditions in JOINs → UNION of simpler queries

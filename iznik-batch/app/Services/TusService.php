@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
  * TUS (Tus Upload Server) is a resumable upload protocol used by Freegle
  * to store message and chat attachments.
  *
- * Port from iznik-server/include/misc/Tus.php - uses curl throughout
+ * Port from the legacy V1 PHP Tus class - uses curl throughout
  * for precise control over the TUS protocol.
  */
 class TusService

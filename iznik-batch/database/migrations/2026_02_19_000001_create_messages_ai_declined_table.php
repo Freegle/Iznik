@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Schema;
  * Creates the messages_ai_declined table.
  *
  * Tracks messages where the user declined the AI-generated illustration
- * during compose. Referenced by iznik-server's Message class.
+ * during compose. Referenced by the legacy V1 PHP implementation's Message class.
  */
 return new class extends Migration
 {

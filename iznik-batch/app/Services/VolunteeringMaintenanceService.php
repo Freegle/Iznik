@@ -12,9 +12,8 @@ use Illuminate\Support\Facades\Log;
 /**
  * Volunteering opportunity renewal + expiry maintenance.
  *
- * Ported from iznik-server Volunteering::askRenew() and Volunteering::expire()
- * (include/group/Volunteering.php). The V1 weekly cron
- * (scripts/cron/volunteering.php) ran askRenew() then expire() before emailing
+ * Ported from the legacy V1 PHP Volunteering::askRenew() and Volunteering::expire().
+ * The V1 weekly cron script ran askRenew() then expire() before emailing
  * the digest. That cron was disabled ~2026-05-12 when digest emailing moved to
  * Laravel (mail:volunteering-digest), but the renewal + expiry maintenance was
  * never migrated — so dateless opportunities stopped being asked-to-renew and
@@ -26,7 +25,7 @@ use Illuminate\Support\Facades\Log;
  */
 class VolunteeringMaintenanceService
 {
-    /** Days after which a dateless opportunity expires (iznik-server Volunteering::EXPIRE_AGE). */
+    /** Days after which a dateless opportunity expires (legacy V1 PHP Volunteering::EXPIRE_AGE). */
     public const EXPIRE_AGE = 31;
 
     /**
@@ -46,7 +45,7 @@ class VolunteeringMaintenanceService
      * Email owners of dateless opportunities approaching expiry to ask whether the
      * opportunity is still active.
      *
-     * Ports iznik-server Volunteering::askRenew(): for opportunities with no end
+     * Ports the legacy V1 PHP Volunteering::askRenew(): for opportunities with no end
      * date, not deleted, not expired, added more than ASK_AGE days ago and not
      * renewed within the last ASK_AGE days, email the owner.
      *
@@ -140,7 +139,7 @@ class VolunteeringMaintenanceService
     /**
      * Expire opportunities that are no longer current.
      *
-     * Ports iznik-server Volunteering::expire():
+     * Ports the legacy V1 PHP Volunteering::expire():
      *  (a) Opportunities WITH dates: expired once no date is still in the future.
      *  (b) Dateless opportunities: expired once older than EXPIRE_AGE days and not
      *      renewed within EXPIRE_AGE days.

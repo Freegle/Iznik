@@ -107,8 +107,8 @@ class MembershipsProcessingService
     }
 
     /**
-     * V1 parity: Spam::checkUser() "seen on many groups" branch
-     * (iznik-server/include/spam/Spam.php ~534-564). A member who has joined
+     * V1 parity: the legacy V1 PHP Spam::checkUser() "seen on many groups"
+     * branch. A member who has joined
      * more than SEEN_THRESHOLD groups in the last year is "suspect" and flagged
      * for moderator review on ALL their groups.
      *

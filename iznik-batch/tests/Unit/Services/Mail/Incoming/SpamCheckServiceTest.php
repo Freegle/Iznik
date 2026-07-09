@@ -11,7 +11,7 @@ use Tests\TestCase;
 /**
  * Tests for SpamCheckService - all spam detection features.
  *
- * Matches legacy iznik-server Spam.php and MailRouter.php checks.
+ * Matches the legacy V1 PHP Spam and MailRouter checks.
  */
 class SpamCheckServiceTest extends TestCase
 {

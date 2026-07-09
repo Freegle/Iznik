@@ -249,7 +249,7 @@ class DonationService
      * Calculates how much more needs to be donated in the current 24-hour window
      * to reach the target that disables ads. Updates the config table.
      *
-     * Migrated from iznik-server/scripts/cron/donations_ads_target.php
+     * Migrated from the legacy V1 PHP donations_ads_target cron script.
      */
     public function updateAdsTarget(bool $dryRun = false): array
     {

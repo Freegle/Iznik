@@ -4939,7 +4939,7 @@ class IncomingMailServiceTest extends TestCase
     /**
      * Test that recordFailure() increments retrycount and sets retrylastfailure.
      *
-     * V1 parity: Message::recordFailure() in iznik-server/include/message/Message.php
+     * V1 parity: the legacy V1 PHP Message::recordFailure()
      * does: UPDATE messages SET retrycount = LAST_INSERT_ID(retrycount), retrylastfailure = NOW()
      * and logs to the logs table with type='Message', subtype='Failure'.
      */

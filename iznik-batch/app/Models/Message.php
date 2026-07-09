@@ -114,7 +114,7 @@ class Message extends Model implements Auditable
     protected $guarded = ['id'];
     public $timestamps = FALSE;
 
-    // Email address validation regex — kept identical to iznik-server
+    // Email address validation regex — kept identical to the legacy V1 PHP
     // Message::EMAIL_REGEXP so anything written by either codebase is accepted
     // by the other.
     public const EMAIL_REGEXP = '/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i';

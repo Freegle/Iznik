@@ -8,8 +8,8 @@ import (
 // resolvePlace reverse-geocodes a (lat,lng) point to its nearest postcode and the containing
 // place/area name, using the already-open groupsDB connection (groups.go) — self-contained, no
 // cross-service HTTP call. locations.areaid on a Postcode row already points directly at the
-// containing place's locations.id (the same join iznik-server's Location::closestPostcode() uses
-// in PHP), so a single query resolves both in one round trip.
+// containing place's locations.id (the same join the retired V1 PHP server's
+// Location::closestPostcode() used to use), so a single query resolves both in one round trip.
 //
 // Best-effort: on any error, no row, or a nil db (e.g. no MySQL configured), returns ("", "") —
 // callers must treat both as optional and degrade gracefully; the group-extent response is still

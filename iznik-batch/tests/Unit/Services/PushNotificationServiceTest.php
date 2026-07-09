@@ -763,7 +763,7 @@ class PushNotificationServiceTest extends TestCase
     // --- Chat message recipient computation (V1 parity tests) ---
     //
     // These pin the V1 ChatRoom::notifyMembers() target table from
-    // iznik-server/include/chat/ChatRoom.php:1458-1521. Each test corresponds
+    // the legacy V1 PHP implementation. Each test corresponds
     // to a cell in that table or an invariant ($excludeuser, getMemberships()>0).
     //
     // Tests target the new getChatMessageRecipients(messageId) method which

@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Mail;
 /**
  * Sends weekly reminders to mods of groups that are currently closed.
  *
- * Migrated from iznik-server/scripts/cron/groups_closed.php
+ * Migrated from the legacy V1 PHP groups_closed cron script.
  */
 class GroupClosedReminderService
 {

@@ -9,7 +9,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * System alert email to group moderators / owners / group contact address.
  *
- * Mirrors iznik-server mailtemplates/alert.php (alert_tpl): standard Freegle
+ * Mirrors the legacy V1 PHP alert mail template (alert_tpl): standard Freegle
  * header/footer styling, the alert subject and HTML body, an optional "I got
  * this" confirmation button (askclick), a 1x1 web beacon for open tracking, and
  * the "sent to all groups" note for global alerts.

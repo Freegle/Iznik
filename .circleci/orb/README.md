@@ -40,25 +40,6 @@ Note: You need a CircleCI API token. Set it via `circleci setup` or use `--token
 
 ## Usage in Repositories
 
-### iznik-server (PHPUnit tests)
-
-```yaml
-version: 2.1
-
-orbs:
-  freegle: freegle/tests@1.0.0
-
-workflows:
-  pr-tests:
-    jobs:
-      - freegle/php-tests:
-          filters:
-            branches:
-              ignore:
-                - master
-                - main
-```
-
 ### iznik-server-go (Go tests)
 
 ```yaml
@@ -103,7 +84,6 @@ workflows:
 
 ### Test Jobs
 - `freegle/build-and-test` - Full FreegleDocker build and test (all three test suites)
-- `freegle/php-tests` - Run PHPUnit tests for iznik-server PRs
 - `freegle/go-tests` - Run Go tests for iznik-server-go PRs
 - `freegle/playwright-tests` - Run Playwright E2E tests for iznik-nuxt3 PRs
 
