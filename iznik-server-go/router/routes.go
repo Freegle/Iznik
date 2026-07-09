@@ -77,6 +77,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/userdump"
 	"github.com/freegle/iznik-server-go/visualise"
+	"github.com/freegle/iznik-server-go/voicepost"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
 )
@@ -730,6 +731,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/image", image.Post)
+
+		// Voice posting: stream audio chunks in while recording, then finalise.
+		// @Router /voicepost/chunk [post]
+		// @Summary Stream a chunk of voice-post audio; returns the transcript so far
+		// @Tags VoicePost
+		// @Accept octet-stream
+		// @Produce json
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/voicepost/chunk", voicepost.Chunk)
+		// @Router /voicepost/finish [post]
+		// @Summary Finalise a voice post: full transcript plus tidied title/description
+		// @Tags VoicePost
+		// @Produce json
+		// @Success 200 {object} voicepost.FinishResult
+		rg.Post("/voicepost/finish", voicepost.Finish)
 
 		// Legacy image URL resolution
 		// @Router /image [get]
