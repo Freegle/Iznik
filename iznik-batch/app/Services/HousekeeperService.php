@@ -58,8 +58,8 @@ class HousekeeperService
      * Process Facebook deletion user IDs.
      *
      * For each Facebook user ID, find the corresponding Freegle user and put them
-     * into limbo (14-day grace period). This mirrors the logic in
-     * iznik-server/http/facebook/facebook_unsubscribe.php.
+     * into limbo (14-day grace period). This mirrors the logic in the legacy
+     * V1 PHP facebook_unsubscribe endpoint.
      */
     protected function processFacebookDeletion(array $taskData, array &$logLines): array
     {

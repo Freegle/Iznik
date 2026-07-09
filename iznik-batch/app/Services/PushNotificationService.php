@@ -13,7 +13,7 @@ use Kreait\Firebase\Messaging\CloudMessage;
 /**
  * Service for sending push notifications via Firebase Cloud Messaging.
  *
- * Ported from iznik-server PushNotifications.php.
+ * Ported from the legacy V1 PHP PushNotifications class.
  * Handles FCM Android/iOS notifications for ModTools moderators.
  */
 class PushNotificationService
@@ -216,7 +216,7 @@ class PushNotificationService
 
     /**
      * Send a Freegle-app (FD) push to a user about their on-site notifications,
-     * mirroring iznik-server PushNotifications::notify($userid, FALSE) +
+     * mirroring the legacy V1 PHP PushNotifications::notify($userid, FALSE) +
      * User::getNotificationPayload(FALSE). Used after creating an onsite
      * notification (e.g. the Exhort nudge) so the device badge/banner updates.
      *
@@ -537,7 +537,7 @@ class PushNotificationService
     /**
      * Build the ModTools notification payload.
      *
-     * Mirrors V1 User::getNotificationPayload(TRUE) (iznik-server/include/user/User.php ~4547-4569):
+     * Mirrors the legacy V1 PHP User::getNotificationPayload(TRUE):
      * iterate categories in a fixed priority order (volunteering → spam → pending), last-wins,
      * so pending — being last — always wins when present. This ensures the notification route and
      * title reflect the highest-priority work type.
@@ -941,8 +941,8 @@ class PushNotificationService
     }
 
     /**
-     * Compute push recipients for a chat message, mirroring V1
-     * ChatRoom::notifyMembers() (iznik-server/include/chat/ChatRoom.php:1458).
+     * Compute push recipients for a chat message, mirroring the legacy V1 PHP
+     * ChatRoom::notifyMembers().
      *
      * Returns ['fd' => int[], 'mt' => int[]] — FD-app and MT-app recipient
      * user IDs respectively. The sender is always excluded. Recipients
@@ -1056,8 +1056,8 @@ class PushNotificationService
     /**
      * Build the FCM payload for a single chat-message push notification.
      *
-     * Mirrors V1 PushNotifications::notifyIndividualMessages payload shape
-     * (iznik-server/include/user/PushNotifications.php:474). Key fields the
+     * Mirrors the legacy V1 PHP PushNotifications::notifyIndividualMessages
+     * payload shape. Key fields the
      * mobile app's handleNotification (iznik-nuxt3/stores/mobile.js) needs:
      *
      * - channel_id: 'chat_messages' (FD) or 'modtools' (MT) — controls
@@ -1493,7 +1493,7 @@ class PushNotificationService
 
     /**
      * Whether an attachment is an AI-generated illustration. The flag lives in the
-     * externalmods JSON as {"ai": true} (see iznik-server messages_illustrations cron).
+     * externalmods JSON as {"ai": true} (see the legacy V1 PHP messages_illustrations cron script).
      */
     private function attachmentIsAi(\App\Models\MessageAttachment $attachment): bool
     {

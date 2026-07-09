@@ -8,7 +8,7 @@ use Tests\TestCase;
 
 /**
  * Tests for User::addEmail() and User::removeEmail() — ported from
- * iznik-server userAPITest::testAddEmail() and iznik-server-go
+ * the legacy V1 PHP userAPITest::testAddEmail() and iznik-server-go
  * TestPostUserAddEmail / TestPostUserRemoveEmail.
  */
 class UserEmailTest extends TestCase

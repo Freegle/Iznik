@@ -98,7 +98,7 @@ graph TB
 ### API Containers
 | Container | Profile | Purpose |
 |-----------|---------|---------|
-| `apiv1` | default | PHP API (iznik-server) |
+| `apiv1` | default | PHP API (legacy V1, retired) |
 | `apiv2` | default | Go API (iznik-server-go) |
 | `apiv1-phpunit` | default | PHP API for running tests |
 

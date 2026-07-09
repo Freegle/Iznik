@@ -2,9 +2,10 @@
 
 Both the Laravel batch app (`iznik-batch`) and the Go API (`iznik-server-go`)
 can split database traffic so that **all writes go to one host** while **reads
-go to a separate host**. This mirrors the V1 split (`SQLHOSTS_MOD` /
-`SQLHOSTS_READ` in `iznik-server`) and exists to protect the single Galera write
-node from cluster write conflicts and lockups, and to offload read load.
+go to a separate host**. This mirrors the split (`SQLHOSTS_MOD` /
+`SQLHOSTS_READ`) used by the retired V1 PHP server and exists to protect the
+single Galera write node from cluster write conflicts and lockups, and to
+offload read load.
 
 It is **off by default**: with no read host configured, both apps behave exactly
 as a single-host deployment. Nothing changes until you set the read-host env var.

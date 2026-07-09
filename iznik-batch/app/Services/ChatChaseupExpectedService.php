@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\DB;
 /**
  * Chase up users who are expected to reply in a User2User chat but haven't.
  *
- * Mirrors iznik-server ChatRoom::chaseupExpected()
- * (include/chat/ChatRoom.php:2381-2524), driven by cron/chat_chaseup_expected.php.
+ * Mirrors the legacy V1 PHP ChatRoom::chaseupExpected() behaviour, driven by
+ * the legacy V1 PHP chat_chaseup_expected cron script.
  *
  * For each (expectee, chat) where a message is flagged replyexpected=1 /
  * replyreceived=0, is at least EXPECTED_CHASEUP_DAYS old, the expectee has been
@@ -53,7 +53,7 @@ class ChatChaseupExpectedService
             ->where('chat_messages.replyexpected', 1)
             ->where('chat_messages.replyreceived', 0)
             // V1 parity: `chat_roster.status != 'Blocked'`. In SQL this also
-            // excludes rows with no roster status (NULL), matching iznik-server.
+            // excludes rows with no roster status (NULL), matching the legacy V1 PHP implementation.
             ->where('chat_roster.status', '!=', ChatRoom::STATUS_BLOCKED)
             ->whereRaw('TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?', [self::EXPECTED_GRACE_MINUTES])
             ->where('chat_rooms.chattype', ChatRoom::TYPE_USER2USER)

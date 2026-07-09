@@ -8,7 +8,7 @@ use Tests\TestCase;
 
 /**
  * Covers item catalog find-or-create + message linking + weight estimation,
- * ported from V1 iznik-server Item::create()/estimateWeight() and the
+ * ported from the legacy V1 PHP Item::create()/estimateWeight() and the
  * Message::save() item-extraction regex. This is the building block the
  * incoming-mail path and the backfill command both use to populate
  * messages_items so the Weight stat can find items moved.

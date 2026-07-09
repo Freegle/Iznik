@@ -246,7 +246,7 @@ class User extends Model implements Auditable
      * Get the user's preferred email address.
      *
      * Excludes internal Freegle domains (users.ilovefreegle.org, groups.ilovefreegle.org, etc.)
-     * and Yahoo Groups addresses, matching iznik-server's getEmailPreferred() behavior.
+     * and Yahoo Groups addresses, matching the legacy V1 PHP implementation's getEmailPreferred() behavior.
      */
     public function getEmailPreferredAttribute(): ?string
     {
@@ -266,7 +266,7 @@ class User extends Model implements Auditable
     /**
      * Check if an email address is an internal Freegle domain that shouldn't receive external mail.
      *
-     * Matches iznik-server's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups filtering.
+     * Matches the legacy V1 PHP implementation's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups filtering.
      */
     public static function isInternalEmail(string $email): bool
     {
@@ -419,7 +419,7 @@ class User extends Model implements Auditable
 
     /**
      * Canonical form of an email address for duplicate detection.
-     * Mirrors User::canonMail() in iznik-server.
+     * Mirrors User::canonMail() in the legacy V1 PHP implementation.
      */
     public static function canonMail(string $email): string
     {
@@ -646,14 +646,14 @@ class User extends Model implements Auditable
     }
 
     /**
-     * Notification type constants matching iznik-server.
+     * Notification type constants matching the legacy V1 PHP implementation.
      */
     public const NOTIFS_EMAIL = 'email';
     public const NOTIFS_EMAIL_MINE = 'emailmine';
     public const NOTIFS_PUSH = 'push';
 
     /**
-     * Simple mail setting constants matching iznik-server.
+     * Simple mail setting constants matching the legacy V1 PHP implementation.
      *
      * SIMPLE_MAIL_NONE: Completely disables all emails.
      * SIMPLE_MAIL_BASIC: Daily digest, chat replies only.
@@ -748,7 +748,7 @@ class User extends Model implements Auditable
     /**
      * Whether we should send our mails to this user.
      *
-     * Ported from iznik-server/include/user/User.php::sendOurMails().
+     * Ported from the legacy V1 PHP User::sendOurMails().
      *
      * @param bool $checkHoliday Whether to check if user is on holiday
      * @param bool $checkBouncing Whether to check if user's email is bouncing
@@ -948,7 +948,7 @@ class User extends Model implements Auditable
     }
 
     /**
-     * Build an auto-login link, mirroring iznik-server User::loginLink($auto=TRUE).
+     * Build an auto-login link, mirroring the legacy V1 PHP User::loginLink($auto=TRUE).
      *
      * Produces `https://{userSite}{url}?u={id}&k={key}&src={src}` using the same
      * users_logins (type='Link') 32-char key the Go API validates for ?u=&k= links.
@@ -1074,7 +1074,7 @@ class User extends Model implements Auditable
      * chat rooms, user attributes, logs, gift aid, and 40+ foreign key tables.
      * The secondary user ($id2) is deleted after a successful merge.
      *
-     * Ported from iznik-server/include/user/User.php::merge().
+     * Ported from the legacy V1 PHP User::merge().
      *
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
@@ -1574,7 +1574,7 @@ class User extends Model implements Auditable
      * - Sessions deleted
      * - Deletion logged
      *
-     * Ported from iznik-server/include/user/User.php::forget().
+     * Ported from the legacy V1 PHP User::forget().
      *
      * @param string $reason Human-readable reason for the deletion (e.g. 'GDPR request')
      */
@@ -1753,7 +1753,7 @@ class User extends Model implements Auditable
      * When banning, also inserts into users_banned and withdraws any active
      * Offer/Wanted messages the user has on the group.
      *
-     * Ported from iznik-server/include/user/User.php::removeMembership().
+     * Ported from the legacy V1 PHP User::removeMembership().
      *
      * @param int $groupId The group to remove the user from
      * @param bool $ban If TRUE, also ban the user from the group and withdraw their messages
@@ -1845,7 +1845,7 @@ class User extends Model implements Auditable
     /**
      * Return the group IDs where this user is a Moderator or Owner.
      *
-     * Ported from iznik-server/include/user/User.php::getModeratorships().
+     * Ported from the legacy V1 PHP User::getModeratorships().
      *
      * @param bool $activeOnly When TRUE, only include groups where the user is actively modding
      *                         (i.e. their membership settings have active=1 or showmessages=1).
@@ -1872,7 +1872,7 @@ class User extends Model implements Auditable
      * Uses the 'active' flag in membership settings if present; falls back to the legacy
      * 'showmessages' flag; defaults to TRUE (active) if neither is set.
      *
-     * Ported from iznik-server/include/user/User.php::activeModForGroup().
+     * Ported from the legacy V1 PHP User::activeModForGroup().
      *
      * @param int $groupId
      * @return bool
@@ -1895,7 +1895,7 @@ class User extends Model implements Auditable
      * Returns TRUE if the user is an active moderator on at least one group that has
      * the 'widerchatreview' group setting enabled.
      *
-     * Ported from iznik-server/include/user/User.php::widerReview().
+     * Ported from the legacy V1 PHP User::widerReview().
      *
      * @return bool
      */
@@ -1917,7 +1917,7 @@ class User extends Model implements Auditable
     /**
      * Get the user's per-group membership settings.
      *
-     * Ported from iznik-server/include/user/User.php::getGroupSettings().
+     * Ported from the legacy V1 PHP User::getGroupSettings().
      *
      * @param int $groupId
      * @param int|null $configId Optional mod config ID (used for mod config lookup)
@@ -1972,7 +1972,7 @@ class User extends Model implements Auditable
      * configid, mysettings). This is distinct from the memberships() Eloquent relationship
      * which returns Membership models.
      *
-     * Ported from iznik-server/include/user/User.php::getMemberships().
+     * Ported from the legacy V1 PHP User::getMemberships().
      *
      * @param bool $modOnly Only return groups where user is Moderator or Owner
      * @param string|null $groupType Filter by group type (e.g. Group::TYPE_FREEGLE)

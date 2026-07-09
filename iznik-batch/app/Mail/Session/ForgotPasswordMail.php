@@ -11,7 +11,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * Forgot password email with auto-login link to settings page.
  *
- * Matches the legacy User::forgotPassword() email from iznik-server.
+ * Matches the legacy V1 PHP User::forgotPassword() email.
  */
 class ForgotPasswordMail extends MjmlMailable
 {

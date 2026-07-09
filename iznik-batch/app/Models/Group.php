@@ -247,7 +247,7 @@ class Group extends Model implements Auditable
     /**
      * Get work counts for a set of groups.
      *
-     * Ported from iznik-server Group::getWorkCounts().
+     * Ported from the legacy V1 PHP Group::getWorkCounts().
      *
      * @param  User   $me          The moderator user requesting work counts.
      * @param  array  $mysettings  Per-group settings indexed by groupid; each entry may have an 'active' boolean.
@@ -601,7 +601,7 @@ class Group extends Model implements Auditable
     /**
      * SQL fragment to filter out auto-generated/boilerplate happiness comments.
      *
-     * Ported from iznik-server Group::getHappinessFilter().
+     * Ported from the legacy V1 PHP Group::getHappinessFilter().
      * Note that this does NOT include a leading " AND" since it's intended for use inside a whereRaw() call.
      */
     private static function getHappinessFilter(): string
@@ -618,7 +618,7 @@ class Group extends Model implements Auditable
               AND messages_outcomes.comments != 'Auto-Expired'";
     }
 
-    // Fields exposed by getPublic() - mirrors iznik-server Group::$publicatts.
+    // Fields exposed by getPublic() - mirrors the legacy V1 PHP Group::$publicatts.
     private const PUBLIC_ATTS = [
         'id',
         'nameshort',
@@ -666,7 +666,7 @@ class Group extends Model implements Auditable
     /**
      * Get the public representation of this group.
      *
-     * Ported from iznik-server Group::getPublic().
+     * Ported from the legacy V1 PHP Group::getPublic().
      *
      * @param  bool  $summary  If true, omits settings, description, and welcomemail.
      */

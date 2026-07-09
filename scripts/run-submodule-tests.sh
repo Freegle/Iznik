@@ -22,9 +22,6 @@ echo "PR code path: $PR_CODE_PATH"
 
 # Determine which directory to replace
 case $TEST_TYPE in
-    php)
-        COMPONENT_DIR="iznik-server"
-        ;;
     go)
         COMPONENT_DIR="iznik-server-go"
         ;;
@@ -32,7 +29,7 @@ case $TEST_TYPE in
         COMPONENT_DIR="iznik-nuxt3"
         ;;
     *)
-        echo "Unknown test type: $TEST_TYPE (use 'php', 'go', or 'playwright')"
+        echo "Unknown test type: $TEST_TYPE (use 'go' or 'playwright')"
         exit 1
         ;;
 esac

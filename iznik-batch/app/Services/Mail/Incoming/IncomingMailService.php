@@ -1998,7 +1998,7 @@ class IncomingMailService
 
         // Strip quoted reply text and signatures before storing.
         // For volunteer messages, the quoted text (conversation transcript, reported post)
-        // is the useful content - don't strip it. Matches legacy iznik-server behavior:
+        // is the useful content - don't strip it. Matches the legacy V1 PHP behavior:
         // "Don't strip quoted as it might be useful."
         if (! $skipStripQuoted) {
             $body = $this->stripQuoted->strip($body);
@@ -2466,7 +2466,7 @@ class IncomingMailService
         // TN "Reporting member/post" emails include a conversation transcript that
         // is valuable context for moderators. Don't strip quoted text for these -
         // the transcript contains From:/To:/Subject:/Date: lines that the strip
-        // logic would eat. Matches legacy iznik-server behavior which says
+        // logic would eat. Matches the legacy V1 PHP behavior which says
         // "Don't strip quoted as it might be useful" for volunteer messages,
         // but we still want to strip for other volunteer messages like digest replies.
         $isTnReport = str_starts_with($email->subject ?? '', 'Reporting ');
@@ -3451,7 +3451,7 @@ class IncomingMailService
         ]);
 
         // Create roster entries for both users so the notification system can
-        // track seen/emailed state. The legacy iznik-server code does this in
+        // track seen/emailed state. The legacy V1 PHP implementation does this in
         // ChatRoom::createConversation() via updateRoster() for both users.
         // Without roster entries, users never receive email notifications
         // about new messages in this chat.
@@ -4186,7 +4186,7 @@ class IncomingMailService
     /**
      * Record a processing failure against a message.
      *
-     * V1 parity: Message::recordFailure() in iznik-server/include/message/Message.php.
+     * V1 parity: the legacy V1 PHP Message::recordFailure().
      * Increments retrycount and sets retrylastfailure so the message can be retried later.
      * Also logs the failure to the logs table (type=Message, subtype=Failure).
      */

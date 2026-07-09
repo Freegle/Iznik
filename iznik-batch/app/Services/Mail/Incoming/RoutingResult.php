@@ -5,7 +5,7 @@ namespace App\Services\Mail\Incoming;
 /**
  * Routing outcomes for incoming email processing.
  *
- * These match the outcomes in iznik-server's MailRouter.php.
+ * These match the outcomes in the legacy V1 PHP implementation's MailRouter.
  */
 enum RoutingResult: string
 {

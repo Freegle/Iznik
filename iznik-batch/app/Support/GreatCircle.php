@@ -3,7 +3,7 @@
 namespace App\Support;
 
 /**
- * Great-circle position maths, ported verbatim from iznik-server lib/GreatCircle.php.
+ * Great-circle position maths, ported verbatim from the legacy V1 PHP GreatCircle library.
  *
  * Used to build the spatial bounding box for the newsfeed digest, so the box
  * matches V1's exactly (NE corner at bearing 45°, SW at 225°, given a distance

@@ -15,12 +15,18 @@ set -euo pipefail
 PREFIX="${COMPOSE_PROJECT_NAME:-freegle}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
-# The set of Playwright spec prefixes that need an isolated seeded environment.
-# Historically this came from create-test-env.php's $knownPrefixes map.
-PREFIXES="browse explore mtholdrelease mtchatlist mtdashboard mtedits mtmemberlogs \
-mtmovemessage mtpageloads mtpendingmessages mtsupport postflow replyflowedgecases \
-replyflowexistinguser replyflowloggedin replyflowlogging replyflownewuser replyflowsocial \
-userratings v2apipages mteditsflow mtchatreply mtspammers repostgroupchange mtmemberreview"
+# The set of Playwright spec prefixes that request a seeded environment — i.e. every e2e spec
+# that uses the `testEnv` OR `postMessage` fixture (postMessage pulls in testEnv). The prefix
+# is derived from the spec filename: test-modtools-X.spec.js -> mtX, test-X.spec.js -> X (dashes
+# stripped). To refresh this list:
+#   for f in iznik-nuxt3/tests/e2e/*.spec.js; do grep -lq 'testEnv\|postMessage' "$f" && \
+#     basename "$f" .spec.js | sed 's/test-modtools-/mt/; s/test-//; s/-//g'; done | sort -u
+PREFIXES="browse bulkofferflow bulkuxreview contactvolunteers editdeadline explore \
+extendexpireddeadline mtchatlist mtchatreply mtdashboard mteditmessage mtedits mteditsflow \
+mtholdrelease mtmemberlogs mtmemberreview mtmovemessage mtpageloads mtpendingmessages \
+mtsettingsmodconfig mtspammers mtsupport postflow replyflowedgecases replyflowexistinguser \
+replyflowloggedin replyflowlogging replyflownewuser replyflowsocial replytochat \
+repostgroupchange userratings v2apipages"
 
 mysql_e() { docker exec "${PREFIX}-apiv1" sh -c "mysql -h percona -u root -piznik -e \"$1\""; }
 

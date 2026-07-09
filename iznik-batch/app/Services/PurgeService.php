@@ -1001,7 +1001,7 @@ class PurgeService
     /**
      * Run all log purge operations.
      *
-     * Migrated from iznik-server/scripts/cron/purge_logs.php
+     * Migrated from the legacy V1 PHP purge_logs cron script.
      */
     public function purgeAllLogs(bool $dryRun = false): array
     {

@@ -65,7 +65,7 @@ SENTRY_DB_PATH=/app/data/sentry-issues.db  # SQLite database path (default)
 
 # Project Configuration (optional - defaults provided)
 # Format: key:projectId:projectSlug:repoPath,key:projectId:projectSlug:repoPath,...
-SENTRY_PROJECTS=php:6119406:php-api:/project/iznik-server,go:4505568012730368:go-api:/project/iznik-server-go,nuxt3:4504083802226688:iznik-nuxt3:/project/iznik-nuxt3,capacitor:4506643536609280:iznik-nuxt3-capacitor:/project/iznik-nuxt3,modtools:4506712427855872:iznik-nuxt3-modtools:/project/iznik-nuxt3-modtools
+SENTRY_PROJECTS=go:4505568012730368:go-api:/project/iznik-server-go,nuxt3:4504083802226688:iznik-nuxt3:/project/iznik-nuxt3,capacitor:4506643536609280:iznik-nuxt3-capacitor:/project/iznik-nuxt3,modtools:4506712427855872:iznik-nuxt3-modtools:/project/iznik-nuxt3-modtools
 ```
 
 ### 4. Update Docker Compose
@@ -258,7 +258,6 @@ If `SENTRY_PROJECTS` is not set, these defaults are used (for Freegle projects):
 
 | Module | Project ID | Sentry Project Slug | Repository | Tests |
 |--------|-----------|---------------------|------------|-------|
-| php | 6119406 | php | iznik-server | PHPUnit |
 | go | 4505568012730368 | go | iznik-server-go | Go tests |
 | nuxt3 | 4504083802226688 | nuxt3 | iznik-nuxt3 | Playwright |
 | capacitor | 4506643536609280 | capacitor | iznik-nuxt3 | Playwright |

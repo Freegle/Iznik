@@ -10,7 +10,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * MJML email sent to ChitChat support when a user reports a newsfeed post.
  *
- * Matches the legacy Newsfeed::report() email from iznik-server.
+ * Matches the legacy V1 PHP Newsfeed::report() email.
  */
 class ChitchatReportMail extends MjmlMailable
 {

@@ -14,8 +14,8 @@ and logs `Group/Joined` with `text='Rippled'`.
 
 That auto-join is **unexpected** for the user and has a family of knock-on user-visible
 side effects. A 13-agent investigation (live system only - Laravel `iznik-batch`, Go
-`iznik-server-go`, frontend `iznik-nuxt3`; V1 `iznik-server/include` is obsolete and not
-the source of truth) mapped ~27 distinct side effects. The product decision is to **keep
+`iznik-server-go`, frontend `iznik-nuxt3`; the retired V1 PHP implementation is obsolete
+and not the source of truth) mapped ~27 distinct side effects. The product decision is to **keep
 the membership** (mods expect that people who post are members - a workflow contract that
 overrides the "don't join" option) and **mitigate the side effects piecemeal**, all on PR #855.
 

@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 /**
- * Covers VolunteeringMaintenanceService, ported from iznik-server
+ * Covers VolunteeringMaintenanceService, ported from the legacy V1 PHP
  * Volunteering::askRenew() and Volunteering::expire().
  */
 class VolunteeringMaintenanceServiceTest extends TestCase

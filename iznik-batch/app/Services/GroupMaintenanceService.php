@@ -11,7 +11,7 @@ class GroupMaintenanceService
     /**
      * Update member and moderator counts for all groups.
      *
-     * Migrated from iznik-server/scripts/cron/membercounts.php
+     * Migrated from the legacy V1 PHP membercounts cron script.
      */
     public function updateMemberCounts(bool $dryRun = false): array
     {
@@ -56,7 +56,7 @@ class GroupMaintenanceService
      * Also fixes any messages referencing the affected locations.
      * Sends an alert email if any skewed locations are found.
      *
-     * Migrated from iznik-server/scripts/cron/locations_skewwhiff.php
+     * Migrated from the legacy V1 PHP locations_skewwhiff cron script.
      */
     public function fixSkewedLocations(bool $dryRun = false): array
     {

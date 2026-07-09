@@ -1612,7 +1612,7 @@ class ChatNotificationServiceTest extends TestCase
      * 4. One of the users replies
      * 5. The moderator should NOT be notified about that reply
      *
-     * This matches the original iznik-server getMembersStatus() which filtered:
+     * This matches the original legacy V1 PHP getMembersStatus() which filtered:
      * "chat_roster.userid IN (chat_rooms.user1, chat_rooms.user2)"
      */
     public function test_notify_by_email_user2user_excludes_moderators_in_roster(): void

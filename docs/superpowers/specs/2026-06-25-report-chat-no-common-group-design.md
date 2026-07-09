@@ -117,7 +117,7 @@ memberships), so a small backend lookup supplies it.
    `ReportNoGroup` action to `POST /chatrooms`** for consistency with the
    sibling `ReferToSupport` action.
 
-### Backend — PHP `apiv1` (`iznik-server`)
+### Backend — legacy V1 PHP (`apiv1`, since retired)
 
 Not modified. The live frontend calls apiv2 (Go) exclusively for chat
 (`$getv2`/`$postv2`/`$putv2`); apiv1 is reference-only and not in use, so adding

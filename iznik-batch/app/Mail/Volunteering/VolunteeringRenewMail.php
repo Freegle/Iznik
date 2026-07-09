@@ -9,7 +9,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * "Is this volunteer opportunity still active?" renewal request.
  *
- * Ported from iznik-server mailtemplates/volunteerrenew.php +
+ * Ported from the legacy V1 PHP volunteerrenew mail template +
  * Volunteering::askRenew(). Sent to the owner of a dateless opportunity that is
  * approaching expiry; the "Let us know" button is an auto-login link to
  * /volunteering/{id} where the owner can renew (Go API sets renewed=NOW(),
@@ -29,7 +29,7 @@ class VolunteeringRenewMail extends MjmlMailable
 
     protected function getSubject(): string
     {
-        // Matches iznik-server Volunteering::askRenew(): "Regarding: {title}".
+        // Matches the legacy V1 PHP Volunteering::askRenew(): "Regarding: {title}".
         return 'Regarding: ' . $this->title;
     }
 
