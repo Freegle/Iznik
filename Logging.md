@@ -4,7 +4,6 @@
 
 Freegle uses Grafana Loki for centralised log aggregation, running in parallel with MySQL logging during the migration period. Logs are collected from:
 
-- **iznik-server** (PHP v1 API)
 - **iznik-server-go** (Go v2 API)
 - **iznik-batch** (Laravel batch processing)
 
@@ -220,13 +219,6 @@ sudo chmod 755 /var/log/freegle
 ```
 
 ### Step 5: Configure Applications
-
-**iznik-server (PHP)** - Add to `/etc/iznik.conf`:
-```php
-define('LOKI_ENABLED', TRUE);
-define('LOKI_JSON_FILE', TRUE);
-define('LOKI_JSON_PATH', '/var/log/freegle');
-```
 
 **iznik-batch (Laravel)** - Set environment variables:
 ```bash

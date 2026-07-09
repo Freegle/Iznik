@@ -106,16 +106,6 @@ export const services: ServiceConfig[] = [
   // Backend Services
   // ============================================
   {
-    id: 'apiv1',
-    name: 'API v1 (PHP)',
-    category: 'backend',
-    container: cn('apiv1'),
-    url: 'http://apiv1.localhost/api/config',
-    healthCheck: { type: 'http', path: '/api/config', timeout: 5000 },
-    actions: ['restart', 'logs'],
-    description: 'PHP API (iznik-server)',
-  },
-  {
     id: 'apiv2',
     name: 'API v2 (Go)',
     category: 'backend',

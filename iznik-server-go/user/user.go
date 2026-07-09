@@ -2307,7 +2307,7 @@ func PatchUser(c *fiber.Ctx) error {
 			targetID, utils.LOGIN_TYPE_NATIVE, uid, hashed, salt, hashed, salt)
 	}
 
-	// Trustlevel mirrors V1 iznik-server/http/api/user.php:199-226.
+	// Trustlevel mirrors the legacy V1 PHP user API endpoint.
 	// A moderator (systemrole Moderator/Support/Admin) can set any trust level
 	// on any user. A regular user can only self-set Basic or Declined, or
 	// clear it by sending an empty string. Attempts that don't match either

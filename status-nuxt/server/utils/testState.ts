@@ -24,7 +24,6 @@ const initialTestState = (): TestState => ({
 const testStates = new Map<string, TestState>([
   ['go', initialTestState()],
   ['spatial', initialTestState()],
-  ['php', initialTestState()],
   ['laravel', initialTestState()],
   ['playwright', initialTestState()],
   ['vitest', initialTestState()],

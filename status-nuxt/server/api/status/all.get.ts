@@ -57,7 +57,7 @@ function mapDockerStateToStatus(state: string, statusStr: string): string {
 /**
  * GET /api/status/all
  * Returns flat object keyed by service ID with status for CircleCI compatibility
- * Format: { "apiv1": { "status": "success" }, "apiv2": { "status": "success" }, ... }
+ * Format: { "apiv2": { "status": "success" }, "batch": { "status": "success" }, ... }
  */
 export default defineEventHandler(async () => {
   const containerStatuses = getContainerStatuses()

@@ -20,7 +20,7 @@ class StoriesNewsletterService
     /**
      * Generate the stories newsletter and send to all eligible members.
      *
-     * Mirrors the logic from iznik-server Story::generateNewsletter() + Newsletter::send().
+     * Mirrors the logic from the legacy V1 PHP Story::generateNewsletter() + Newsletter::send().
      *
      * @return array{stories: int, sent: int}
      */

@@ -8,7 +8,7 @@ const statusStore = useStatusStore()
 const tabServices: Record<string, string[]> = {
   freegle: ['freegle-dev-local', 'freegle-prod-local'],
   modtools: ['modtools-dev-local', 'modtools-prod-local'],
-  backend: ['apiv1', 'apiv2', 'batch', 'host-scripts', 'mcp-sanitizer', 'mcp-interface', 'mcp-pseudonymizer'],
+  backend: ['apiv2', 'batch', 'host-scripts', 'mcp-sanitizer', 'mcp-interface', 'mcp-pseudonymizer'],
   devtools: ['phpmyadmin', 'mailpit', 'loki', 'grafana', 'playwright', 'status'],
   testing: [], // Testing tab shows test runners, not services
   infrastructure: ['percona', 'postgres', 'redis', 'beanstalkd', 'spamassassin', 'traefik', 'tusd', 'delivery', 'mjml', 'loki-backup'],

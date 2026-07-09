@@ -33,7 +33,7 @@ class WhatJobsService
     const UK_NELAT = 58.6350001085;
     const UK_NELNG = 1.68153079591;
 
-    // Special-case address normalisation (matches iznik-server Jobs::geocode)
+    // Special-case address normalisation (matches the legacy V1 PHP Jobs::geocode)
     private const ADDRESS_FIXES = [
         'West Marsh'      => 'Grimsby',
         'Stoney Middleton' => 'Stoney Middleton, Derbyshire',
@@ -741,7 +741,7 @@ class WhatJobsService
 
             [$swlat, $swlng, $nelat, $nelng, $geomWkt] = $geom;
 
-            // Randomise within bbox to avoid clustering (matches iznik-server behaviour)
+            // Randomise within bbox to avoid clustering (matches the legacy V1 PHP behaviour)
             $newlat  = $swlat + (mt_rand() / mt_getrandmax()) * ($nelat - $swlat);
             $newlng  = $swlng + (mt_rand() / mt_getrandmax()) * ($nelng - $swlng);
             $geomWkt = $this->boxPoly(

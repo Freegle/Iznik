@@ -9,7 +9,7 @@ import (
 )
 
 // RedirectShortlink handles GET /shortlink?name=xxx — the public-facing redirect endpoint.
-// This is the Go equivalent of iznik-server/http/shortlink.php.
+// This is the Go equivalent of the legacy V1 PHP shortlink handler.
 //
 // If the name matches a shortlink, it 302-redirects to the resolved URL.
 // If no match or no name, it redirects to the user site.

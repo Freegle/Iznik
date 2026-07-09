@@ -91,7 +91,7 @@ check_git_clean() {
         has_changes=true
     fi
 
-    for sub in iznik-nuxt3 iznik-server iznik-server-go iznik-batch; do
+    for sub in iznik-nuxt3 iznik-server-go iznik-batch; do
         if [[ -d "$SCRIPT_DIR/$sub" && -n $(git -C "$SCRIPT_DIR/$sub" status --porcelain 2>/dev/null) ]]; then
             log WARN "$sub has uncommitted changes."
             has_changes=true

@@ -20,7 +20,6 @@ The Freegle monorepo uses a **shared CircleCI orb** (`freegle/tests`) that provi
 | Component | Directory | Test Type | Coverage |
 |-----------|-----------|-----------|----------|
 | **Go API** | `iznik-server-go/` | Go unit tests with race detection | Coveralls |
-| **PHP API** | `iznik-server/` | PHPUnit with MySQL, Redis | Coveralls |
 | **Laravel Batch** | `iznik-batch/` | Laravel PHPUnit tests | Coveralls |
 | **Frontend** | `iznik-nuxt3/` | Vitest unit tests | Coveralls |
 | **E2E** | `iznik-nuxt3/` | Playwright end-to-end tests | Coveralls |

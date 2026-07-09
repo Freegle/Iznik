@@ -5,7 +5,7 @@ namespace App\Services\Mail\Incoming;
 /**
  * Strip quoted reply text and signatures from email bodies.
  *
- * Ported from iznik-server Message::stripQuoted() and Message::stripSigs().
+ * Ported from the legacy V1 PHP Message::stripQuoted() and Message::stripSigs().
  * Email quoting varies widely between clients; this handles the most common
  * patterns seen in Freegle traffic.
  */

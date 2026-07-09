@@ -10,16 +10,16 @@ use Tests\TestCase;
 /**
  * Tests for monitor:deprecated-endpoints.
  *
- * The command reads the apiv2 spec for deprecated endpoints past their x-sunset
- * date, checks Loki for hits since sunset, and emails geeks@ a retire/chase
- * report — but only when at least one endpoint is past sunset.
+ * The command reads apiv2's deprecated-endpoint registry (GET /deprecated) for
+ * endpoints past their sunset date, checks Loki for hits since sunset, and emails
+ * geeks@ a retire/chase report — but only when at least one endpoint is past sunset.
  */
 class DeprecatedEndpointsCommandTest extends TestCase
 {
     protected function setUp(): void
     {
         parent::setUp();
-        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
+        config()->set('freegle.apiv2_deprecated_url', 'http://apiv2:8192/deprecated');
         config()->set('freegle.loki.query_url', 'http://loki:3100');
         config()->set('freegle.geeks_addr', 'geeks@ilovefreegle.org');
         Carbon::setTestNow('2026-07-09T06:20:00Z');
@@ -31,17 +31,16 @@ class DeprecatedEndpointsCommandTest extends TestCase
         parent::tearDown();
     }
 
-    private function fakeSpec(): array
+    /** The shape apiv2 GET /deprecated returns (already the Fiber route-pattern form). */
+    private function fakeRegistry(): array
     {
         return [
-            'paths' => [
-                // Past sunset, still called by an app straggler -> still in use.
-                '/message/{id}' => ['get' => ['deprecated' => true, 'x-sunset' => '2026-07-01']],
-                // Past sunset, silent -> safe to retire.
-                '/activity' => ['get' => ['deprecated' => true, 'x-sunset' => '2026-07-01']],
-                // Not yet armed.
-                '/future' => ['get' => ['deprecated' => true, 'x-sunset' => '2099-01-01']],
-            ],
+            // Past sunset, still called by an app straggler -> still in use.
+            ['endpoint' => 'GET /message/:id', 'sunset' => '2026-07-01'],
+            // Past sunset, silent -> safe to retire.
+            ['endpoint' => 'GET /activity', 'sunset' => '2026-07-01'],
+            // Not yet armed.
+            ['endpoint' => 'GET /future', 'sunset' => '2099-01-01'],
         ];
     }
 
@@ -49,7 +48,7 @@ class DeprecatedEndpointsCommandTest extends TestCase
     {
         Mail::fake();
         Http::fake([
-            'http://apiv2/*' => Http::response($this->fakeSpec(), 200),
+            'http://apiv2:8192/*' => Http::response($this->fakeRegistry(), 200),
             // GET /message/:id — still used by an app straggler.
             'http://loki:3100/*message*' => Http::response([
                 'data' => ['result' => [[
@@ -86,8 +85,8 @@ class DeprecatedEndpointsCommandTest extends TestCase
     {
         Mail::fake();
         Http::fake([
-            'http://apiv2/*' => Http::response([
-                'paths' => ['/message/{id}' => ['get' => ['deprecated' => true, 'x-sunset' => '2026-07-01']]],
+            'http://apiv2:8192/*' => Http::response([
+                ['endpoint' => 'GET /message/:id', 'sunset' => '2026-07-01'],
             ], 200),
             // Loki errors on the query -> must NOT count as "safe to retire".
             'http://loki:3100/*' => Http::response('range too long', 400),
@@ -102,8 +101,8 @@ class DeprecatedEndpointsCommandTest extends TestCase
     {
         Mail::fake();
         Http::fake([
-            'http://apiv2/*' => Http::response([
-                'paths' => ['/future' => ['get' => ['deprecated' => true, 'x-sunset' => '2099-01-01']]],
+            'http://apiv2:8192/*' => Http::response([
+                ['endpoint' => 'GET /future', 'sunset' => '2099-01-01'],
             ], 200),
         ]);
 
@@ -114,12 +113,12 @@ class DeprecatedEndpointsCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_fails_loudly_when_spec_unreachable(): void
+    public function test_fails_loudly_when_registry_unreachable(): void
     {
         Mail::fake();
-        // apiv2 spec unreachable/misconfigured -> the command must NOT behave like
+        // apiv2 registry unreachable/misconfigured -> the command must NOT behave like
         // "nothing deprecated"; it exits non-zero (red cron badge) and sends nothing.
-        Http::fake(['http://apiv2/*' => Http::response('down', 503)]);
+        Http::fake(['http://apiv2:8192/*' => Http::response('down', 503)]);
 
         $this->artisan('monitor:deprecated-endpoints')
             ->assertExitCode(1);

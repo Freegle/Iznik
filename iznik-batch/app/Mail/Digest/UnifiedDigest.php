@@ -669,7 +669,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // " via Trash Nothing" (the raw From-header display name). Strip it
             // so we don't surface the partner branding in the digest From line.
             $posterName = preg_replace('/\s+via\s+Trash\s*Nothing\s*$/i', '', $posterName);
-            // V1 parity (iznik-server/include/mail/Digest.php): the immediate
+            // V1 parity (legacy V1 PHP Digest implementation): the immediate
             // digest From name is "<poster> on <SITE_NAME>".
             $posterDisplayName = $posterName . ' on ' . config('freegle.branding.name');
 
@@ -1299,7 +1299,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     /**
      * Get the message image URL via delivery service.
      *
-     * V1 parity (iznik-server Attachment::getByIds ORDER BY `primary` DESC,
+     * V1 parity (legacy V1 PHP Attachment::getByIds ORDER BY `primary` DESC,
      * id): prefer the user-uploaded photo (primary=1) over AI-generated
      * fallbacks (primary=0). Also skip attachment rows that haven't been
      * fully populated — same condition V1 uses to exclude in-flight rows

@@ -9,56 +9,41 @@ use Tests\TestCase;
 
 class DeprecatedEndpointServiceTest extends TestCase
 {
-    private function fakeSpec(): array
+    /** The shape apiv2 GET /deprecated returns. */
+    private function fakeRegistry(): array
     {
         return [
-            'paths' => [
-                '/message/{id}' => [
-                    'get' => ['deprecated' => true, 'x-sunset' => '2026-07-01'],
-                    'delete' => ['deprecated' => true, 'x-sunset' => '2099-01-01'], // future
-                ],
-                '/activity' => [
-                    'get' => ['deprecated' => true, 'x-sunset' => '2026-06-15'],
-                ],
-                '/deprecated-no-sunset' => [
-                    'get' => ['deprecated' => true], // no x-sunset: not armed
-                ],
-                '/live' => [
-                    'get' => ['summary' => 'not deprecated'],
-                ],
-            ],
+            ['endpoint' => 'GET /activity', 'sunset' => '2026-06-15'],       // past
+            ['endpoint' => 'DELETE /message/:id', 'sunset' => '2026-07-01'], // past
+            ['endpoint' => 'POST /team', 'sunset' => '2099-01-01'],          // future -> excluded
         ];
     }
 
-    public function test_returns_only_deprecated_past_sunset_operations(): void
+    public function test_returns_only_past_sunset_entries(): void
     {
-        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
-        Http::fake(['http://apiv2/*' => Http::response($this->fakeSpec(), 200)]);
+        config()->set('freegle.apiv2_deprecated_url', 'http://apiv2:8192/deprecated');
+        Http::fake(['http://apiv2:8192/*' => Http::response($this->fakeRegistry(), 200)]);
 
         $svc = new DeprecatedEndpointService();
         $out = $svc->pastSunset(Carbon::parse('2026-07-09'));
 
-        // GET /message/{id} (sunset 07-01, passed) and GET /activity (06-15,
-        // passed). NOT DELETE /message/{id} (future), GET /deprecated-no-sunset
-        // (not armed), or GET /live (not deprecated).
-        $keys = array_map(fn ($e) => $e['method'].' '.$e['path'], $out);
+        $keys = array_map(fn ($e) => $e['endpoint'], $out);
         sort($keys);
-        $this->assertSame(['GET /activity', 'GET /message/{id}'], $keys);
+        $this->assertSame(['DELETE /message/:id', 'GET /activity'], $keys);
 
-        $msg = collect($out)->firstWhere('path', '/message/{id}');
+        $msg = collect($out)->firstWhere('endpoint', 'DELETE /message/:id');
         $this->assertSame('2026-07-01', $msg['sunset']);
-        // The endpoint label matches the Go middleware's route-pattern form,
-        // with Fiber ":id" params (see loggedEndpoint()).
-        $this->assertSame('GET /message/:id', $msg['logged_endpoint']);
+        // apiv2 already emits the Fiber form, so logged_endpoint == endpoint.
+        $this->assertSame('DELETE /message/:id', $msg['logged_endpoint']);
     }
 
-    public function test_returns_null_when_spec_unreachable(): void
+    public function test_returns_null_when_registry_unreachable(): void
     {
-        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
+        config()->set('freegle.apiv2_deprecated_url', 'http://apiv2:8192/deprecated');
         Http::fake(['*' => Http::response('nope', 503)]);
 
         $svc = new DeprecatedEndpointService();
-        // null (not []) so the caller can distinguish unreachable from empty.
+        // null (not []) so the command can surface "apiv2 unreachable" loudly.
         $this->assertNull($svc->pastSunset(Carbon::parse('2026-07-09')));
     }
 }

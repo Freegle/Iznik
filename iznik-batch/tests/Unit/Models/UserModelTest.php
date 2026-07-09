@@ -516,7 +516,7 @@ class UserModelTest extends TestCase
 
     /**
      * Tests for internal email filtering in getEmailPreferred.
-     * These verify that iznik-batch matches iznik-server's behavior.
+     * These verify that iznik-batch matches the legacy V1 PHP implementation's behavior.
      */
 
     public function test_email_preferred_excludes_users_ilovefreegle_domain(): void

@@ -11,7 +11,7 @@ class Location extends Model implements Auditable
 {
     use \OwenIt\Auditing\Auditable;
 
-    // Fields exposed by getPublic() - mirrors iznik-server Location::$publicatts.
+    // Fields exposed by getPublic() - mirrors the legacy V1 PHP Location::$publicatts.
     private const PUBLIC_ATTS = ['id', 'osm_id', 'name', 'type', 'popularity', 'postcodeid', 'areaid', 'lat', 'lng', 'maxdimension'];
 
     protected $table = 'locations';

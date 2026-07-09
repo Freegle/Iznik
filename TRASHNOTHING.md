@@ -209,7 +209,7 @@ When a TN user deletes their account:
 
 ## Maintenance Scripts
 
-Located in `/iznik-server/scripts/fix/`:
+The following one-off maintenance scripts existed in the legacy V1 PHP implementation (retired):
 
 | Script | Purpose |
 |--------|---------|
@@ -312,13 +312,10 @@ Responses/Chats synced bidirectionally
 
 ## Key File References
 
+TN user identification, message parsing, LoveJunk integration, daily sync and the memberships API originally lived in the legacy V1 PHP implementation (retired). Daily sync now runs via `iznik-batch`'s `TrashNothing\TNSyncCommand`; TN-aware routes (message-by-TN-post-id, partner-key auth for group join/leave) live in `iznik-server-go`.
+
 | Component | File Path |
 |-----------|-----------|
-| TN user identification | `iznik-server/include/user/User.php` |
-| Message parsing | `iznik-server/include/message/Message.php` |
-| LoveJunk integration | `iznik-server/include/integrations/LoveJunk.php` |
-| Daily sync | `iznik-server/scripts/cron/tn_sync.php` |
-| Memberships API | `iznik-server/http/api/memberships.php` |
 | ModTools member display | `iznik-nuxt3-modtools/modtools/components/ModMember.vue` |
 | Message history | `iznik-nuxt3-modtools/components/MessageHistory.vue` |
 | Chat message parsing | `iznik-nuxt3-modtools/components/ChatMessageText.vue` |

@@ -12,7 +12,7 @@ use Tests\TestCase;
  * chitchat notification email link to https://modtools.org/chitchat, but the
  * Modtools application has no /chitchat route — clicking the link produces a 404.
  *
- * V1 parity: iznik-server Newsfeed.php links to /chitchat/{id} (specific post),
+ * V1 parity: the legacy V1 PHP Newsfeed implementation links to /chitchat/{id} (specific post),
  * not just /chitchat. Each per-post "View" button must use the post ID so mods
  * land directly on the reported post rather than the general chitchat listing.
  */

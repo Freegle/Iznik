@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Tests for User::forget() — ported from iznik-server UserTest::testForget()
+ * Tests for User::forget() — ported from the legacy V1 PHP UserTest::testForget()
  * and iznik-server-go TestPostSessionForget.
  */
 class UserForgetTest extends TestCase

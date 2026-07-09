@@ -10,7 +10,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * The newsfeed ("chitchat") digest email.
  *
- * Mirrors iznik-server Newsfeed::digest() email (Newsfeed.php:935-968): subject
+ * Mirrors the legacy V1 PHP Newsfeed::digest() email: subject
  * is a snippet of the first item plus a count "from your neighbours[ in X, Y]".
  */
 class NewsfeedDigestMail extends MjmlMailable

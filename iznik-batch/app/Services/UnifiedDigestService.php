@@ -139,7 +139,7 @@ class UnifiedDigestService
     /**
      * V1-parity per-group iteration for immediate-mode digests.
      *
-     * Mirrors iznik-server/include/mail/Digest.php exactly: walk the V1
+     * Mirrors the legacy V1 PHP Digest implementation exactly: walk the V1
      * `groups_digests` table, find new messages per group since that group's
      * cursor, send one notification to every member at emailfrequency=-1
      * (minus the poster), then advance the cursor. Using V1's table directly
@@ -953,8 +953,8 @@ class UnifiedDigestService
      */
     protected function getUsersForDigest(string $mode, ?int $userId = null, int $shard = 0, int $shards = 1): \Illuminate\Support\LazyCollection
     {
-        // V1 parity (User::sendOurMails, iznik-server/include/user/User.php:4117
-        // and Engage::USER_INACTIVE = 365*12*3600 = 182.5 days): the canonical
+        // V1 parity (the legacy V1 PHP User::sendOurMails and
+        // Engage::USER_INACTIVE = 365*12*3600 = 182.5 days): the canonical
         // "is this user reachable" gate excludes anyone inactive for half a
         // year, all Trash Nothing-imported users (handled separately by TN),
         // and any address known to be bouncing. V2 previously used 90 days
@@ -989,7 +989,7 @@ class UnifiedDigestService
             $query->whereRaw('CRC32(users.id) % ? = ?', [$shards, $shard]);
         }
 
-        // V1 parity (iznik-server/include/mail/Digest.php:418): per-group
+        // V1 parity (the legacy V1 PHP Digest implementation): per-group
         // memberships.emailfrequency is authoritative at send time. The
         // global users.settings.simplemail only acts as the join-time
         // DEFAULT that populates a new membership's emailfrequency (see
@@ -1416,7 +1416,7 @@ class UnifiedDigestService
     /**
      * Get all posts for a user from their member groups since last digest.
      *
-     * V1 parity (iznik-server/include/mail/Digest.php): per-group
+     * V1 parity (the legacy V1 PHP Digest implementation): per-group
      * memberships.emailfrequency is authoritative at send time. The
      * global users.settings.simplemail is NEVER consulted here — it
      * only sets the join-time default for emailfrequency on new

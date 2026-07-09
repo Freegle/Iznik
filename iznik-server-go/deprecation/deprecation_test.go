@@ -17,8 +17,7 @@ import (
 var lokiDir string
 
 // TestMain enables Loki to a temp dir BEFORE any GetLoki() call in this test
-// binary, so the misc.GetLoki sync.Once initialises deterministically. Without
-// this, whichever test runs first would freeze the singleton's enabled state.
+// binary, so the misc.GetLoki sync.Once initialises deterministically.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "deprecation-loki")
 	if err != nil {
@@ -32,9 +31,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestMarkerSetsHeaderAndPreservesResponse(t *testing.T) {
+func TestMarkerSetsHeadersAndPreservesResponse(t *testing.T) {
 	app := fiber.New()
-	app.Get("/test/:id", Marker(), func(c *fiber.Ctx) error {
+	app.Get("/test/:id", Marker("GET /test/:id", "2026-08-01"), func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusTeapot).SendString("body-unchanged")
 	})
 
@@ -46,39 +45,73 @@ func TestMarkerSetsHeaderAndPreservesResponse(t *testing.T) {
 	assert.Equal(t, fiber.StatusTeapot, resp.StatusCode)
 	body, _ := io.ReadAll(resp.Body)
 	assert.Equal(t, "body-unchanged", string(body))
-	// External consumers can self-detect deprecation.
+	// RFC 8594 headers so external consumers can self-detect.
 	assert.Equal(t, "true", resp.Header.Get("Deprecation"))
+	assert.Equal(t, "2026-08-01", resp.Header.Get("Sunset"))
 }
 
-func TestMarkerLogsRoutePatternNotFilledPath(t *testing.T) {
+func TestMarkerLogsPassedEndpointNotFilledPath(t *testing.T) {
 	app := fiber.New()
-	app.Get("/test/:id", Marker(), func(c *fiber.Ctx) error {
+	app.Get("/msg/:id", Marker("GET /msg/:id", "2026-08-01"), func(c *fiber.Ctx) error {
 		return c.SendString("ok")
 	})
 
-	req := httptest.NewRequest("GET", "/test/999?webversion=2026-01-02T00:00:00Z", nil)
+	req := httptest.NewRequest("GET", "/msg/999?webversion=2026-01-02T00:00:00Z", nil)
 	req.Header.Set("User-Agent", "FreegleApp/9.9.9")
 	_, err := app.Test(req, -1)
 	assert.NoError(t, err)
 
 	line := readTodaysLokiLine(t)
 	assert.Contains(t, line, `"source":"deprecated_endpoint"`)
-	// The route PATTERN, never the filled /test/999.
-	assert.Contains(t, line, `"endpoint":"GET /test/:id"`)
-	assert.NotContains(t, line, "/test/999")
+	// The registered pattern, never the filled /msg/999.
+	assert.Contains(t, line, `"endpoint":"GET /msg/:id"`)
+	assert.NotContains(t, line, "/msg/999")
 	// Caller identity captured for chase-down.
 	assert.Contains(t, line, "FreegleApp/9.9.9")
 	assert.Contains(t, line, "2026-01-02T00:00:00Z")
 }
 
-// readTodaysLokiLine returns the last line of today's go-api log file.
+func TestListAndGetDeprecatedExposeTheRegistry(t *testing.T) {
+	// Registering via Marker is what populates the registry — the set and the
+	// logging are the same act, so they can't drift.
+	Marker("DELETE /widget/:id", "2026-09-15")
+
+	found := false
+	for _, e := range List() {
+		if e.Endpoint == "DELETE /widget/:id" {
+			assert.Equal(t, "2026-09-15", e.Sunset)
+			found = true
+		}
+	}
+	assert.True(t, found, "List() should contain a Marker()'d endpoint")
+
+	// GetDeprecated serves the same registry as JSON for the batch monitor.
+	app := fiber.New()
+	app.Get("/deprecated", GetDeprecated)
+	resp, err := app.Test(httptest.NewRequest("GET", "/deprecated", nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var entries []Entry
+	body, _ := io.ReadAll(resp.Body)
+	assert.NoError(t, json.Unmarshal(body, &entries))
+	var got *Entry
+	for i := range entries {
+		if entries[i].Endpoint == "DELETE /widget/:id" {
+			got = &entries[i]
+		}
+	}
+	assert.NotNil(t, got, "GET /deprecated should list the registered endpoint")
+	if got != nil {
+		assert.Equal(t, "2026-09-15", got.Sunset)
+	}
+}
+
 func readTodaysLokiLine(t *testing.T) string {
 	t.Helper()
 	fname := filepath.Join(lokiDir, "go-api-"+time.Now().Format("2006-01-02")+".log")
 	data, err := os.ReadFile(fname)
 	assert.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	// Sanity: the entry is valid JSON.
 	var entry map[string]interface{}
 	assert.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &entry))
 	return lines[len(lines)-1]

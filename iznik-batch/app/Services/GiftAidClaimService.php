@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Mail;
 /**
  * Generates HMRC Gift Aid claim CSVs from reviewed, unclaimed donation records.
  *
- * This is a Laravel port of iznik-server/scripts/cli/donations_giftaid_claim.php.
+ * This is a Laravel port of the legacy V1 PHP donations_giftaid_claim CLI script.
  * The claim CSV format matches HMRC's Gift Aid schedule spreadsheet layout.
  */
 class GiftAidClaimService

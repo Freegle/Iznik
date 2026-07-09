@@ -51,14 +51,6 @@ export default class StatusAPI extends BaseAPI {
     return await this.$get('/api/tests/go/status')
   }
 
-  async startPhpTests(withCoverage?: boolean): Promise<{ status: string }> {
-    return await this.$post('/api/tests/php', { coverage: withCoverage })
-  }
-
-  async getPhpTestStatus(): Promise<TestStatus> {
-    return await this.$get('/api/tests/php/status')
-  }
-
   async startLaravelTests(withCoverage?: boolean): Promise<{ status: string }> {
     return await this.$post('/api/tests/laravel', { coverage: withCoverage })
   }

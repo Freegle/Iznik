@@ -1,8 +1,13 @@
 #!/bin/bash
-# Set up test databases via Laravel migrations (single source of truth)
+# Set up test databases via Laravel migrations (single source of truth) + captured fixtures.
 #
-# Laravel migrations in iznik-batch are the authoritative schema definition.
-# Test databases are created by running migrations, then cloned via mysqldump.
+# Laravel migrations in iznik-batch are the authoritative schema definition. Test fixture
+# DATA lives in scripts/test-fixtures.sql (captured once from the retired V1 seeders — see
+# scripts/regenerate-test-fixtures.sh). All DB operations run through the `percona`
+# container's mysql/mysqldump clients; the `batch` container runs the migrations.
+
+# Resolve the repo dir from the script location BEFORE any cd (robust on CI + local).
+REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 
 # Support both CircleCI (~/project) and local (~/FreegleDocker) paths
 if [ -d "$HOME/FreegleDocker" ]; then
@@ -15,7 +20,7 @@ PREFIX="${COMPOSE_PROJECT_NAME:-freegle}"
 
 # Verify required containers are still running
 echo "Verifying required containers..."
-for service in apiv1 percona batch; do
+for service in percona batch; do
     container="${PREFIX}-${service}"
     if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q "true"; then
     echo "Container $container is not running!"
@@ -38,10 +43,10 @@ done
 # from previous CI runs. Cloud CI always starts fresh.
 if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
   echo "Self-hosted runner: dropping iznik database to ensure clean state..."
-  docker exec "${PREFIX}-apiv1" sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik;'"
+  docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik;'"
 fi
 echo "Creating iznik database and running Laravel migrations..."
-docker exec "${PREFIX}-apiv1" sh -c "mysql -h percona -u root -piznik -e 'CREATE DATABASE IF NOT EXISTS iznik;'"
+docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik -e 'CREATE DATABASE IF NOT EXISTS iznik;'"
 if ! docker exec "${PREFIX}-batch" php artisan migrate --force --no-interaction; then
   echo "Laravel migrations FAILED — aborting test database setup"
   docker logs "${PREFIX}-batch" --tail 50 2>&1 || true
@@ -51,38 +56,30 @@ echo "Laravel migrations complete"
 
 # 2. Set SQL mode (disable ONLY_FULL_GROUP_BY)
 echo "Setting SQL mode..."
-docker exec "${PREFIX}-apiv1" sh -c "mysql -h percona -u root -piznik \
+docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik \
   -e \"SET GLOBAL sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'\" && \
-  mysql -h percona -u root -piznik \
+  mysql -u root -piznik \
   -e \"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\""
 
-# 3. Run testenv.php for fixture data (still needs apiv1 PHP classes)
-# Clear any stale LoggedPDO "host down" markers first. On self-hosted runner
-# apiv1's /tmp persists across CI runs; a stale /tmp/iznik.dbstatus.*.down
-# causes doConnect() to short-circuit every retry for 60s, so testenv.php
-# fatals with "Sleep for all DB hosts down" and fixture data is never
-# created — cascading into AUTO_INCREMENT-dependent PHPUnit failures.
-echo "Setting up test environment (FreeglePlayground group, test users, etc.)..."
-docker exec "${PREFIX}-apiv1" sh -c "rm -f /tmp/iznik.dbstatus.*.down"
-docker exec "${PREFIX}-apiv1" sh -c "cd /var/www/iznik && php install/testenv.php" || {
-  echo "testenv.php failed — aborting test database setup"
+# 3. Load captured fixture data into iznik (replaces the retired V1 testenv.php seeding).
+# Fixtures are idempotent (INSERT IGNORE, explicit ids) so this is safe on a fresh or
+# already-populated iznik. Used by the running dev/prod stack + Playwright E2E; the Go
+# suite runs against the schema-only iznik_go_test clone below and self-seeds its own data.
+echo "Loading test fixtures into iznik (scripts/test-fixtures.sql)..."
+docker cp "${REPO_DIR}/scripts/test-fixtures.sql" "${PREFIX}-percona:/tmp/test-fixtures.sql"
+if ! docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"; then
+  echo "Fixture load FAILED — aborting test database setup"
   exit 1
-}
+fi
+echo "Fixtures loaded"
 
-# 4. Create iznik_go_test by cloning schema from migrated iznik DB
+# 4. Create iznik_go_test by cloning schema (no data) from the migrated iznik DB.
+# Go tests create their own fixture data at runtime, so only the schema is needed.
 echo "Setting up iznik_go_test database for Go tests..."
-docker exec "${PREFIX}-apiv1" sh -c "\
-    mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \
-    mysqldump -h percona -u root -piznik --no-data --routines --triggers iznik | \
-      mysql -h percona -u root -piznik iznik_go_test"
-echo "iznik_go_test ready (cloned from migrated iznik)"
-
-# 5. Create iznik_phpunit_test by cloning schema from migrated iznik DB
-echo "Setting up iznik_phpunit_test database for PHPUnit tests..."
-docker exec "${PREFIX}-apiv1" sh -c "\
-    mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_phpunit_test; CREATE DATABASE iznik_phpunit_test;' && \
-    mysqldump -h percona -u root -piznik --no-data --routines --triggers iznik | \
-      mysql -h percona -u root -piznik iznik_phpunit_test"
-echo "iznik_phpunit_test ready (cloned from migrated iznik)"
+docker exec "${PREFIX}-percona" sh -c "\
+    mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \
+    mysqldump -u root -piznik --no-data --routines --triggers iznik | \
+      mysql -u root -piznik iznik_go_test"
+echo "iznik_go_test ready (schema cloned from migrated iznik)"
 
 echo "Test database and environment ready!"

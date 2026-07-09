@@ -14,7 +14,7 @@ use Throwable;
  *
  * IMPORTANT: On a MySQL/Galera cluster, explicit transactions hold locks across
  * all nodes. Long-running or overlapping transactions cause deadlocks. The
- * iznik-server PHP code avoids this by using IMPLICIT transactions - each SQL
+ * legacy V1 PHP code avoids this by using IMPLICIT transactions - each SQL
  * statement auto-commits immediately, minimizing lock time.
  *
  * POLICY:
