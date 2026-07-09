@@ -474,7 +474,7 @@ services:
       - default
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./conf/alloy-edge.alloy:/etc/alloy/config.alloy:ro
+      - ./alloy-edge.alloy:/etc/alloy/config.alloy:ro
       - alloy-data:/var/lib/alloy/data
     command:
       - run

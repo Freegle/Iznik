@@ -1,0 +1,52 @@
+// Grafana Alloy — ships the edge (front-end host) container logs to Loki so the
+// user-facing tusd/upload + delivery + tile access logs are queryable, closing
+// the observability gap that hid a real upload failure (2026-07-09). Runs ONLY
+// under the `edge` profile on the prod docker host (migration plan §10). Alloy
+// (not Promtail — EOL) matches what the live servers use (loki LIVE-SERVER-CONFIG).
+//
+// Discovers containers via the Docker socket and streams each one's stdout/stderr
+// (frontend-nginx logs to /dev/stdout, tusd already does) to the freegledocker-loki
+// container, labelled app="edge", container=<name>.
+
+discovery.docker "edge" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "edge" {
+  targets = discovery.docker.edge.targets
+
+  // Only the edge/user-facing containers — not the whole batch stack.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(freegledocker-(frontend-nginx|tusd|delivery|tile-server|wiki-media|wiki-mysql))"
+    action        = "keep"
+  }
+  // container=<name> (strip Docker's leading slash).
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    target_label = "app"
+    replacement  = "edge"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+}
+
+loki.source.docker "edge" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.edge.output
+  forward_to       = [loki.write.default.receiver]
+  refresh_interval = "15s"
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
