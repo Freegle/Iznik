@@ -47,12 +47,12 @@ Playwright expect; needs no runtime PHP.
 | 2 | Rewire status container test endpoints off apiv1 | ✅ | go/playwright/recreate-users/env; php.post.ts deleted; apiv1 svc removed |
 | 3 | Verify Go suite green off the fixture (apiv1 stopped) | ✅ | **3439 passed, 0 failed** via status API on percona path |
 | 4 | Remove apiv1/apiv1-phpunit from compose + ports + yesterday; deps + IZNIK_API_V1 + mounts; tusd hook | ✅ | committed dc0bdac97; `docker-compose config` clean |
-| 5 | Update CI orb (remove apiv1 build/health/phpunit; use percona+fixture); publish orb | 🔄 | IN PROGRESS. Also: repoint Laravel coverage upload apiv1→batch; delete retired run-php-tests |
-| 6 | Delete `iznik-server/` + `iznik-server-my.cnf.template` (verify) + .gitattributes/.gitignore entries | ⬜ | |
-| 7 | Docs sweep (README/ARCHITECTURE/CircleCI.md/Logging.md/etc + iznik-batch comments + yesterday/ subdir) | ⬜ | neutralize dangling refs. yesterday/ subsystem heavily coupled to apiv1 |
-| 8 | Memory cleanup (MEMORY.md + V1/apiv1 memory files) | ⬜ | feedback_v1_no_longer_in_use, finding_go_tests_fail_when_apiv1_down etc |
-| 9 | Full suite green in worktree (Go✅, vitest, Laravel, Playwright) | 🔄 | Go done; bring up stack sans apiv1 + run the rest |
-| 10 | Push branch, open PR, CI green | ⬜ | |
+| 5 | Update CI orb (remove apiv1 build/health/phpunit; use percona+fixture) | ✅ | orb yaml clean + validates; coverage apiv1→batch; retired run-php-tests deleted. PUBLISH pending |
+| 6 | Delete `iznik-server/` + `iznik-server-my.cnf.template` (verify) + .gitattributes/.gitignore entries | ✅ | 1165 files gone; Dockerfile.base GeoIP COPY repointed (was a build-breaker) |
+| 7 | Docs sweep (README/ARCHITECTURE/CircleCI.md/Logging.md/etc + iznik-batch comments + yesterday/ subdir) | ✅ | 2 subagents (comment-only verified) + yesterday subsystem + file-sync + test-runners. Left: scripts/parsers/ V1↔V2 parity tooling (obsolete, flag in PR) |
+| 8 | Memory cleanup (MEMORY.md + V1/apiv1 memory files) | ✅ | feedback_v1_no_longer_in_use updated; finding_go_tests_fail_when_apiv1_down DELETED; +project_iznik_server_removed |
+| 9 | Full suite green in worktree | ✅ | **Go 3439/0 · Vitest 14236/0 · Laravel 4774/0 · Playwright 151/0** (all with apiv1 removed). Rebased onto origin/master 137bf8ec6 |
+| 10 | Publish orb (freegle/tests@1.1.354) + bump continue-config pin; push; PR; CI green | 🔄 | orb 1.1.354 PUBLISHED; pin bumped 1.1.352→1.1.354. Push + PR next |
 
 ## Open risks to verify during execution
 - Postgres `locations` (`copyLocationsToPostgresql`) — does any live test path read locations
