@@ -39,7 +39,6 @@ nohup.out
 *.deb
 
 # Temporary scripts
-apiv1-entrypoint.sh
 
 # Node modules
 node_modules/

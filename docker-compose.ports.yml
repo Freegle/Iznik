@@ -41,12 +41,6 @@ services:
     ports:
       - "${PORT_AI_SUPPORT:-8083}:3000"
 
-  apiv1:
-    ports:
-      - "${PORT_APIV1_SSH:-1023}:22"
-      - "${PORT_APIV1_HTTP:-83}:80"
-      - "${PORT_APIV1_HTTP2:-8181}:80"
-
   apiv2:
     ports:
       - "${PORT_APIV2:-8193}:8192"
