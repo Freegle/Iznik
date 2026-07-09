@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process'
+import { spawn, execSync, exec } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
 import { clearTestEnvCache } from '../../utils/testEnvCache'
@@ -63,6 +63,8 @@ export default defineEventHandler(async (event) => {
 })
 
 async function runPlaywrightTests(testFile: string | null, testName: string | null) {
+  // Drives periodic background-task processing during the run (started/stopped below).
+  let bgTasksInterval: ReturnType<typeof setInterval> | null = null
   try {
     // Check both prod containers are running
     const pfx = process.env.COMPOSE_PROJECT_NAME || 'freegle'
@@ -194,6 +196,26 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         { encoding: 'utf8', timeout: 5000 }
       )
     } catch {}
+
+    // Process incoming chat messages throughout the run. apiv2 (Go) creates a reply chat message
+    // with processingrequired=1; chats:process-incoming flips it to processingsuccessful=1, which
+    // makes the ChatListEntry visible (see iznik-server-go chatmessage.go). The retired V1 apiv1
+    // cron used to run this every minute; with apiv1 gone and batch's scheduler disabled in CI,
+    // nothing else processes it while Playwright runs, so chat-dependent specs (post-flow reply,
+    // user-ratings) hang. We drive short run-once invocations from the (stable) status container
+    // event loop rather than a long-lived detached process, which the batch PID 1 can reap. The
+    // stale command-lock is cleared each tick (flock isn't reliably released on the bind mount).
+    let bgTasksBusy = false
+    bgTasksInterval = setInterval(() => {
+      if (bgTasksBusy) return
+      bgTasksBusy = true
+      exec(
+        `docker exec ${pfx}-batch sh -c "rm -f storage/framework/command-locks/App-Console-Commands-Chat-ProcessIncomingChatCommand.lock; php artisan chats:process-incoming"`,
+        { timeout: 60000 },
+        () => { bgTasksBusy = false }
+      )
+    }, 5000)
+    appendTestLogs('playwright', 'Started chats:process-incoming processor for the run\n')
 
     setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
@@ -385,6 +407,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       }
     }
 
+    // Stop the background-task processor started for this run.
+    if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
+
     const state = getTestState('playwright')
     const p = state.progress
     setTestState('playwright', {
@@ -397,6 +422,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     })
     console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
+    if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
     setTestState('playwright', {
       status: 'failed',
       message: `Error: ${error.message}`,

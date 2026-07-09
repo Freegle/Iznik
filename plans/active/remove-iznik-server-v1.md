@@ -52,7 +52,7 @@ Playwright expect; needs no runtime PHP.
 | 7 | Docs sweep (README/ARCHITECTURE/CircleCI.md/Logging.md/etc + iznik-batch comments + yesterday/ subdir) | ✅ | 2 subagents (comment-only verified) + yesterday subsystem + file-sync + test-runners. Left: scripts/parsers/ V1↔V2 parity tooling (obsolete, flag in PR) |
 | 8 | Memory cleanup (MEMORY.md + V1/apiv1 memory files) | ✅ | feedback_v1_no_longer_in_use updated; finding_go_tests_fail_when_apiv1_down DELETED; +project_iznik_server_removed |
 | 9 | Full suite green in worktree | ✅ | **Go 3439/0 · Vitest 14236/0 · Laravel 4774/0 · Playwright 151/0** (all with apiv1 removed). Rebased onto origin/master 137bf8ec6 |
-| 10 | Publish orb (freegle/tests@1.1.354) + bump continue-config pin; push; PR; CI green | 🔄 | orb 1.1.354 PUBLISHED; pin bumped 1.1.352→1.1.354. Push + PR next |
+| 10 | Publish orb + bump pin; push; PR; CI green | 🔄 | PR #1022. orb 1.1.355 pinned. CI#1 fail: orb `ls -d iznik-server/` subtree guard (mixed-line, grep-v hid it) — fixed. CI#2 fail: 2 chat specs (post-flow reply, user-ratings) — **apiv1's V1 cron processed chats in CI; batch scheduler off in CI mode; removing apiv1 left no chat processor**. Fix: playwright.post.ts drives `queue:background-tasks` from the status container during the run. Validating under CI-sim (batch supervisor off) |
 
 ## Open risks to verify during execution
 - Postgres `locations` (`copyLocationsToPostgresql`) — does any live test path read locations
