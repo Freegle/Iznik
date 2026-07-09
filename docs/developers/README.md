@@ -18,9 +18,9 @@ If a page here ever disagrees with the code, the code wins - and the page is a b
    together, and where things live.
 2. **[Local development](02-local-development.md)** - getting a working environment,
    running the stack, and worktrees for parallel work.
-3. **[Testing](03-testing.md)** - the five test suites and how to run them.
-4. **[APIs and data](04-apis-and-data.md)** - the v1/v2 APIs, how the frontend talks to
-   them, the data model, and recipes for common changes.
+3. **[Testing](03-testing.md)** - the four test suites and how to run them.
+4. **[APIs and data](04-apis-and-data.md)** - the v2 API, how the frontend talks to
+   it, the data model, and recipes for common changes.
 
 ## The authoritative reference docs
 

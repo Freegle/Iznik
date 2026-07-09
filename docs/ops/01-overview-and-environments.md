@@ -30,8 +30,8 @@ At an architecture level:
 - The **member site** and **ModTools** are static Nuxt builds served from a CDN/host
   (Netlify), one site each, built from the same repository. See
   [Deployment and CI](02-deployment-and-ci.md).
-- The **v2 (Go) API** and **v1 (PHP) API** serve application requests. v1 is being
-  retired.
+- The **v2 (Go) API** serves application requests. The legacy PHP v1 API has been retired
+  and removed.
 - **Batch** (Laravel) runs scheduled and background jobs against the production database.
 - **Routing** and **spatial** Go services back rippling, browse and digests.
 - **Loki** aggregates logs; **Sentry** tracks errors. See

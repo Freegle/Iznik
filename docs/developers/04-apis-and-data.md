@@ -9,16 +9,15 @@ covers:
 
 # APIs and data
 
-## Two API versions
+## The API
 
-Freegle has two APIs, and the frontend uses both during the ongoing migration:
+Freegle's API is the Go **v2** API (`iznik-server-go/`), which returns bare JSON and is
+where all work goes.
 
-- **v2 (Go), `iznik-server-go/`** - the **primary** API and where new work goes. Handlers
-  return bare JSON.
-- **v1 (PHP), `iznik-server/`** - the **legacy** API, being retired. It returns a
-  `{ ret, status, ... }` envelope. The **frontend no longer calls v1**: its api-client
-  layer only speaks v2. v1 survives for a few server-side uses (for example the tusd image
-  upload hook) while it is wound down.
+A legacy PHP **v1** API (`iznik-server/`) existed during the migration but has now been
+**retired and removed from the repo** (git history only). It returned a `{ ret, status,
+... }` envelope. Everything, including image uploads, is on v2 now, and the frontend's
+api-client layer speaks v2 only.
 
 When you add or change an endpoint, add it to **v2**. The mandatory patterns for a new Go
 endpoint (routing, structure, error handling) are in

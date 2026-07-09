@@ -8,7 +8,7 @@ covers:
 
 # Testing
 
-Freegle has five test suites. The coding standards are strict about tests: fix root
+Freegle has four test suites. The coding standards are strict about tests: fix root
 causes, never skip tests or make coverage optional, and never dismiss a failure as
 "unrelated". See [../../codingstandards.md](../../codingstandards.md).
 
@@ -17,7 +17,6 @@ causes, never skip tests or make coverage optional, and never dismiss a failure 
 | Suite | Covers | Component |
 |-------|--------|-----------|
 | **Go** | The v2 API | `iznik-server-go/` |
-| **PHPUnit** | The legacy v1 API | `iznik-server/` |
 | **Laravel** | Batch processing | `iznik-batch/` |
 | **Vitest** | Frontend stores and components | `iznik-nuxt3/` |
 | **Playwright** | End-to-end user journeys | `iznik-nuxt3/tests/e2e/` |

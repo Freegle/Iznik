@@ -21,7 +21,6 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 |-----------|-----------|--------|
 | `iznik-nuxt3/` | Nuxt 3 frontend. Serves **both** the member site (ilovefreegle.org) and, from the `modtools/` subfolder, the moderator app (modtools.org). | `iznik-nuxt3/README.md` |
 | `iznik-server-go/` | Go API, **version 2** - the primary API. | `iznik-server-go/README.md` |
-| `iznik-server/` | Legacy PHP API, **version 1** - being retired. | `iznik-server/README.md` |
 | `iznik-batch/` | Laravel batch processing: digests, notifications, scheduled jobs. Owns the database schema (migrations). | `iznik-batch/README.md` |
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling and browse. | `iznik-routing-go/README.md` |
 | `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
@@ -46,8 +45,8 @@ and per-group membership and roles are the ones you will meet first.
 
 ## How the pieces talk
 
-- The frontend calls the **Go v2 API**; its api-client layer speaks v2 only. The **PHP v1
-  API** is legacy and being retired (it survives for a few server-side uses). See
+- The frontend calls the **Go v2 API**; its api-client layer speaks v2 only. The legacy
+  **PHP v1 API** (`iznik-server/`) has been retired and removed from the repo. See
   [APIs and data](04-apis-and-data.md).
 - **Batch** (Laravel) runs the scheduled and background work (digests, notification
   emails, reposts) against the database.

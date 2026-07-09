@@ -15,8 +15,7 @@ covers:
 |---------|-----------|
 | **ilovefreegle.org** | The member site (Nuxt build, served from Netlify). |
 | **modtools.org** | The moderator app (Nuxt build from the same repo, `modtools/`). |
-| **v2 API (Go)** | The primary application API. |
-| **v1 API (PHP)** | The legacy application API, being retired. |
+| **v2 API (Go)** | The application API. |
 
 The local development equivalents (the `*.localhost` domains) are listed in the root
 [../../README.md](../../README.md) and are development-only.
