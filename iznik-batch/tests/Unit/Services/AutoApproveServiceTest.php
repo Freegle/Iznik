@@ -78,6 +78,40 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    public function test_does_not_auto_approve_a_vague_item_leaving_it_pending(): void
+    {
+        // A vague item ("anything") must be routed to Pending for a moderator to review, even for
+        // a long-standing member whose posts would otherwise auto-approve after 48h.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $group, [
+            'type' => 'Wanted',
+            'subject' => 'WANTED: Anything (TestLocation)',
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
+            ]);
+
+        $this->service->process();
+
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->first();
+        $this->assertEquals(
+            MessageGroup::COLLECTION_PENDING,
+            $mg->collection,
+            'a vague-item post must stay Pending for moderator review, not auto-approve'
+        );
+    }
+
     public function test_auto_approve_mails_newly_reached_members_of_a_done_rippling_post(): void
     {
         // A rippling post auto-approved on a group AFTER its reach has finished expanding
@@ -829,7 +863,7 @@ class AutoApproveServiceTest extends TestCase
         ]);
 
         $message = $this->createTestMessage($user, $group, [
-            'subject' => 'OFFER: Something',
+            'subject' => 'OFFER: Sofa',
         ]);
 
         DB::table('messages')->where('id', $message->id)->update([
@@ -849,7 +883,7 @@ class AutoApproveServiceTest extends TestCase
 
         // Should NOT whitelist subject for non-SubjectUsedForDifferentGroups spamtype.
         $this->assertDatabaseMissing('spam_whitelist_subjects', [
-            'subject' => AutoApproveService::getPrunedSubject('OFFER: Something'),
+            'subject' => AutoApproveService::getPrunedSubject('OFFER: Sofa'),
         ]);
 
         // But Ham should still be recorded.

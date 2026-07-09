@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\ItemQuality;
 use App\Models\Group;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
@@ -221,6 +222,15 @@ class AutoApproveService
         // membership gate — the group publish/closed/override checks above still apply.
         if ((int) ($candidate->rippled_in ?? 0) === 1) {
             return true;
+        }
+
+        // Low-quality / vague item ("anything", "free stuff", "various items", "things for the
+        // garden"): do NOT auto-approve — leave it Pending so a moderator reviews it (they can
+        // approve the genuine ones). This is deliberately more aggressive than the client-side
+        // compose gate because Pending is reversible; live-data sized at ~3 posts/day across
+        // Freegle. Applied to ORIGIN rows only — a rippled-in copy was already vetted above.
+        if (ItemQuality::subjectItemIsVague($candidate->subject ?? null)) {
+            return false;
         }
 
         // V1: $joined = $u->getMembershipAtt($gid, 'added');
