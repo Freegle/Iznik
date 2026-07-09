@@ -439,7 +439,7 @@ return [
     // reaches it as http://apiv2:8192 (NOT port 80). PROD must set
     // APIV2_DEPRECATED_URL for its network (batch-prod isn't in this compose
     // network); if the fetch fails the command warns and exits non-zero.
-    'apiv2_deprecated_url' => env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/deprecated'),
+    'apiv2_deprecated_url' => env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/apiv2/deprecated'),
 
     // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
     // max_query_length (~30d) — a longer since-sunset range 400s; this many days of
