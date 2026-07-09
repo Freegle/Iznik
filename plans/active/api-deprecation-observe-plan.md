@@ -413,7 +413,7 @@ class DeprecatedEndpointServiceTest extends TestCase
 
     public function test_returns_only_deprecated_past_sunset_operations(): void
     {
-        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/doc.json');
+        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
         Http::fake(['http://apiv2/*' => Http::response($this->fakeSpec(), 200)]);
 
         $svc = new DeprecatedEndpointService();
@@ -434,7 +434,7 @@ class DeprecatedEndpointServiceTest extends TestCase
 
     public function test_returns_empty_when_spec_unreachable(): void
     {
-        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/doc.json');
+        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
         Http::fake(['*' => Http::response('nope', 503)]);
 
         $svc = new DeprecatedEndpointService();
@@ -454,8 +454,8 @@ In `iznik-batch/config/freegle.php`, add a top-level key (near the other service
 
 ```php
     // Served OpenAPI spec for monitor:deprecated-endpoints. Verify the served
-    // path once with: curl -s http://apiv2/swagger/doc.json | head -c 200
-    'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2/swagger/doc.json'),
+    // path once with: curl -s http://apiv2/swagger/swagger.json | head -c 200
+    'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2/swagger/swagger.json'),
 ```
 
 - [ ] **Step 4: Write the service**
@@ -599,7 +599,7 @@ class DeprecatedEndpointsCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/doc.json');
+        config()->set('freegle.apiv2_swagger_url', 'http://apiv2/swagger/swagger.json');
         config()->set('freegle.loki.query_url', 'http://loki:3100');
         config()->set('freegle.geeks_addr', 'geeks@ilovefreegle.org');
     }

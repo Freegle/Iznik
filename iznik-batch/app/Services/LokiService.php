@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -270,5 +272,53 @@ class LokiService
         }
 
         return substr(md5($email), 0, 16);
+    }
+
+    /**
+     * Read side: run a LogQL query over [$start, $end] and return the decoded
+     * JSON body of every matching log line. Returns [] on any error so a nightly
+     * monitor degrades to "no data" rather than throwing.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function queryRange(string $logql, Carbon $start, Carbon $end): array
+    {
+        $url = config('freegle.loki.query_url');
+        if (empty($url)) {
+            return [];
+        }
+
+        try {
+            $resp = Http::timeout(30)->get(rtrim($url, '/').'/loki/api/v1/query_range', [
+                'query' => $logql,
+                'start' => $start->getTimestamp() * 1_000_000_000, // ns
+                'end' => $end->getTimestamp() * 1_000_000_000,   // ns
+                'limit' => 5000,
+                'direction' => 'forward',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('LokiService::queryRange failed: '.$e->getMessage());
+
+            return [];
+        }
+
+        if (! $resp->ok()) {
+            Log::warning('LokiService::queryRange non-200: '.$resp->status());
+
+            return [];
+        }
+
+        $rows = [];
+        foreach (($resp->json('data.result') ?? []) as $stream) {
+            foreach (($stream['values'] ?? []) as $pair) {
+                // $pair = [ "<ns timestamp>", "<log line json>" ]
+                $decoded = json_decode($pair[1] ?? '', true);
+                if (is_array($decoded)) {
+                    $rows[] = $decoded;
+                }
+            }
+        }
+
+        return $rows;
     }
 }

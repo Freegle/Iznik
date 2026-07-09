@@ -426,7 +426,14 @@ return [
     'loki' => [
         'enabled' => env('LOKI_ENABLED', false) || env('LOKI_JSON_FILE', false),
         'log_path' => env('LOKI_JSON_PATH', '/var/log/freegle'),
+        // Read side: Loki's HTTP query API, for monitor:deprecated-endpoints.
+        'query_url' => env('LOKI_URL', 'http://loki:3100'),
     ],
+
+    // Served OpenAPI spec for monitor:deprecated-endpoints (source of truth for
+    // which apiv2 endpoints are deprecated + their x-sunset dates). apiv2 serves
+    // it at /swagger/swagger.json (verified 2026-07-09; /swagger/doc.json 404s).
+    'apiv2_swagger_url' => env('APIV2_SWAGGER_URL', 'http://apiv2/swagger/swagger.json'),
 
     /*
     |--------------------------------------------------------------------------
