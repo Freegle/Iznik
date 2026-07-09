@@ -89,16 +89,15 @@ while true; do
         # Get health status from status service
         health_response=$(curl -s http://localhost:8081/api/status/all 2>/dev/null || echo '{}')
 
-        # Check if API v1 and v2 are healthy
-        apiv1_status=$(echo "$health_response" | jq -r '.apiv1.status // "unknown"')
+        # Check if the API is healthy
         apiv2_status=$(echo "$health_response" | jq -r '.apiv2.status // "unknown"')
 
-        if [ "$apiv1_status" = "success" ] && [ "$apiv2_status" = "success" ]; then
-            echo "✅ API v1 and v2 services are healthy!"
+        if [ "$apiv2_status" = "success" ]; then
+            echo "✅ API v2 service is healthy!"
             break
         else
             elapsed_min=$((elapsed / 60))
-            echo "[${elapsed_min}m] API v1: $apiv1_status, API v2: $apiv2_status - waiting..."
+            echo "[${elapsed_min}m] API v2: $apiv2_status - waiting..."
         fi
     else
         echo "Status service not yet responding..."
