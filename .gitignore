@@ -24,7 +24,6 @@
 /rebuild-monitor.log
 yesterday/.env
 yesterday/data/
-iznik-server-my.cnf
 docker-compose.override.yml
 
 # Vim swap files
