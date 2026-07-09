@@ -37,7 +37,11 @@ type Job struct {
 
 const JOBS_LIMIT = 50
 const JOBS_DISTANCE = 64
-const JOBS_MINIMUM_CPC = 0.10
+// Lowered 0.10 -> 0.08 on 2026-07-09 after WhatJobs compressed their bids to
+// ~£0.084 (below the old £0.10 floor), which had collapsed the billable feed.
+// Keep in lockstep with iznik-batch WhatJobsService::MINIMUM_CPC (ingest) and
+// Job::MINIMUM_CPC (eligibility). See the note in WhatJobsService.
+const JOBS_MINIMUM_CPC = 0.08
 
 func GetJobs(c *fiber.Ctx) error {
 	lat, _ := strconv.ParseFloat(c.Query("lat"), 64)

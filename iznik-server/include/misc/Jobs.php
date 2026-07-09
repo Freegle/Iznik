@@ -15,7 +15,10 @@ class Jobs {
 
     private $jobKeywords = NULL;
 
-    const MINIMUM_CPC = 0.10;
+    # Lowered 0.10 -> 0.08 on 2026-07-09 after WhatJobs compressed their bids to
+    # ~£0.084. Keep in lockstep with iznik-batch (WhatJobsService, Job model) and
+    # the Go API (job.JOBS_MINIMUM_CPC).
+    const MINIMUM_CPC = 0.08;
 
     function __construct(LoggedPDO $dbhr, LoggedPDO $dbhm) {
         $this->dbhr = $dbhr;
