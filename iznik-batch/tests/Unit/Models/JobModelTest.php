@@ -133,7 +133,8 @@ class JobModelTest extends TestCase
     public function test_minimum_cpc_constant(): void
     {
         // Matches the spatial "jobs" dataset floor and the public jobs page.
-        $this->assertEquals(0.10, Job::MINIMUM_CPC);
+        // Lowered 0.10 -> 0.08 (2026-07-09) after WhatJobs compressed their bids.
+        $this->assertEquals(0.08, Job::MINIMUM_CPC);
     }
 
     public function test_job_model_is_not_guarded_except_id(): void
@@ -179,7 +180,7 @@ class JobModelTest extends TestCase
     {
         $this->clearJobsTable();
 
-        $this->seedJob(['title' => 'Low CPC Job', 'cpc' => 0.05]);  // below 0.10
+        $this->seedJob(['title' => 'Low CPC Job', 'cpc' => 0.05]);  // below the 0.08 floor
         $this->seedJob(['title' => 'Good CPC Job', 'cpc' => 0.20]);
 
         $result = Job::nearLocation(51.5074, -0.1278);
@@ -292,7 +293,7 @@ class JobModelTest extends TestCase
     {
         $this->clearJobsTable();
 
-        // All above the 0.10 floor; fewer than the default limit so there is no
+        // All above the 0.08 floor; fewer than the default limit so there is no
         // variety shuffle and the CPC-desc order is preserved.
         $this->seedJob(['title' => 'Low CPC', 'cpc' => 0.10]);
         $this->seedJob(['title' => 'High CPC', 'cpc' => 0.30]);

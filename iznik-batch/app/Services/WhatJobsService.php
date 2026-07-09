@@ -8,7 +8,14 @@ use Illuminate\Support\Facades\Log;
 
 class WhatJobsService
 {
-    const MINIMUM_CPC = 0.10;
+    // Minimum cost-per-click for a WhatJobs listing to be worth ingesting/showing.
+    // Lowered 0.10 -> 0.08 on 2026-07-09: WhatJobs compressed ~75% of their bids to
+    // ~£0.084 (just under the old £0.10 floor), collapsing our billable feed from
+    // ~225k to ~80k and tripping the swap-guard so the jobs table went stale. £0.08
+    // sits just below that £0.084 spike (≈10th percentile of the current feed),
+    // recapturing the bulk (~325k) while still excluding the genuine sub-£0.08 tail.
+    // Must match Job::MINIMUM_CPC (serving), Go job.JOBS_MINIMUM_CPC, and V1.
+    const MINIMUM_CPC = 0.08;
     const MAX_AGE_DAYS = 7;
     const DISTRIBUTE = 0.0005;
     const BATCH_SIZE = 500;
