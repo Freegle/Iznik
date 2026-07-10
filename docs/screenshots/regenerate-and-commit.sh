@@ -32,9 +32,19 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$BRANCH" = "master" ] || [ "$BRANCH" = "production" ]; then
-  echo "On $BRANCH - not regenerating screenshots here. Exiting."
+# --commit-only skips generation and just commits assets already in the working
+# tree (CI generates inside the -playwright container and copies them out).
+COMMIT_ONLY=0
+[ "${1:-}" = "--commit-only" ] && COMMIT_ONLY=1
+
+# In CI the checkout is a detached HEAD, so prefer CIRCLE_BRANCH for the branch.
+BRANCH="${CIRCLE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+if [ "$BRANCH" = "production" ]; then
+  echo "On production - not committing screenshots here. Exiting."
+  exit 0
+fi
+if [ "$BRANCH" = "master" ] && [ "${DOCS_ALLOW_MASTER:-}" != "1" ]; then
+  echo "On master and DOCS_ALLOW_MASTER != 1 - not committing. Exiting."
   exit 0
 fi
 
@@ -43,11 +53,13 @@ if git log -1 --pretty=%s | grep -qi '\[skip ci\].*screenshot\|regenerate screen
   exit 0
 fi
 
-echo "Regenerating screenshots..."
-( cd iznik-nuxt3 && node tests/e2e/docs-screenshots.mjs ) || {
-  echo "Screenshot generation failed - not committing." >&2
-  exit 1
-}
+if [ "$COMMIT_ONLY" = 0 ]; then
+  echo "Regenerating screenshots..."
+  ( cd iznik-nuxt3 && node tests/e2e/docs-screenshots.mjs ) || {
+    echo "Screenshot generation failed - not committing." >&2
+    exit 1
+  }
+fi
 
 # Keep only screenshots that changed MEANINGFULLY. Screenshots carry a few
 # non-deterministic pixels (antialiasing, carets, sub-pixel layout), so a raw

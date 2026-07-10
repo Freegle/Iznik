@@ -24,7 +24,11 @@ import { dirname, resolve } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const DOCS_ROOT = resolve(__dirname, '../../../docs')
+// DOCS_OUT lets CI write the assets to a known dir it can copy out of the
+// container; locally it defaults to the repo's docs/ folder.
+const DOCS_ROOT = process.env.DOCS_OUT
+  ? resolve(process.env.DOCS_OUT)
+  : resolve(__dirname, '../../../docs')
 
 const cfg = {
   memberBase: process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost',
