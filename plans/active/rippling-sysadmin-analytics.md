@@ -99,6 +99,31 @@ existed only as a static SVG in the reach-tuning writeup - never wired into the 
   which the component didn't render. Reconciled the component copy to its spec (uncommitted; belongs
   with the hold-web-replies feature, not the bullseye PR).
 
+## Progressive drive-time load (2026-07-09)
+Edward: the tab "takes a crazy amount of time to load... stuck on sampling drive-times from the
+routing graph". Root cause: `Analytics` computed the sampled routing pass (`scoreSample` →
+~250 `/v1/ripple-eval` isochrone calls, tens of seconds, worse over the apiv2-live tunnel) INLINE
+and blocked the whole response — the fast SQL KPIs waited behind it, so the whole tab hung.
+- **Split the endpoint.** `GET /rippling/analytics` now returns only the pure-SQL KPIs
+  (section1/2/3), fast. The routing pass moved to a new `GET /rippling/analytics/drivetime`
+  (`AnalyticsDriveTimes`) returning just the drive-derived blocks: `reply_drive_min`,
+  `ripple_drive_min`, `drive_time` (trend) and `bullseye`. Shared `analyticsWindow(c)` helper keeps
+  both handlers' window/stratum parsing identical. Still ONE sampled pass — no extra routing cost.
+- **Frontend loads progressively.** `fetchAnalytics` renders the KPIs immediately, then fires
+  `loadDriveTimes()` (not awaited). The four drive panels (Section 1 travel, Section 3 rippled
+  travel, the drive-time trend chart, the bullseye) show their own `driveLoading` spinner and fill
+  in when the routing pass returns. A stale-guard (captured stratum+window) stops a slow in-flight
+  response overwriting the panels after the user switches density/window. On KPI error the routing
+  pass is skipped entirely.
+- Net: tab is usable in ~1s instead of hanging on the routing graph; drive-times trickle in.
+- **Follow-up (not done, needs a routing-server deploy):** `/v1/ripple-eval` computes a full 45-min
+  isochrone AND a `within_coords` freegler enumeration + per-freegler `nearestNodeForMode` loop
+  (the known hottest loop per the routing-perf study), but analytics reads ONLY `drive_min` per
+  replier point. A lightweight point-to-point route reusing `costToTargets` (multi-target Dijkstra,
+  early-termination + bbox prune, already in `iznik-routing-go/proximity.go`) would cut each call
+  from full-isochrone+enumeration to settling a handful of targets — a step-change in the actual
+  drive-time latency, on top of the perceived-latency win above.
+
 ## Notes
 - Read-only prod convention: endpoint must not write. Sampling is read-only.
 - Coverage: this is exploratory sysadmin analytics; keep the routing helper thin + unit-test the pure bits (band/stratum classification, mean calc). Full routing not unit-tested (external).

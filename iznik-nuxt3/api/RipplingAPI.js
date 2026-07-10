@@ -13,12 +13,23 @@ export default class RipplingAPI extends BaseAPI {
   }
 
   // On-the-fly rippling analytics KPIs (§ sysadmin analytics tab). stratum =
-  // all|rural|suburban|dense. Drive-time metrics are sampled server-side, so this can take
-  // ~10-20s — callers should show a spinner and allow a long timeout.
+  // all|rural|suburban|dense. Fast: pure-SQL KPIs only. The slow drive-time metrics are fetched
+  // separately via fetchAnalyticsDriveTimes so this returns (and the tab renders) immediately.
   fetchAnalytics(stratum = 'all', start = '', end = '') {
     const params = { stratum }
     if (start) params.start = start
     if (end) params.end = end
     return this.$getv2('/rippling/analytics', params)
+  }
+
+  // The SLOW half of the analytics tab: the sampled drive-time routing pass (reply/rippled mean
+  // drive-times, the per-day trend and the reliability bullseye). ~250 isochrone calls, so this
+  // can take tens of seconds — callers fetch it after the KPIs and fill the drive panels in
+  // progressively, with a long timeout.
+  fetchAnalyticsDriveTimes(stratum = 'all', start = '', end = '') {
+    const params = { stratum }
+    if (start) params.start = start
+    if (end) params.end = end
+    return this.$getv2('/rippling/analytics/drivetime', params)
   }
 }
