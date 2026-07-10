@@ -34,9 +34,7 @@
 
     <div v-if="loading" class="text-center py-5">
       <b-spinner />
-      <p class="text-muted small mt-2 mb-0">
-        Computing live — sampling drive-times from the routing graph…
-      </p>
+      <p class="text-muted small mt-2 mb-0">Computing live KPIs…</p>
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else-if="s1">
@@ -103,6 +101,10 @@
                 ±{{ s1.reply_drive_min.ci_half_min.toFixed(1) }} · n =
                 {{ s1.reply_drive_min.n_replies.toLocaleString() }}
               </div>
+            </template>
+            <template v-else-if="driveLoading">
+              <b-spinner small />
+              <div class="sub muted">sampling drive-times…</div>
             </template>
             <div v-else class="sub">No drive-time sample.</div>
             <div class="divider"></div>
@@ -227,6 +229,10 @@
                 {{ s3.ripple_drive_min.n_replies.toLocaleString() }}
               </div>
             </template>
+            <template v-else-if="driveLoading">
+              <b-spinner small />
+              <div class="sub muted">sampling drive-times…</div>
+            </template>
             <div v-else class="sub">No sample.</div>
           </div>
         </div>
@@ -336,6 +342,12 @@
           </div>
         </div>
       </div>
+      <div v-else-if="driveLoading" class="text-center py-4">
+        <b-spinner small />
+        <p class="text-muted small mt-2 mb-0">
+          Sampling drive-times from the routing graph…
+        </p>
+      </div>
       <p v-else class="text-muted small">
         No drive-time sample for the bullseye in this window.
       </p>
@@ -433,6 +445,9 @@ const s1 = ref(null)
 const s2 = ref({ kpis: [], drive_time: [] })
 const s3 = ref(null)
 const bull = ref([])
+// The drive-time metrics are a slow sampled routing pass, fetched separately from the KPIs; this
+// tracks that second request so the drive panels can show their own spinner without blocking the tab.
+const driveLoading = ref(false)
 // Folded in from the retired dashboard: reply-source attribution + geographic hotspots
 // (fetched in parallel from the metrics endpoint, which already computes them).
 const replySource = ref([])
@@ -692,6 +707,42 @@ async function fetchAnalytics() {
     error.value = e.message || 'Unknown error'
   } finally {
     loading.value = false
+  }
+  // Drive-time metrics are a slow sampled routing pass (~250 isochrone calls). Load them AFTER the
+  // KPIs are on screen, not blocking them — the drive panels show their own spinner meanwhile.
+  // Skip it if the KPIs failed: there are no panels to fill, so don't hit the routing graph.
+  if (!error.value && s1.value) loadDriveTimes()
+}
+
+async function loadDriveTimes() {
+  // Remember which selection this pass is for, so a slow in-flight response can't overwrite the
+  // panels after the user has moved to a different density/window.
+  const forStratum = stratum.value
+  const forStart = startDate.value
+  const forEnd = endDate.value
+  const isStale = () =>
+    forStratum !== stratum.value ||
+    forStart !== startDate.value ||
+    forEnd !== endDate.value
+  driveLoading.value = true
+  try {
+    const d = await apiInstance.rippling.fetchAnalyticsDriveTimes(
+      forStratum,
+      forStart,
+      forEnd
+    )
+    if (isStale()) return
+    if (s1.value && d?.reply_drive_min)
+      s1.value.reply_drive_min = d.reply_drive_min
+    if (s3.value && d?.ripple_drive_min)
+      s3.value.ripple_drive_min = d.ripple_drive_min
+    s2.value = { ...s2.value, drive_time: d?.drive_time || [] }
+    bull.value = d?.bullseye || []
+  } catch (e) {
+    // Non-fatal: the KPIs are already shown. Leave the drive panels in their "no sample" state.
+  } finally {
+    // Only clear the spinner if a newer request hasn't already taken over.
+    if (!isStale()) driveLoading.value = false
   }
 }
 function setStratum(v) {
