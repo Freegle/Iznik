@@ -18,10 +18,15 @@
  * See docs/screenshots/README.md for the full guide, including how to point it at a
  * worktree (offset ports) and how determinism is achieved.
  */
-import { chromium } from '@playwright/test'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+
+// Resolve Playwright via CJS require (honours NODE_PATH and finds it whether it
+// is installed locally or globally), which ESM bare-import resolution does not.
+const require = createRequire(import.meta.url)
+const { chromium } = require('@playwright/test')
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // DOCS_OUT lets CI write the assets to a known dir it can copy out of the
