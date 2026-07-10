@@ -288,6 +288,10 @@ workflows:
                   PROJ="${COMPOSE_PROJECT_NAME:-freegle}"
                   ROOT="$(git rev-parse --show-toplevel)"
                   cd "$ROOT" || exit 0
+                  # The auto-merge-to-production step leaves git on the production
+                  # branch; reset to this pipeline's commit so screenshots are
+                  # committed onto master, not production.
+                  git checkout -f "${CIRCLE_SHA1:-HEAD}" 2>/dev/null || echo "checkout to CIRCLE_SHA1 failed"
                   if ! docker ps --format '{{.Names}}' | grep -q "^${PROJ}-playwright$"; then
                     echo "playwright container not up at post-step; skipping screenshots"
                     exit 0
