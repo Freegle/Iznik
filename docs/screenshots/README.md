@@ -69,17 +69,36 @@ generator pins the things that would otherwise vary:
 Run it against the **prod-local** container (the production build with the seeded test
 database), not a dev container, to avoid hot-reload noise.
 
-## Keeping images fresh in CI (recommended)
+## Keeping images fresh in CI
 
-The lowest-friction way to stop screenshots going stale is a **drift gate**:
+The runnable mechanism is built; wiring it into CircleCI is the remaining step.
 
-1. On a pull request touching `iznik-nuxt3/pages/`, `iznik-nuxt3/components/` or
-   `iznik-nuxt3/modtools/`, bring up the prod container and run the generator into a
-   temporary directory.
-2. Pixel-diff the result against the committed images.
-3. If anything moved beyond a small threshold, **fail the check** so a human regenerates
-   and commits the images in that same pull request. Do not auto-commit silently.
+**Built and ready:**
 
-This mirrors how the CircleCI orb version bumps already work: the change and its
-consequence are reviewed together. A weekly cron run catches drift from data or
-dependency changes that no single pull request touched.
+- `iznik-nuxt3/tests/e2e/docs-screenshots.mjs` - the generator (its `SHOTS` manifest).
+- `regenerate-and-commit.sh` - regenerates, keeps only **meaningful** pixel changes
+  (ImageMagick `compare`, tuned by `DOCS_PIXEL_THRESHOLD` / `DOCS_PIXEL_FUZZ`), and commits
+  them back with `[skip ci]` so the push never starts a new pipeline. New shots are always
+  kept; non-deterministic noise is reverted.
+
+**The CI job to add:**
+
+The orb's `run-playwright-tests` job already brings up the full seeded stack (`prod-local`,
+`modtools-prod-local`, `apiv2`, `delivery`, `playwright`, ...) - the same environment where
+login and the image proxy work, which they do not in an ad-hoc local stack. So a
+screenshots job, on feature branches only (never `master`/`production`), should:
+
+1. Reuse that stack bring-up.
+2. Run the generator inside the `${COMPOSE_PROJECT_NAME}-playwright` container (it has the
+   browsers and can reach the other containers on the internal network), pointing
+   `TEST_BASE_URL` / `TEST_MODTOOLS_BASE_URL` at the internal `prod-local` /
+   `modtools-prod-local` hostnames with the seeded `DOCS_*` credentials.
+3. Copy the generated PNGs out of the container (`docker cp`) into the working tree.
+4. Run `docs/screenshots/regenerate-and-commit.sh` (needs `imagemagick` installed and a
+   `GITHUB_TOKEN` with push scope).
+
+Because the commit carries `[skip ci]`, it does not re-run CI. Keep the job **off** the
+required-checks list (a `[skip ci]` commit carries no CircleCI status) and **off** master
+(so it never interferes with the auto-merge-to-production flow). This job changes the shared
+test pipeline, so build and validate it on its own branch and PR before it lands - a CI
+change can only be tested by running CI.
