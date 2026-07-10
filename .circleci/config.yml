@@ -70,8 +70,8 @@ jobs:
             else
               SKIP_CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
             fi
-            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/)')" ]; then
-              echo "This commit changes only plans/ or yesterday/ — its build will be skipped, so it must not cancel older (real) builds. Skipping cancellation."
+            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/|docs/)')" ]; then
+              echo "This commit changes only plans/, yesterday/ or docs/ — its build will be skipped, so it must not cancel older (real) builds. Skipping cancellation."
               exit 0
             fi
 
@@ -273,8 +273,8 @@ jobs:
             else
               SKIP_CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
             fi
-            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/)')" ]; then
-              echo "This commit changes only plans/ or yesterday/ — skipping cancellation so the older real build survives."
+            if [ -n "$SKIP_CHANGED" ] && [ -z "$(echo "$SKIP_CHANGED" | grep -v -E '^(plans/|yesterday/|docs/)')" ]; then
+              echo "This commit changes only plans/, yesterday/ or docs/ — skipping cancellation so the older real build survives."
               exit 0
             fi
 
