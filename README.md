@@ -168,5 +168,5 @@ Multiple isolated development environments can run in parallel using git worktre
 ./freegle worktree remove feature-x    # Cleanup
 ```
 
-See [WORKTREE-GUIDE.md](WORKTREE-GUIDE.md) for details.
+See [./docs/developers/reference/worktrees.md](./docs/developers/reference/worktrees.md) for details.
 </details>

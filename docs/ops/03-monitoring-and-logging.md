@@ -2,15 +2,15 @@
 last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
-  - Logging.md
-  - SENTRY-INTEGRATION.md
-  - SENTRY-AUTOFIX.md
+  - docs/ops/reference/logging.md
+  - docs/ops/reference/sentry-integration.md
+  - docs/ops/reference/sentry-autofix.md
 ---
 
 # Monitoring and logging
 
 How we see what the system is doing and find problems. The technical reference is
-[../../Logging.md](../../Logging.md).
+[./reference/logging.md](./reference/logging.md).
 
 ## Logging: Loki
 
@@ -27,14 +27,14 @@ For moderators and support, a **Log Viewer** in ModTools surfaces the relevant l
 without needing direct Loki access.
 
 Timestamps are in nanoseconds and label values must be quoted; see the query examples and
-the Go wrapper referenced in [../../Logging.md](../../Logging.md).
+the Go wrapper referenced in [./reference/logging.md](./reference/logging.md).
 
 ## Error tracking: Sentry
 
 **Sentry** captures application errors. Freegle also runs tooling around Sentry that can
 propose fixes for recurring issues as pull requests for a human to review. The
-architecture is in [../../SENTRY-INTEGRATION.md](../../SENTRY-INTEGRATION.md) and
-[../../SENTRY-AUTOFIX.md](../../SENTRY-AUTOFIX.md). (Those two overlap and are candidates
+architecture is in [./reference/sentry-integration.md](./reference/sentry-integration.md) and
+[./reference/sentry-autofix.md](./reference/sentry-autofix.md). (Those two overlap and are candidates
 for consolidation; treat them as one system described twice.)
 
 ## Development and test visibility: the status dashboard

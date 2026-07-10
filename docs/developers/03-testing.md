@@ -2,7 +2,7 @@
 last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
-  - codingstandards.md
+  - docs/developers/reference/coding-standards.md
   - iznik-nuxt3/tests/e2e/README.md
 ---
 
@@ -10,7 +10,7 @@ covers:
 
 Freegle has four test suites. The coding standards are strict about tests: fix root
 causes, never skip tests or make coverage optional, and never dismiss a failure as
-"unrelated". See [../../codingstandards.md](../../codingstandards.md).
+"unrelated". See [./reference/coding-standards.md](./reference/coding-standards.md).
 
 ## The suites
 
@@ -64,4 +64,4 @@ FreeglePlayground around Edinburgh (postcode EH3 6SS).
 CircleCI runs the full suite on every push to master, via a shared reusable orb. When you
 change tests, remember to update the orb too. The operational view of CI is in
 [../ops/02-deployment-and-ci.md](../ops/02-deployment-and-ci.md), and the reference is
-[../../CircleCI.md](../../CircleCI.md).
+[../ops/reference/circleci.md](../ops/reference/circleci.md).

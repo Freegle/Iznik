@@ -2,15 +2,15 @@
 last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
-  - CircleCI.md
+  - docs/ops/reference/circleci.md
   - .circleci/**
-  - README-APP.md
+  - docs/developers/reference/mobile-app.md
 ---
 
 # Deployment and CI
 
 This describes how code reaches production. The CI reference is
-[../../CircleCI.md](../../CircleCI.md).
+[./reference/circleci.md](./reference/circleci.md).
 
 ## The web pipeline
 
@@ -29,14 +29,14 @@ This describes how code reaches production. The CI reference is
 
 When a change spans both, deploy the **backend before** the frontend that depends on it,
 so the frontend never calls an endpoint that is not there yet. This ordering rule is in
-[../../codingstandards.md](../../codingstandards.md).
+[../developers/reference/coding-standards.md](../developers/reference/coding-standards.md).
 
 ## The mobile app pipeline
 
 Android (and iOS) builds run from the `production` branch. The Android flow builds the app
 and uploads it to Google Play's internal track via Fastlane, with a weekly manual
 promotion from internal to beta to production. Detail is in
-[../../CircleCI.md](../../CircleCI.md) and [../../README-APP.md](../../README-APP.md).
+[./reference/circleci.md](./reference/circleci.md) and [../developers/reference/mobile-app.md](../developers/reference/mobile-app.md).
 
 ## CI runner
 

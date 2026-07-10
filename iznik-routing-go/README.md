@@ -15,7 +15,7 @@ This means the same spatial capabilities (isochrones, nearby freeglers, group bo
 > [`iznik-spatial-go`](../iznik-spatial-go/README.md).
 >
 > **New here / not a developer?** Read the plain-English overview first:
-> [`../SPATIAL-SERVERS.md`](../SPATIAL-SERVERS.md).
+> [`../SPATIAL-SERVERS.md`](../docs/developers/reference/spatial-servers.md).
 
 ---
 
@@ -37,7 +37,7 @@ All endpoints are available on both ports. On the external port (8196) every `/v
 | `GET /v1/digest-simulator?lat=&lng=&max_minutes=&w_closeness=&w_freshness=&w_budget=&w_anchor=&cap=&group_by_poster=` | Simulate a member's ranked digest with tunable scoring weights and a result cap |
 | `GET /swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |
 
-See [`plans/rippling-out-algorithm.md`](../plans/rippling-out-algorithm.md) for the thinking behind the ripple / digest endpoints.
+See [the rippling algorithm reference](../docs/developers/reference/rippling-algorithm.md) for the thinking behind the ripple / digest endpoints.
 
 ---
 

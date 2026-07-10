@@ -66,8 +66,8 @@ and public transport, not just drivers.
 Putting those two together lets Freegle introduce a post to people gradually —
 starting with those closest and rippling outwards over time, so a post gets seen
 by enough people to find a home without spamming everyone at once. The full
-thinking behind that is written up (also in plain English) in
-[`plans/rippling-out-algorithm.md`](plans/rippling-out-algorithm.md).
+thinking behind that is written up in
+[the rippling algorithm reference](rippling-algorithm.md).
 
 ## What it does **not** do
 
@@ -85,12 +85,12 @@ The two services are separate Go programs in this repository:
 
 | Folder | Role | Technical docs |
 |--------|------|----------------|
-| [`iznik-spatial-go`](iznik-spatial-go/README.md) | The "finder" — nearest-neighbour / within-area index over six datasets | [`iznik-spatial-go/README.md`](iznik-spatial-go/README.md) |
-| [`iznik-routing-go`](iznik-routing-go/README.md) | The "travel-time mapper" — isochrones, fairness, nearby-freeglers, the Rippling Explorer | [`iznik-routing-go/README.md`](iznik-routing-go/README.md) |
+| [`iznik-spatial-go`](../../../iznik-spatial-go/README.md) | The "finder" — nearest-neighbour / within-area index over six datasets | [`iznik-spatial-go/README.md`](../../../iznik-spatial-go/README.md) |
+| [`iznik-routing-go`](../../../iznik-routing-go/README.md) | The "travel-time mapper" — isochrones, fairness, nearby-freeglers, the Rippling Explorer | [`iznik-routing-go/README.md`](../../../iznik-routing-go/README.md) |
 
 Each service publishes a live, browsable API reference (OpenAPI / Redoc) at
 `/swagger` when running — e.g. `http://spatial-knn.localhost/swagger` and
 `http://spatial.localhost/swagger` in local dev.
 
-Design notes live in [`plans/spatial-server-multi-dataset.md`](plans/spatial-server-multi-dataset.md)
-and [`plans/rippling-out-algorithm.md`](plans/rippling-out-algorithm.md).
+Design background for the rippling side is in
+[the rippling algorithm reference](rippling-algorithm.md).

@@ -104,7 +104,7 @@ In all these cases the copies are **kept**, each community decides independently
 re-approving a copy does **not** re-notify members or re-ripple from scratch. Rejecting a
 rippled-in copy simply removes it from your community; the poster is not told, and other
 communities are unaffected. There is a full walk-through in
-[../../RIPPLING-OUT-FOR-MODERATORS.md](../../RIPPLING-OUT-FOR-MODERATORS.md).
+[./rippling-out.md](./rippling-out.md).
 
 ## Next steps
 

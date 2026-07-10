@@ -80,7 +80,7 @@ What this means for you as a member:
   in the filters (or in Settings) towards "Nearer".
 
 There is a fuller explanation for members in
-[RIPPLING-OUT-FOR-MEMBERS.md](../../RIPPLING-OUT-FOR-MEMBERS.md).
+[./rippling-out.md](./rippling-out.md).
 
 ## Next steps
 

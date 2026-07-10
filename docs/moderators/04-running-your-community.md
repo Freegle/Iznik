@@ -102,6 +102,25 @@ These pages are only available to volunteers with the Support or Admin system ro
 - **Images** (`/images`) - review and regenerate AI-generated item images that volunteers
   have flagged.
 
+## Partner platforms: TrashNothing and LoveJunk
+
+Freegle works with two partner platforms, and their users turn up in your community. The
+one thing to remember is simple: **treat these members exactly like any other** - approve,
+chat and moderate them as normal.
+
+- **TrashNothing** is another app people can use to read and reply to Freegle posts. Someone
+  who joined through TrashNothing appears as an ordinary member and posts and replies just
+  like anyone else. A few of their settings (some email and notification preferences) are
+  managed by TrashNothing rather than Freegle, so those options may be hidden on their
+  member panel.
+- **LoveJunk** is a reuse marketplace that Freegle shares OFFERs with, to help more items
+  get taken. By default your community's OFFERs are also shown on LoveJunk, and LoveJunk
+  users can reply through the normal chat. Those members show a "LoveJunk user" note on
+  their panel, and their chat messages are kept in step between the two sites.
+
+Whether your community shares posts with TrashNothing and LoveJunk is a community setting.
+There is technical detail for the curious in [../developers/reference/trashnothing.md](../developers/reference/trashnothing.md).
+
 ## Next steps
 
 - Back to the daily work: [Moderating posts](02-moderating-posts.md) and

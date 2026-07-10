@@ -2,15 +2,15 @@
 last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
-  - ARCHITECTURE.md
-  - SPATIAL-SERVERS.md
-  - RIPPLING-ALGORITHM.md
+  - docs/developers/reference/architecture.md
+  - docs/developers/reference/spatial-servers.md
+  - docs/developers/reference/rippling-algorithm.md
 ---
 
 # Architecture and codebase map
 
 This page is the "where does everything live" overview. For the detailed container,
-network and profile picture, read [../../ARCHITECTURE.md](../../ARCHITECTURE.md); this
+network and profile picture, read [./reference/architecture.md](./reference/architecture.md); this
 page will not repeat it.
 
 ## The components
@@ -25,11 +25,11 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling and browse. | `iznik-routing-go/README.md` |
 | `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
 | `status-nuxt/` | Development status dashboard and test runner. | - |
-| `freegle-mobile/` | Capacitor mobile app wrapper around the Nuxt frontend. See [../../README-APP.md](../../README-APP.md). | - |
+| `freegle-mobile/` | Capacitor mobile app wrapper around the Nuxt frontend. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
 
 There is more than one strand of mobile work in the tree (a Capacitor build of the Nuxt
 app, plus native app assets). If you are touching mobile, start from
-[../../README-APP.md](../../README-APP.md) and confirm the current direction rather than
+[./reference/mobile-app.md](./reference/mobile-app.md) and confirm the current direction rather than
 assuming.
 
 ## How the frontend is put together
@@ -52,19 +52,19 @@ and per-group membership and roles are the ones you will meet first.
   emails, reposts) against the database.
 - **Routing and spatial** Go services answer "how far / which area" questions that
   rippling, browse and digests depend on. The plain-English overview is
-  [../../SPATIAL-SERVERS.md](../../SPATIAL-SERVERS.md).
+  [./reference/spatial-servers.md](./reference/spatial-servers.md).
 
 ## Cross-cutting features worth knowing
 
 - **Rippling out** is the mechanism that spreads a post outward over time. The algorithm
-  and the rejected alternatives are in [../../RIPPLING-ALGORITHM.md](../../RIPPLING-ALGORITHM.md);
+  and the rejected alternatives are in [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md);
   the member and moderator behaviour is in
-  [../../RIPPLING-OUT-FOR-MEMBERS.md](../../RIPPLING-OUT-FOR-MEMBERS.md) and
-  [../../RIPPLING-OUT-FOR-MODERATORS.md](../../RIPPLING-OUT-FOR-MODERATORS.md).
+  [../members/rippling-out.md](../members/rippling-out.md) and
+  [../moderators/rippling-out.md](../moderators/rippling-out.md).
 - **TrashNothing / LoveJunk** is a partner integration where external users post into
-  Freegle communities. See [../../TRASHNOTHING.md](../../TRASHNOTHING.md).
+  Freegle communities. See [./reference/trashnothing.md](./reference/trashnothing.md).
 - **Logging and observability** run through Loki, with client-side tracing. See
-  [../../Logging.md](../../Logging.md) and [APIs and data](04-apis-and-data.md).
+  [../ops/reference/logging.md](../ops/reference/logging.md) and [APIs and data](04-apis-and-data.md).
 
 ## Finding your way around
 
@@ -76,4 +76,4 @@ and per-group membership and roles are the ones you will meet first.
 - Scheduled jobs and mail: `iznik-batch/`.
 
 For the deep container and deployment view, and the full list of Docker profiles, go to
-[../../ARCHITECTURE.md](../../ARCHITECTURE.md).
+[./reference/architecture.md](./reference/architecture.md).

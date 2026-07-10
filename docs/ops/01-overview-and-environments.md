@@ -2,15 +2,15 @@
 last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
-  - ARCHITECTURE.md
-  - WORKTREE-GUIDE.md
+  - docs/developers/reference/architecture.md
+  - docs/developers/reference/worktrees.md
 ---
 
 # Overview and environments
 
 Freegle is a Docker Compose stack. The same `docker-compose.yml` supports several
 environments, selected by Compose **profiles** and a few override files. The definitive
-list is in [../../ARCHITECTURE.md](../../ARCHITECTURE.md); this is the operational summary.
+list is in [../developers/reference/architecture.md](../developers/reference/architecture.md); this is the operational summary.
 
 ## The environments
 
@@ -20,7 +20,7 @@ list is in [../../ARCHITECTURE.md](../../ARCHITECTURE.md); this is the operation
 | **CircleCI** | The same stack brought up in CI to run the test suites on every push. |
 | **Production background** | The server that runs the Laravel scheduled jobs and Loki log aggregation against the production database. Uses its own profile and environment file. |
 | **"Yesterday"** | A data-recovery / testing configuration that runs only the containers needed to inspect a previous state, via an override file. |
-| **Developer worktrees** | Multiple isolated stacks running in parallel, each on offset ports with its own database, for working on several branches at once. See [../../WORKTREE-GUIDE.md](../../WORKTREE-GUIDE.md). |
+| **Developer worktrees** | Multiple isolated stacks running in parallel, each on offset ports with its own database, for working on several branches at once. See [../developers/reference/worktrees.md](../developers/reference/worktrees.md). |
 | **dev-live** | A lightweight profile that runs only the frontend against the live production APIs, for low-resource development. It touches real data. |
 
 ## Where things run
@@ -49,4 +49,4 @@ details are operational and not reproduced in these docs.
 
 Which containers come up is controlled by `COMPOSE_PROFILES` in `.env`. A typical local
 set is `frontend,database,backend,dev,monitoring`. See the profile definitions in
-`docker-compose.yml` and the summary in [../../ARCHITECTURE.md](../../ARCHITECTURE.md).
+`docker-compose.yml` and the summary in [../developers/reference/architecture.md](../developers/reference/architecture.md).

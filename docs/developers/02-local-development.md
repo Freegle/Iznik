@@ -3,8 +3,8 @@ last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
   - README.md
-  - WORKTREE-GUIDE.md
-  - BROWSER-TESTING.md
+  - docs/developers/reference/worktrees.md
+  - docs/developers/reference/browser-testing.md
 ---
 
 # Local development
@@ -75,13 +75,13 @@ ports and database. Use the `./freegle` CLI, never `git worktree add` directly:
 ```
 
 The full guide, including the strict isolation rules (never bridge a worktree to the main
-instance's network or database), is in [../../WORKTREE-GUIDE.md](../../WORKTREE-GUIDE.md).
+instance's network or database), is in [./reference/worktrees.md](./reference/worktrees.md).
 
 ## Visual and browser changes
 
 When you change CSS, layout or component structure, verify it in a real browser with the
 Chrome DevTools MCP workflow rather than by eye. The full guide, including viewport sizes
-for the Bootstrap breakpoints, is in [../../BROWSER-TESTING.md](../../BROWSER-TESTING.md).
+for the Bootstrap breakpoints, is in [./reference/browser-testing.md](./reference/browser-testing.md).
 
 ## Next
 

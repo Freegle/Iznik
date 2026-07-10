@@ -2,9 +2,9 @@
 last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
-  - DATABASE-READ-WRITE-SPLIT.md
+  - docs/ops/reference/database-read-write-split.md
   - docs/RSPAMD.md
-  - SPATIAL-SERVERS.md
+  - docs/developers/reference/spatial-servers.md
 ---
 
 # Domains, services, and runbooks
@@ -24,7 +24,7 @@ The local development equivalents (the `*.localhost` domains) are listed in the 
 
 The **routing** and **spatial** Go services back rippling, browse and the digests. Useful
 operational facts (from their component READMEs and
-[../../SPATIAL-SERVERS.md](../../SPATIAL-SERVERS.md)):
+[../developers/reference/spatial-servers.md](../developers/reference/spatial-servers.md)):
 
 - They hold a graph of the country in memory, so their memory footprint is substantial
   (multiple gigabytes).
@@ -38,7 +38,7 @@ Plan restarts of these services with that warm-up time in mind.
 
 Production splits database **reads and writes** across hosts; the application routes
 queries accordingly. The reference is
-[../../DATABASE-READ-WRITE-SPLIT.md](../../DATABASE-READ-WRITE-SPLIT.md). The schema is
+[./reference/database-read-write-split.md](./reference/database-read-write-split.md). The schema is
 owned by Laravel migrations (see [../developers/04-apis-and-data.md](../developers/04-apis-and-data.md)).
 
 ## Mail and spam filtering
@@ -55,7 +55,7 @@ At an architecture level:
 
 - **Logs** are backed up from Loki to cloud storage with cross-region replication and
   daily snapshots, under tiered retention (short, medium and long term for different log
-  categories). See [../../Logging.md](../../Logging.md).
+  categories). See [./reference/logging.md](./reference/logging.md).
 - **Database** backup strategy is operational and maintained by the ops team; it is not
   documented in these public docs. If you find it undocumented internally, that is a gap
   worth closing.

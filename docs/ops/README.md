@@ -29,5 +29,5 @@ process level**.
    public services, the spatial and mail stacks, backups, and operational runbooks.
 
 The single best technical reference for the container and environment architecture is
-[../../ARCHITECTURE.md](../../ARCHITECTURE.md). These pages summarise the operational shape
+[../developers/reference/architecture.md](../developers/reference/architecture.md). These pages summarise the operational shape
 and link to it rather than duplicating it.

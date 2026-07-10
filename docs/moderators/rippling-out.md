@@ -1,7 +1,7 @@
 # Rippling Out - A Guide for Moderators
 
 > For the technical detail of how the algorithm works (and the approaches that were
-> rejected), see [RIPPLING-ALGORITHM.md](RIPPLING-ALGORITHM.md).
+> rejected), see [../developers/reference/rippling-algorithm.md](../developers/reference/rippling-algorithm.md).
 
 ---
 

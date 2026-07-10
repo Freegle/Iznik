@@ -67,7 +67,7 @@ note that both people in the chat can see. "Delete All" clears the queue.
 
 Some chats are held because a post has not yet rippled out to the member who replied.
 Those release automatically; you do not need to do anything. See
-[../../RIPPLING-OUT-FOR-MODERATORS.md](../../RIPPLING-OUT-FOR-MODERATORS.md).
+[./rippling-out.md](./rippling-out.md).
 
 (This is different from moderating the **ChitChat** discussion feed, which is done on the
 main Freegle site by the ChitChat Moderation team, not in ModTools.)

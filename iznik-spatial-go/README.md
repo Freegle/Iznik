@@ -12,7 +12,7 @@ service, [`iznik-routing-go`](../iznik-routing-go/README.md), which calls this o
 for its nearby-freegler queries.
 
 > **New here / not a developer?** Read the plain-English overview first:
-> [`../SPATIAL-SERVERS.md`](../SPATIAL-SERVERS.md).
+> [`../SPATIAL-SERVERS.md`](../docs/developers/reference/spatial-servers.md).
 
 ---
 

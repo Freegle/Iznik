@@ -3,8 +3,8 @@ last_reviewed: 2026-07-09
 owner: Freegle dev team
 covers:
   - iznik-server-go/API-GUIDE.md
-  - DATABASE-READ-WRITE-SPLIT.md
-  - Logging.md
+  - docs/ops/reference/database-read-write-split.md
+  - docs/ops/reference/logging.md
 ---
 
 # APIs and data
@@ -34,7 +34,7 @@ in one place, `iznik-server-go/router/routes.go`'s `SetupRoutes`, so an endpoint
 cleanly to its handler. (Note some write endpoints such as `POST /message` multiplex
 several behaviours behind an `action` field.) Keep enrichment and business logic on the
 server side of that boundary, and pass ids rather than whole objects between components
-where practical - see [../../codingstandards.md](../../codingstandards.md).
+where practical - see [./reference/coding-standards.md](./reference/coding-standards.md).
 
 ## The data model
 
@@ -51,7 +51,7 @@ where practical - see [../../codingstandards.md](../../codingstandards.md).
 Production splits database reads and writes across hosts, and the application layer routes
 queries accordingly. This has caught out subtle bugs (for example reading an id straight
 after an insert). Read
-[../../DATABASE-READ-WRITE-SPLIT.md](../../DATABASE-READ-WRITE-SPLIT.md) before writing
+[../ops/reference/database-read-write-split.md](../ops/reference/database-read-write-split.md) before writing
 code that writes then immediately reads.
 
 ## Logging and observability (for developers)
@@ -59,7 +59,7 @@ code that writes then immediately reads.
 Logs go to **Loki** (`localhost:3100` in development). Query with LogQL; user-facing and
 client-side tracing carry trace and session ids so you can follow a request across
 services. The developer-facing parts (local setup and querying) are in
-[../../Logging.md](../../Logging.md); the production and backup side is covered under
+[../ops/reference/logging.md](../ops/reference/logging.md); the production and backup side is covered under
 [../ops/03-monitoring-and-logging.md](../ops/03-monitoring-and-logging.md).
 
 ## Recipes: how do I add ...?
@@ -73,7 +73,7 @@ Short pointers; each ends at the real pattern to copy.
 - **A member or moderator page** - add a Vue page under `iznik-nuxt3/pages/` (member) or
   `iznik-nuxt3/modtools/pages/` (moderator); routes follow the file path. Run
   `eslint --fix` on changed files and verify visually per
-  [../../BROWSER-TESTING.md](../../BROWSER-TESTING.md).
+  [./reference/browser-testing.md](./reference/browser-testing.md).
 - **A Playwright test** - reuse the helpers in `iznik-nuxt3/tests/e2e/utils/`; see
   [Testing](03-testing.md).
 - **A scheduled job or email** - add it in `iznik-batch/`; follow the email and template

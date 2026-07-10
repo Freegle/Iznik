@@ -1,4 +1,4 @@
-**See also: [codingstandards.md](codingstandards.md)** for coding rules. **Use the `ralph` skill** for any non-trivial development task. For automated execution: `./ralph.sh -t "task description"`
+**See also: [./docs/developers/reference/coding-standards.md](./docs/developers/reference/coding-standards.md)** for coding rules. **Use the `ralph` skill** for any non-trivial development task. For automated execution: `./ralph.sh -t "task description"`
 
 ## Critical Rules
 

@@ -1,6 +1,6 @@
 # How Rippling Works - Technical Reference
 
-The technical companion to [RIPPLING-OUT-FOR-MODERATORS.md](RIPPLING-OUT-FOR-MODERATORS.md)
+The technical companion to [../../moderators/rippling-out.md](../../moderators/rippling-out.md)
 (the non-technical guide). This describes how the algorithm computes and spreads a post's
 reach, including the approaches that were tried and rejected, and why.
 

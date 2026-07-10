@@ -28,18 +28,18 @@ Read these directly; the pages above link into them rather than copy them:
 
 | Topic | Doc |
 |-------|-----|
-| System architecture, containers, profiles | [../../ARCHITECTURE.md](../../ARCHITECTURE.md) |
-| Coding standards | [../../codingstandards.md](../../codingstandards.md) |
+| System architecture, containers, profiles | [./reference/architecture.md](./reference/architecture.md) |
+| Coding standards | [./reference/coding-standards.md](./reference/coding-standards.md) |
 | Adding a Go v2 API endpoint | [../../iznik-server-go/API-GUIDE.md](../../iznik-server-go/API-GUIDE.md) |
-| Database read/write split | [../../DATABASE-READ-WRITE-SPLIT.md](../../DATABASE-READ-WRITE-SPLIT.md) |
-| Logging and observability | [../../Logging.md](../../Logging.md) |
-| Spatial services (plain English) | [../../SPATIAL-SERVERS.md](../../SPATIAL-SERVERS.md) |
-| Rippling out algorithm | [../../RIPPLING-ALGORITHM.md](../../RIPPLING-ALGORITHM.md) |
-| Browser testing with Chrome DevTools | [../../BROWSER-TESTING.md](../../BROWSER-TESTING.md) |
-| Worktrees / parallel instances | [../../WORKTREE-GUIDE.md](../../WORKTREE-GUIDE.md) |
-| TrashNothing / LoveJunk integration | [../../TRASHNOTHING.md](../../TRASHNOTHING.md) |
-| ModTools AI Support Helper | [../../AI-SUPPORT-HELPER.md](../../AI-SUPPORT-HELPER.md) |
-| Sentry integration and auto-fix | [../../SENTRY-INTEGRATION.md](../../SENTRY-INTEGRATION.md), [../../SENTRY-AUTOFIX.md](../../SENTRY-AUTOFIX.md) |
+| Database read/write split | [../ops/reference/database-read-write-split.md](../ops/reference/database-read-write-split.md) |
+| Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
+| Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
+| Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
+| Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
+| Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
+| TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
+| ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
+| Sentry integration and auto-fix | [../ops/reference/sentry-integration.md](../ops/reference/sentry-integration.md), [../ops/reference/sentry-autofix.md](../ops/reference/sentry-autofix.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

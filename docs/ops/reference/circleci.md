@@ -186,7 +186,7 @@ Each CircleCI build collects:
 
 ## Related Documentation
 
-- [CircleCI Configuration Details](.circleci/README.md)
-- [Playwright Testing](iznik-nuxt3/tests/e2e/README.md)
-- [Docker Compose Setup](README.md#running)
-- [Status Monitoring](README.md#monitoring)
+- [CircleCI Configuration Details](../../../.circleci/README.md)
+- [Playwright Testing](../../../iznik-nuxt3/tests/e2e/README.md)
+- [Docker Compose Setup](../../../README.md#running)
+- [Status Monitoring](../../../README.md#monitoring)

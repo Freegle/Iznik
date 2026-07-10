@@ -39,5 +39,5 @@ A few things worth holding onto, whichever guide you are in:
   ModTools).
 
 There is a moderator-facing guide to rippling out at
-[../../RIPPLING-OUT-FOR-MODERATORS.md](../../RIPPLING-OUT-FOR-MODERATORS.md), and the
-technical detail is in [../../RIPPLING-ALGORITHM.md](../../RIPPLING-ALGORITHM.md).
+[./rippling-out.md](./rippling-out.md), and the
+technical detail is in [../developers/reference/rippling-algorithm.md](../developers/reference/rippling-algorithm.md).
