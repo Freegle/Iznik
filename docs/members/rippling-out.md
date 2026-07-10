@@ -148,13 +148,21 @@ everything in the communities you belong to.
 
 ### A distance slider, if you want one
 
-In the browse filters there is a simple slider marked **"Nearer"** at one end and
-**"Further"** at the other - no numbers, just a feel for how far you would like posts to
-come from. It starts set to "Further", which means no extra limit beyond the posts that
-have naturally reached you. If you would rather only see things from close by, drag it
-towards "Nearer" at any time; drag it back whenever you like. Freegle remembers your
-choice, along with your other filters (which posts, which communities, and sort order), so
-you do not need to set them again next time you visit.
+In the browse filters - and in your **Settings**, under "Feed" - there is a simple slider
+marked **"Nearer"** at one end and **"Further"** at the other - no numbers, just a feel for
+how far you would like posts to come from. It starts set to "Further", which means no extra
+limit beyond the posts that have naturally reached you. If you would rather only see things
+from close by, drag it towards "Nearer" at any time; drag it back whenever you like.
+
+The same setting works **both ways**. As well as narrowing which posts you see and get
+emailed about, moving it towards "Nearer" also limits **how far away other people see your
+own posts** - handy if you would rather only hear from people who can easily get to you.
+Left at "Further", your posts reach as far as rippling naturally takes them. (It measures
+distance by road distance and travel time, not a straight line, so it follows real geography
+like estuaries and coastlines.)
+
+Freegle remembers your choice, along with your other filters (which posts, which communities,
+and sort order), so you do not need to set them again next time you visit.
 
 ### When you post, there is no group to choose
 
@@ -182,7 +190,7 @@ shows as "waiting to send" until then. Nothing is lost.
 |---|---|
 | Your post | Shown to people nearby first, then gradually further away |
 | Nearby browse order | Unseen posts first, then seen; each ordered by closeness, freshness and interest, not just newest |
-| Distance slider | Optional "Nearer/Further" filter in Browse; starts at "Further" (no extra limit) |
+| Distance slider | Optional "Nearer/Further" control in Browse and Settings; narrows what you see and are emailed about, and how far away other people see your own posts; starts at "Further" (no extra limit) |
 | Browse filters | Remembered between visits, including the distance slider |
 | New communities | You are joined automatically so replies and contact work |
 | Email defaults | Immediate is switched to daily; no-email and daily are unchanged |

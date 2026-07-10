@@ -27,7 +27,9 @@ vi.mock('~/components/RangeSlider.vue', () => ({
 function mountWith(browseMaxDistance) {
   me.value = { settings: { browseMaxDistance } }
   return mount(FeedSettingsSection, {
-    global: { stubs: { 'v-icon': true, 'nuxt-link': true } },
+    // Stub NearbyTowns - it fires a routing-backed API call and uses IntersectionObserver,
+    // neither of which this section's tests should depend on.
+    global: { stubs: { 'v-icon': true, 'nuxt-link': true, NearbyTowns: true } },
   })
 }
 
@@ -42,10 +44,13 @@ describe('FeedSettingsSection', () => {
     expect(wrapper.find('.range-slider').exists()).toBe(true)
   })
 
-  it('explains it applies to both browse and emails', () => {
+  it('explains the distance preference applies to browse, notifications and who sees your posts', () => {
     const wrapper = mountWith(BROWSE_DISTANCE_UNLIMITED)
-    expect(wrapper.text()).toContain('browse')
-    expect(wrapper.text().toLowerCase()).toContain('emails')
+    const text = wrapper.text().toLowerCase()
+    expect(text).toContain('browse')
+    expect(text).toContain('notifications')
+    // The outbound half: the setting also caps who sees the member's own posts.
+    expect(text).toContain('who sees your posts')
   })
 
   it('has no numeric miles readout (matches the browse slider; avoids janky drag)', () => {

@@ -9,23 +9,28 @@
       <div class="option-info mb-2">
         <span class="option-label">How far away</span>
         <span class="option-desc">
-          How far away posts can be &mdash; this applies both when you browse
-          <em>and</em> to the posts in the emails we send you. Drag towards
-          <strong>Nearer</strong> to see only nearby posts, or
-          <strong>Further</strong> for no distance limit.
+          You'll see mostly nearby posts, but some from further away.
+          <span class="drag-hint"
+            >Drag towards <strong>Nearer</strong> or
+            <strong>Further</strong>. </span
+          >We use road distance and travel time, not crow flies. Applies to
+          Browse, notifications and who sees your posts.
         </span>
       </div>
 
-      <RangeSlider
-        v-model="sliderValue"
-        :min="0.5"
-        :max="feedMax"
-        :step="0.5"
-        left-label="Nearer"
-        right-label="Further"
-        aria-label="How far away"
-        @change="onSliderChange"
-      />
+      <div class="slider-frame">
+        <RangeSlider
+          v-model="sliderValue"
+          :min="0.5"
+          :max="feedMax"
+          :step="0.5"
+          left-label="Nearer"
+          right-label="Further"
+          aria-label="How far away"
+          @change="onSliderChange"
+        />
+        <NearbyTowns :miles="sliderValue" />
+      </div>
     </div>
   </div>
 </template>
@@ -35,6 +40,7 @@ import { ref, computed, watch, defineEmits } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import RangeSlider from '~/components/RangeSlider.vue'
+import NearbyTowns from '~/components/NearbyTowns.vue'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 const emit = defineEmits(['update'])
@@ -128,5 +134,29 @@ async function onSliderChange(val) {
 .option-desc {
   font-size: 0.8rem;
   color: var(--color-gray-600);
+}
+
+/* The drag instruction is redundant on a touch screen and costs a line, so hide it on mobile. */
+.drag-hint {
+  display: none;
+}
+@media (min-width: 768px) {
+  .drag-hint {
+    display: inline;
+  }
+}
+
+/* Framed rounded box around the slider + its reach hint, matching the settings card curves. */
+.slider-frame {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg, 0.75rem);
+  padding: 0.75rem 1rem 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Centre the reach hint under the slider, within the frame. text-align centres the two-line block
+   layout on mobile and the single inline line on tablet+ (when it fits). */
+.slider-frame :deep(.nearby-towns) {
+  text-align: center;
 }
 </style>

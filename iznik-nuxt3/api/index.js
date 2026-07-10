@@ -42,6 +42,7 @@ import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
 import RipplingAPI from './RipplingAPI.js'
+import TownAPI from './TownAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
@@ -93,6 +94,7 @@ export default (config) => {
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
     rippling: new RipplingAPI(options),
+    town: new TownAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),
     spammers: new SpammersAPI(options),

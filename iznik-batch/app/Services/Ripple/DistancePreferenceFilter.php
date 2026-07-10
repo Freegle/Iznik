@@ -89,6 +89,31 @@ class DistancePreferenceFilter
     }
 
     /**
+     * Whether a candidate post passes BOTH distance caps that apply to a
+     * (post, recipient) pair, measured against the single recipient<->post
+     * great-circle distance $distanceMiles:
+     *
+     *   - INBOUND  ($recipientMaxMiles): the recipient only wants to see posts
+     *     within their chosen distance of them (settings.browseMaxDistance).
+     *   - OUTBOUND ($authorMaxMiles): the post author only wants their post shown
+     *     to people within their chosen distance of it (the same setting, read
+     *     from the author). This makes "How far away" also cap who sees your posts.
+     *
+     * Either cap being the DISTANCE_UNLIMITED sentinel disables that side (the
+     * common case). Own posts bypass both (the author is always looped back their
+     * own post), matching passes()'s own-post rule.
+     */
+    public function passesBothPreferences(
+        float $distanceMiles,
+        float $recipientMaxMiles,
+        float $authorMaxMiles,
+        bool $isOwnPost
+    ): bool {
+        return $this->passes($distanceMiles, $recipientMaxMiles, $isOwnPost)
+            && $this->passes($distanceMiles, $authorMaxMiles, $isOwnPost);
+    }
+
+    /**
      * Great-circle (haversine) distance in MILES between two (lat,lng)
      * points in degrees. The canonical distance calculation used by all
      * three insertion points, consolidating what would otherwise be a third

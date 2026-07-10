@@ -2523,6 +2523,79 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent'], 'the sentinel value means unlimited — unaffected by the new filter');
     }
 
+    // ─── OUTBOUND (author-side) distance preference ─────────────────────
+    // The SAME setting, read from the POST AUTHOR, also caps who sees their post:
+    // a recipient beyond the author's browseMaxDistance of the post is filtered
+    // out even when the recipient themselves has no distance limit. (51.5, 0.4) is
+    // ~22.7 miles from the London recipient — inside a 50-mile author cap, outside
+    // a 2-mile one.
+
+    public function test_daily_digest_filters_out_post_beyond_authors_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        // Recipient has NO distance limit of their own, so any filtering is the author's doing.
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        // Poster caps how far away their post is shown at 2 miles.
+        $poster = $this->createTestUser();
+        $poster->settings = ['browseMaxDistance' => 2];
+        $poster->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        // ~22.7 miles from the recipient — outside the poster's 2-mile outbound cap.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Local-only item',
+            'lat' => 51.5,
+            'lng' => 0.4,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent'], "the post is filtered out by the author's 2-mile cap, despite the recipient having no limit");
+    }
+
+    public function test_daily_digest_keeps_post_within_authors_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        // Poster's cap (50 miles) comfortably includes the ~22.7-mile recipient.
+        $poster = $this->createTestUser();
+        $poster->settings = ['browseMaxDistance' => 50];
+        $poster->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Wider-reach item',
+            'lat' => 51.5,
+            'lng' => 0.4,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], "a recipient within the author's cap still gets the post");
+    }
+
     public function test_daily_digest_own_post_bypasses_distance_preference(): void
     {
         config(['freegle.digest.daily_allowlist' => '*']);

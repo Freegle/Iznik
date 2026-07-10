@@ -367,7 +367,8 @@ class UnifiedDigestService
                     $message->lat,
                     $message->lng,
                     $user,
-                    $isOwnPost
+                    $isOwnPost,
+                    $this->authorMaxMiles((int) $message->fromuser)
                 )) {
                     continue;
                 }
@@ -719,7 +720,8 @@ class UnifiedDigestService
                     $msg->lat,
                     $msg->lng,
                     $user,
-                    $isOwnPost
+                    $isOwnPost,
+                    $this->authorMaxMiles((int) $msg->fromuser)
                 )) {
                     continue;
                 }
@@ -1263,7 +1265,8 @@ class UnifiedDigestService
                 $p->lat,
                 $p->lng,
                 $user,
-                (int) $p->fromuser === (int) $user->id
+                (int) $p->fromuser === (int) $user->id,
+                $this->authorMaxMiles((int) $p->fromuser)
             ))->values();
         }
 
@@ -1625,7 +1628,7 @@ class UnifiedDigestService
      * @param mixed $lat Post/message latitude (numeric or null).
      * @param mixed $lng Post/message longitude (numeric or null).
      */
-    private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost): bool
+    private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost, ?float $authorMaxMiles = null): bool
     {
         if ($isOwnPost) {
             return true;
@@ -1642,9 +1645,14 @@ class UnifiedDigestService
         }
 
         $filter = app(DistancePreferenceFilter::class);
-        $maxMiles = $filter->maxDistanceMiles($user);
-        if ($maxMiles >= DistancePreferenceFilter::DISTANCE_UNLIMITED) {
-            // Fast path: absent/sentinel setting, the majority case. No haversine needed.
+        // INBOUND cap: the recipient only wants posts within their chosen distance.
+        // OUTBOUND cap: the post author only wants their post shown to people within
+        // their chosen distance of it (the same setting, read from the author).
+        $recipientMax = $filter->maxDistanceMiles($user);
+        $authorMax = $authorMaxMiles ?? (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
+        if ($recipientMax >= DistancePreferenceFilter::DISTANCE_UNLIMITED
+            && $authorMax >= DistancePreferenceFilter::DISTANCE_UNLIMITED) {
+            // Fast path: neither side limits distance, the majority case. No haversine needed.
             return true;
         }
 
@@ -1655,7 +1663,27 @@ class UnifiedDigestService
             (float) $lng
         );
 
-        return $filter->passes($distanceMiles, $maxMiles, false);
+        return $filter->passesBothPreferences($distanceMiles, $recipientMax, $authorMax, false);
+    }
+
+    /**
+     * The post author's OUTBOUND distance cap in miles (settings.browseMaxDistance),
+     * memoised per author id so repeated posts by the same freegler — across
+     * recipients and groups within a run — cost a single lookup. Absent author or
+     * absent/sentinel setting resolves to DISTANCE_UNLIMITED (no outbound cap).
+     */
+    private array $authorMaxMilesCache = [];
+
+    private function authorMaxMiles(int $fromuser): float
+    {
+        if (!array_key_exists($fromuser, $this->authorMaxMilesCache)) {
+            $author = User::select('id', 'settings')->find($fromuser);
+            $this->authorMaxMilesCache[$fromuser] = $author
+                ? app(DistancePreferenceFilter::class)->maxDistanceMiles($author)
+                : (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
+        }
+
+        return $this->authorMaxMilesCache[$fromuser];
     }
 
     /**

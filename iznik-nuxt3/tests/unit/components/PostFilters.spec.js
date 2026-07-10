@@ -117,6 +117,9 @@ describe('PostFilters', () => {
       },
       global: {
         stubs: {
+          // NearbyTowns fires a routing-backed API call and uses IntersectionObserver; stub it
+          // out so these filter tests don't depend on either.
+          NearbyTowns: true,
           'b-collapse': {
             template:
               '<div class="b-collapse" :class="{ show: modelValue }"><slot /></div>',

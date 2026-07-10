@@ -8,6 +8,11 @@ import (
 // IsochroneResult is the set of nodes reachable within a time budget.
 type IsochroneResult struct {
 	ReachedNodes map[NodeID]float32
+	// DistM is the road distance in metres along the time-optimal path to each reached node,
+	// accumulated in the SAME Dijkstra pass (great-circle per edge, matching pathMetres). Lets
+	// callers read how far a node is BY ROAD, not just by time, for free - a nearby node reads
+	// as a small distance even if the isochrone sprawls much further in other directions.
+	DistM map[NodeID]float32
 }
 
 // item is a priority queue entry.
@@ -42,7 +47,7 @@ func modeMaxSpeed(mode Mode) float64 {
 func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) IsochroneResult {
 	origin := nearestNodeForMode(g, lat, lng, mode)
 	if origin == noNode {
-		return IsochroneResult{ReachedNodes: map[NodeID]float32{}}
+		return IsochroneResult{ReachedNodes: map[NodeID]float32{}, DistM: map[NodeID]float32{}}
 	}
 
 	startLat := float64(g.Nodes[origin].Lat)
@@ -50,7 +55,9 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 	maxReachM := modeMaxSpeed(mode) * float64(limitSeconds)
 
 	dist := make(map[NodeID]float32)
+	distM := make(map[NodeID]float32)
 	dist[origin] = 0
+	distM[origin] = 0
 
 	q := &pq{}
 	heap.Push(q, &item{id: origin, cost: 0})
@@ -63,6 +70,7 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 		if cur.cost > limitSeconds {
 			break
 		}
+		curNode := g.Nodes[cur.id]
 		for _, e := range g.EdgesFrom(cur.id) {
 			edgeCost := e.Seconds[mode]
 			if edgeCost < 0 {
@@ -78,12 +86,14 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 			}
 			if prev, seen := dist[e.To]; !seen || newCost < prev {
 				dist[e.To] = newCost
+				// Carry road distance along the same time-optimal path (great-circle per edge).
+				distM[e.To] = distM[cur.id] + float32(haversineM(float64(curNode.Lat), float64(curNode.Lng), float64(n.Lat), float64(n.Lng)))
 				heap.Push(q, &item{id: e.To, cost: newCost})
 			}
 		}
 	}
 
-	return IsochroneResult{ReachedNodes: dist}
+	return IsochroneResult{ReachedNodes: dist, DistM: distM}
 }
 
 // nearestNodeForMode returns the NodeID closest to (lat, lng) with an edge usable by mode.

@@ -106,16 +106,23 @@ section above Email Settings. It is a **personal preference each member sets for
 themselves** - by default it is left at "Further" (no extra limit beyond their normal
 rippling reach), and moving it towards "Nearer" narrows how far away posts can be.
 
-Importantly, this preference now applies **both to what they see when browsing and to the
-posts in the emails we send them** (their daily digest and immediate emails). A member who
-sets it "Nearer" will stop seeing - and stop being emailed about - posts from further away,
-including rippled-in ones. It still has **no effect on rippling itself, on what other
-members see, or on moderation**, and their choice is remembered between visits.
+Importantly, this preference now applies in **three** ways:
+
+- **What they see when browsing** - moving it "Nearer" hides posts from further away.
+- **The posts we email them** (their daily digest and immediate emails) - the same narrowing.
+- **How far away other people see their own posts** (new). Setting it "Nearer" also caps who
+  their own offers and wanteds reach: someone far away won't see the post in their Nearby feed
+  or be emailed about it, even though rippling had carried it that far. Left at "Further" (the
+  default), there is no such cap and the post reaches as far as rippling takes it.
+
+It still has **no effect on the rippling engine itself** (what it approves or joins, or how far
+it carries a post) **or on moderation**, and their choice is remembered between visits.
 
 A practical consequence worth knowing: a rippled-in post is shown to the members of your
-community who are **closest to the poster and whose own distance preference reaches that
-far - not necessarily everyone**. If a member says a post "isn't showing for them", their
-distance slider being set to "Nearer" is a likely reason.
+community who are **closest to the poster, whose own distance preference reaches that far, and
+whom the poster's own distance preference reaches - not necessarily everyone**. If a member
+says a post "isn't showing for them", either their own slider *or the poster's* slider being
+set to "Nearer" is a likely reason.
 
 ---
 
