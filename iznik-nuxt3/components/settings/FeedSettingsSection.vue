@@ -26,6 +26,7 @@
         aria-label="How far away"
         @change="onSliderChange"
       />
+      <NearbyTowns :miles="sliderValue" />
     </div>
   </div>
 </template>
@@ -35,6 +36,7 @@ import { ref, computed, watch, defineEmits } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import RangeSlider from '~/components/RangeSlider.vue'
+import NearbyTowns from '~/components/NearbyTowns.vue'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 const emit = defineEmits(['update'])

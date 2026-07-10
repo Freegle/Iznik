@@ -73,6 +73,7 @@ import (
 	"github.com/freegle/iznik-server-go/story"
 	"github.com/freegle/iznik-server-go/systemlogs"
 	"github.com/freegle/iznik-server-go/team"
+	"github.com/freegle/iznik-server-go/town"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/userdump"
@@ -849,6 +850,7 @@ func SetupRoutes(app *fiber.App) {
 
 		// Location Search (GET /locations - search by lat/lng, typeahead, or bounding box)
 		rg.Get("/locations", location.SearchLocations)
+		rg.Get("/town/near", town.Near)
 
 		// Location Write Operations
 		rg.Put("/locations", location.CreateLocation)

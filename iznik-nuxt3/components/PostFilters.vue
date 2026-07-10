@@ -35,6 +35,7 @@
             aria-label="Maximum distance"
             @change="onSliderChange"
           />
+          <NearbyTowns :miles="sliderValue" />
         </div>
         <div class="sort mb-2">
           <label for="sortOptions">Sort by:</label>
@@ -139,6 +140,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import RangeSlider from '~/components/RangeSlider.vue'
+import NearbyTowns from '~/components/NearbyTowns.vue'
 import WhichPostsModal from '~/components/WhichPostsModal.vue'
 
 const props = defineProps({
