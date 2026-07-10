@@ -548,3 +548,69 @@ describe('message store - markSeenSiblings()', () => {
     expect(mockMarkSeen).not.toHaveBeenCalled()
   })
 })
+
+// After a per-group approve/reject, a reported post that's pending on several of a mod's groups
+// must stay in the pending list so the next group's copy can be actioned without reloading
+// (Discourse 9862). refreshOrRemoveFromMTList re-fetches and keeps-or-drops it accordingly.
+describe('message store - refreshOrRemoveFromMTList()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('keeps the (refreshed) message when a group copy is still pending', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500, subject: 'stale' }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      subject: 'fresh',
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Pending' },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeDefined()
+    expect(store.list[500].subject).toBe('fresh')
+  })
+
+  it('removes the message once no group copy is still in the review queue', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500, subject: 'stale' }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Rejected' },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeUndefined()
+  })
+
+  it('treats Spam and PendingOther as still in the review queue', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi
+      .fn()
+      .mockResolvedValue({ id: 500, groups: [{ groupid: 1, collection: 'Spam' }] })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeDefined()
+  })
+
+  it('removes the message if the re-fetch fails', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockRejectedValue(new Error('gone'))
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeUndefined()
+  })
+})
