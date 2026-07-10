@@ -95,7 +95,7 @@ fi
 
 git add docs/members/assets docs/moderators/assets 2>/dev/null || true
 
-if git diff --cached --quiet -- 'docs/*/assets'; then
+if git diff --cached --quiet -- docs/members/assets docs/moderators/assets; then
   echo "No screenshot changes. Done."
   exit 0
 fi
@@ -105,7 +105,7 @@ AUTHOR_NAME="${DOCS_COMMIT_AUTHOR:-freegle-docs-bot}"
 AUTHOR_EMAIL="${DOCS_COMMIT_EMAIL:-docs-bot@ilovefreegle.org}"
 
 git -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" \
-  commit -m "docs: regenerate screenshots [skip ci]" -- 'docs/*/assets'
+  commit -m "docs: regenerate screenshots [skip ci]" -- docs/members/assets docs/moderators/assets
 
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   # Push over HTTPS with the CI token so the commit lands on the PR branch.

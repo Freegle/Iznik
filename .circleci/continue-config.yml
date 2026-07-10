@@ -281,6 +281,9 @@ workflows:
                 when: on_success
                 no_output_timeout: 15m
                 command: |
+                  # Generate doc screenshots inside the seeded -playwright container,
+                  # copy them to the git top-level, and auto-commit meaningful changes
+                  # with [skip ci] so it never triggers a new pipeline. Best-effort.
                   set +e
                   PROJ="${COMPOSE_PROJECT_NAME:-freegle}"
                   ROOT="$(git rev-parse --show-toplevel)"
