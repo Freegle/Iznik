@@ -287,13 +287,16 @@ workflows:
                     echo "playwright container not up at post-step; skipping screenshots"
                     exit 0
                   fi
-                  docker exec -e DOCS_OUT=/tmp/docshots "${PROJ}-playwright" node tests/e2e/docs-screenshots.mjs || echo "generator non-zero (partial shots ok)"
+                  docker exec -e DOCS_OUT=/tmp/docshots "${PROJ}-playwright" \
+                    sh -c 'cd /app && export NODE_PATH="$(npm root 2>/dev/null):$(npm root -g 2>/dev/null)"; echo "NODE_PATH=$NODE_PATH"; node tests/e2e/docs-screenshots.mjs' \
+                    || echo "generator non-zero (partial shots ok)"
                   for aud in members moderators; do
                     mkdir -p "docs/$aud/assets"
                     docker cp "${PROJ}-playwright:/tmp/docshots/$aud/assets/." "docs/$aud/assets/" 2>/dev/null || true
                   done
                   mkdir -p ~/artifacts/doc-screenshots
                   cp -r docs/members/assets docs/moderators/assets ~/artifacts/doc-screenshots/ 2>/dev/null || true
+                  command -v compare >/dev/null 2>&1 || sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || echo "imagemagick unavailable (will commit all changes)"
                   DOCS_ALLOW_MASTER=1 bash docs/screenshots/regenerate-and-commit.sh --commit-only || echo "commit step non-fatal"
                   exit 0
             - store_artifacts:
