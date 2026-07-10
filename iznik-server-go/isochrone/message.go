@@ -311,16 +311,18 @@ func Messages(c *fiber.Ctx) error {
 				// off My Posts, not linger here for up to OPEN_AGE days (approved, no
 				// outcome row yet, arrival still within the window) because this own-posts
 				// arm queries the messages table directly and so bypasses spatial pruning.
-				// Pending/Rejected posts are never in spatial, so keep showing those - that
-				// is the whole point of this arm: the poster sees their post immediately,
-				// including while it awaits moderation.
+				// A PENDING post is never in spatial, so keep showing it via this arm - that
+				// is its whole point: the poster sees their post immediately while it awaits
+				// moderation, so it's less obvious a post is delayed. A REJECTED post is
+				// deliberately NOT shown here - a poster seeing their own rejected post linger in
+				// the browse feed is wrong (Discourse 9808); it belongs only in My Posts.
 				"AND (EXISTS (SELECT 1 FROM messages_spatial ms WHERE ms.msgid = m.id) "+
-				"OR mg.collection IN (?, ?)) "+
+				"OR mg.collection = ?) "+
 				"GROUP BY m.id",
 			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
 			myid, utils.MESSAGE_LIKES_VIEW, myid, start,
-			utils.COLLECTION_PENDING, utils.COLLECTION_REJECTED,
+			utils.COLLECTION_PENDING,
 		).Scan(&ownCandidates)
 
 		// Apply the SAME age-based expiry the My Posts endpoint uses, so a poster's
