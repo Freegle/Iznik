@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Optional docs pre-commit hook.
+#
+# It does two cheap, local things and NEVER blocks your commit (advisory only -
+# CI is where the freshness gate is enforced hard):
+#
+#   1. Runs the documentation freshness gate on your STAGED changes, so if you
+#      staged a change to code a doc covers without updating the doc, you get a
+#      heads-up now instead of in CI.
+#   2. If you staged UI changes, reminds you to regenerate the doc screenshots.
+#      It does NOT run Playwright here - screenshot regen needs the app running
+#      and is far too slow for a commit hook. See docs/screenshots/README.md.
+#
+# Install (optional):
+#   ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
+# or, if you already have a pre-commit hook (e.g. the lint one), append the two
+# commands below to it, or use a hook manager to run both.
+#
+# Bypass any hook with:  git commit --no-verify
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# 1. Freshness gate on staged changes (advisory).
+if command -v node >/dev/null 2>&1 && [ -f scripts/check-docs-freshness.mjs ]; then
+  node scripts/check-docs-freshness.mjs --staged --warn || true
+fi
+
+# 2. Screenshot regen reminder if UI files are staged.
+UI_STAGED="$(git diff --cached --name-only | grep -E '^iznik-nuxt3/(pages|components|modtools)/' || true)"
+if [ -n "$UI_STAGED" ]; then
+  echo ""
+  echo "ℹ️  You changed UI files. If the visuals moved, regenerate the doc screenshots:"
+  echo "      cd iznik-nuxt3 && node tests/e2e/docs-screenshots.mjs"
+  echo "    (needs the app running; see docs/screenshots/README.md). Not doing it now."
+  echo ""
+fi
+
+exit 0
