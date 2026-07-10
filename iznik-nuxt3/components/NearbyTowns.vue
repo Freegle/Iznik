@@ -6,7 +6,7 @@
     pulsating loader while fetching, the list when found, and nothing (space kept) when none.
   -->
   <div
-    v-observe-visibility="{ callback: onVisibility, once: true }"
+    v-observe-visibility="onVisibility"
     class="nearby-towns text-muted small mt-1"
     aria-live="polite"
   >
