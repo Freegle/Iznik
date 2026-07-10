@@ -142,7 +142,6 @@
 <script setup>
 import { useMiscStore } from '~/stores/misc'
 import { useMessageStore } from '~/stores/message'
-import { useNearbyStore } from '~/stores/nearby'
 import { ref, watch } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
@@ -217,7 +216,6 @@ watch(
 const { me } = useMe()
 const authStore = useAuthStore()
 const messageStore = useMessageStore()
-const nearbyStore = useNearbyStore()
 
 // Modal for the shared "which posts do I see?" explainer (#K). Always mounted (not
 // v-if-gated) so its ref is available as soon as the button is clicked, matching the
@@ -370,32 +368,16 @@ const sort = computed({
 // far-right ("Further") position stores BROWSE_DISTANCE_UNLIMITED rather than that
 // feed max, so the server's own reach limit keeps governing and newly-arriving distant
 // posts keep showing without the client capping them out.
-const FEED_MAX_FLOOR = 2
-
-const feedMax = computed(() => {
-  // Scale the slider's right end to the farthest post in the CURRENTLY-SHOWN feed. Which feed
-  // that is depends on the view: the nearby (reach) view is in nearbyStore, the "all my
-  // communities" view is in messageStore.myGroupsList. Reading the wrong one (nearbyStore is
-  // empty on mygroups) collapsed the slider max to its floor and mis-scaled the slider there.
-  //
-  // It depends ONLY on the feed (not on the saved browseMaxDistance), so it stays STABLE while
-  // the member drags: coupling it to browseMaxDistance made feedMax grow on every change, which
-  // moved the slider's right edge mid-interaction and, via the [maxDistance, feedMax] watch
-  // below, kept yanking the thumb back - a janky "clicking back" drag.
-  const feed =
-    browseView.value === 'mygroups'
-      ? messageStore.myGroupsList
-      : nearbyStore.messageList
-  const distances = (feed || [])
-    .map((m) => m.distance)
-    .filter((d) => typeof d === 'number' && isFinite(d))
-
-  if (!distances.length) {
-    return FEED_MAX_FLOOR
-  }
-
-  return Math.max(FEED_MAX_FLOOR, Math.ceil(Math.max(...distances)))
-})
+// The slider's right end ("Further") is a FIXED extent anchored to the server's reach ceiling, NOT
+// the farthest post in the currently-loaded feed. The default reach is a 30-minute drive-time
+// budget and milesToDriveMinutes maps ~2 min per mile, so 15 miles corresponds to that ~30-minute
+// max travel time. Anchoring the far end there keeps the "Max X-Y miles by road" hint stable and
+// meaningful - it tracks the real reach instead of jumping (e.g. 2-4 -> 10-22 miles on reload) as
+// more distant posts load and rescale the max, which made the slider unpredictable as an input
+// control (Discourse 9808). The far-right still stores BROWSE_DISTANCE_UNLIMITED, so the server's
+// own reach limit keeps governing and newly-arriving distant posts still show.
+const FEED_MAX = 15
+const feedMax = computed(() => FEED_MAX)
 
 // Distance is meaningless without a known location.
 const hasLocation = computed(() => {
@@ -542,6 +524,11 @@ const hasNonDefaultFilters = computed(() => {
   .distance {
     grid-column: 1 / 2;
     grid-row: 2 / 3;
+    /* Grid cells default to min-width:auto, so the NearbyTowns single-line hint
+       ("Max X-Y miles by road, e.g. ...") expanded this cell past its track and spilled
+       out of the filter panel. min-width:0 lets the cell hold its track width so the hint
+       ellipsis-truncates inside the panel instead of overflowing. */
+    min-width: 0;
 
     @include media-breakpoint-up(md) {
       grid-column: 1 / 2;

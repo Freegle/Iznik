@@ -476,22 +476,24 @@ describe('PostFilters', () => {
       expect(wrapper.find('.range-slider-stub').exists()).toBe(true)
     })
 
-    it('scales the slider max to the farthest distance in the feed (rounded up)', () => {
+    // The slider's right end is now a FIXED extent (matching the Settings slider), not scaled to
+    // the farthest post in the loaded feed. Feed-scaling made the "Max X-Y miles by road" hint jump
+    // as more distant posts loaded and rescaled the max (Discourse 9808), so the max is now stable
+    // regardless of the feed.
+    it('uses a fixed slider max (not scaled to the feed)', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(7) // ceil(6.7)
+      expect(Number(input.attributes('max'))).toBe(15)
     })
 
-    it('floors the slider max at 2 when the feed is tiny/empty', () => {
+    it('keeps the fixed slider max even when the feed is empty', () => {
       mockNearbyMessageList.value = []
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(2)
+      expect(Number(input.attributes('max'))).toBe(15)
     })
 
-    it('scales the slider max from the mygroups feed on the all-my-communities view', () => {
-      // On mygroups the nearby store is empty - the feed lives in messageStore.myGroupsList.
-      // The slider must scale to THAT, not collapse to the floor (the mis-scaling bug).
+    it('keeps the fixed slider max on the all-my-communities view regardless of that feed', () => {
       mockMe.value = meWithLocation({ browseView: 'mygroups' })
       mockNearbyMessageList.value = []
       mockMyGroupsList.value = [
@@ -500,7 +502,7 @@ describe('PostFilters', () => {
       ]
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(9) // ceil(8.4), from the mygroups feed
+      expect(Number(input.attributes('max'))).toBe(15)
     })
 
     it('has a minimum of 0.5 miles and a step of 0.5', () => {
@@ -519,7 +521,7 @@ describe('PostFilters', () => {
     it('renders the thumb at the far right by default (unlimited sentinel)', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.element.value)).toBe(7)
+      expect(Number(input.element.value)).toBe(15) // the fixed slider max
     })
 
     it('renders the thumb at the real value when a distance limit is already saved', () => {
@@ -529,12 +531,12 @@ describe('PostFilters', () => {
       expect(Number(input.element.value)).toBe(3)
     })
 
-    // The slider's right end (feedMax) must depend ONLY on the loaded feed, never on the saved
-    // browseMaxDistance - coupling the two made feedMax grow on every slider change, moving the
-    // right edge mid-drag and yanking the thumb back (a janky "clicking back" drag). Here a 5mi
-    // limit is saved but the feed still reaches ~6.7mi, so the scale is the feed extent (7), not
-    // a headroom value derived from the saved distance.
-    it('scales the slider max to the feed extent, independent of the saved distance', () => {
+    // The slider's right end is a FIXED extent, independent of both the loaded feed and the saved
+    // browseMaxDistance. Feed-scaling made feedMax grow as more distant posts loaded, moving the
+    // right edge mid-drag and yanking the thumb back (a janky "clicking back" drag, Discourse 9808).
+    // Here a 5mi limit is saved and the feed reaches ~6.7mi, but the max stays the fixed 15 and the
+    // thumb sits at the saved 5.
+    it('uses the fixed slider max regardless of the feed or the saved distance', () => {
       mockMe.value = meWithLocation({ browseMaxDistance: 5 })
       mockNearbyMessageList.value = [
         { id: 1, distance: 1.2 },
@@ -542,14 +544,14 @@ describe('PostFilters', () => {
       ]
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(7) // ceil(6.7), not a fn of the saved 5
+      expect(Number(input.attributes('max'))).toBe(15) // fixed, not a fn of the feed or saved 5
       expect(Number(input.element.value)).toBe(5) // thumb at the saved distance
     })
 
-    it('stores BROWSE_DISTANCE_UNLIMITED (not the feed max) when dragged to the rightmost stop', async () => {
+    it('stores BROWSE_DISTANCE_UNLIMITED (not the slider max) when dragged to the rightmost stop', async () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      input.element.value = 7
+      input.element.value = 15 // the fixed slider max
       await input.trigger('change')
       await flushPromises()
       expect(mockMe.value.settings.browseMaxDistance).toBe(
