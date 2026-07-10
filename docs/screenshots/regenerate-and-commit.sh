@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Regenerate the documentation screenshots and, if any changed, commit them back
-# to the current branch WITHOUT triggering another CI run.
+# Regenerate the documentation screenshots and, if any changed MEANINGFULLY,
+# commit them back to the current branch WITHOUT triggering another CI run.
 #
 # This is the "auto-commit on change" half of keeping docs fresh: a CI job (or a
 # person) runs it, and any drift in the screenshots is committed alongside the
@@ -25,6 +25,8 @@
 #   GITHUB_TOKEN  - if set, used to push over HTTPS (for CI). Otherwise a plain
 #     `git push` is used (for local runs with existing credentials).
 #   DOCS_COMMIT_AUTHOR / DOCS_COMMIT_EMAIL - optional bot identity for the commit.
+#   DOCS_PIXEL_THRESHOLD / DOCS_PIXEL_FUZZ - meaningful-change tuning. Needs the
+#     ImageMagick `compare` tool; without it, all pixel changes are committed.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -46,6 +48,38 @@ echo "Regenerating screenshots..."
   echo "Screenshot generation failed - not committing." >&2
   exit 1
 }
+
+# Keep only screenshots that changed MEANINGFULLY. Screenshots carry a few
+# non-deterministic pixels (antialiasing, carets, sub-pixel layout), so a raw
+# byte diff would commit noise. Compare each changed PNG to the committed
+# version and revert ones whose differing-pixel count is below a threshold.
+# Brand-new screenshots (no committed version) are always kept.
+THRESHOLD="${DOCS_PIXEL_THRESHOLD:-400}"   # differing pixels to count as meaningful
+FUZZ="${DOCS_PIXEL_FUZZ:-6%}"              # per-pixel colour tolerance
+if command -v compare >/dev/null 2>&1; then
+  while IFS= read -r png; do
+    [ -z "$png" ] && continue
+    if ! git cat-file -e "HEAD:$png" 2>/dev/null; then
+      echo "  new screenshot (keep): $png"
+      continue
+    fi
+    old="$(mktemp --suffix=.png)"
+    git show "HEAD:$png" >"$old"
+    raw="$(compare -metric AE -fuzz "$FUZZ" "$old" "$png" null: 2>&1 || true)"
+    rm -f "$old"
+    diffpx="$(printf '%s' "$raw" | grep -oE '^[0-9]+' || true)"
+    [ -z "$diffpx" ] && diffpx=999999   # unparseable (e.g. size change) -> meaningful
+    if [ "$diffpx" -lt "$THRESHOLD" ]; then
+      git checkout -- "$png"
+      echo "  noise only (${diffpx}px < ${THRESHOLD}, reverted): $png"
+    else
+      echo "  meaningful change (${diffpx}px): $png"
+    fi
+  done < <(git diff --name-only -- 'docs/*/assets/*.png')
+else
+  echo "WARNING: ImageMagick 'compare' not found - committing all pixel changes" >&2
+  echo "         without the meaningfulness filter. Install imagemagick in CI." >&2
+fi
 
 git add docs/members/assets docs/moderators/assets 2>/dev/null || true
 
