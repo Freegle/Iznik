@@ -47,6 +47,8 @@ A WANTED has no delivery or deadline step. People who have the item can reply to
 
 ## The chat: arranging collection
 
+![Your chats](assets/chats.png)
+
 Everything after the first reply happens in the **chat** (`/chats`).
 
 - **Agree a time and place** to collect, in your own words.

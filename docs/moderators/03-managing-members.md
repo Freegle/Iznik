@@ -18,6 +18,8 @@ review and, when you must, remove members.
 
 ## The members list
 
+![The members list](assets/members.png)
+
 **Members > Approved** (`/members/approved`) lists a community's members.
 
 From here you can:

@@ -18,6 +18,8 @@ This guide covers the parts you are most likely to want.
 
 ## Email and notifications
 
+![Your settings](assets/settings.png)
+
 This is the setting people ask about most. You control how much Freegle emails you, per
 community.
 

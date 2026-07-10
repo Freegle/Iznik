@@ -18,6 +18,8 @@ queues, the actions, why posts get held, and how reports work.
 
 ## The pending queue
 
+![The pending queue](assets/pending.png)
+
 **Messages > Pending** (`/messages/pending`) is where posts waiting for a decision
 appear, for the community (or all your communities) you have selected.
 

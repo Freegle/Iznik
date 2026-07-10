@@ -18,6 +18,8 @@ after its wider life: stories, events, broadcasts and more.
 
 ## Community settings
 
+![Community settings](assets/settings.png)
+
 **Settings** (`/settings`) is where you configure a community (you need to be an Owner or
 Moderator of it). It is a set of sections, each covering one topic:
 

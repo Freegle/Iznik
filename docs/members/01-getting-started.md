@@ -19,6 +19,8 @@ ready to give or get your first item.
 
 ## Creating an account
 
+![The Freegle homepage](assets/homepage.png)
+
 You can start browsing and even start a post without an account, but you need one to
 reply to posts and to keep track of what you have given and received.
 
@@ -49,6 +51,8 @@ You do not always have to join a community to use it. When you post, Freegle wor
 the right community from the postcode you give, and joins you automatically if needed.
 
 ## Browsing what is on offer
+
+![The Browse page](assets/browse.png)
 
 Once you are logged in, **Browse** is your home page. It shows OFFERs and WANTEDs near
 you, on a map and as a list.

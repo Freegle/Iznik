@@ -26,6 +26,8 @@ separate application from the main Freegle site, but you log in with the same ac
 
 ## The dashboard
 
+![The ModTools dashboard](assets/dashboard.png)
+
 The dashboard (the ModTools home page) is your daily starting point.
 
 It shows:
