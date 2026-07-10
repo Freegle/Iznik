@@ -46,7 +46,6 @@ graph TB
         end
 
         subgraph "API Containers"
-            APIV1[apiv1<br/>PHP API]
             APIV2[apiv2<br/>Go API]
         end
 
@@ -66,17 +65,13 @@ graph TB
 
         subgraph "Testing"
             PLAYWRIGHT[playwright<br/>E2E Tests]
-            PHPUNIT[apiv1-phpunit<br/>PHP Tests]
         end
 
         TRAEFIK --> FREEGLE_DEV
         TRAEFIK --> MODTOOLS_DEV
-        TRAEFIK --> APIV1
         TRAEFIK --> APIV2
 
-        FREEGLE_DEV --> APIV1
         FREEGLE_DEV --> APIV2
-        APIV1 --> PERCONA
         APIV2 --> PERCONA
         BATCH --> PERCONA
         BATCH --> REDIS
@@ -98,9 +93,7 @@ graph TB
 ### API Containers
 | Container | Profile | Purpose |
 |-----------|---------|---------|
-| `apiv1` | default | PHP API (legacy V1, retired) |
 | `apiv2` | default | Go API (iznik-server-go) |
-| `apiv1-phpunit` | default | PHP API for running tests |
 
 ### Background Processing
 | Container | Profile | Purpose |
@@ -160,7 +153,7 @@ All containers → Loki (port 3100) → Grafana (optional)
 
 ### API Request Flow (Local Dev)
 ```
-Browser → Traefik → freegle-dev-local → apiv1/apiv2 → percona
+Browser → Traefik → freegle-dev-local → apiv2 → percona
                            ↓
                       delivery (images)
 ```
