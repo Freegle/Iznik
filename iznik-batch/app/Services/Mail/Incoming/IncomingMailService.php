@@ -2641,6 +2641,11 @@ class IncomingMailService
         // Determine routing result first
         $routingResult = RoutingResult::PENDING;  // Default
         $pendingReason = null;
+        // True when the post would otherwise have gone live immediately (an
+        // unmoderated member, clean of the checks below). Such posts now start
+        // Pending and are promoted by the content-check batch job instead of being
+        // approved on arrival - see the routing note and the collection update below.
+        $awaitingContentCheck = false;
 
         // Check if user is unmapped (no location)
         if ($user->lastlocation === null) {
@@ -2660,11 +2665,18 @@ class IncomingMailService
         // API rejects PROHIBITED with "Not allowed to post on this group" (message.php:625)
         // so email should match: drop the post.
         else {
+            // Unmoderated members (DEFAULT/UNMODERATED) are NOT approved on arrival.
+            // Like the web/API submit path (iznik-server-go message.go: "All messages
+            // start Pending - the content check batch job ... promotes clean messages
+            // from non-moderated users to Approved"), they start Pending so the
+            // content-check job (messages:contentcheck) can gate them: clean posts are
+            // auto-promoted within a minute, while posts matching a concern keyword or
+            // content rule are held for a moderator instead of going live unchecked.
             $routingResult = match ($postingStatus) {
-                'DEFAULT', 'UNMODERATED' => RoutingResult::APPROVED,
                 'PROHIBITED' => RoutingResult::DROPPED,
-                default => RoutingResult::PENDING,  // NULL, MODERATED, or any other value
+                default => RoutingResult::PENDING,  // DEFAULT, UNMODERATED, NULL, MODERATED, ...
             };
+            $awaitingContentCheck = in_array($postingStatus, ['DEFAULT', 'UNMODERATED'], true);
         }
 
         // For DROPPED messages, don't create a record
@@ -2687,7 +2699,10 @@ class IncomingMailService
                 'date' => now(),
             ]);
 
-            // Update the collection based on routing result
+            // Update the collection based on routing result.
+            // Note: member posts are no longer Approved on arrival (see routing note
+            // above). The APPROVED branch is retained for completeness / any future
+            // caller; unmoderated members take the awaiting-content-check path below.
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
                 MessageGroup::where('msgid', $messageId)
@@ -2703,8 +2718,23 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+            } elseif ($awaitingContentCheck) {
+                // Unmoderated member: start Pending and let the content-check job
+                // promote it (clean) or hold and notify mods (flagged). We do NOT
+                // notify mods or add to the spatial index here - that is the
+                // content-check job's responsibility, so clean posts create no mod
+                // work and flagged posts never go live unchecked.
+                MessageGroup::where('msgid', $messageId)
+                    ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+
+                Log::info('Message pending content check (auto-approve candidate)', [
+                    'message_id' => $messageId,
+                    'group_id' => $group->id,
+                ]);
             } else {
-                // Message is pending - collection is already Incoming, update to Pending
+                // Message is pending for a moderator reason (moderated user/group,
+                // worry words, unmapped user, Big Switch) - collection is already
+                // Incoming, update to Pending and notify mods now.
                 MessageGroup::where('msgid', $messageId)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 

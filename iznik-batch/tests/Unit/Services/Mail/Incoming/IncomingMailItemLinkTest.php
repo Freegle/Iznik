@@ -64,7 +64,9 @@ class IncomingMailItemLinkTest extends TestCase
         $parsed = $this->parser->parse($email, $userEmail, $to);
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        // The item link is created regardless of collection; an unmoderated member's
+        // post now starts Pending (content-check gated) rather than Approved on arrival.
+        $this->assertEquals(RoutingResult::PENDING, $result);
 
         $msg = DB::table('messages')
             ->where('subject', 'OFFER: Distinctive Velvet Armchair (London)')
