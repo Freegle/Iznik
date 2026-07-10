@@ -24,6 +24,14 @@
         </div>
         <div v-if="showDistanceSlider" class="distance">
           <label for="distanceSlider">How far away:</label>
+          <span class="distance-desc d-block text-muted small">
+            You'll see mostly nearby posts, but some from further away.
+            <span class="drag-hint"
+              >Drag towards <strong>Nearer</strong> or
+              <strong>Further</strong>. </span
+            >We use road distance and travel time, not crow flies. Applies to
+            Browse, notifications and who sees your posts.
+          </span>
           <RangeSlider
             id="distanceSlider"
             v-model="sliderValue"
@@ -35,6 +43,7 @@
             aria-label="Maximum distance"
             @change="onSliderChange"
           />
+          <NearbyTowns :miles="sliderValue" />
         </div>
         <div class="sort mb-2">
           <label for="sortOptions">Sort by:</label>
@@ -139,6 +148,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import RangeSlider from '~/components/RangeSlider.vue'
+import NearbyTowns from '~/components/NearbyTowns.vue'
 import WhichPostsModal from '~/components/WhichPostsModal.vue'
 
 const props = defineProps({
@@ -576,6 +586,20 @@ const hasNonDefaultFilters = computed(() => {
   color: var(--color-gray-600);
   margin-top: 0.5rem;
   margin-bottom: 0;
+}
+
+.distance-desc {
+  margin-bottom: 0.25rem;
+}
+
+// Match the Settings Feed slider: the drag instruction is redundant on touch and costs a line,
+// so hide it on mobile.
+.drag-hint {
+  display: none;
+
+  @include media-breakpoint-up(md) {
+    display: inline;
+  }
 }
 
 /* "Filters active" indicator on the collapsed "Map & Filters" button - a small red

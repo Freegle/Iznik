@@ -1,0 +1,189 @@
+<template>
+  <!--
+    Reach hint below the distance slider, from a single routing pass server-side:
+    "Upto X-Y miles by road" (X-Y = min/max frontier road-distance across directions) followed by
+    example places it covers ("e.g. Town, Town", biggest-population first) - or the nearest place
+    when none are in reach. Responsive: on mobile the town list drops to its own line and truncates
+    with an ellipsis; on tablet and up it's one line, ellipsis-truncated. Fixed per-breakpoint height
+    so the async result doesn't shift the page (CLS-safe). Fetches lazily, only once scrolled into
+    view. Pulsates while fetching.
+  -->
+  <div
+    v-observe-visibility="onVisibility"
+    class="nearby-towns text-muted small mt-1"
+    aria-live="polite"
+  >
+    <span v-if="loading" class="pulsate">Finding nearby places…</span>
+    <template v-else-if="bits.lead || bits.tail">
+      <span class="nt-lead">{{ bits.lead }}</span
+      ><span v-if="bits.sep" class="nt-sep">{{ bits.sep }}</span
+      ><span class="nt-tail">{{ bits.tail }}</span>
+    </template>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch } from 'vue'
+import { useMe } from '~/composables/useMe'
+import api from '~/api'
+
+// Furthest towns the setting reaches (biggest-population first) as examples, plus the road-distance
+// reach range. Real miles - the reach follows road distance and travel time, which the slider copy
+// explains.
+const props = defineProps({
+  miles: { type: Number, required: true },
+})
+
+const runtimeConfig = useRuntimeConfig()
+const apiInstance = api(runtimeConfig)
+const { me } = useMe()
+
+const towns = ref([])
+const closer = ref('')
+const frontierMedian = ref(null)
+const frontierMax = ref(null)
+const loading = ref(false)
+const visible = ref(false)
+let timer = null
+let seq = 0
+
+// Split into a fixed lead ("Upto X-Y miles by road") that always stays visible and a tail (the town
+// examples, or the nearest place) that truncates with an ellipsis. `sep` joins them on one line
+// (tablet+); it's hidden on mobile where the tail drops to its own line.
+const bits = computed(() => {
+  const lo = frontierMedian.value
+  const hi = frontierMax.value
+  let lead = ''
+  if (lo != null && hi != null) {
+    const a = Math.round(lo)
+    const b = Math.round(hi)
+    if (b > 0) {
+      const unit = b === 1 ? 'mile' : 'miles'
+      const dist = a > 0 && a < b ? `${a}-${b}` : `${b}`
+      lead = `Max ${dist} ${unit} by road`
+    }
+  }
+  if (towns.value.length) {
+    return {
+      lead,
+      sep: lead ? ', ' : '',
+      tail: `e.g. ${towns.value.join(', ')}`,
+    }
+  }
+  if (closer.value) {
+    return { lead, sep: lead ? '. ' : '', tail: `Closer than ${closer.value}` }
+  }
+  return { lead, sep: '', tail: '' }
+})
+
+// Debounce so dragging the slider doesn't spam the (expensive) routing pass.
+function schedule() {
+  if (timer) clearTimeout(timer)
+  timer = setTimeout(fetchTowns, 350)
+}
+
+function reset() {
+  towns.value = []
+  closer.value = ''
+  frontierMedian.value = null
+  frontierMax.value = null
+}
+
+async function fetchTowns() {
+  if (!visible.value) return
+  const lat = me.value?.lat
+  const lng = me.value?.lng
+  const miles = props.miles
+  if ((!lat && !lng) || !miles) {
+    reset()
+    loading.value = false
+    return
+  }
+  const mySeq = ++seq
+  loading.value = true
+  try {
+    const r = await apiInstance.town.fetchNear(lat, lng, miles)
+    if (mySeq !== seq) return // a newer request superseded this one
+    towns.value = r?.towns || []
+    closer.value = r?.closer_than || ''
+    frontierMedian.value =
+      typeof r?.frontier_median_miles === 'number'
+        ? r.frontier_median_miles
+        : null
+    frontierMax.value =
+      typeof r?.frontier_max_miles === 'number' ? r.frontier_max_miles : null
+  } catch (e) {
+    if (mySeq === seq) reset()
+  } finally {
+    if (mySeq === seq) loading.value = false
+  }
+}
+
+// Lazy: first time it scrolls into view, fetch. Thereafter re-fetch on slider changes.
+function onVisibility(isVisible) {
+  if (isVisible && !visible.value) {
+    visible.value = true
+    schedule()
+  }
+}
+watch(
+  () => props.miles,
+  () => {
+    if (visible.value) schedule()
+  }
+)
+</script>
+
+<style scoped>
+/* Mobile-first: two lines - the range on line 1, the town examples on line 2, ellipsis-truncated.
+   min-height reserves both lines so the async result never shifts the page (CLS-safe). */
+.nearby-towns {
+  min-height: 2.5rem;
+  line-height: 1.25rem;
+}
+.nt-lead {
+  display: block;
+  white-space: nowrap;
+}
+.nt-sep {
+  display: none; /* only used to join lead + tail inline on tablet+ */
+}
+.nt-tail {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tablet and up: a single line, ellipsis-truncated. Inline (not flex) so a parent text-align:center
+   actually centres the line when it fits; when it overflows, the container's own ellipsis clips the
+   tail (the town list) while the lead ("Upto X-Y miles by road") stays visible. */
+@media (min-width: 768px) {
+  .nearby-towns {
+    min-height: 1.25rem;
+    height: 1.25rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nt-lead,
+  .nt-sep,
+  .nt-tail {
+    display: inline;
+  }
+}
+
+.pulsate {
+  animation: pulsate 1.2s ease-in-out infinite;
+}
+@keyframes pulsate {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+</style>

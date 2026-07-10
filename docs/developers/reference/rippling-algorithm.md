@@ -217,7 +217,11 @@ retracted, so re-approval restores the copy without re-rippling.
 
 - **Browse / Nearby feed:** members see rippled-in posts via
   `ST_Contains(rippling_reach.polygon, member point)`, filtered by the member's own distance
-  preference (`browseMaxDistance`), which also filters their mail.
+  preference (`browseMaxDistance`), which also filters their mail. `browseMaxDistance` is
+  applied in **both directions**: INBOUND (the viewer only sees/receives posts within their
+  own distance) and OUTBOUND (a post is only shown/mailed to people within the *poster's*
+  distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
+  the digest's `DistancePreferenceFilter::passesBothPreferences`).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
 - **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.

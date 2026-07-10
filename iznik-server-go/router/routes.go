@@ -73,6 +73,7 @@ import (
 	"github.com/freegle/iznik-server-go/story"
 	"github.com/freegle/iznik-server-go/systemlogs"
 	"github.com/freegle/iznik-server-go/team"
+	"github.com/freegle/iznik-server-go/town"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/userdump"
@@ -541,9 +542,6 @@ func SetupRoutes(app *fiber.App) {
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
 		ripplingAdmin.Get("/analytics", rippling.Analytics)
-		// The slow sampled drive-time pass is fetched separately so the fast SQL KPIs above
-		// aren't blocked on ~250 isochrone calls against the routing graph.
-		ripplingAdmin.Get("/analytics/drivetime", rippling.AnalyticsDriveTimes)
 
 		// Create a protected route group for admin endpoints
 		adminConfig := rg.Group("/config/admin")
@@ -852,6 +850,7 @@ func SetupRoutes(app *fiber.App) {
 
 		// Location Search (GET /locations - search by lat/lng, typeahead, or bounding box)
 		rg.Get("/locations", location.SearchLocations)
+		rg.Get("/town/near", town.Near)
 
 		// Location Write Operations
 		rg.Put("/locations", location.CreateLocation)

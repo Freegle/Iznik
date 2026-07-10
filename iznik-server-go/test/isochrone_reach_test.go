@@ -351,3 +351,86 @@ func TestNearbyReachFeedExcludesHeld(t *testing.T) {
 	assert.True(t, got[live], "a post with a live reach appears in the nearby feed")
 	assert.False(t, got[held], "a post whose reach is held for moderation is absent from the nearby feed")
 }
+
+// TestNearbyFeedHonoursAuthorDistanceLimit: the OUTBOUND half of the distance preference. A post
+// author's settings.browseMaxDistance also caps WHO SEES their post — a viewer beyond that distance
+// of the post does not see it in the nearby feed (or unread count) even when the viewer has no
+// distance limit of their own and the post's reach polygon covers them. Mirrors the recipient-side
+// TestNearbyFeedHonoursDistanceLimit, but the cap is set on the POSTER, not the viewer.
+func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("nearbyauthordist")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	// The poster caps how far away their posts are shown at 10 miles.
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseMaxDistance', 10) WHERE id = ?", posterID)
+
+	group := CreateTestGroup(t, prefix)
+	near := CreateTestMessage(t, posterID, group, "OFFER: near author-cap (nearbyauthordist)", 51.5, -0.1)
+	far := CreateTestMessage(t, posterID, group, "OFFER: far author-cap (nearbyauthordist)", 51.9, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", near, far)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", near, far)
+
+	// The viewer has NO distance limit of their own, so any filtering is the author's doing.
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// Both reach polygons cover the viewer; 'near' is at the viewer (~0mi), 'far' is ~27mi away.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.9, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
+
+	inFeed := func(url string) map[float64]bool {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var msgs []map[string]interface{}
+		json2.Unmarshal(rsp(resp), &msgs)
+		got := map[float64]bool{}
+		for _, m := range msgs {
+			if id, ok := m["id"].(float64); ok {
+				got[id] = true
+			}
+		}
+		return got
+	}
+
+	// The viewer has no distance limit of their own, so the unread count takes the fast (no per-post
+	// distance) path - which must ALSO honour the author cap so the badge matches the feed.
+	countOf := func() float64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		if c, ok := body["count"].(float64); ok {
+			return c
+		}
+		return -1
+	}
+
+	// With the poster's 10-mile cap, the ~27-mile far viewer position drops the far post; near stays.
+	capped := inFeed("/api/isochrone/message?jwt=" + token)
+	assert.True(t, capped[float64(near)], "the near post (within the author's 10-mile cap) appears")
+	assert.False(t, capped[float64(far)],
+		"the ~27-mile far post is hidden by the author's 10-mile outbound cap, despite being in reach and the viewer having no limit")
+	cappedCount := countOf()
+
+	// Control: remove the author's cap and the far in-reach post reappears — proving the cap, not
+	// reach or the viewer's own setting, is what hid it.
+	db.Exec("UPDATE users SET settings = JSON_REMOVE(settings, '$.browseMaxDistance') WHERE id = ?", posterID)
+	uncapped := inFeed("/api/isochrone/message?jwt=" + token)
+	assert.True(t, uncapped[float64(far)], "with no author cap, the far in-reach post appears again")
+	assert.Less(t, cappedCount, countOf(),
+		"the fast-path unread count excludes the far post while the author caps distance, and re-includes it once uncapped - staying in lock-step with the feed")
+}

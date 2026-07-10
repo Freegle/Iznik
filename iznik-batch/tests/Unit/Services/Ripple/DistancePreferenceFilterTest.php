@@ -119,6 +119,50 @@ class DistancePreferenceFilterTest extends TestCase
         $this->assertTrue($this->filter()->passes(1000000.0, 2.0, true));
     }
 
+    // ─── OUTBOUND (author-side) distance preference ─────────────────────
+    // passesBothPreferences enforces BOTH the recipient's inbound cap AND the post
+    // author's outbound cap on the SAME recipient<->post distance: a post is shown
+    // only to people within the author's chosen distance of it, as well as within
+    // the recipient's own chosen distance. Own posts always pass.
+
+    public function test_passes_both_within_both_limits(): void
+    {
+        $this->assertTrue($this->filter()->passesBothPreferences(1.0, 2.0, 3.0, false));
+    }
+
+    public function test_passes_both_fails_when_beyond_author_limit_only(): void
+    {
+        // The recipient is happy to see far posts (cap 50) but the author capped at 2.
+        $this->assertFalse($this->filter()->passesBothPreferences(10.0, 50.0, 2.0, false));
+    }
+
+    public function test_passes_both_fails_when_beyond_recipient_limit_only(): void
+    {
+        $this->assertFalse($this->filter()->passesBothPreferences(10.0, 2.0, 50.0, false));
+    }
+
+    public function test_passes_both_fails_when_beyond_both_limits(): void
+    {
+        $this->assertFalse($this->filter()->passesBothPreferences(100.0, 2.0, 3.0, false));
+    }
+
+    public function test_passes_both_author_boundary_is_inclusive(): void
+    {
+        $this->assertTrue($this->filter()->passesBothPreferences(2.0, 50.0, 2.0, false));
+    }
+
+    public function test_passes_both_own_post_bypasses_both_limits(): void
+    {
+        $this->assertTrue($this->filter()->passesBothPreferences(1000000.0, 2.0, 2.0, true));
+    }
+
+    public function test_passes_both_unlimited_author_defers_to_recipient(): void
+    {
+        $unlimited = (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
+        $this->assertTrue($this->filter()->passesBothPreferences(10.0, 50.0, $unlimited, false));
+        $this->assertFalse($this->filter()->passesBothPreferences(10.0, 5.0, $unlimited, false));
+    }
+
     public function test_distance_miles_is_zero_at_the_same_point(): void
     {
         $this->assertSame(0.0, $this->filter()->distanceMiles(51.5, -0.1, 51.5, -0.1));
