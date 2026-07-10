@@ -283,6 +283,8 @@ workflows:
                 command: |
                   set +e
                   PROJ="${COMPOSE_PROJECT_NAME:-freegle}"
+                  ROOT="$(git rev-parse --show-toplevel)"
+                  cd "$ROOT" || exit 0
                   if ! docker ps --format '{{.Names}}' | grep -q "^${PROJ}-playwright$"; then
                     echo "playwright container not up at post-step; skipping screenshots"
                     exit 0
@@ -290,13 +292,18 @@ workflows:
                   docker exec -e DOCS_OUT=/tmp/docshots "${PROJ}-playwright" \
                     sh -c 'cd /app && export NODE_PATH="$(npm root 2>/dev/null):$(npm root -g 2>/dev/null)"; echo "NODE_PATH=$NODE_PATH"; node tests/e2e/docs-screenshots.mjs' \
                     || echo "generator non-zero (partial shots ok)"
+                  echo "--- container output tree ---"; docker exec "${PROJ}-playwright" sh -c 'ls -R /tmp/docshots 2>/dev/null' | head -40
                   for aud in members moderators; do
-                    mkdir -p "docs/$aud/assets"
-                    docker cp "${PROJ}-playwright:/tmp/docshots/$aud/assets/." "docs/$aud/assets/" 2>/dev/null || true
+                    mkdir -p "$ROOT/docs/$aud/assets"
+                    docker cp "${PROJ}-playwright:/tmp/docshots/$aud/assets/." "$ROOT/docs/$aud/assets/" 2>&1 | head -3 || true
                   done
+                  echo "--- runner assets after cp ---"; ls -la "$ROOT/docs/members/assets" "$ROOT/docs/moderators/assets" 2>&1 | head -30
+                  echo "--- git status docs ---"; git status --short docs/ | head -30
                   mkdir -p ~/artifacts/doc-screenshots
-                  cp -r docs/members/assets docs/moderators/assets ~/artifacts/doc-screenshots/ 2>/dev/null || true
-                  command -v compare >/dev/null 2>&1 || sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || echo "imagemagick unavailable (will commit all changes)"
+                  cp -r "$ROOT/docs/members/assets" "$ROOT/docs/moderators/assets" ~/artifacts/doc-screenshots/ 2>/dev/null || true
+                  if ! command -v compare >/dev/null 2>&1; then
+                    sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || echo "imagemagick unavailable (will commit all changes)"
+                  fi
                   DOCS_ALLOW_MASTER=1 bash docs/screenshots/regenerate-and-commit.sh --commit-only || echo "commit step non-fatal"
                   exit 0
             - store_artifacts:
