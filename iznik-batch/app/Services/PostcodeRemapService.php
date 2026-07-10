@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -105,12 +106,20 @@ class PostcodeRemapService
         // type=Area restricts the expanding-buffer search to non-postcode
         // locations, matching the V1 PostGIS candidate pool (which synced
         // everything except postcodes).
-        $response = Http::get("{$this->spatialServerUrl}/v1/locations/knn", [
-            'lng'   => $lng,
-            'lat'   => $lat,
-            'limit' => 1,
-            'type'  => 'Area',
-        ]);
+        try {
+            $response = Http::get("{$this->spatialServerUrl}/v1/locations/knn", [
+                'lng'   => $lng,
+                'lat'   => $lat,
+                'limit' => 1,
+                'type'  => 'Area',
+            ]);
+        } catch (ConnectionException $e) {
+            // A transient blip on the spatial server (e.g. mid-rebuild) must not
+            // abort the whole remap. Treat it like a failed lookup: skip this
+            // postcode (return null => no update) so the run continues.
+            Log::warning("PostcodeRemapService: spatial server unreachable for lng={$lng} lat={$lat}: {$e->getMessage()}");
+            return null;
+        }
 
         if ($response->successful()) {
             $results = $response->json('results', []);
