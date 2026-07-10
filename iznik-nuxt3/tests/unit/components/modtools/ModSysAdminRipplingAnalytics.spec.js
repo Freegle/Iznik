@@ -4,12 +4,14 @@ import { mount, flushPromises } from '@vue/test-utils'
 import ModSysAdminRipplingAnalytics from '~/modtools/components/ModSysAdminRipplingAnalytics.vue'
 
 const mockFetchAnalytics = vi.fn()
+const mockFetchAnalyticsDriveTimes = vi.fn()
 const mockFetchMetrics = vi.fn().mockResolvedValue({})
 
 vi.mock('~/api', () => ({
   default: () => ({
     rippling: {
       fetchAnalytics: mockFetchAnalytics,
+      fetchAnalyticsDriveTimes: mockFetchAnalyticsDriveTimes,
       fetchMetrics: mockFetchMetrics,
     },
   }),
@@ -166,8 +168,39 @@ const FULL = {
   ],
 }
 
+// The endpoint is split: /rippling/analytics returns fast SQL KPIs (drive-time fields blank), and
+// /rippling/analytics/drivetime returns the slow sampled routing pass. These helpers split the
+// combined FULL fixture the same way, so the component is exercised through both requests.
+const BLANK_DRIVE = {
+  mean_min: 0,
+  ci_half_min: 0,
+  n_replies: 0,
+  available: false,
+}
+function fastOf(full) {
+  return {
+    ...full,
+    section1: { ...full.section1, reply_drive_min: { ...BLANK_DRIVE } },
+    section2: { ...full.section2, drive_time: [] },
+    section3: { ...full.section3, ripple_drive_min: { ...BLANK_DRIVE } },
+    bullseye: [],
+  }
+}
+function driveOf(full) {
+  return {
+    reply_drive_min: full.section1.reply_drive_min,
+    ripple_drive_min: full.section3.ripple_drive_min,
+    drive_time: full.section2.drive_time,
+    bullseye: full.bullseye,
+  }
+}
+
 describe('ModSysAdminRipplingAnalytics', () => {
-  beforeEach(() => mockFetchAnalytics.mockReset())
+  beforeEach(() => {
+    mockFetchAnalytics.mockReset()
+    mockFetchAnalyticsDriveTimes.mockReset()
+    mockFetchAnalyticsDriveTimes.mockResolvedValue(driveOf(FULL))
+  })
 
   it('fetches with the default stratum + date range on mount', async () => {
     mockFetchAnalytics.mockResolvedValue({})
@@ -182,7 +215,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('renders Section 1 KPIs from the response', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
     await flushPromises()
     const html = wrapper.html()
@@ -198,7 +231,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('uses one consistent green across every pie (positive slice first)', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
     await flushPromises()
     const pies = wrapper
@@ -212,7 +245,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('renders a separate trend chart per metric (incl. freeglers + drive-time)', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.html()).toContain('Trends')
@@ -227,7 +260,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('answers "is rippling helping?" as a contribution range with a rescue floor', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
     await flushPromises()
     const html = wrapper.html()
@@ -243,7 +276,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('folds in the attribution channels + geographic hotspots from the metrics call', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     mockFetchMetrics.mockResolvedValueOnce({
       reply_source_split: [
         { day: '2026-06-24', home: 5, ripple_notified: 2, ripple_reach: 1 },
@@ -271,7 +304,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('draws the reliability bullseye: a ring per drive-time band, empty rings greyed', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
     await flushPromises()
     const html = wrapper.html()
@@ -296,7 +329,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
   })
 
   it('highlights the active density and refetches on change (defaults to All)', async () => {
-    mockFetchAnalytics.mockResolvedValue(FULL)
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
     await flushPromises()
 
@@ -315,6 +348,37 @@ describe('ModSysAdminRipplingAnalytics', () => {
       '2026-07-08'
     )
     expect(wrapper.findAll('.seg-btn')[1].classes()).toContain('active')
+    wrapper.unmount()
+  })
+
+  it('renders KPIs immediately and fills the drive-time panels from a separate request', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    // Hold the slow routing pass open so we can assert the page is usable before it resolves.
+    let resolveDrive
+    mockFetchAnalyticsDriveTimes.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDrive = resolve
+      })
+    )
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    // The SQL KPIs are on screen even though the routing pass has NOT resolved.
+    expect(wrapper.html()).toContain('51.2%')
+    // The drive-time value isn't shown yet — a sampling spinner is in its place.
+    expect(wrapper.html()).not.toContain('17.2')
+    expect(wrapper.html()).toContain('sampling drive-times')
+
+    // Resolve the routing pass: the drive panels + bullseye now fill in.
+    resolveDrive(driveOf(FULL))
+    await flushPromises()
+    expect(wrapper.html()).toContain('17.2') // reply drive-time
+    expect(wrapper.html()).toContain('How reliably does a reply convert') // bullseye
+    expect(mockFetchAnalyticsDriveTimes).toHaveBeenCalledWith(
+      'all',
+      '2026-06-24',
+      '2026-07-08'
+    )
     wrapper.unmount()
   })
 })

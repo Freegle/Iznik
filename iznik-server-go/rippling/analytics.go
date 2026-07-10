@@ -408,18 +408,26 @@ type Section1KPI struct {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
-func Analytics(c *fiber.Ctx) error {
-	db := database.DBConn
-	stratum := c.Query("stratum", "all")
-	start := c.Query("start")
-	end := c.Query("end")
+// analyticsWindow parses the shared stratum + [start,end) window query params, defaulting to the
+// last 30 days, and returns the density SQL predicate. Used by both the fast SQL Analytics handler
+// and the slow AnalyticsDriveTimes routing pass so their windows match exactly.
+func analyticsWindow(c *fiber.Ctx) (stratum, start, end, stratumSQL string) {
+	stratum = c.Query("stratum", "all")
+	start = c.Query("start")
+	end = c.Query("end")
 	if start == "" {
 		start = time.Now().AddDate(0, 0, -30).Format("2006-01-02 15:04:05")
 	}
 	if end == "" {
 		end = time.Now().Format("2006-01-02 15:04:05")
 	}
-	stratumSQL := StratumFilter(stratum)
+	stratumSQL = StratumFilter(stratum)
+	return
+}
+
+func Analytics(c *fiber.Ctx) error {
+	db := database.DBConn
+	stratum, start, end, stratumSQL := analyticsWindow(c)
 
 	// Section 1 counts - pure SQL, full set. Per-post nreplies/taken/freeglers, then aggregate.
 	var agg struct {
@@ -478,22 +486,25 @@ func Analytics(c *fiber.Ctx) error {
 		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
 	}
 
-	// ONE sampled routing pass feeds every drive-time figure: the Section 1 overall mean, the
-	// Section 3 rippled-out mean, and the drive-time trend - no re-calling the graph.
-	obs := scoreSample(fetchDriveSample(start, end, stratumSQL, driveSampleSize()))
-	kpi.ReplyDrive = statFromObs(obs, false)
+	// The drive-time figures (the Section 1 overall mean, the Section 3 rippled-out mean, the
+	// per-day trend and the reliability bullseye) all come from a sampled routing pass - ~250
+	// isochrone calls that take tens of seconds (worse over the apiv2-live tunnel). They are NOT
+	// computed here: the frontend fetches them separately from AnalyticsDriveTimes so these fast
+	// SQL KPIs render immediately instead of the whole tab blocking on the routing graph.
+	// kpi.ReplyDrive and s3.RippleDrive keep their zero value (Available:false), so the UI shows a
+	// "sampling..." placeholder until the drive-time request fills them in.
 
 	// Section 2 - trends: the SQL KPIs (reply rate, taken rate, mean replies, freeglers reached)
-	// per arrival day, plus the sample-based drive-time trend from the pass above.
+	// per arrival day. The sample-based drive-time trend is merged in client-side from the
+	// separate drive-time request.
 	trend := fiber.Map{
 		"kpis":       trendSeries(start, end, stratumSQL),
-		"drive_time": driveTrendFromObs(obs),
+		"drive_time": []DriveTrendPoint{},
 	}
 
 	// Section 3 - is rippling helping? Server-derived rippled-out shares, the rescue floor and
-	// contribution range, the home-vs-rippled comparison, and the rippled-out mean drive-time.
+	// contribution range, and the home-vs-rippled comparison. RippleDrive fills in separately.
 	s3 := rippledOutSection(start, end, stratumSQL)
-	s3.RippleDrive = statFromObs(obs, true)
 
 	return c.JSON(fiber.Map{
 		"stratum":       stratum,
@@ -503,8 +514,37 @@ func Analytics(c *fiber.Ctx) error {
 		"section1":      kpi,
 		"section2":      trend,
 		"section3":      s3,
-		// Reliability bullseye: reply->take conversion by drive-time ring, from the same sample.
-		"bullseye": bullseyeFromObs(obs),
+	})
+}
+
+// AnalyticsDriveTimes is the SLOW half of the analytics tab: the sampled drive-time routing pass.
+// Split out from Analytics so the fast SQL KPIs render immediately and these figures fill in
+// progressively, rather than the whole tab blocking on ~250 isochrone calls against the routing
+// graph (tens of seconds, and slower still over the apiv2-live tunnel). ONE sampled pass still
+// feeds every figure - the Section 1 overall mean, the Section 3 rippled-out mean, the per-day
+// trend and the reliability bullseye - so nothing re-calls the graph. Support/Admin only. Read-only.
+//
+// @Router /rippling/analytics/drivetime [get]
+// @Summary Sampled drive-time rippling analytics (sysadmin) - slow routing pass, loaded separately
+// @Tags rippling
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+func AnalyticsDriveTimes(c *fiber.Ctx) error {
+	stratum, start, end, stratumSQL := analyticsWindow(c)
+
+	// ONE sampled routing pass feeds every drive-time figure.
+	obs := scoreSample(fetchDriveSample(start, end, stratumSQL, driveSampleSize()))
+
+	return c.JSON(fiber.Map{
+		"stratum":          stratum,
+		"start":            start,
+		"end":              end,
+		"sample_target":    driveSampleSize(),
+		"reply_drive_min":  statFromObs(obs, false), // Section 1 overall mean
+		"ripple_drive_min": statFromObs(obs, true),  // Section 3 rippled-out mean
+		"drive_time":       driveTrendFromObs(obs),  // Section 2 per-day trend
+		"bullseye":         bullseyeFromObs(obs),    // reply->take conversion by drive-time ring
 	})
 }
 

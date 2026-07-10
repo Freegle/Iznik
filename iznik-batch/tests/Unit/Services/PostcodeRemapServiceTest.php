@@ -49,6 +49,24 @@ class PostcodeRemapServiceTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_find_nearest_area_returns_null_when_server_connection_refused(): void
+    {
+        // A transient blip (spatial server mid-rebuild) makes Http::get throw a
+        // ConnectionException rather than return a response. This must be
+        // swallowed so a single failed lookup does not abort the whole remap.
+        Http::fake([
+            '*/v1/locations/knn*' => function () {
+                throw new \Illuminate\Http\Client\ConnectionException(
+                    'cURL error 7: Failed to connect to spatial-knn port 8194'
+                );
+            },
+        ]);
+
+        $result = $this->service->findNearestArea(-1.5491, 53.8008);
+
+        $this->assertNull($result);
+    }
+
     public function test_find_nearest_area_queries_locations_knn_with_area_filter(): void
     {
         Http::fake([
