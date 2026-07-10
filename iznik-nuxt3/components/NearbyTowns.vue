@@ -31,7 +31,9 @@ import api from '~/api'
 // reach range. Real miles - the reach follows road distance and travel time, which the slider copy
 // explains.
 const props = defineProps({
-  miles: { type: Number, required: true },
+  // The slider's travel-time budget in MINUTES. The reach hint it drives is still shown in road
+  // miles (the frontier the isochrone reaches), which is what members find meaningful.
+  minutes: { type: Number, required: true },
 })
 
 const runtimeConfig = useRuntimeConfig()
@@ -93,8 +95,8 @@ async function fetchTowns() {
   if (!visible.value) return
   const lat = me.value?.lat
   const lng = me.value?.lng
-  const miles = props.miles
-  if ((!lat && !lng) || !miles) {
+  const minutes = props.minutes
+  if ((!lat && !lng) || !minutes) {
     reset()
     loading.value = false
     return
@@ -102,7 +104,7 @@ async function fetchTowns() {
   const mySeq = ++seq
   loading.value = true
   try {
-    const r = await apiInstance.town.fetchNear(lat, lng, miles)
+    const r = await apiInstance.town.fetchNear(lat, lng, minutes)
     if (mySeq !== seq) return // a newer request superseded this one
     towns.value = r?.towns || []
     closer.value = r?.closer_than || ''
@@ -127,7 +129,7 @@ function onVisibility(isVisible) {
   }
 }
 watch(
-  () => props.miles,
+  () => props.minutes,
   () => {
     if (visible.value) schedule()
   }

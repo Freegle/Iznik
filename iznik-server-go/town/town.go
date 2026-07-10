@@ -1,10 +1,11 @@
 package town
 
 // The "Near: ..." hint under the browse/feed distance slider. Given the user's location and the
-// slider's distance, list up to 5 towns the setting reaches - by REAL travel (drive-time via the
-// routing server's ripple-eval), not crow-flies. We show place NAMES only, never any distance or
-// time units, so the miles-slider / drive-time-metric mismatch is invisible: the user just sees
-// which places their setting covers, and the list changes as they drag.
+// slider's TRAVEL TIME (minutes), list up to 5 towns the setting reaches - by REAL travel (drive-time
+// via the routing server's ripple-eval), not crow-flies. We show place NAMES only, never any distance
+// or time units: the user just sees which places their setting covers, and the list changes as they
+// drag. The slider is time-based end to end - the minutes go straight to the isochrone's max_minutes,
+// with no hardcoded miles<->minutes conversion anywhere.
 
 import (
 	"bytes"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -34,18 +36,31 @@ func routingEvalURL() string {
 
 var routingClient = &http.Client{Timeout: 15 * time.Second}
 
-// milesToDriveMinutes turns the slider's miles into a drive-time budget for the isochrone. No units
-// are ever shown, so this only needs to be monotonic and roughly realistic: ~2 min/mile (a blended
-// ~30mph). Floored/capped so the extremes stay sane ("no limit" doesn't route the whole country).
-func milesToDriveMinutes(miles float64) float64 {
-	m := miles * 2.0
-	if m > 120 {
-		m = 120
+// reachRadiusFloorMiles keeps the derived crow-flies cap from collapsing to ~0 (which would hide
+// everything) when the chosen reach is tiny or no named town falls inside it.
+const reachRadiusFloorMiles = 1.0
+
+// reachRadiusMiles converts the towns reachable within the chosen travel time into a crow-flies mile
+// radius to store as settings.browseMaxDistance (the value the feed's fast Haversine distance filter
+// reads). It uses the FURTHEST reachable town's straight-line distance - a real, location-aware reach
+// extent with NO hardcoded miles<->minutes mapping - and falls back to the isochrone's road frontier
+// when nothing named is reachable. Floored so it never collapses to ~0. The nearby feed already gates
+// every post through the real drive-time isochrone (ST_Contains on the reach polygon), so this cap
+// only needs to be a rough, generous tightening; an approximate crow-flies circle is fine.
+func reachRadiusMiles(crowMilesReachable []float64, fallbackMiles float64) float64 {
+	radius := 0.0
+	for _, d := range crowMilesReachable {
+		if d > radius {
+			radius = d
+		}
 	}
-	if m < 5 {
-		m = 5
+	if radius <= 0 {
+		radius = fallbackMiles
 	}
-	return m
+	if radius < reachRadiusFloorMiles {
+		radius = reachRadiusFloorMiles
+	}
+	return radius
 }
 
 // TownCand is a candidate town with its drive-time from the user (nil = unreachable in the budget).
@@ -105,9 +120,12 @@ type rippleEvalResp struct {
 	FrontierMaxMiles    *float64 `json:"frontier_max_miles"`
 }
 
-// Near returns up to 5 town names the given slider distance reaches from (lat,lng), by travel,
-// furthest-selected and population-ordered - for the "Near: ..." hint under the distance slider.
-// Names only, no units. Best-effort: any routing/DB failure returns an empty list (the hint hides).
+// Near returns up to 5 town names reachable within the slider's TRAVEL TIME (minutes) from (lat,lng),
+// by travel, furthest-selected and population-ordered - for the "Near: ..." hint under the distance
+// slider. It also returns reach_radius_miles, the crow-flies radius that travel time reaches, which
+// the client stores as settings.browseMaxDistance (so the fast Haversine feed filter tightens to
+// roughly the chosen travel time, location-aware, with no hardcoded conversion). Names only, no
+// units. Best-effort: any routing/DB failure returns an empty list (the hint hides).
 //
 // @Router /town/near [get]
 // @Summary Up to 5 towns the browse/feed distance slider reaches (by drive-time), names only
@@ -117,17 +135,20 @@ type rippleEvalResp struct {
 func Near(c *fiber.Ctx) error {
 	lat, _ := strconv.ParseFloat(c.Query("lat"), 64)
 	lng, _ := strconv.ParseFloat(c.Query("lng"), 64)
-	miles, _ := strconv.ParseFloat(c.Query("miles"), 64)
+	minutes, _ := strconv.ParseFloat(c.Query("minutes"), 64)
 	empty := fiber.Map{"towns": []string{}}
-	if (lat == 0 && lng == 0) || miles <= 0 {
+	if (lat == 0 && lng == 0) || minutes <= 0 {
 		return c.JSON(empty)
 	}
-	maxMin := milesToDriveMinutes(miles)
+	maxMin := minutes
+	if maxMin > 120 {
+		maxMin = 120 // cap so "no limit" never routes the whole country
+	}
 
-	// Candidate towns within a generous crow-flies box (travel >= crow-flies, and fast roads can
-	// cover ~2x the miles in the same minutes) so we don't route the whole country. The towns
-	// table is tiny (~234 rows), so this stays cheap.
-	boxMiles := miles*2 + 5
+	// Candidate towns within a generous crow-flies box: fast roads can cover well over a mile a
+	// minute, so size the box off the time budget (~1.5 mi/min plus slack) to be sure we don't miss
+	// a reachable town. The towns table is tiny (~234 rows), so a generous box stays cheap.
+	boxMiles := maxMin*1.5 + 5
 	latDeg := boxMiles / 69.0
 	lngDeg := boxMiles / (69.0 * math.Cos(lat*math.Pi/180))
 	db := database.DBConn
@@ -165,14 +186,28 @@ func Near(c *fiber.Ctx) error {
 		return c.JSON(empty)
 	}
 	cands := make([]TownCand, len(rows))
+	var crowReachable []float64 // straight-line miles to each town reachable within the time budget
 	for i, rw := range rows {
-		cands[i] = TownCand{ID: rw.ID, Name: rw.Name, DriveMin: r.Results[i].DriveMin}
+		dm := r.Results[i].DriveMin
+		cands[i] = TownCand{ID: rw.ID, Name: rw.Name, DriveMin: dm}
+		if dm != nil && *dm <= maxMin {
+			crowReachable = append(crowReachable, utils.Haversine(lat, lng, rw.Lat, rw.Lng))
+		}
 	}
 
 	// The road-distance reach range ("reaches median..max miles by road"), shown alongside the town
 	// list. Comes free from the isochrone, so it's present even when no named town falls inside the
 	// reach.
 	out := fiber.Map{"frontier_median_miles": r.FrontierMedianMiles, "frontier_max_miles": r.FrontierMaxMiles}
+
+	// reach_radius_miles: the crow-flies radius the chosen travel time reaches, for the client to
+	// store as settings.browseMaxDistance. Falls back to the isochrone's road frontier when no named
+	// town is reachable (rural short trips).
+	fallback := 0.0
+	if r.FrontierMedianMiles != nil {
+		fallback = *r.FrontierMedianMiles
+	}
+	out["reach_radius_miles"] = reachRadiusMiles(crowReachable, fallback)
 
 	towns := SelectNear(cands, maxMin, 5)
 	if len(towns) > 0 {

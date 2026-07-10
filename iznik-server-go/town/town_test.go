@@ -2,20 +2,25 @@ package town
 
 import "testing"
 
-// milesToDriveMinutes turns the slider's miles into a drive-time budget: ~2 min/mile, floored at 5
-// and capped at 120 so the extremes stay sane.
-func TestMilesToDriveMinutes(t *testing.T) {
-	cases := []struct{ miles, want float64 }{
-		{0, 5},     // 0 -> floored to 5
-		{1, 5},     // 2 -> floored to 5
-		{3, 6},     // 3 * 2
-		{15, 30},   // 15 * 2
-		{60, 120},  // 120, at the cap
-		{100, 120}, // 200 -> capped at 120
+// reachRadiusMiles turns the reachable towns' straight-line distances into a crow-flies mile radius
+// to store as settings.browseMaxDistance: the furthest reachable town, falling back to the road
+// frontier when nothing named is reachable, and never below a small floor. This is the value the
+// slider's chosen travel time maps to - via real routing, with no hardcoded miles<->minutes constant.
+func TestReachRadiusMiles(t *testing.T) {
+	cases := []struct {
+		name     string
+		reach    []float64
+		fallback float64
+		want     float64
+	}{
+		{"furthest reachable town wins", []float64{2.0, 8.5, 5.1}, 3.0, 8.5},
+		{"no town reachable -> road frontier fallback", []float64{}, 6.2, 6.2},
+		{"tiny reach floored", []float64{0.2}, 0.0, reachRadiusFloorMiles},
+		{"empty and no fallback floored", []float64{}, 0.0, reachRadiusFloorMiles},
 	}
 	for _, c := range cases {
-		if got := milesToDriveMinutes(c.miles); got != c.want {
-			t.Errorf("milesToDriveMinutes(%v) = %v, want %v", c.miles, got, c.want)
+		if got := reachRadiusMiles(c.reach, c.fallback); got != c.want {
+			t.Errorf("%s: reachRadiusMiles(%v, %v) = %v, want %v", c.name, c.reach, c.fallback, got, c.want)
 		}
 	}
 }

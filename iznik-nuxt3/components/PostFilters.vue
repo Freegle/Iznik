@@ -35,15 +35,15 @@
           <RangeSlider
             id="distanceSlider"
             v-model="sliderValue"
-            :min="0.5"
-            :max="feedMax"
-            :step="0.5"
+            :min="BROWSE_MINUTES_MIN"
+            :max="BROWSE_MINUTES_MAX"
+            :step="BROWSE_MINUTES_STEP"
             left-label="Nearer"
             right-label="Further"
-            aria-label="Maximum distance"
+            aria-label="Maximum travel time"
             @change="onSliderChange"
           />
-          <NearbyTowns :miles="sliderValue" />
+          <NearbyTowns :minutes="sliderValue" />
         </div>
         <div class="sort mb-2">
           <label for="sortOptions">Sort by:</label>
@@ -145,7 +145,13 @@ import { useMessageStore } from '~/stores/message'
 import { ref, watch } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
-import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
+import {
+  BROWSE_DISTANCE_UNLIMITED,
+  BROWSE_MINUTES_MIN,
+  BROWSE_MINUTES_MAX,
+  BROWSE_MINUTES_STEP,
+} from '~/constants'
+import { useReachDistance } from '~/composables/useReachDistance'
 import RangeSlider from '~/components/RangeSlider.vue'
 import NearbyTowns from '~/components/NearbyTowns.vue'
 import WhichPostsModal from '~/components/WhichPostsModal.vue'
@@ -361,23 +367,15 @@ const sort = computed({
   },
 })
 
-// Distance slider (#D)
+// Distance slider (#D) - TIME-based.
 //
-// No fixed cap: the slider's right end is scaled to the farthest post distance in the
-// currently-loaded feed (with a floor so it's still usable on a tiny/empty feed). The
-// far-right ("Further") position stores BROWSE_DISTANCE_UNLIMITED rather than that
-// feed max, so the server's own reach limit keeps governing and newly-arriving distant
-// posts keep showing without the client capping them out.
-// The slider's right end ("Further") is a FIXED extent anchored to the server's reach ceiling, NOT
-// the farthest post in the currently-loaded feed. The default reach is a 30-minute drive-time
-// budget and milesToDriveMinutes maps ~2 min per mile, so 15 miles corresponds to that ~30-minute
-// max travel time. Anchoring the far end there keeps the "Max X-Y miles by road" hint stable and
-// meaningful - it tracks the real reach instead of jumping (e.g. 2-4 -> 10-22 miles on reload) as
-// more distant posts load and rescale the max, which made the slider unpredictable as an input
-// control (Discourse 9808). The far-right still stores BROWSE_DISTANCE_UNLIMITED, so the server's
-// own reach limit keeps governing and newly-arriving distant posts still show.
-const FEED_MAX = 15
-const feedMax = computed(() => FEED_MAX)
+// The slider is a travel-time budget in MINUTES (matching the reach system's drive-time isochrones),
+// not miles - so the "Max X-Y miles by road" hint stays stable and meaningful instead of jumping as
+// the feed reloads (Discourse 9808). The shared useReachDistance composable converts the chosen
+// minutes to a crow-flies mile radius via real routing (location-aware, no hardcoded conversion) and
+// persists both settings.browseMaxMinutes (source of truth) and settings.browseMaxDistance (the value
+// this feed's fast Haversine filter reads). The far-right ("Further") stop stores
+// BROWSE_DISTANCE_UNLIMITED so the server's own reach keeps governing.
 
 // Distance is meaningless without a known location.
 const hasLocation = computed(() => {
@@ -391,47 +389,18 @@ const showDistanceSlider = computed(() => {
   return hasLocation.value
 })
 
-const maxDistance = computed({
-  get() {
-    return me.value?.settings?.browseMaxDistance ?? BROWSE_DISTANCE_UNLIMITED
-  },
-  async set(val) {
-    const settings = me.value?.settings
-    settings.browseMaxDistance = val
+// Read-only here (the composable owns the writes): the "filters active" badge below uses it to tell
+// whether a distance limit is active.
+const maxDistance = computed(
+  () => me.value?.settings?.browseMaxDistance ?? BROWSE_DISTANCE_UNLIMITED
+)
 
-    await authStore.saveAndGet({
-      settings,
-    })
-
-    emit('update:selectedMaxDistance', val)
-
-    // Keep the unseen-count badge in step with the filtered feed.
-    refetchCount()
-  },
+// The time-based slider position + its persistence live in the shared composable. When a change is
+// saved it re-emits the derived mile cap (so parent feeds re-filter) and refreshes the unseen count.
+const { sliderValue, onSliderChange } = useReachDistance((miles) => {
+  emit('update:selectedMaxDistance', miles)
+  refetchCount()
 })
-
-// Where the thumb should sit for a given stored distance/feed-max pair: at the far
-// right when unlimited (or when the stored value is no longer less than the current
-// feed max, e.g. the feed has shrunk since it was saved).
-function sliderPositionFor(distance, max) {
-  return distance === BROWSE_DISTANCE_UNLIMITED || distance >= max
-    ? max
-    : distance
-}
-
-// Local slider position, separate from `maxDistance`. RangeSlider emits
-// update:modelValue (bound here) on every drag tick for an instant visual, and a
-// separate `change` event only on release/keyup - so we only save + refetch the count
-// once the member has settled on a value, not on every tick of the drag.
-const sliderValue = ref(sliderPositionFor(maxDistance.value, feedMax.value))
-
-watch([maxDistance, feedMax], ([newDistance, newMax]) => {
-  sliderValue.value = sliderPositionFor(newDistance, newMax)
-})
-
-function onSliderChange(val) {
-  maxDistance.value = val >= feedMax.value ? BROWSE_DISTANCE_UNLIMITED : val
-}
 
 // "Filters active" badge (#G): lights for ANY control that differs from its default -
 // not just narrowing ones - so members always have a quick visual cue that the feed

@@ -42,12 +42,29 @@ const { mockNearbyMessageList, mockMyGroupsList, mockWhichPostsShow } =
     }
   })
 
-// PostFilters.vue's only need from '~/constants' is the distance-slider sentinel -
-// mock it explicitly (matching the plain-factory style other spec files use for this
-// module) rather than via importOriginal, which does not reliably re-resolve aliased
+// PostFilters.vue + useReachDistance need the distance-slider sentinel and the time-based slider
+// bounds from '~/constants' - mock them explicitly (matching the plain-factory style other spec files
+// use for this module) rather than via importOriginal, which does not reliably re-resolve aliased
 // modules from inside a vi.mock factory in this project's Vitest setup.
 vi.mock('~/constants', () => ({
   BROWSE_DISTANCE_UNLIMITED: Number.MAX_SAFE_INTEGER,
+  BROWSE_MINUTES_MIN: 5,
+  BROWSE_MINUTES_MAX: 30,
+  BROWSE_MINUTES_STEP: 5,
+}))
+
+// The time-based slider converts the chosen minutes to a crow-flies mile radius via the routing-backed
+// /town/near (api().town.fetchNear). Mock it to a fixed radius so a change stores a known value.
+const { mockFetchNear } = vi.hoisted(() => ({
+  mockFetchNear: vi.fn().mockResolvedValue({
+    reach_radius_miles: 4,
+    towns: [],
+    frontier_median_miles: 3,
+    frontier_max_miles: 5,
+  }),
+}))
+vi.mock('~/api', () => ({
+  default: () => ({ town: { fetchNear: mockFetchNear } }),
 }))
 
 vi.mock('~/stores/misc', () => ({
@@ -476,24 +493,18 @@ describe('PostFilters', () => {
       expect(wrapper.find('.range-slider-stub').exists()).toBe(true)
     })
 
-    // The slider's right end is now a FIXED extent (matching the Settings slider), not scaled to
-    // the farthest post in the loaded feed. Feed-scaling made the "Max X-Y miles by road" hint jump
-    // as more distant posts loaded and rescaled the max (Discourse 9808), so the max is now stable
-    // regardless of the feed.
-    it('uses a fixed slider max (not scaled to the feed)', () => {
+    // The slider is a fixed TRAVEL-TIME range in MINUTES (5-30, matching the reach system), not a
+    // miles scale tied to the feed - so the "Max X-Y miles by road" reach hint stays stable instead
+    // of jumping as the feed reloads (Discourse 9808).
+    it('is a fixed 5-30 minute travel-time range with 5-minute steps', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(15)
+      expect(Number(input.attributes('min'))).toBe(5)
+      expect(Number(input.attributes('max'))).toBe(30)
+      expect(Number(input.attributes('step'))).toBe(5)
     })
 
-    it('keeps the fixed slider max even when the feed is empty', () => {
-      mockNearbyMessageList.value = []
-      const wrapper = createWrapper({ forceShowFilters: true })
-      const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(15)
-    })
-
-    it('keeps the fixed slider max on the all-my-communities view regardless of that feed', () => {
+    it('keeps the fixed range regardless of the loaded feed', () => {
       mockMe.value = meWithLocation({ browseView: 'mygroups' })
       mockNearbyMessageList.value = []
       mockMyGroupsList.value = [
@@ -502,14 +513,7 @@ describe('PostFilters', () => {
       ]
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(15)
-    })
-
-    it('has a minimum of 0.5 miles and a step of 0.5', () => {
-      const wrapper = createWrapper({ forceShowFilters: true })
-      const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('min'))).toBe(0.5)
-      expect(Number(input.attributes('step'))).toBe(0.5)
+      expect(Number(input.attributes('max'))).toBe(30)
     })
 
     it('labels the ends Nearer/Further with no numeric readout', () => {
@@ -518,64 +522,53 @@ describe('PostFilters', () => {
       expect(wrapper.text()).toContain('Further')
     })
 
-    it('renders the thumb at the far right by default (unlimited sentinel)', () => {
+    it('renders the thumb at the far right by default (no limit)', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.element.value)).toBe(15) // the fixed slider max
+      expect(Number(input.element.value)).toBe(30) // max minutes = "no limit"
     })
 
-    it('renders the thumb at the real value when a distance limit is already saved', () => {
-      mockMe.value = meWithLocation({ browseMaxDistance: 3 })
+    it('renders the thumb at the saved travel time when one is stored', () => {
+      mockMe.value = meWithLocation({ browseMaxMinutes: 10 })
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.element.value)).toBe(3)
+      expect(Number(input.element.value)).toBe(10)
     })
 
-    // The slider's right end is a FIXED extent, independent of both the loaded feed and the saved
-    // browseMaxDistance. Feed-scaling made feedMax grow as more distant posts loaded, moving the
-    // right edge mid-drag and yanking the thumb back (a janky "clicking back" drag, Discourse 9808).
-    // Here a 5mi limit is saved and the feed reaches ~6.7mi, but the max stays the fixed 15 and the
-    // thumb sits at the saved 5.
-    it('uses the fixed slider max regardless of the feed or the saved distance', () => {
-      mockMe.value = meWithLocation({ browseMaxDistance: 5 })
-      mockNearbyMessageList.value = [
-        { id: 1, distance: 1.2 },
-        { id: 2, distance: 6.7 },
-      ]
+    it('stores BROWSE_DISTANCE_UNLIMITED (and skips routing) when dragged to the rightmost stop', async () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      expect(Number(input.attributes('max'))).toBe(15) // fixed, not a fn of the feed or saved 5
-      expect(Number(input.element.value)).toBe(5) // thumb at the saved distance
-    })
-
-    it('stores BROWSE_DISTANCE_UNLIMITED (not the slider max) when dragged to the rightmost stop', async () => {
-      const wrapper = createWrapper({ forceShowFilters: true })
-      const input = wrapper.find('.range-slider-stub')
-      input.element.value = 15 // the fixed slider max
+      input.element.value = 30 // the max = "no limit"
       await input.trigger('change')
       await flushPromises()
+      expect(mockMe.value.settings.browseMaxMinutes).toBe(30)
       expect(mockMe.value.settings.browseMaxDistance).toBe(
         Number.MAX_SAFE_INTEGER
       )
+      expect(mockFetchNear).not.toHaveBeenCalled() // far right needs no reach lookup
       expect(wrapper.emitted('update:selectedMaxDistance')[0]).toEqual([
         Number.MAX_SAFE_INTEGER,
       ])
     })
 
-    it('stores the real mile value for any position left of max', async () => {
+    // For any position left of max, the chosen MINUTES are stored (so the slider restores) and the
+    // routing-derived crow-flies mile radius is stored as browseMaxDistance for the fast feed filter.
+    it('stores the chosen minutes and the routing-derived mile radius left of max', async () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      input.element.value = 3
+      input.element.value = 10
       await input.trigger('change')
       await flushPromises()
-      expect(mockMe.value.settings.browseMaxDistance).toBe(3)
-      expect(wrapper.emitted('update:selectedMaxDistance')[0]).toEqual([3])
+      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10)
+      expect(mockMe.value.settings.browseMaxMinutes).toBe(10)
+      expect(mockMe.value.settings.browseMaxDistance).toBe(4) // mocked reach_radius_miles
+      expect(wrapper.emitted('update:selectedMaxDistance')[0]).toEqual([4])
     })
 
     it('refetches the count after a slider change settles', async () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      input.element.value = 3
+      input.element.value = 10
       await input.trigger('change')
       await flushPromises()
       expect(mockMessageStore.fetchCount).toHaveBeenCalled()
@@ -584,7 +577,7 @@ describe('PostFilters', () => {
     it('does not save on every drag tick - only on change (debounced persistence)', async () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
-      input.element.value = 3
+      input.element.value = 10
       await input.trigger('input')
       await flushPromises()
       expect(mockAuthStore.saveAndGet).not.toHaveBeenCalled()
