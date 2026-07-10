@@ -27,21 +27,19 @@ The APK will be at `androidApp/build/outputs/apk/debug/androidApp-debug.apk`.
 
 ### API Configuration
 
-The app connects to the Freegle V2 API (Go) for most operations and V1 API (PHP) for user creation/session management.
+The app connects to the Freegle V2 API (Go). (The legacy V1 PHP API has been retired.)
 
-Default URLs in `androidApp/build.gradle.kts`:
+Default URL in `androidApp/build.gradle.kts`:
 - **V2**: `https://api.ilovefreegle.org/apiv2` (production Go API)
-- **V1**: `https://fdapilive.ilovefreegle.org/api` (production PHP API)
 
-To use local APIs for development:
+To use a local API for development:
 ```kotlin
 buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:18193/api\"")
-buildConfigField("String", "API_V1_BASE_URL", "\"http://10.0.2.2:18181/api\"")
 ```
 
 ### V2 API Response Format
 
-The Go V2 API returns **bare JSON arrays and objects** (not wrapped in `{ret: 0, status: "", ...}` envelopes like the V1 PHP API). For example, `GET /api/message/inbounds` returns `[{...}, {...}]` directly, and `GET /api/user/{id}` returns `{...}` directly.
+The Go V2 API returns **bare JSON arrays and objects** (not wrapped in `{ret: 0, status: "", ...}` envelopes, as the retired V1 PHP API used to be). For example, `GET /api/message/inbounds` returns `[{...}, {...}]` directly, and `GET /api/user/{id}` returns `{...}` directly.
 
 ## Features
 
@@ -79,7 +77,7 @@ The Go V2 API returns **bare JSON arrays and objects** (not wrapped in `{ret: 0,
 - **Progress tracking**: Coloured progress dots show position in daily 5 picks (filled = seen, empty = remaining)
 
 ### Authentication
-- **Auto-login**: Device-based anonymous account creation via V1 API on first launch
+- **Auto-login**: Device-based anonymous account creation via the V2 API on first launch
 - **Persistent credentials**: JWT + persistent token stored in DataStore, restored on app restart
 - **Email verification**: Optional email linking in profile settings (two-step verification flow)
 - **No explicit sign-in**: Users can browse, chat, and post without manual login
@@ -90,10 +88,9 @@ The Go V2 API returns **bare JSON arrays and objects** (not wrapped in `{ret: 0,
 - **Welcome carousel**: Replayable from help menu at any time
 
 ### Test Data
-Run `create-test-data.php` inside the apiv1 container to populate 20 realistic Edinburgh-area items:
-```bash
-docker exec freegle-apiv1 php /var/www/iznik/install/create-mobile-test-data.php
-```
+The seeded local database already contains test data (FreeglePlayground, around Edinburgh).
+The old `create-mobile-test-data.php` script ran in the now-retired V1 PHP container and no
+longer applies.
 
 ## Testing with Android Emulator
 
