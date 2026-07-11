@@ -50,6 +50,8 @@ type ChatRoomListEntry struct {
 	Chatmsg       string     `json:"-"`
 	Chatmsgtype   string     `json:"-"`
 	Refmsgtype    string     `json:"-"`
+	Hasmessages   bool       `json:"-" gorm:"column:hasmessages"`
+	Hasvisiblemsg bool       `json:"-" gorm:"column:hasvisiblemsg"`
 	Gimageid      uint64     `json:"-"`
 	U1imageid     uint64     `json:"-"`
 	U2imageid     uint64     `json:"-"`
@@ -1112,6 +1114,17 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				"i3.id AS gimageid, " +
 				"(SELECT chat_roster.lastmsgseen FROM chat_roster WHERE chatid = chat_rooms.id AND userid = ?) AS lastmsgseen, " +
 				"messages.type AS refmsgtype, " +
+				// Whether the room contains ANY message at all, and whether it contains any
+				// message that is NOT actively withheld from this user. A message counts as
+				// visible if it is the user's own, OR it is not held for review, not rejected,
+				// and not held pending a rippling reach release. A room that has messages but
+				// none visible to this user is suppressed from the list below, so a reply the
+				// user is not yet allowed to see never surfaces as a confusing empty chat.
+				// Brand-new rooms with no messages at all keep showing (hasmessages = 0).
+				"EXISTS(SELECT 1 FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id) AS hasmessages, " +
+				"EXISTS(SELECT 1 FROM chat_messages cmv WHERE cmv.chatid = chat_rooms.id AND " +
+				"  (cmv.userid = ? OR (cmv.reviewrequired = 0 AND cmv.reviewrejected = 0 AND " +
+				"   NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr2 WHERE rhr2.chatmsgid = cmv.id AND rhr2.status <> 'released')))) AS hasvisiblemsg, " +
 				"rcm.* " +
 				"FROM chat_rooms " +
 				"LEFT JOIN `groups` ON groups.id = chat_rooms.groupid " +
@@ -1136,7 +1149,10 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				"  SELECT * FROM cm WHERE rn = 1) rcm ON rcm.chatid = chat_rooms.id " +
 				"WHERE chat_rooms.id IN " + idlist
 
-			res := db.Raw(sql, myid, myid, unseenSince, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid)
+			// The extra trailing myid feeds the hasvisiblemsg "own messages always count"
+			// check; it sits between the lastmsgseen and lastmsg-join placeholders, all of
+			// which are myid, so appending one more keeps every placeholder correctly bound.
+			res := db.Raw(sql, myid, myid, unseenSince, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
 			res.Scan(&chats2)
 		}()
 
@@ -1204,6 +1220,21 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 			for _, chat := range chats2 {
 				if chat1.ID == chat.ID {
+					// Suppress a User2User room whose only messages are hidden from this user -
+					// a reply held because the post has not yet rippled to their area, a
+					// message held for review, or a rejected message - which would otherwise
+					// appear as a confusing empty chat in the list. Restricted to User2User:
+					// on User2Mod / Mod2Mod a moderator MUST still see held-for-review content
+					// to act on it. The sender still sees their own held message (hasvisiblemsg
+					// counts own messages), a directly-requested room (onlyChat / keepChat) is
+					// never suppressed so notifications and deep links still open it, and a
+					// brand-new room with no messages at all is unaffected (hasmessages = false).
+					if onlyChat == 0 && chat1.ID != keepChat && !chats[ix].Search &&
+						chat1.Chattype == utils.CHAT_TYPE_USER2USER &&
+						chat.Hasmessages && !chat.Hasvisiblemsg {
+						break
+					}
+
 					if chat.Lastdate != nil {
 						chats[ix].Lastdate = chat.Lastdate
 						chats[ix].Lastmsg = chat.Lastmsg

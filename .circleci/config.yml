@@ -131,6 +131,41 @@ jobs:
               exit 0
             fi
 
+            # === Runner provider: Hetzner (RUNNER_PROVIDER=hetzner) or Katapult (default) ===
+            # Hetzner: create an ephemeral cpx62 that boots into a CircleCI runner registered under
+            # freegle/katapult-runner (drop-in — build-test-katapult claims it). It self-destructs on
+            # idle (see scripts/hetzner/cloud-init.yaml). Cap at 2 concurrent runners. Used while
+            # Katapult can't provision (billing) or as a permanent replacement.
+            if [ "${RUNNER_PROVIDER:-katapult}" = "hetzner" ]; then
+              HTOKEN="${HETZNER_API_TOKEN:?HETZNER_API_TOKEN env var not set}"
+              HAPI="https://api.hetzner.cloud/v1"
+              RUNNER_LAUNCH_TOKEN="${RUNNER_LAUNCH_TOKEN:-ac43519948448b967b504c5e97e6dc552fa403b4ea259713dfe1973d3db391ae2cc6b794ed974d2e}"
+              MAX_RUNNERS=2
+              EXISTING=$(curl -sf -H "Authorization: Bearer $HTOKEN" "$HAPI/servers?per_page=50" 2>/dev/null | jq '[.servers[]|select(.name|startswith("hetzner-runner-"))]|length' 2>/dev/null || echo 0)
+              echo "Hetzner runners: $EXISTING / $MAX_RUNNERS"
+              if [ "$EXISTING" -lt "$MAX_RUNNERS" ]; then
+                RUNNER_NAME="hetzner-runner-$(date +%s)-<< pipeline.number >>"
+                echo "Provisioning $RUNNER_NAME (cpx62/nbg1)..."
+                USER_DATA=$(sed -e "s|\${RUNNER_NAME}|$RUNNER_NAME|g" \
+                                -e "s|\${RUNNER_AUTH_TOKEN}|$RUNNER_LAUNCH_TOKEN|g" \
+                                -e "s|\${HETZNER_SELF_TOKEN}|$HTOKEN|g" scripts/hetzner/cloud-init.yaml)
+                BODY=$(jq -n --arg n "$RUNNER_NAME" --arg u "$USER_DATA" \
+                  '{name:$n, server_type:"cpx62", image:"ubuntu-24.04", location:"nbg1", ssh_keys:["hetzner-ci-runner"], user_data:$u, start_after_create:true}')
+                RESP=$(curl -sf -X POST "$HAPI/servers" -H "Authorization: Bearer $HTOKEN" -H "Content-Type: application/json" -d "$BODY" 2>/dev/null) || true
+                SID=$(echo "$RESP" | jq -r '.server.id // empty' 2>/dev/null)
+                if [ -n "$SID" ]; then
+                  echo "Created Hetzner server $SID; runner registers in ~4 min and claims the build."
+                else
+                  echo "WARNING: Hetzner provision failed: $(echo "$RESP" | jq -c '.error // .' 2>/dev/null) — job will queue on existing runners"
+                fi
+              else
+                echo "At Hetzner runner cap ($MAX_RUNNERS) — job will queue on existing runners"
+              fi
+              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
+              cat /tmp/pipeline-params.json
+              exit 0
+            fi
+
             # Katapult is the default runner for all CI builds.
             KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
             KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
@@ -210,23 +245,15 @@ jobs:
               done
 
               if [ "$PROVISION_OK" != "true" ]; then
-                echo "WARNING: All provision attempts failed — falling back to the CircleCI cloud runner"
-                FALLBACK_CLOUD=true
+                echo "WARNING: All provision attempts failed — job will queue on existing runner pool"
               fi
             else
               echo "At VM cap ($MAX_VMS) — routing job to existing runner pool"
             fi
 
-            # Route to the Katapult resource class normally. But if we were under the VM cap
-            # and still could NOT provision a runner (e.g. Katapult refuses to create VMs —
-            # billing/quota outage), fall back to the CircleCI cloud runner (build-test-cloud,
-            # use_katapult=false + use_self_hosted=false) rather than queuing forever on an
-            # empty Katapult pool. When Katapult can provision again this reverts automatically.
-            if [ "$FALLBACK_CLOUD" = "true" ]; then
-              echo "{\"use_self_hosted\": false, \"use_katapult\": false}" > /tmp/pipeline-params.json
-            else
-              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
-            fi
+            # Always route to Katapult resource class. If no runner is free the job
+            # queues until one finishes — no fallback to the local runner.
+            echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
             cat /tmp/pipeline-params.json
       - run:
           name: Mark CI as running on PR
