@@ -117,7 +117,7 @@
         </button>
       </div>
 
-      <!-- FINISHING: single transcription + tidy-up -->
+      <!-- FINISHING: single transcription (no rewrite) -->
       <div v-else-if="phase === 'finishing'" class="voicepost__stage">
         <b-spinner class="voicepost__spinner" />
         <p class="voicepost__lead">Writing down what you said&hellip;</p>
@@ -129,8 +129,7 @@
           Here's your post - have a read
         </h1>
         <p class="voicepost__lead voicepost__lead--tight">
-          We tidied up what you said - same words, just neatened. Change anything
-          you like.
+          Here's what you said, word for word. Change anything you like.
         </p>
 
         <img
