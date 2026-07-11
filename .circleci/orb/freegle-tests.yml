@@ -9,7 +9,7 @@ executors:
     machine:
       image: ubuntu-2404:current
       docker_layer_caching: true
-    resource_class: xlarge
+    resource_class: large
     environment:
       DOCKER_BUILDKIT: 1
       COMPOSE_DOCKER_CLI_BUILD: 1
@@ -20,7 +20,7 @@ executors:
       # reaches the `docker-compose up` step, which runs in a different shell.
       OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
       DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
-      PW_WORKERS: 4
+      PW_WORKERS: 2
 
   machine-executor-local:
     machine:
