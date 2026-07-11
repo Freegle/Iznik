@@ -107,4 +107,37 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
+
+    public function test_release_open_since_hours_only_releases_recent_replies(): void
+    {
+        // Scoped backfill: only held replies whose reply is within the window are released;
+        // older held replies for the same still-open post are left alone (row-level).
+        [$recentRow] = $this->seedHeldNoReach();
+        [$oldRow, $oldMsgId] = $this->seedHeldNoReach();
+
+        // Age the old reply's chat message beyond the window.
+        $oldChatMsgId = DB::table('rippling_held_replies')->where('id', $oldRow)->value('chatmsgid');
+        DB::table('chat_messages')->where('id', $oldChatMsgId)->update(['date' => now()->subHours(72)]);
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true, '--since-hours' => 48])
+            ->assertExitCode(0);
+
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $recentRow)->value('status'),
+            'recent held reply for an open post is released');
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $oldRow)->value('status'),
+            'held reply older than the window is left alone');
+    }
+
+    public function test_release_open_since_hours_skips_gone_posts(): void
+    {
+        // A recent held reply whose post is gone is skipped by the scoped backfill (left for
+        // the normal per-post release path to mark gone) — not released.
+        [$rowId, $msgid] = $this->seedHeldNoReach();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true, '--since-hours' => 48])
+            ->assertExitCode(0);
+
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
 }
