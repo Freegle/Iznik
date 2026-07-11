@@ -79,22 +79,31 @@ class ReleaseRepliesCommand extends Command
                 continue;
             }
 
-            $reach = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-
-            if ($reach === null) {
-                // No reach row. This is only terminal ("taken-gone") if the post is
-                // ACTUALLY gone — deleted, or with a Taken/Received outcome. A post can
-                // be transiently absent from messages_spatial (and so have its reach row
-                // removed) without being taken; in that case wait for reach to be
-                // re-initialised rather than wrongly telling repliers it's gone.
-                if (!$this->postIsGone($msgid)) {
-                    continue;
-                }
+            // Check "gone" FIRST, before consulting the reach row. A Taken/Received/Withdrawn
+            // (or deleted) post must always mark its held replies gone — telling the repliers,
+            // never surfacing them to the offerer — even when a stale reach row still lingers.
+            // Otherwise the 'done' branch below wins the race and releaseAll floods the offerer
+            // of an item they have already given away with far-away held replies. Real case
+            // (Discourse 9808/#555): a TV marked Taken at 12:48 still had its reach row reach
+            // 'done' at 13:33, and at 13:34 releaseAll dumped all 13 held TrashNothing replies
+            // into the offerer's inbox as if they were live.
+            if ($this->postIsGone($msgid)) {
                 if ($dryRun) {
                     $wouldGone += $this->heldCount($msgid);
                 } else {
                     $gone += $svc->markGone($msgid);
                 }
+
+                continue;
+            }
+
+            $reach = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+
+            if ($reach === null) {
+                // No reach row and the post is not gone → it is transiently absent from
+                // messages_spatial (reach row removed) without being taken. Wait for reach to
+                // be re-initialised rather than releasing or wrongly telling repliers it's gone.
+                continue;
             } elseif ($reach->status === 'done') {
                 if ($dryRun) {
                     $wouldRelease += $this->heldCount($msgid);

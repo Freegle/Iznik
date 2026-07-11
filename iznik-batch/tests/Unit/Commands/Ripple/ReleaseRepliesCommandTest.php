@@ -140,4 +140,23 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
+
+    public function test_taken_post_with_lingering_done_reach_marks_gone_not_released(): void
+    {
+        // Discourse 9808/#555: a post can be marked Taken while its reach row lingers and only
+        // later reaches status 'done'. The "gone" check must win over the 'done' branch — the
+        // post is gone, so its held replies are told-gone (taken-gone), never released and
+        // flooded into the offerer's inbox as if the item were still live.
+        [$rowId, , $msgid] = $this->seedHeldInsideReach(); // reach row created ('expanding')
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['status' => 'done']);
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies')->assertExitCode(0);
+
+        $this->assertSame(
+            'taken-gone',
+            DB::table('rippling_held_replies')->where('id', $rowId)->value('status'),
+            'a Taken post with a lingering done reach row is marked gone, not released'
+        );
+    }
 }
