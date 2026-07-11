@@ -135,7 +135,7 @@ jobs:
             KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
             KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
             KATAPULT_API="https://api.katapult.io/core/v1"
-            MAX_VMS=10
+            MAX_VMS=2
 
             # Count VMs already provisioned (by name prefix) to enforce the cap.
             # We count VMs, not online runners — busy runners appear offline to the
