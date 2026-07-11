@@ -20,7 +20,7 @@ executors:
       # reaches the `docker-compose up` step, which runs in a different shell.
       OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
       DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
-      PW_WORKERS: 2
+      PW_WORKERS: 4
 
   machine-executor-local:
     machine:
@@ -474,30 +474,15 @@ commands:
             NEEDS_DAEMON_UPDATE=false
             grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
             grep -q '"http://185.44.254.6:5000"' /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
-            # Docker 28+ loses host-gateway resolution when daemon.json is (re)written without an
-            # explicit host-gateway-ip and the daemon is reloaded: every extra_hosts ":host-gateway"
-            # then fails container creation with "could not parse extra host IP invalid IP", which
-            # kills the whole compose stack (seen on the CircleCI cloud machine-executor, Docker
-            # 28.4). Pin host-gateway-ip to the default bridge gateway so it survives the reload.
-            grep -q "host-gateway-ip" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
             if [ "$NEEDS_DAEMON_UPDATE" = "true" ]; then
-              echo "Updating Docker daemon.json for local registry mirrors + host-gateway-ip..."
-              BRIDGE_GW=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)
-              [ -z "$BRIDGE_GW" ] && BRIDGE_GW="172.17.0.1"
+              echo "Updating Docker daemon.json for local registry mirrors..."
               DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
               echo "$DAEMON_JSON" \
-                | jq --arg gw "$BRIDGE_GW" '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique) | ."host-gateway-ip" = $gw' \
+                | jq '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique)' \
                 | sudo tee /etc/docker/daemon.json > /dev/null \
                 && sudo systemctl reload docker 2>/dev/null \
-                && echo "Done — daemon config updated (host-gateway-ip=$BRIDGE_GW)" \
+                && echo "Done — daemon config updated" \
                 || echo "⚠️  Could not update daemon.json (non-critical)"
-              # host-gateway-ip only reliably takes effect after a full restart on some Docker 28
-              # builds; verify resolution and restart if the reload did not apply it.
-              if ! timeout 30 docker run --rm --add-host hgtest:host-gateway busybox:latest true 2>/dev/null; then
-                echo "host-gateway still unresolved after reload — restarting docker to apply host-gateway-ip"
-                sudo systemctl restart docker 2>/dev/null || true
-                sleep 5
-              fi
             fi
             # The mirror may be in daemon.json (from VM provisioning) yet NOT loaded
             # by the running dockerd (started before the config, or never reloaded),
