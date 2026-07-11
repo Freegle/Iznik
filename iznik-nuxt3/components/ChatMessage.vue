@@ -81,17 +81,17 @@
       Unknown chat message type {{ chatmessage?.type }}, {{ chat }}
       {{ chatmessage }}
     </div>
+    <!-- Held-by-rippling notice. Deliberately never shown to the sender: their
+         reply should look like an ordinary sent message awaiting a response, so
+         they are not aware it is being held back. Only moderators, viewing
+         someone else's held reply, see the notice. -->
     <b-badge
-      v-if="chatmessage?.heldbyrippling"
-      :variant="chatmessage?.userid === myid ? 'info' : 'warning'"
+      v-if="chatmessage?.heldbyrippling && chatmessage?.userid !== myid"
+      variant="warning"
       class="mt-1"
       data-testid="rippling-held-badge"
     >
-      <template v-if="chatmessage?.userid === myid">
-        Waiting to send — we'll deliver this to the owner when the item reaches
-        your area.
-      </template>
-      <template v-else> Held: rippling out </template>
+      Held: rippling out
     </b-badge>
     <chat-message-warning v-if="phoneNumber" />
     <chat-message-date-read :id="id" :chatid="chatid" :last="last" :pov="pov" />
