@@ -98,7 +98,7 @@ runcmd:
     runner:
       name: "${RUNNER_NAME}"
       working_directory: "/home/circleci/workdir"
-      cleanup_working_directory: true
+      cleanup_working_directory: false
       max_run_time: 2h
     CFG
   - chown -R circleci:circleci /home/circleci /etc/circleci-runner || true
