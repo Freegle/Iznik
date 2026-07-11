@@ -210,15 +210,23 @@ jobs:
               done
 
               if [ "$PROVISION_OK" != "true" ]; then
-                echo "WARNING: All provision attempts failed — job will queue on existing runner pool"
+                echo "WARNING: All provision attempts failed — falling back to the CircleCI cloud runner"
+                FALLBACK_CLOUD=true
               fi
             else
               echo "At VM cap ($MAX_VMS) — routing job to existing runner pool"
             fi
 
-            # Always route to Katapult resource class. If no runner is free the job
-            # queues until one finishes — no fallback to the local runner.
-            echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
+            # Route to the Katapult resource class normally. But if we were under the VM cap
+            # and still could NOT provision a runner (e.g. Katapult refuses to create VMs —
+            # billing/quota outage), fall back to the CircleCI cloud runner (build-test-cloud,
+            # use_katapult=false + use_self_hosted=false) rather than queuing forever on an
+            # empty Katapult pool. When Katapult can provision again this reverts automatically.
+            if [ "$FALLBACK_CLOUD" = "true" ]; then
+              echo "{\"use_self_hosted\": false, \"use_katapult\": false}" > /tmp/pipeline-params.json
+            else
+              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
+            fi
             cat /tmp/pipeline-params.json
       - run:
           name: Mark CI as running on PR
