@@ -14,28 +14,40 @@ write_files:
 
   # Idle self-destruct (billing-aware), like the Katapult VM. Hetzner bills per STARTED hour, so once
   # we've paid for the hour we stay up to serve builds and only delete near the hour's end. "Busy" =
-  # a CI task is executing (circleci-agent) OR compose containers are up (covers the image-build gap).
-  # HETZNER_SELF_TOKEN is substituted at provision time; if empty, self-destruct is disabled (an
-  # external reaper is expected instead).
+  # the CI task agent (circleci-agent, EXACT name) is executing OR the freegle-ci compose stack is up.
+  # A HARD UPTIME CAP is the real safety net: a completed build leaves its freegle-ci stack running
+  # (job teardown deliberately skips `docker compose down` — it raced the idle-check and killed jobs
+  # mid-step), which pins the container check "busy" forever. Without a cap the runner NEVER self-reaps
+  # (observed 2026-07-11: two runners stuck idle, stacks up, no task agent). Mirrors the Katapult
+  # idle-check's 2.5h cap (scripts/configure-katapult-vm.sh). HETZNER_SELF_TOKEN is substituted at
+  # provision time; if empty, self-destruct is disabled (an external reaper is expected instead).
   - path: /opt/hetzner-reaper.sh
     content: |
       #!/bin/bash
       TOKEN="${HETZNER_SELF_TOKEN}"
       [ -z "$TOKEN" ] && { echo "no self-token; self-destruct disabled"; exit 0; }
       SID="$(curl -s http://169.254.169.254/hetzner/v1/metadata/instance-id)"
-      CREATED="$(date +%s)"; IDLE_MIN=10; REAP_WINDOW=10; idle_since=""
+      IDLE_MIN=10; REAP_WINDOW=10; MAX_UPTIME=9000; ZOMBIE_UPTIME=12600; idle_since=""
+      reap() { echo "self-destructing: $1 (uptime ${up}s)"; curl -s -X DELETE "https://api.hetzner.cloud/v1/servers/$SID" -H "Authorization: Bearer $TOKEN" -w "\nHTTP %{http_code}\n"; exit 0; }
       while true; do
-        now="$(date +%s)"
-        if pgrep -f circleci-agent >/dev/null 2>&1 || [ -n "$(docker ps -q 2>/dev/null)" ]; then
+        now="$(date +%s)"; up="$(awk '{print int($1)}' /proc/uptime)"
+        # Task agent alive? -x (exact) so the always-on launch daemon never counts as busy.
+        if pgrep -x circleci-agent >/dev/null 2>&1; then agent=1; else agent=0; fi
+        # Hard uptime cap — the fix for the leftover-stack-pins-busy trap. max_run_time is 2h so a
+        # legit single build can't reach MAX_UPTIME; force-delete past it when no task agent runs.
+        # A genuine zombie job that never ends is force-killed at the higher ZOMBIE_UPTIME ceiling.
+        [ "$up" -ge "$MAX_UPTIME" ] && [ "$agent" -eq 0 ] && reap "uptime cap, no task agent"
+        [ "$up" -ge "$ZOMBIE_UPTIME" ] && reap "zombie uptime ceiling"
+        # Busy = task agent running OR the freegle-ci compose stack is up (scoped by compose project).
+        if [ "$agent" -eq 1 ] || docker ps -q --filter label=com.docker.compose.project=freegle-ci 2>/dev/null | grep -q .; then
           idle_since=""
         else
           [ -z "$idle_since" ] && idle_since="$now"
         fi
         idle=0; [ -n "$idle_since" ] && idle=$(( now - idle_since ))
-        hourpos=$(( (now - CREATED) % 3600 ))
+        hourpos=$(( up % 3600 ))
         if [ "$idle" -ge $(( IDLE_MIN*60 )) ] && [ "$hourpos" -ge $(( 3600 - REAP_WINDOW*60 )) ]; then
-          curl -s -X DELETE "https://api.hetzner.cloud/v1/servers/$SID" -H "Authorization: Bearer $TOKEN"
-          exit 0
+          reap "idle ${idle}s near hour boundary"
         fi
         sleep 60
       done
