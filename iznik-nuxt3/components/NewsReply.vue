@@ -422,6 +422,11 @@ const showProfileModal = ref(false)
 const showNewsPhotoModal = ref(false)
 const currentAtts = ref([])
 const bump = ref(0) // Used to force re-renders
+// Guards sendReply against double-submit. The reply box binds Enter on BOTH keydown (parent div)
+// and keyup (textarea), so one Enter press can call sendReply twice; because replybox is only
+// cleared AFTER the async send, both calls pass the non-empty check and post twice, creating
+// duplicate replies (seen on live: newsfeed 613876/613879). Also covers double-click / slow network.
+const sending = ref(false)
 
 // Computed properties
 const enterNewLine = computed(() => {
@@ -568,36 +573,46 @@ function replyReply() {
 }
 
 async function sendReply(callback) {
+  // Re-entrancy guard: a single Enter can fire this twice (keydown + keyup bindings); without this
+  // both would post before replybox is cleared, creating a duplicate reply.
+  if (sending.value) {
+    return
+  }
   // Encode up any emojis.
   if (replybox.value && replybox.value.trim()) {
-    const msg = untwem(replybox.value)
+    sending.value = true
+    try {
+      const msg = untwem(replybox.value)
 
-    const newid = await newsfeedStore.send(
-      msg,
-      replyingTo.value,
-      props.threadhead,
-      imageid.value
-    )
+      const newid = await newsfeedStore.send(
+        msg,
+        replyingTo.value,
+        props.threadhead,
+        imageid.value
+      )
 
-    // New message will be shown because it's in the store and we have a computed property.
-    //
-    // The refetch after send re-renders the thread in the server's new order
-    // (the server bumps the replied-to parent to the end), so the content
-    // under the viewport changes and the fresh reply can land off-screen.
-    // Keep the poster anchored to what they just wrote.
-    scrollReplyIntoView(newid)
+      // New message will be shown because it's in the store and we have a computed property.
+      //
+      // The refetch after send re-renders the thread in the server's new order
+      // (the server bumps the replied-to parent to the end), so the content
+      // under the viewport changes and the fresh reply can land off-screen.
+      // Keep the poster anchored to what they just wrote.
+      scrollReplyIntoView(newid)
 
-    // Clear and hide the textarea now it's sent.
-    replybox.value = null
-    showReplyBox.value = false
+      // Clear and hide the textarea now it's sent.
+      replybox.value = null
+      showReplyBox.value = false
 
-    // And any image id
-    imageid.value = null
-    imageuid.value = null
-    imagemods.value = null
+      // And any image id
+      imageid.value = null
+      imageuid.value = null
+      imagemods.value = null
 
-    // Force re-render. Store reactivity doesn't seem to work nicely with the nested reply structure we have.
-    bump.value++
+      // Force re-render. Store reactivity doesn't seem to work nicely with the nested reply structure we have.
+      bump.value++
+    } finally {
+      sending.value = false
+    }
   }
 
   if (typeof callback === 'function') {
