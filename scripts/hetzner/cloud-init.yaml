@@ -1,0 +1,109 @@
+#cloud-config
+# Hetzner CI runner bootstrap (PROTOTYPE).
+# Boots Ubuntu 24.04 into a CircleCI machine runner registered under freegle/katapult-runner
+# (drop-in for a Katapult VM). ${RUNNER_NAME} / ${RUNNER_AUTH_TOKEN} substituted by provision-runner.sh.
+# Docker pinned to 27.5.1 (the runner-pinned version) so the Docker-28 host-gateway/Playwright bugs
+# never arise. Krystal build cache is intentionally NOT wired up here (follow-up).
+
+package_update: true
+
+write_files:
+  - path: /etc/sysctl.d/99-swap.conf
+    content: |
+      vm.swappiness=10
+
+  # Idle self-destruct (billing-aware), like the Katapult VM. Hetzner bills per STARTED hour, so once
+  # we've paid for the hour we stay up to serve builds and only delete near the hour's end. "Busy" =
+  # a CI task is executing (circleci-agent) OR compose containers are up (covers the image-build gap).
+  # HETZNER_SELF_TOKEN is substituted at provision time; if empty, self-destruct is disabled (an
+  # external reaper is expected instead).
+  - path: /opt/hetzner-reaper.sh
+    content: |
+      #!/bin/bash
+      TOKEN="${HETZNER_SELF_TOKEN}"
+      [ -z "$TOKEN" ] && { echo "no self-token; self-destruct disabled"; exit 0; }
+      SID="$(curl -s http://169.254.169.254/hetzner/v1/metadata/instance-id)"
+      CREATED="$(date +%s)"; IDLE_MIN=10; REAP_WINDOW=10; idle_since=""
+      while true; do
+        now="$(date +%s)"
+        if pgrep -f circleci-agent >/dev/null 2>&1 || [ -n "$(docker ps -q 2>/dev/null)" ]; then
+          idle_since=""
+        else
+          [ -z "$idle_since" ] && idle_since="$now"
+        fi
+        idle=0; [ -n "$idle_since" ] && idle=$(( now - idle_since ))
+        hourpos=$(( (now - CREATED) % 3600 ))
+        if [ "$idle" -ge $(( IDLE_MIN*60 )) ] && [ "$hourpos" -ge $(( 3600 - REAP_WINDOW*60 )) ]; then
+          curl -s -X DELETE "https://api.hetzner.cloud/v1/servers/$SID" -H "Authorization: Bearer $TOKEN"
+          exit 0
+        fi
+        sleep 60
+      done
+    permissions: '0755'
+  - path: /etc/systemd/system/hetzner-reaper.service
+    content: |
+      [Unit]
+      Description=Idle self-destruct for the Hetzner CI runner
+      After=network-online.target
+      [Service]
+      ExecStart=/opt/hetzner-reaper.sh
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - set -eux
+  - systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
+  - systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
+  # 20GB swap (matches Katapult runner)
+  - fallocate -l 20G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=20480 status=none
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - grep -q /swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - sysctl -p /etc/sysctl.d/99-swap.conf || true
+  # Docker CE pinned to 27.5.1
+  - install -m0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update -qq
+  - DVER='5:27.5.1-1~ubuntu.24.04~noble'
+  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-compose-plugin sshpass jq
+  - apt-mark hold docker-ce docker-ce-cli containerd.io
+  - ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
+  - systemctl enable --now docker
+  - sysctl -w vm.overcommit_memory=1 || true
+  - iptables-legacy -P FORWARD ACCEPT 2>/dev/null || true
+  # Node.js 22 on the HOST. On self-hosted runners the orb's "Install Node.js" step early-exits
+  # (it expects Node pre-installed, like the Katapult VM template) and Vitest then runs via host
+  # npm inside the parallel-tests step — without this, that step hangs on "npm not found".
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y -qq nodejs
+  - node --version && npm --version
+  # circleci user + workdir + PASSWORDLESS SUDO (job steps run as circleci and use sudo
+  # chown/rm; without NOPASSWD sudo hangs forever on a hidden password prompt).
+  - id circleci >/dev/null 2>&1 || useradd -m -s /bin/bash circleci
+  - usermod -aG docker circleci
+  - echo 'circleci ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-circleci-nopasswd
+  - chmod 440 /etc/sudoers.d/90-circleci-nopasswd
+  - mkdir -p /home/circleci/workdir && chown circleci:circleci /home/circleci/workdir
+  # CircleCI machine runner
+  - curl -s https://packagecloud.io/install/repositories/circleci/runner/script.deb.sh?any=true | bash
+  - apt-get install -y -qq circleci-runner
+  - |
+    cat > /etc/circleci-runner/circleci-runner-config.yaml <<CFG
+    api:
+      auth_token: "${RUNNER_AUTH_TOKEN}"
+    runner:
+      name: "${RUNNER_NAME}"
+      working_directory: "/home/circleci/workdir"
+      cleanup_working_directory: true
+      max_run_time: 2h
+    CFG
+  - chown -R circleci:circleci /home/circleci /etc/circleci-runner || true
+  - systemctl enable --now circleci-runner
+  # Idle self-destruct (no-op if HETZNER_SELF_TOKEN was left empty)
+  - systemctl daemon-reload
+  - systemctl enable --now hetzner-reaper.service
+  - echo "runner bootstrap complete" > /var/log/hetzner-runner-ready
