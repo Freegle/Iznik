@@ -635,4 +635,22 @@ describe('NewsReply', () => {
       expect(pill.attributes('aria-label')).toBeTruthy()
     })
   })
+
+  describe('double-submit guard', () => {
+    it('posts a reply only once when send fires twice (Enter keydown+keyup double-fire)', async () => {
+      // Live bug (newsfeed 613876/613879): one Enter fires both the keydown (parent div) and keyup
+      // (textarea) sendReply bindings; without a re-entrancy guard both pass the non-empty check
+      // (replybox is cleared only after the async send) and post duplicate replies.
+      mockNewsfeedSend.mockResolvedValue(999)
+      const wrapper = createWrapper()
+      await wrapper.find('.reply-action').trigger('click') // open the reply box
+      const ta = wrapper.findComponent({ name: 'AutoHeightTextarea' })
+      await ta.setValue('hello world')
+      // Rapid double-fire, no await between, so the 2nd call hits the in-flight guard.
+      ta.trigger('keyup.enter')
+      ta.trigger('keyup.enter')
+      await flushPromises()
+      expect(mockNewsfeedSend).toHaveBeenCalledTimes(1)
+    })
+  })
 })

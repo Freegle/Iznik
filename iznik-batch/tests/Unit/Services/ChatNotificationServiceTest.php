@@ -314,6 +314,64 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertTrue($present(), 'released reply is delivered (selectable) again');
     }
 
+    public function test_released_reply_older_than_window_is_delivered_by_releasedat(): void
+    {
+        // Regression: a rippling-held reply is released when the post finally ripples to the
+        // replier — typically hours/days after the reply was written, so its chat_messages.date
+        // is long outside the notification look-back window. Keying delivery on date alone
+        // meant a released reply was never selected and the poster was never notified. The
+        // selection must also admit messages whose hold was released within the window,
+        // keyed on releasedat.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($sender, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        // Reply written 3 days ago — well outside the 24h look-back window.
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'date' => now()->subDays(3),
+        ]);
+
+        $present = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        // A held row on an old message keeps it out (both by the gate and the old date).
+        $rowId = (int) DB::table('rippling_held_replies')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $msg->id,
+            'msgid' => $post->id,
+            'replieruserid' => $sender->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now()->subDays(3),
+        ]);
+        $this->assertFalse($present(), 'old held reply is not selectable');
+
+        // Released just now → even though the message date is 3 days old, it is selectable
+        // because the release fell within the look-back window (keyed on releasedat).
+        DB::table('rippling_held_replies')->where('id', $rowId)->update([
+            'status' => 'released',
+            'releasedat' => now()->subMinutes(5),
+        ]);
+        $this->assertTrue($present(), 'reply released within the window is delivered despite an old date');
+
+        // Released long ago (outside the window) → aged out, not re-selected on every run.
+        DB::table('rippling_held_replies')->where('id', $rowId)->update([
+            'releasedat' => now()->subDays(3),
+        ]);
+        $this->assertFalse($present(), 'a release older than the window is not re-selected');
+    }
+
     public function test_notify_by_email_skips_deleted_messages(): void
     {
         $sender = $this->createTestUser();
