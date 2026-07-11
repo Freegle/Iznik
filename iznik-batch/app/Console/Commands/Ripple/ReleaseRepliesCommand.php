@@ -22,7 +22,9 @@ class ReleaseRepliesCommand extends Command
 {
     use GracefulShutdown;
 
-    protected $signature = 'ripple:release-replies {--dry-run : Report without releasing}';
+    protected $signature = 'ripple:release-replies
+                            {--dry-run : Report without releasing}
+                            {--release-open : Release ALL still-held replies for posts that are still open (not taken/withdrawn), regardless of reach coverage}';
 
     protected $description = 'Release/expire held external replies (#3) as posts ripple out';
 
@@ -31,6 +33,7 @@ class ReleaseRepliesCommand extends Command
         $this->registerShutdownHandlers();
 
         $dryRun = (bool) $this->option('dry-run');
+        $releaseOpen = (bool) $this->option('release-open');
 
         $msgids = DB::table('rippling_held_replies')
             ->where('status', 'held')
@@ -44,6 +47,28 @@ class ReleaseRepliesCommand extends Command
 
         foreach ($msgids as $msgid) {
             $msgid = (int) $msgid;
+
+            // Backfill mode: don't strand held replies behind reach that never reached the
+            // replier. For any post that is still open, release everyone now (delivered via
+            // the notification pipeline, which is keyed on releasedat); only genuinely gone
+            // posts are marked gone.
+            if ($releaseOpen) {
+                if ($this->postIsGone($msgid)) {
+                    if ($dryRun) {
+                        $wouldGone += $this->heldCount($msgid);
+                    } else {
+                        $gone += $svc->markGone($msgid);
+                    }
+                } else {
+                    if ($dryRun) {
+                        $wouldRelease += $this->heldCount($msgid);
+                    } else {
+                        $released += $svc->releaseAll($msgid);
+                    }
+                }
+
+                continue;
+            }
 
             $reach = DB::table('rippling_reach')->where('msgid', $msgid)->first();
 

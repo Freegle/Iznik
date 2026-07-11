@@ -84,4 +84,27 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
+
+    public function test_release_open_releases_stuck_reply_for_open_post(): void
+    {
+        // Backfill: a held reply for a post that is still open but whose reach never reached
+        // the replier would otherwise stay 'held' indefinitely (see the no-reach regression
+        // test above). --release-open releases it so it is delivered.
+        [$rowId] = $this->seedHeldNoReach(); // open post, no reach row -> normally stays held
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true])->assertExitCode(0);
+
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_open_still_marks_gone_for_taken_post(): void
+    {
+        // --release-open must not resurrect replies for genuinely gone posts.
+        [$rowId, $msgid] = $this->seedHeldNoReach();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true])->assertExitCode(0);
+
+        $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
 }
