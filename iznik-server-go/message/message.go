@@ -1486,6 +1486,23 @@ func Search(c *fiber.Ctx) error {
 		}
 	}()
 
+	// A bare message id (optionally "#"-prefixed) should return that exact
+	// message, not word-match its digits against message subjects/text. Reported
+	// on Discourse (topic 9585): searching "#120975040" surfaced unrelated posts
+	// whose title merely contained those digits. A "#"-prefixed term is always an
+	// id lookup; a bare number only when long enough (>= 6 digits) so ordinary
+	// short numeric searches are not hijacked. Access stays restricted by
+	// groupFilter, so a mod only gets the message if it is in their groups.
+	if idStr := strings.TrimPrefix(term, "#"); idStr != "" && (strings.HasPrefix(term, "#") || len(idStr) >= 6) {
+		if msgid, err := strconv.ParseUint(idStr, 10, 64); err == nil {
+			byID := SearchByMsgID(db, msgid, groupids)
+			if len(byID) > 0 {
+				wg.Wait()
+				return c.JSON(byID)
+			}
+		}
+	}
+
 	nelat, _ := strconv.ParseFloat(c.Query("nelat", "0"), 32)
 	nelng, _ := strconv.ParseFloat(c.Query("nelng", "0"), 32)
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
