@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -55,15 +56,22 @@ return new class extends Migration
             }
         });
 
-        // Indexes (guarded — MySQL has no IF NOT EXISTS for ADD INDEX pre-8.0.29).
-        Schema::table('reengage', function (Blueprint $table) {
-            $sm = Schema::getConnection()->getDoctrineSchemaManager();
-            $existing = collect($sm->listTableIndexes('reengage'))->keys()->all();
+        // Indexes (guarded via information_schema — MySQL has no IF NOT EXISTS
+        // for ADD INDEX pre-8.0.29, and Laravel 11 dropped the Doctrine schema
+        // manager we'd otherwise use to introspect them).
+        $hasIndex = static function (string $index): bool {
+            return DB::table('information_schema.statistics')
+                ->whereRaw('table_schema = DATABASE()')
+                ->where('table_name', 'reengage')
+                ->where('index_name', $index)
+                ->exists();
+        };
 
-            if (! in_array('experiment_arm_segment', $existing, true)) {
+        Schema::table('reengage', function (Blueprint $table) use ($hasIndex) {
+            if (! $hasIndex('experiment_arm_segment')) {
                 $table->index(['experiment', 'arm', 'segment'], 'experiment_arm_segment');
             }
-            if (! in_array('reengage_email_tracking_id', $existing, true)) {
+            if (! $hasIndex('reengage_email_tracking_id')) {
                 $table->index('email_tracking_id', 'reengage_email_tracking_id');
             }
         });
