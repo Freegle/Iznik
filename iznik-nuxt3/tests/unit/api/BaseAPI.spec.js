@@ -76,13 +76,36 @@ describe('BaseAPI', () => {
       expect(mockCaptureMessage).not.toHaveBeenCalled()
     })
 
-    it('clears auth state on 401', async () => {
+    it('does not clear auth state on a 401 from a non-session endpoint (Discourse #9893)', async () => {
+      // A 401 from a background/secondary call (chat poll, notification count,
+      // ModTools work-count refresh, newsfeed, etc.) does not prove the whole
+      // session is dead - only GET/PATCH/DELETE /session, the authoritative
+      // login check, does. Wiping auth here caused moderators to be bounced
+      // to the login screen from a single transient 401 on any one of the
+      // many background requests ModTools fires.
       mockFetch.mockResolvedValue([401, {}])
 
       const api = createApi()
 
       try {
         await api.$requestv2('GET', '/test', {})
+      } catch (e) {
+        // expected
+      }
+
+      expect(mockSetAuth).not.toHaveBeenCalled()
+      expect(mockSetUser).not.toHaveBeenCalled()
+    })
+
+    it('clears auth state on a 401 from the /session endpoint', async () => {
+      // /session is the authoritative "am I still logged in" check, so a 401
+      // from it genuinely means the session is dead and auth must be cleared.
+      mockFetch.mockResolvedValue([401, {}])
+
+      const api = createApi()
+
+      try {
+        await api.$requestv2('GET', '/session', {})
       } catch (e) {
         // expected
       }
