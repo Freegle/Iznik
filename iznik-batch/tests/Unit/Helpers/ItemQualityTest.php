@@ -37,6 +37,11 @@ class ItemQualityTest extends TestCase
             'WANTED: Things for the garden (X)',
             'WANTED: Items for house (X)',
             'WANTED: Anything to resell (X)',
+            // Content-free responses/fillers left in the item box.
+            'OFFER: Yes (X BS1)',
+            'OFFER: No (X)',
+            'WANTED: Please (X)',
+            'OFFER: Thanks (X)',
         ];
         foreach ($vague as $s) {
             $this->assertTrue(ItemQuality::subjectItemIsVague($s), "should be vague: $s");
@@ -55,6 +60,8 @@ class ItemQualityTest extends TestCase
             // These start with an otherwise-vague word but carry real content, so are allowed.
             'WANTED: Various board games (X)',
             'WANTED: Free weights (X)',
+            // "yes" as one word among real content must NOT flag (whole-item match only).
+            'OFFER: Yes to Life recovery book (X)',
         ];
         foreach ($specific as $s) {
             $this->assertFalse(ItemQuality::subjectItemIsVague($s), "should be allowed: $s");
