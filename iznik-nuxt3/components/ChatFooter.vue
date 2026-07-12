@@ -423,7 +423,11 @@ const miscStore = useMiscStore()
 const addressStore = useAddressStore()
 const chatDraftStore = useChatDraftStore()
 
-// Setup chat data
+// Setup chat data. setupChat() is a plain synchronous function - it must not be
+// awaited here. A top-level await in <script setup> makes Vue treat the whole
+// component as async setup(), which silently detaches any watch()/onMounted()/
+// onBeforeUnmount() registered afterwards from the component instance (they never
+// fire). That broke the draft-save-on-chat-switch flush below (topic 9884 post 2).
 const {
   chat,
   otheruser,
@@ -432,7 +436,7 @@ const {
   chatmessages,
   milesaway,
   milesstring,
-} = await setupChat(props.id)
+} = setupChat(props.id)
 
 // Extract writable state from store
 const { lastTyping } = storeToRefs(miscStore)
