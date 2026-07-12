@@ -75,7 +75,7 @@ import { useImageStore } from '~/stores/image'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
-import { cameraErrorMessage } from '~/composables/useCameraErrorMessage'
+import { reportCameraError } from '~/composables/useCameraErrorMessage'
 
 const runtimeConfig = useRuntimeConfig()
 
@@ -212,7 +212,7 @@ async function openModal() {
     } catch (e) {
       loading.value = ''
       console.log('openModal', e.message)
-      photoError.value = cameraErrorMessage(e)
+      photoError.value = reportCameraError(e)
     }
     return
   }
@@ -389,7 +389,7 @@ async function choosePhoto() {
   } catch (e) {
     loading.value = ''
     console.log('choosePhoto', e.message)
-    photoError.value = cameraErrorMessage(e)
+    photoError.value = reportCameraError(e)
   }
 }
 

@@ -211,7 +211,7 @@ import OurUploadedImage from '~/components/OurUploadedImage.vue'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
 import { action } from '~/composables/useClientLog'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
-import { cameraErrorMessage } from '~/composables/useCameraErrorMessage'
+import { reportCameraError } from '~/composables/useCameraErrorMessage'
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
@@ -374,7 +374,7 @@ async function takePhoto() {
     await processPhoto(image.webPath)
   } catch (e) {
     console.log('Camera cancelled or error:', e.message)
-    photoError.value = cameraErrorMessage(e)
+    photoError.value = reportCameraError(e)
   }
 }
 
@@ -393,7 +393,7 @@ async function chooseFromGallery() {
     }
   } catch (e) {
     console.log('Gallery cancelled or error:', e.message)
-    photoError.value = cameraErrorMessage(e)
+    photoError.value = reportCameraError(e)
   }
 }
 
