@@ -233,8 +233,9 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 }
 
 func TestSearchByMessageID(t *testing.T) {
-	// Reported on Discourse (topic 9585): searching for a bare message id returned
-	// posts whose title merely contained those digits, not the message with that id.
+	// Reported on Discourse (topic 9585): searching for a message id returned posts
+	// whose title merely contained those digits, not the message with that id. A
+	// purely-numeric term (with or without a leading "#") must return that message.
 	prefix := uniquePrefix("searchbyid")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
@@ -242,19 +243,21 @@ func TestSearchByMessageID(t *testing.T) {
 	msgID := CreateTestMessage(t, userID, groupID, "Exercise Bike Lewisham", 55.9533, -3.1883)
 	_, token := CreateTestSession(t, userID)
 
-	// "%23" is the URL-encoded "#"; the exact message must come back.
-	u := fmt.Sprintf("/api/message/search/%%23%d?groupids=%d&jwt=%s", msgID, groupID, token)
-	resp, _ := getApp().Test(httptest.NewRequest("GET", u, nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var results []message.SearchResult
-	json2.NewDecoder(resp.Body).Decode(&results)
-
-	found := false
-	for _, r := range results {
-		if r.Msgid == msgID {
-			found = true
+	findsIt := func(term string) bool {
+		u := fmt.Sprintf("/api/message/search/%s?groupids=%d&jwt=%s", term, groupID, token)
+		resp, _ := getApp().Test(httptest.NewRequest("GET", u, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var results []message.SearchResult
+		json2.NewDecoder(resp.Body).Decode(&results)
+		for _, r := range results {
+			if r.Msgid == msgID {
+				return true
+			}
 		}
+		return false
 	}
-	assert.True(t, found, "searching by #<id> should return the message with that id")
+
+	// "%23" is the URL-encoded "#".
+	assert.True(t, findsIt(fmt.Sprintf("%%23%d", msgID)), "#<id> should return that message")
+	assert.True(t, findsIt(fmt.Sprintf("%d", msgID)), "a bare numeric id should also return that message")
 }
